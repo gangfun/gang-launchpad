@@ -17,4 +17,5 @@ bsc = "${BSC_RPC_URL}"
 bsc_testnet = "${BSC_TESTNET_RPC_URL}"
 
 [etherscan]
-bsc = { key = "${BSCSCAN_API_KEY}", chain = 56 }
+# BscScan explorer data → Etherscan API V2 (same key, chainId 56)
+bsc = { key = "${ETHERSCAN_API_KEY}", chain = 56, url = "https://api.etherscan.io/v2/api" }

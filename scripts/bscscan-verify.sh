@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-click BscScan verify for live v4 Launchpad / Migrator / GANG.
+# One-click Etherscan API V2 verify (BSC chainId 56) for live v4 Launchpad / Migrator / GANG.
 # Idempotent: exits 0 if already verified or verify succeeds.
 # NEVER prints API key values.
 set -euo pipefail
@@ -20,13 +20,15 @@ FACTORY=0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73
 WBNB=0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c
 
 load_key() {
-  if [[ -n "${BSCSCAN_API_KEY:-}" ]]; then
-    echo "key_source=env:BSCSCAN_API_KEY" >&2
+  # Etherscan API V2 unified key (BSC chainId 56). Accept legacy BSCSCAN_API_KEY alias.
+  if [[ -n "${ETHERSCAN_API_KEY:-}" ]]; then
+    export ETHERSCAN_API_KEY
+    echo "key_source=env:ETHERSCAN_API_KEY" >&2
     return 0
   fi
-  if [[ -n "${ETHERSCAN_API_KEY:-}" ]]; then
-    export BSCSCAN_API_KEY="$ETHERSCAN_API_KEY"
-    echo "key_source=env:ETHERSCAN_API_KEY" >&2
+  if [[ -n "${BSCSCAN_API_KEY:-}" ]]; then
+    export ETHERSCAN_API_KEY="$BSCSCAN_API_KEY"
+    echo "key_source=env:BSCSCAN_API_KEY→ETHERSCAN_API_KEY" >&2
     return 0
   fi
   local f
@@ -44,13 +46,13 @@ load_key() {
       local line k v
       while IFS= read -r line || [[ -n "$line" ]]; do
         case "$line" in
-          BSCSCAN_API_KEY=*|ETHERSCAN_API_KEY=*)
+          ETHERSCAN_API_KEY=*|BSCSCAN_API_KEY=*)
             k="${line%%=*}"
             v="${line#*=}"
             v="${v%\"}"; v="${v#\"}"
             v="${v%\'}"; v="${v#\'}"
             if [[ -n "$v" ]]; then
-              export BSCSCAN_API_KEY="$v"
+              export ETHERSCAN_API_KEY="$v"
               echo "key_source=file:${f} name=${k}" >&2
               set +a
               return 0
@@ -65,8 +67,8 @@ load_key() {
 }
 
 if ! load_key; then
-  echo "BSCSCAN_API_KEY: MISSING (checked env + ~/gang/.env + /Users/lazy/gang/.env + repo .env)" >&2
-  echo "Drop key into ~/gang/.env as BSCSCAN_API_KEY=... then re-run: ./scripts/bscscan-verify.sh" >&2
+  echo "ETHERSCAN_API_KEY: MISSING (Etherscan API V2; also accepts BSCSCAN_API_KEY alias)" >&2
+  echo "Drop key into ~/gang/.env as ETHERSCAN_API_KEY=... then re-run: ./scripts/bscscan-verify.sh" >&2
   exit 2
 fi
 
@@ -93,7 +95,9 @@ verify_one() {
     --compiler-version "$COMPILER" \
     --num-of-optimizations "$OPT_RUNS" \
     --watch \
-    --etherscan-api-key "$BSCSCAN_API_KEY" \
+    --verifier etherscan \
+    --verifier-url "https://api.etherscan.io/v2/api" \
+    --etherscan-api-key "$ETHERSCAN_API_KEY" \
     --constructor-args "$args" 2>&1)"
   rc=$?
   set -e
