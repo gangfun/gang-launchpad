@@ -4,8 +4,8 @@
 
 ```bash
 # v4 mainnet defaults (override as needed)
-GANG_LAUNCHPAD=0x86854E8ee7D438ca9B52407DCF92D1616385dDcc \
-GANG_START_BLOCK=128968738 \
+GANG_LAUNCHPAD=0x315Ba2e8952D06094CC636b2B84229FA32fb23A7 \
+GANG_START_BLOCK=128977029 \
 GANG_RPC_URL=https://bsc-rpc.publicnode.com npm start
 ```
 Wipe or raise `GANG_START_BLOCK` when switching from v3 so event history does not mix.

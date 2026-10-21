@@ -13,8 +13,8 @@ const cfg = {
   // Comma-separated GANG_RPC_URLS preferred (viem fallback). Single GANG_RPC_URL still works.
   // Near-head sync (raised GANG_START_BLOCK) does not need archive RPC.
   rpcUrls: urls,
-  launchpad: process.env.GANG_LAUNCHPAD || '0x86854E8ee7D438ca9B52407DCF92D1616385dDcc',
-  startBlock: Number(process.env.GANG_START_BLOCK || 128968738),
+  launchpad: process.env.GANG_LAUNCHPAD || '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7',
+  startBlock: Number(process.env.GANG_START_BLOCK || 128977029),
   db: process.env.GANG_DB || './gang.db',
   port: Number(process.env.PORT || 8787),
   batch: Number(process.env.GANG_BATCH || 50),

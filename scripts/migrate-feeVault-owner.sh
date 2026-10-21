@@ -4,7 +4,7 @@
 # Does NOT invent addresses — NEW_FEE_VAULT and NEW_OWNER are required.
 set -euo pipefail
 
-LAUNCHPAD="${LAUNCHPAD:-0x86854E8ee7D438ca9B52407DCF92D1616385dDcc}"
+LAUNCHPAD="${LAUNCHPAD:-0x315Ba2e8952D06094CC636b2B84229FA32fb23A7}"
 BSC_RPC="${BSC_RPC:-${BSC_RPC_URL:-https://bsc-dataseed.binance.org}}"
 BROADCAST=0
 NEW_FEE_VAULT=""

@@ -142,9 +142,9 @@ Always speak amounts in BNB / tokens, never raw wei. Show full addresses; confir
 
 | Contract | Deploy block | Address |
 |---|---|---|
-| Launchpad **v4** (current) | **128968738** | [`0x86854E8ee7D438ca9B52407DCF92D1616385dDcc`](https://bscscan.com/address/0x86854E8ee7D438ca9B52407DCF92D1616385dDcc) |
-| Migrator v4 | **128968738** | [`0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17`](https://bscscan.com/address/0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17) |
-| Platform token (GANG) | **128968738** | [`0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2`](https://bscscan.com/address/0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2) |
+| Launchpad **v4.1** (current) | **128977029** | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) |
+| Migrator v4.1 | **128977029** | [`0xFcB6278b6FE3f2e3F567bb49cBf8d8883bcE96E9`](https://bscscan.com/address/0xFcB6278b6FE3f2e3F567bb49cBf8d8883bcE96E9) |
+| Platform token (GANG) | **128977029** | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) |
 | Agent ID (SPACE ID) | — | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
 | feeVault / opsTreasury | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
 | Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
