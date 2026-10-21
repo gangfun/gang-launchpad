@@ -1,7 +1,38 @@
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ago, px, short, usd, api } from '../api.js'
 import { useQuery } from '@tanstack/react-query'
-import { useT } from '../i18n.jsx'
+import { useT, Lines } from '../i18n.jsx'
+import Cmd from './Cmd.jsx'
+
+function ColdStart() {
+  const { t } = useT()
+  return (
+    <div className="cold">
+      <div className="cold-title">{t('cold_title')}</div>
+      <Lines k="cold_lines" className="cold-lines" />
+      <ol className="cold-steps">
+        <li>
+          <b>{t('cold_install')}</b>
+          <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
+          <Cmd block>npm i -g github:gangfun/cli</Cmd>
+        </li>
+        <li>
+          <b>{t('cold_preflight')}</b>
+          <Cmd block>gang preflight</Cmd>
+        </li>
+        <li>
+          <b>{t('cold_create')}</b>
+          <Cmd block>{'gang create --name "…" --symbol …'}</Cmd>
+          <Cmd block>gang execute --request-id …</Cmd>
+          <Cmd block>gang tx --hash 0x…</Cmd>
+        </li>
+      </ol>
+      <p className="cold-docs">
+        <Link to="/docs">{t('cold_docs')}</Link>
+      </p>
+    </div>
+  )
+}
 
 export default function TokenTable({ rows, loading, error }) {
   const nav = useNavigate()
@@ -9,7 +40,7 @@ export default function TokenTable({ rows, loading, error }) {
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   if (loading) return <div className="empty">{t('loading')}</div>
   if (error) return <div className="empty err">{t('api_error')}</div>
-  if (!rows?.length) return <div className="empty">{t('empty')}</div>
+  if (!rows?.length) return <ColdStart />
   return (
     <div className="market-scroll"><table>
       <thead><tr>

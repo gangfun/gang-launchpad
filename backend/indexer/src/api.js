@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
+import { getMeta } from './db.js'
 import { readPair } from './pancake.js'
 
 const GRAD = 20n * 10n ** 18n
@@ -49,6 +50,19 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
     const url = new URL(req.url, 'http://x'); const p = url.pathname.split('/').filter(Boolean)
     const limit = Math.min(Number(url.searchParams.get('limit') || 50), 200)
     try {
+      if (p[0] === 'health') {
+        const lastBlock = Number(getMeta(db, 'last_block') || 0)
+        const tokens = Number(db.prepare('SELECT COUNT(*) AS n FROM tokens').get()?.n || 0)
+        let rpcOk = false
+        try {
+          await Promise.race([
+            client.getBlockNumber(),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('rpc timeout')), 3000)),
+          ])
+          rpcOk = true
+        } catch { /* leave false */ }
+        return json(res, 200, { ok: true, launchpad, lastBlock, tokens, rpcOk })
+      }
       if (p[0] === 'search') {
         const qs = (url.searchParams.get('q') || '').trim().toLowerCase()
         if (qs.length < 2) return json(res, 200, [])

@@ -19,7 +19,11 @@ export default function Token() {
   const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res) })
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   if (q.isLoading) return <main className="wrap"><div className="empty">{t('loading')}</div></main>
-  if (q.isError) return <main className="wrap"><div className="empty">{t('not_found')}</div></main>
+  if (q.isError) {
+    const status = String(q.error?.message || '')
+    const notFound = status === '404'
+    return <main className="wrap"><div className={`empty${notFound ? '' : ' err'}`}>{t(notFound ? 'not_found' : 'api_error')}</div></main>
+  }
   const d = q.data
   const pct = d.graduated ? 100 : d.progressPct
   const pk = d.pancake

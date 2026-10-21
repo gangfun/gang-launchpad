@@ -11,3 +11,5 @@ gang create --name "My Agent Coin" --symbol MAC
 
 Flow: preview → show the user name/symbol and that it costs only gas → confirm → `gang execute` → `gang tx --hash`
 and read the `Created` event for the token address. Hand the address back in full so the user can share it.
+
+Graduation (unchanged): curve raises **20 BNB** → PancakeSwap V2, LP burned.

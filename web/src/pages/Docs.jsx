@@ -14,6 +14,8 @@ export default function Docs() {
       <p>{t('g_s2_p')}</p>
       <Cmd block>npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet</Cmd>
       <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
+      <Cmd block>npm i -g @binance/agentic-wallet</Cmd>
+      <Cmd block>npm i -g github:gangfun/cli</Cmd>
       <Lines k="g_s2_then" />
       <h2>03 {t('g_s3')}</h2>
       <Cmd block>gang preflight</Cmd>
@@ -22,13 +24,17 @@ export default function Docs() {
       <Cmd block>gang list</Cmd>
       <Cmd block>gang quote --token 0x… --bnb 0.05</Cmd>
       <Cmd block>gang buy --token 0x… --bnb 0.05</Cmd>
+      <Cmd block>gang execute --request-id …</Cmd>
       <Lines k="g_s4_p" />
       <div className="callout"><Lines k="g_cap" /></div>
       <h2>05 {t('g_s5')}</h2>
       <Cmd block>gang sell --token 0x… --all</Cmd>
+      <Cmd block>gang sell --token 0x… --amount 1000000</Cmd>
       <Lines k="g_s5_p" />
       <h2>06 {t('g_s6')}</h2>
       <Cmd block>gang create --name "My Agent Coin" --symbol MAC</Cmd>
+      <Cmd block>gang execute --request-id …</Cmd>
+      <Cmd block>gang tx --hash 0x…</Cmd>
       <Lines k="g_s6_p" />
       <h2>{t('g_rules')}</h2>
       <table><tbody>
