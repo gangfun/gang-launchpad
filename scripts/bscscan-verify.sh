@@ -96,7 +96,7 @@ verify_one() {
     --num-of-optimizations "$OPT_RUNS" \
     --watch \
     --verifier etherscan \
-    --verifier-url "https://api.etherscan.io/v2/api" \
+    --verifier-url "https://api.etherscan.io/v2/api?chainid=56" \
     --etherscan-api-key "$ETHERSCAN_API_KEY" \
     --constructor-args "$args" 2>&1)"
   rc=$?
