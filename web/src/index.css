@@ -163,14 +163,117 @@ td.r, th.r { text-align: right; }
 .footer { margin-top: 64px; padding: 20px 0 40px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 
-@media (max-width: 1024px) { .work { grid-template-columns: 1fr; } .search { width: 220px; } .stats { grid-template-columns: repeat(2, 1fr); } }
+/* ---------- market cards (mobile list; hidden on desktop) ---------- */
+.market-cards { display: none; }
+.mcard {
+  display: block; width: 100%; text-align: left;
+  padding: 12px 14px; border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; color: inherit; cursor: pointer;
+  min-height: 44px;
+}
+.mcard:last-child { border-bottom: 0; }
+.mcard:hover, .mcard:active { background: var(--s2); }
+.mcard-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 8px; margin-bottom: 8px; }
+.mcard-head .sym { color: var(--text); font-weight: 500; font-size: 14px; }
+.mcard-head .name { color: var(--text-3); font-size: 12px; }
+.mcard-metrics {
+  display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px 12px; align-items: end;
+}
+.mcard-metrics > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mcard-metrics span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+.mcard-metrics b { font-size: 13px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+.mcard-curve { display: flex; align-items: center; gap: 6px; justify-content: flex-end; padding-bottom: 1px; }
+.mcard-curve .pbar { width: 56px; margin-right: 0; }
+
+@media (max-width: 1024px) {
+  .work { grid-template-columns: 1fr; }
+  .search { width: 220px; }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 768px) {
-  .wrap { padding: 0 14px; }
-  .bar .wrap { gap: 12px; } .bar .nav { gap: 12px; } .bar .lang { display: none; } .search { width: 140px; }
-  .hero { padding: 28px 0 20px; } .hero h1 { font-size: 24px; line-height: 32px; }
-  .market-scroll { overflow-x: auto; } .market-scroll table { min-width: 760px; }
-  .win > .b.chart-body { min-height: 260px; }
-  .ident .addr { word-break: break-all; }
+  /* breathing room — avoid stuck-to-edge */
+  .wrap { padding: 0 18px; }
+
+  /* mobile contrast bump for grey labels / body copy */
+  :root {
+    --text-2: #A8A8A8;
+    --text-3: #787878;
+  }
+
+  /* top bar: row1 logo+nav, row2 full-width search; baselines aligned */
+  .bar { height: auto; }
+  .bar .wrap {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 10px 16px; height: auto; padding-top: 10px; padding-bottom: 10px;
+  }
+  .bar .logo { display: inline-flex; align-items: center; line-height: 1; }
+  .bar .nav {
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 4px 14px; font-size: 12px;
+  }
+  .bar .nav a { display: inline-flex; align-items: center; min-height: 40px; padding: 0 2px; }
+  .bar .spacer { display: none; }
+  .bar .lang { display: none; }
+  .bar .search { flex: 1 1 100%; width: 100%; order: 10; }
+  .search input { height: 40px; font-size: 13px; }
+  .search::before { top: 10px; }
+
+  /* hero rhythm */
+  .hero { padding: 22px 0 16px; }
+  .hero h1 { font-size: 24px; line-height: 32px; margin-bottom: 10px; }
+  .hero .tag { margin-bottom: 10px; }
+  .hero-lines { margin-bottom: 14px; }
+  .hero .cmd { display: flex; width: 100%; margin-bottom: 4px; }
+
+  /* stats: tighter join to hero, softer terminal box */
+  .stats {
+    margin: 16px 0 18px;
+    gap: 1px;
+    box-shadow: 2px 2px 0 #000;
+  }
+  .stat { padding: 12px 14px; gap: 2px; }
+  .stat b { font-size: 20px; line-height: 24px; }
+  .stat span { color: var(--text-2); }
+
+  /* win title + tabs: wrap / scroll-x, no page overflow */
+  .win > .t {
+    height: auto; min-height: 36px; flex-wrap: wrap;
+    padding: 6px 10px; gap: 8px;
+  }
+  .win > .t .right {
+    margin-left: 0; width: 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .win > .t .right::-webkit-scrollbar { display: none; }
+  .tabs { flex-wrap: nowrap; width: max-content; }
+  .tabs button { height: 32px; padding: 0 12px; min-width: 40px; }
+
+  /* market: cards on, wide table off */
+  .market-scroll { display: none; }
+  .market-cards { display: block; }
+
+  /* token page light overflow pass */
+  .win > .b.chart-body { min-height: 240px; }
+  .ident { padding: 24px 0 14px; gap: 8px 10px; }
+  .ident h1 { font-size: 22px; line-height: 28px; }
+  .ident .addr { word-break: break-all; font-size: 11px; }
+  .ident .btn { width: 100%; justify-content: center; min-height: 40px; }
+  .ident .spacer { display: none; }
+  .kv { margin-bottom: 14px; }
+  .kv div { padding: 10px 12px; }
+  .work { gap: 12px; }
+  .win > .t .right .seg { flex-wrap: wrap; }
+  .howto .cmd, .cold-steps .cmd { width: 100%; }
+  /* trades/holders tables: contain horizontal scroll inside card */
+  .win > .b.flush { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .win > .b.flush table { min-width: 480px; }
+}
+
+@media (max-width: 390px) {
+  .wrap { padding: 0 16px; }
+  .mcard-metrics { grid-template-columns: 1fr 1fr; }
+  .mcard-curve { grid-column: 1 / -1; justify-content: flex-start; margin-top: 2px; }
 }
 
 .empty.err { color: #f66; }

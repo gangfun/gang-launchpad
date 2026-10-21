@@ -34,6 +34,21 @@ function ColdStart() {
   )
 }
 
+function RowCells({ r, rate, t }) {
+  return (
+    <>
+      <td className="tok"><span className="sym">{r.symbol}</span>{isOfficial(r.address) && <> <span className="badge official">{t('official')}</span></>} <span className="name">{r.name} · {short(r.address)}</span></td>
+      <td className="r num">{usd(r.fdvBnb * rate)}</td>
+      <td className="r num">{px(r.priceBnb)}</td>
+      <td className="r num">{usd((r.volume24hBnb || 0) * rate)}</td>
+      <td className="r num">{r.trades24h ?? 0}</td>
+      <td className="r num">{r.holders}</td>
+      <td>{r.graduated ? <span className="badge grad">{t('graduated')}</span> : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}</td>
+      <td className="r dim">{ago(r.lastTradeAt || r.createdAt)}</td>
+    </>
+  )
+}
+
 export default function TokenTable({ rows, loading, error }) {
   const nav = useNavigate()
   const { t } = useT()
@@ -42,24 +57,45 @@ export default function TokenTable({ rows, loading, error }) {
   if (error) return <div className="empty err">{t('api_error')}</div>
   if (!rows?.length) return <ColdStart />
   return (
-    <div className="market-scroll"><table>
-      <thead><tr>
-        <th>{t('col_token')}</th><th className="r">{t('col_mcap')}</th><th className="r">{t('col_price')}</th><th className="r">{t('col_vol')}</th><th className="r">{t('col_trades')}</th><th className="r">{t('col_holders')}</th><th>{t('col_curve')}</th><th className="r">{t('col_age')}</th>
-      </tr></thead>
-      <tbody>
+    <>
+      <div className="market-scroll"><table>
+        <thead><tr>
+          <th>{t('col_token')}</th><th className="r">{t('col_mcap')}</th><th className="r">{t('col_price')}</th><th className="r">{t('col_vol')}</th><th className="r">{t('col_trades')}</th><th className="r">{t('col_holders')}</th><th>{t('col_curve')}</th><th className="r">{t('col_age')}</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.address} onClick={() => nav(`/token/${r.address}`)} style={{ cursor: 'pointer' }}>
+              <RowCells r={r} rate={rate} t={t} />
+            </tr>
+          ))}
+        </tbody>
+      </table></div>
+      <div className="market-cards" role="list">
         {rows.map((r) => (
-          <tr key={r.address} onClick={() => nav(`/token/${r.address}`)} style={{ cursor: 'pointer' }}>
-            <td className="tok"><span className="sym">{r.symbol}</span>{isOfficial(r.address) && <> <span className="badge official">{t('official')}</span></>} <span className="name">{r.name} · {short(r.address)}</span></td>
-            <td className="r num">{usd(r.fdvBnb * rate)}</td>
-            <td className="r num">{px(r.priceBnb)}</td>
-            <td className="r num">{usd((r.volume24hBnb || 0) * rate)}</td>
-            <td className="r num">{r.trades24h ?? 0}</td>
-            <td className="r num">{r.holders}</td>
-            <td>{r.graduated ? <span className="badge grad">{t('graduated')}</span> : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}</td>
-            <td className="r dim">{ago(r.lastTradeAt || r.createdAt)}</td>
-          </tr>
+          <button
+            type="button"
+            key={r.address}
+            className="mcard"
+            role="listitem"
+            onClick={() => nav(`/token/${r.address}`)}
+          >
+            <div className="mcard-head">
+              <span className="sym">{r.symbol}</span>
+              {isOfficial(r.address) && <span className="badge official">{t('official')}</span>}
+              <span className="name">{r.name} · {short(r.address)}</span>
+            </div>
+            <div className="mcard-metrics">
+              <div><span>{t('col_mcap')}</span><b className="num">{usd(r.fdvBnb * rate)}</b></div>
+              <div><span>{t('col_price')}</span><b className="num">{px(r.priceBnb)}</b></div>
+              <div className="mcard-curve">
+                {r.graduated
+                  ? <span className="badge grad">{t('graduated')}</span>
+                  : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}
+              </div>
+            </div>
+          </button>
         ))}
-      </tbody>
-    </table></div>
+      </div>
+    </>
   )
 }
