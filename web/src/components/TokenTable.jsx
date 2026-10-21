@@ -3,11 +3,12 @@ import { ago, px, short, usd, api } from '../api.js'
 import { useQuery } from '@tanstack/react-query'
 import { useT } from '../i18n.jsx'
 
-export default function TokenTable({ rows, loading }) {
+export default function TokenTable({ rows, loading, error }) {
   const nav = useNavigate()
   const { t } = useT()
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   if (loading) return <div className="empty">{t('loading')}</div>
+  if (error) return <div className="empty err">{t('api_error')}</div>
   if (!rows?.length) return <div className="empty">{t('empty')}</div>
   return (
     <div className="market-scroll"><table>

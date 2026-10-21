@@ -9,6 +9,12 @@ const flag = (name) => args.includes(`--${name}`)
 const out = (o) => console.log(JSON.stringify(o, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2))
 const fail = (msg, extra = {}) => { out({ success: false, error: msg, ...extra }); process.exit(1) }
 
+const parseSlippage = (raw) => {
+  const s = Number(raw)
+  if (!Number.isFinite(s) || s < 0 || s > 50) fail('--slippage must be a number between 0 and 50', { got: raw })
+  return s
+}
+
 const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet)
 
   gang preflight                         check sign-in, Developer Mode, tradeAllTokens, Agent ID
@@ -16,7 +22,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang token --token <addr>              one token in detail
   gang quote --token <addr> --bnb <n>    buy quote for my wallet (fee, cap, refund)
   gang buy --token <addr> --bnb <n> [--slippage 1]      preview a buy  -> requestId
-  gang sell --token <addr> [--amount <tokens> | --all]  preview approve or sell -> requestId
+  gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]  preview approve or sell -> requestId
   gang create --name <n> --symbol <s>    preview token creation -> requestId
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events
@@ -70,7 +76,7 @@ async function main() {
     }
     case 'buy': {
       const token = opt('token'), bnb = opt('bnb'); if (!token || !bnb) fail('--token and --bnb required')
-      const slippage = Number(opt('slippage', '1'))
+      const slippage = parseSlippage(opt('slippage', '1'))
       const me = bawAddress()
       const info = await tokenInfo(token, me)
       if (info.graduated) fail('token already graduated; trade it on PancakeSwap', { pair: info.pair })
@@ -89,14 +95,16 @@ async function main() {
       if (info.graduated) fail('token already graduated; sell on PancakeSwap', { pair: info.pair })
       const bal = await balanceOf(token, me)
       if (bal === 0n) fail('no balance to sell')
-      const amount = flag('all') || !opt('amount') ? bal : parseEther(opt('amount'))
+      if (!flag('all') && !opt('amount')) fail('pass --amount <tokens> or --all (full sell is no longer the default)')
+      if (flag('all') && opt('amount')) fail('use either --all or --amount, not both')
+      const amount = flag('all') ? bal : parseEther(opt('amount'))
       if (amount > bal) fail('amount exceeds balance', { balance: fmtTok(bal) })
       const allow = await allowance(token, me)
       if (allow < amount) {
         const p = bawPreview({ from: me, to: token, data: calldata.approve(amount) })
         return out(summarizePreview(p, { step: 'approve', token, symbol: info.symbol, amount: fmtTok(amount), note: 'Approve first. After it confirms on-chain, run the same `gang sell` again to preview the sell.' }))
       }
-      const slippage = Number(opt('slippage', '1'))
+      const slippage = parseSlippage(opt('slippage', '1'))
       const q = await quoteSell(token, amount)
       const minOut = (q.bnbToUser * BigInt(Math.round((100 - slippage) * 100))) / 10000n
       const p = bawPreview({ from: me, to: CONFIG.launchpad, data: calldata.sell(token, amount, minOut) })

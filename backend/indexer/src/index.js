@@ -2,7 +2,8 @@ import { openDb } from './db.js'
 import { Indexer } from './indexer.js'
 import { startApi } from './api.js'
 
-const urls = (process.env.GANG_RPC_URLS || process.env.GANG_RPC_URL || 'https://bsc-rpc.publicnode.com')
+const DEFAULT_RPCS = 'https://bsc-rpc.publicnode.com,https://bsc.publicnode.com'
+const urls = (process.env.GANG_RPC_URLS || process.env.GANG_RPC_URL || DEFAULT_RPCS)
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean)

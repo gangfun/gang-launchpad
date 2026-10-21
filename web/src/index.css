@@ -171,3 +171,5 @@ td.r, th.r { text-align: right; }
   .win > .b.chart-body { min-height: 260px; }
   .ident .addr { word-break: break-all; }
 }
+
+.empty.err { color: #f66; }
