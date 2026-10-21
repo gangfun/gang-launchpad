@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbiItem } from 'viem'
+import { createPublicClient, http, fallback, parseAbiItem } from 'viem'
 import { bsc } from 'viem/chains'
 import { EVENTS } from './abi.js'
 import { getMeta, setMeta } from './db.js'
@@ -8,9 +8,13 @@ const VIRTUAL_TOKEN = 1066666666666666666666666667n
 const price = (realBnb, sold) => ((VIRTUAL_BNB + realBnb) * 10n ** 18n) / (VIRTUAL_TOKEN - sold) // wei per token
 
 export class Indexer {
-  constructor({ db, rpc, launchpad, startBlock, batch = 1000, log = console.log }) {
+  constructor({ db, rpc, rpcUrls, launchpad, startBlock, batch = 1000, log = console.log }) {
     this.db = db; this.launchpad = launchpad; this.startBlock = BigInt(startBlock); this.batch = BigInt(batch); this.log = log
-    this.client = createPublicClient({ chain: bsc, transport: http(rpc, { retryCount: 3, retryDelay: 800 }) })
+    const urls = (rpcUrls && rpcUrls.length ? rpcUrls : [rpc]).filter(Boolean)
+    const transport = urls.length > 1
+      ? fallback(urls.map((u) => http(u, { retryCount: 2, retryDelay: 800 })), { rank: true, retryCount: 3 })
+      : http(urls[0], { retryCount: 3, retryDelay: 800 })
+    this.client = createPublicClient({ chain: bsc, transport })
     this.blockTs = new Map()
     this.stmts = {
       insTok: db.prepare('INSERT OR IGNORE INTO tokens(address,name,symbol,creator,created_block,created_ts,created_tx,last_price) VALUES(?,?,?,?,?,?,?,?)'),
