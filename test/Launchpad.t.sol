@@ -240,7 +240,9 @@ contract LaunchpadTest is BaseTest {
         // withdraw fails for a contract that still can't receive; the funds stay claimable
         vm.expectRevert(Launchpad.PayoutFailed.selector);
         w.withdraw(pad);
-        assertEq(address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending() + pad.pendingBuyback());
+        assertEq(
+            address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending() + pad.pendingBuyback()
+        );
     }
 
     function test_withdraw_nothingPending() public {
