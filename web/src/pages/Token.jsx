@@ -14,9 +14,9 @@ export default function Token() {
   const [res, setRes] = useState('5m')
   const [mode, setMode] = useState('mcap')
   const q = useQuery({ queryKey: ['token', address], queryFn: () => api.token(address), refetchInterval: 15_000 })
-  const trades = useQuery({ queryKey: ['trades', address], queryFn: () => api.trades(address, 60) })
-  const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20) })
-  const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res) })
+  const trades = useQuery({ queryKey: ['trades', address], queryFn: () => api.trades(address, 60), refetchInterval: 15_000 })
+  const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20), refetchInterval: 15_000 })
+  const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res), refetchInterval: 15_000 })
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   if (q.isLoading) return <main className="wrap"><div className="empty">{t('loading')}</div></main>
   if (q.isError) {

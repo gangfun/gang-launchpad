@@ -53,7 +53,17 @@ export class Indexer {
       try {
         logs = await this.client.getLogs({ address: this.launchpad, events: EVENTS, fromBlock: from, toBlock: to })
       } catch (e) {
-        if (/limit|range|too many|exceed/i.test(e.message) && span > 50n) { span /= 2n; this.log(`getLogs limited, span -> ${span}`); await new Promise((r) => setTimeout(r, 500)); continue }
+        const msg = e.message || ''
+        if (/beyond|future block|higher than/i.test(msg)) {
+          // tip moved between getBlockNumber and getLogs — refresh head and retry
+          const h = await this.retry(() => this.client.getBlockNumber())
+          if (from > h) break
+          span = this.batch
+          this.log(`getLogs beyond head, refresh tip -> ${h}`)
+          await new Promise((r) => setTimeout(r, 200))
+          continue
+        }
+        if (/limit|range|too many|exceed/i.test(msg) && span > 50n) { span /= 2n; this.log(`getLogs limited, span -> ${span}`); await new Promise((r) => setTimeout(r, 500)); continue }
         throw e
       }
       logs.sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : Number(a.blockNumber - b.blockNumber)))

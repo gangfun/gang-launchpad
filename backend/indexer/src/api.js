@@ -134,7 +134,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           if (t0 >= since) cur = { t: t0, o: open0, h: open0, l: open0, c: open0, v: 0 }
           for (const r of q.candles.all(res_, res_, addr, since)) {
             const px = Number(formatEther(BigInt(r.price))); const v = Number(formatEther(BigInt(r.bnb)))
-            if (!cur || cur.t !== r.t) { if (cur) out.push(cur); cur = { t: r.t, o: px, h: px, l: px, c: px, v } }
+            if (!cur || cur.t !== r.t) { if (cur) out.push(cur); const o = cur ? cur.c : px; cur = { t: r.t, o, h: Math.max(o, px), l: Math.min(o, px), c: px, v } }
             else { cur.h = Math.max(cur.h, px); cur.l = Math.min(cur.l, px); cur.c = px; cur.v += v }
           }
           if (cur) out.push(cur)
