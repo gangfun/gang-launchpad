@@ -33,3 +33,43 @@ jobs:
 
       - name: Run Forge tests
         run: forge test -vvv
+
+  web-prod-guard:
+    name: Web prod API guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Production build
+        run: npm run build
+
+      - name: Ban localhost indexer URL in dist
+        working-directory: .
+        run: |
+          if command -v rg >/dev/null 2>&1; then
+            HIT=$(rg -n --hidden -g '!*.map' '127\.0\.0\.1:8787' web/dist || true)
+          else
+            HIT=$(grep -RIn --exclude='*.map' '127.0.0.1:8787' web/dist || true)
+          fi
+          if [[ -n "${HIT}" ]]; then
+            echo "$HIT"
+            echo "::error::web/dist contains 127.0.0.1:8787 — use web/.env.production (VITE_API_URL=/api)"
+            exit 1
+          fi
+          echo "OK: no 127.0.0.1:8787 in web/dist"
