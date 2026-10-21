@@ -1,0 +1,14 @@
+{
+  "name": "@gangfun/agent-id-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Watch SPACE ID Agent ID (HandleRegistry) admin/mint events on BSC",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once"
+  },
+  "dependencies": {
+    "viem": "^2.57.7"
+  }
+}
