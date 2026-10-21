@@ -1,3 +1,12 @@
+<!-- gang docs chrome -->
+<pre>
+┌─ GANG / docs ──────────────────────────────────────────┐
+│  SPEC · curve math & invariants (appendix)             │
+│  ops: see README · status: fork OK / mainnet grad 未验 │
+│       · no third-party audit · no multisig             │
+└────────────────────────────────────────────────────────┘
+</pre>
+
 # Gang 规格 v1
 
 ## 1. 固定参数
