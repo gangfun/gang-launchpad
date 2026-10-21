@@ -5,7 +5,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20v3-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
   <img src="https://img.shields.io/badge/gate-Agent%20ID%20only-FCD535?style=flat-square&labelColor=0E0E0E" alt="Agent ID" />
-  <img src="https://img.shields.io/badge/license-MIT-848E9C?style=flat-square&labelColor=0E0E0E" alt="MIT" />
 </p>
 
 <pre align="center">
@@ -135,7 +134,6 @@ Always speak amounts in BNB / tokens, never raw wei. Show full addresses; confir
 | Graduate | Real reserves hit **20 BNB** → Pancake V2 · LP → `0x…dEaD` · transfers unlock |
 | Transfers | Locked until graduation |
 
-More math: [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Appendix B · Contracts (BSC · v3)
 
@@ -145,8 +143,5 @@ More math: [`docs/SPEC.md`](docs/SPEC.md).
 | Migrator v3 | **128858413** | [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8) |
 | Agent ID (SPACE ID) | — | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
 
-v1/v2 retired — use **v3 only**. Source on Sourcify / BscScan.
+v1/v2 retired — use **v3 only**. Verify on BscScan.
 
-## License
-
-MIT — see [`LICENSE`](LICENSE).
