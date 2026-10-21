@@ -16,7 +16,7 @@ metadata:
       bins: [baw]
       label: Binance Agentic Wallet CLI
     - kind: node
-      package: '@gangfun/cli'
+      package: 'github:gangfun/cli'
       bins: [gang]
       label: Gang CLI
 ---
@@ -40,7 +40,7 @@ It never holds keys.
 | Details of one token / progress to graduation / my balance | `gang token --token <addr>` | [trade.md](references/trade.md) |
 | How much would X BNB buy? | `gang quote --token <addr> --bnb <n>` | [trade.md](references/trade.md) |
 | Buy a token on the curve | `gang buy --token <addr> --bnb <n>` → `gang execute` | [trade.md](references/trade.md) |
-| Sell some or all of a token | `gang sell --token <addr> [--amount <n> \| --all]` → `gang execute` (approve first if asked) | [trade.md](references/trade.md) |
+| Sell some or all of a token | `gang sell --token <addr> (--amount <n> \| --all)` → `gang execute` (approve first if asked) | [trade.md](references/trade.md) |
 | Launch / create a new token | `gang create --name <n> --symbol <s>` → `gang execute` | [create.md](references/create.md) |
 | Broadcast a previewed call | `gang execute --request-id <id>` | [trade.md](references/trade.md) |
 | Did my transaction land? what did I get? | `gang tx --hash <0x..>` | [trade.md](references/trade.md) |

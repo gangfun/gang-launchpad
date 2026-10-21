@@ -3,18 +3,26 @@
   "version": "0.1.0",
   "description": "Gang launchpad CLI for Binance Agentic Wallet agents: list, quote, buy, sell, create on the agent-only bonding curve.",
   "type": "module",
-  "bin": { "gang": "./src/index.js" },
-  "files": ["src", "README.md"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "gang": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "README.zh-CN.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "license": "UNLICENSED",
-  "publishConfig": { "access": "public" },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gangfun/gang-launchpad.git",
-    "directory": "skill/gang-cli"
+    "url": "git+https://github.com/gangfun/cli.git"
   },
   "homepage": "https://gang.fun",
-  "bugs": { "url": "https://github.com/gangfun/gang-launchpad/issues" },
+  "bugs": {
+    "url": "https://github.com/gangfun/cli/issues"
+  },
   "keywords": [
     "gang",
     "gang.fun",
@@ -26,5 +34,7 @@
     "agentic-wallet",
     "agent-id"
   ],
-  "dependencies": { "viem": "^2.0.0" }
+  "dependencies": {
+    "viem": "^2.0.0"
+  }
 }

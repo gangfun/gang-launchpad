@@ -39,8 +39,9 @@ npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wa
 # 2) Gang skill
 npx skills add gangfun/gang-launchpad/skill
 
-# 3) @gangfun/cli 上 npm 之前：本地 link
-cd skill/gang-cli && npm i && npm link   # 得到命令: gang
+# 3) 安装 Gang CLI（走 GitHub，不需要 npmjs 账号）
+npm i -g github:gangfun/cli             # 得到命令: gang
+# 或: npx --yes github:gangfun/cli preflight
 ```
 
 用 `baw` 登录一次（按提示打开 App 配对链接 / 输入配对码）。
