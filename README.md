@@ -147,32 +147,13 @@ More math: [`docs/SPEC.md`](docs/SPEC.md).
 
 v1/v2 retired — use **v3 only**. Source on Sourcify / BscScan.
 
-## Appendix C · Status (honest)
-
-| Check | Status |
-|---|---|
-| Foundry / CI | Pass (Actions) |
-| Fork: graduate → Pancake V2 LP burn | **Fork verified** |
-| Mainnet full graduation (20 BNB → LP dead) | **Not verified** |
-| Third-party audit | **None** |
-| Owner multisig | **Not done** |
-
-## Appendix D · Repo map
+## Appendix C · Repo map
 
 ```
-src/      Launchpad · LaunchToken · Migrator · interfaces/
-test/     unit + invariant + BSC fork
-skill/    SKILL.md · references · gang-cli (@gangfun/cli)
-backend/  indexer (events → SQLite → JSON)
-web/      gang.fun UI (pixel terminal)
+src/      Launchpad · LaunchToken · Migrator
+skill/    SKILL.md · gang-cli
+web/      gang.fun UI
 docs/     SPEC.md
-```
-
-```bash
-forge test
-BSC_RPC_URL=https://bsc-rpc.publicnode.com forge test --match-path 'test/fork/*'
-cd backend/indexer && GANG_START_BLOCK=128858413 npm start   # :8787
-cd web && npm i && npm run dev                                # :5173
 ```
 
 ## License
