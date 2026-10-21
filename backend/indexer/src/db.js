@@ -22,6 +22,12 @@ export function openDb(path) {
     CREATE TABLE IF NOT EXISTS holders (
       token TEXT, holder TEXT, balance TEXT, PRIMARY KEY(token, holder)
     );
+    CREATE TABLE IF NOT EXISTS handles (
+      address TEXT PRIMARY KEY,
+      handle TEXT NOT NULL DEFAULT '',
+      checked_ts INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS handles_checked ON handles(checked_ts);
   `)
   return db
 }

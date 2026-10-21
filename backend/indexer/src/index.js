@@ -1,6 +1,7 @@
 import { openDb } from './db.js'
 import { Indexer } from './indexer.js'
 import { startApi } from './api.js'
+import { refreshHandles } from './handles.js'
 
 const DEFAULT_RPCS = 'https://bsc-rpc.publicnode.com,https://bsc.publicnode.com'
 const urls = (process.env.GANG_RPC_URLS || process.env.GANG_RPC_URL || DEFAULT_RPCS)
@@ -22,11 +23,14 @@ const db = openDb(cfg.db)
 const ix = new Indexer({ db, rpcUrls: cfg.rpcUrls, launchpad: cfg.launchpad, startBlock: cfg.startBlock, batch: cfg.batch })
 const once = process.argv.includes('--once')
 // Serve API immediately so deploys aren't blocked on long backfills.
-if (!once) startApi(db, { port: cfg.port, launchpad: cfg.launchpad })
+if (!once) startApi(db, { port: cfg.port, launchpad: cfg.launchpad, rpcUrls: cfg.rpcUrls })
 try {
   const head = await ix.syncOnce()
   console.log(`synced to block ${head}`)
 } catch (e) {
   console.error('initial sync failed:', e.message)
 }
-if (!once) ix.run()
+if (!once) {
+  refreshHandles(db, ix.client).catch((e) => console.error('handle refresh:', e.message))
+  ix.run()
+}

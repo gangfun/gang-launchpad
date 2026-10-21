@@ -1,5 +1,7 @@
 import http from 'node:http'
 import { formatEther } from 'viem'
+import { getHandleMap, makeClient } from './handles.js'
+import { readPair } from './pancake.js'
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
@@ -20,7 +22,8 @@ async function pollBnb() {
 }
 pollBnb(); setInterval(pollBnb, 60_000)
 
-export function startApi(db, { port = 8787, launchpad }) {
+export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
+  const client = makeClient(rpcUrls)
   const q = {
     list: (order, where = '1=1') => db.prepare(`
       SELECT t.*, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
@@ -42,7 +45,7 @@ export function startApi(db, { port = 8787, launchpad }) {
   const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)) }
   const day = () => Math.floor(Date.now() / 1000) - 86400
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x'); const p = url.pathname.split('/').filter(Boolean)
     const limit = Math.min(Number(url.searchParams.get('limit') || 50), 200)
     try {
@@ -58,14 +61,56 @@ export function startApi(db, { port = 8787, launchpad }) {
         const orders = { new: 'created_ts DESC', hot: 'vol24 DESC, n24 DESC, created_ts DESC', graduated: 'graduated_ts DESC', progress: 'CAST(real_bnb AS REAL) DESC' }
         const where = sort === 'graduated' ? 'graduated=1' : sort === 'hot' || sort === 'progress' ? 'graduated=0' : '1=1'
         const rows = q.list(orders[sort] || orders.new, where).all(day(), day(), limit)
-        return json(res, 200, rows.map((r) => ({ ...tokRow(r), volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0' })))
+        const handles = getHandleMap(db, rows.map((r) => r.creator))
+        return json(res, 200, rows.map((r) => ({
+          ...tokRow(r),
+          volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
+          creatorHandle: handles[r.creator] || null,
+        })))
       }
       if (p[0] === 'tokens' && p[1]) {
         const addr = p[1].toLowerCase(); const t = q.one.get(day(), day(), addr)
         if (!t) return json(res, 404, { error: 'not found' })
-        if (!p[2]) return json(res, 200, { ...tokRow(t), volume24hBnb: t.vol24 ? formatEther(BigInt(Math.round(t.vol24))) : '0' })
-        if (p[2] === 'trades') return json(res, 200, q.trades.all(addr, limit).map((r) => ({ ...r, bnb: formatEther(BigInt(r.bnb)), fee: formatEther(BigInt(r.fee)), tokens: fmtTok(r.tokens), price: formatEther(BigInt(r.price)) })))
-        if (p[2] === 'holders') return json(res, 200, q.holders.all(addr, limit).map((r) => ({ holder: r.holder, balance: fmtTok(r.balance), pct: Number(BigInt(r.balance) * 10000n / 10n ** 27n) / 100 })))
+        if (!p[2]) {
+          const handles = getHandleMap(db, [t.creator])
+          const body = {
+            ...tokRow(t),
+            volume24hBnb: t.vol24 ? formatEther(BigInt(Math.round(t.vol24))) : '0',
+            creatorHandle: handles[t.creator] || null,
+            creatorUrl: t.creator ? `https://bscscan.com/address/${t.creator}` : null,
+          }
+          if (t.graduated && t.pair) {
+            body.pancake = await readPair(client, t.pair, t.address)
+            // Always expose pair links even if reserves fail.
+            if (!body.pancake) {
+              body.pancake = {
+                pair: t.pair,
+                pairUrl: `https://bscscan.com/address/${t.pair}`,
+                pancakeUrl: `https://pancakeswap.finance/swap?outputCurrency=${t.address}&chain=bsc`,
+                infoUrl: `https://pancakeswap.finance/info/v2/pairs/${t.pair}`,
+              }
+            }
+          }
+          return json(res, 200, body)
+        }
+        if (p[2] === 'trades') {
+          const rows = q.trades.all(addr, limit)
+          const handles = getHandleMap(db, rows.map((r) => r.trader))
+          return json(res, 200, rows.map((r) => ({
+            ...r,
+            bnb: formatEther(BigInt(r.bnb)), fee: formatEther(BigInt(r.fee)), tokens: fmtTok(r.tokens), price: formatEther(BigInt(r.price)),
+            traderHandle: handles[r.trader] || null,
+          })))
+        }
+        if (p[2] === 'holders') {
+          const rows = q.holders.all(addr, limit)
+          const handles = getHandleMap(db, rows.map((r) => r.holder))
+          return json(res, 200, rows.map((r) => ({
+            holder: r.holder, balance: fmtTok(r.balance),
+            pct: Number(BigInt(r.balance) * 10000n / 10n ** 27n) / 100,
+            handle: handles[r.holder] || null,
+          })))
+        }
         if (p[2] === 'candles') {
           const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[url.searchParams.get('res') || '5m'] || 300
           const since = Number(url.searchParams.get('since') || 0)

@@ -2,6 +2,7 @@ import { createPublicClient, http, fallback, parseAbiItem } from 'viem'
 import { bsc } from 'viem/chains'
 import { EVENTS } from './abi.js'
 import { getMeta, setMeta } from './db.js'
+import { refreshHandles } from './handles.js'
 
 const VIRTUAL_BNB = 6666666666666666667n
 const VIRTUAL_TOKEN = 1066666666666666666666666667n
@@ -100,8 +101,13 @@ export class Indexer {
   }
 
   async run(intervalMs = 3000) {
+    let handleTick = 0
     for (;;) {
       try { await this.syncOnce() } catch (e) { this.log('sync error:', e.message) }
+      // Agent ID handleOf cache — every ~5 sync cycles, non-blocking for API.
+      if (++handleTick % 5 === 0) {
+        try { await refreshHandles(this.db, this.client, { log: this.log }) } catch (e) { this.log('handle refresh:', e.message) }
+      }
       await new Promise((r) => setTimeout(r, intervalMs))
     }
   }

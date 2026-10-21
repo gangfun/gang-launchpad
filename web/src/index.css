@@ -173,3 +173,14 @@ td.r, th.r { text-align: right; }
 }
 
 .empty.err { color: #f66; }
+
+/* ---------- agent handle / creator meta ---------- */
+.meta-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin: -8px 0 16px; font-size: 12px; color: var(--text-2); }
+.meta-row .label { color: var(--text-3); }
+.meta-row .sep { color: var(--text-3); }
+.agent { display: inline-flex; align-items: baseline; gap: 6px; }
+.agent .handle { color: var(--yellow); font-family: var(--px); font-size: 12px; }
+.agent .addr-sub { color: var(--text-3); font-size: 11px; }
+.pancake-block { margin-bottom: 16px; }
+.pancake-kv { margin: 0; box-shadow: none; border: 0; }
+.pancake p a { color: var(--yellow); }

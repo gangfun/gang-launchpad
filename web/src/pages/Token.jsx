@@ -6,13 +6,14 @@ import { useT } from '../i18n.jsx'
 import Chart from '../components/Chart.jsx'
 import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
+import Agent from '../components/Agent.jsx'
 
 export default function Token() {
   const { t } = useT()
   const { address } = useParams()
   const [res, setRes] = useState('5m')
   const [mode, setMode] = useState('mcap')
-  const q = useQuery({ queryKey: ['token', address], queryFn: () => api.token(address) })
+  const q = useQuery({ queryKey: ['token', address], queryFn: () => api.token(address), refetchInterval: 15_000 })
   const trades = useQuery({ queryKey: ['trades', address], queryFn: () => api.trades(address, 60) })
   const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20) })
   const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res) })
@@ -21,6 +22,8 @@ export default function Token() {
   if (q.isError) return <main className="wrap"><div className="empty">{t('not_found')}</div></main>
   const d = q.data
   const pct = d.graduated ? 100 : d.progressPct
+  const pk = d.pancake
+  const showDexPrice = d.graduated && pk?.priceBnb != null && pk.priceBnb > 0
   return (
     <main className="wrap">
       <div className="ident">
@@ -28,11 +31,24 @@ export default function Token() {
         <a className="addr" href={`https://bscscan.com/token/${d.address}`} target="_blank" rel="noreferrer">{d.address}</a>
         <span className={`badge ${d.graduated ? 'grad' : 'yellow'}`}>{d.graduated ? t('graduated') : t('curve')}</span>
         <div className="spacer" />
-        {d.graduated && <a className="btn" href={`https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>}
+        {d.graduated && <a className="btn" href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>}
       </div>
+
+      <div className="meta-row">
+        <span className="label">{t('k_creator')}</span>
+        <Agent address={d.creator} handle={d.creatorHandle} href={d.creatorUrl || (d.creator && `https://bscscan.com/address/${d.creator}`)} />
+        {d.graduated && d.pair && (
+          <>
+            <span className="sep">·</span>
+            <span className="label">{t('k_pair')}</span>
+            <a className="addr" href={`https://bscscan.com/address/${d.pair}`} target="_blank" rel="noreferrer">{short(d.pair)}</a>
+          </>
+        )}
+      </div>
+
       <div className="kv">
-        <div><span>{t('k_mcap')}</span><b>{usd(d.fdvBnb * rate)}</b><small>{bnb(d.fdvBnb, 2)} BNB</small></div>
-        <div><span>{t('k_price')}</span><b>{px(d.priceBnb)} BNB</b><small>{usd(d.priceBnb * rate)}</small></div>
+        <div><span>{t('k_mcap')}</span><b>{usd((showDexPrice ? pk.fdvBnb : d.fdvBnb) * rate)}</b><small>{bnb(showDexPrice ? pk.fdvBnb : d.fdvBnb, 2)} BNB</small></div>
+        <div><span>{t('k_price')}</span><b>{px(showDexPrice ? pk.priceBnb : d.priceBnb)} BNB</b><small>{usd((showDexPrice ? pk.priceBnb : d.priceBnb) * rate)}</small></div>
         <div><span>{t('k_raised')}</span><b>{bnb(d.raisedBnb, 4)} / 20 BNB</b><small>{usd(d.raisedBnb * rate)}</small></div>
         <div><span>{t('k_vol')}</span><b>{usd((d.volume24hBnb || 0) * rate)}</b><small>{bnb(d.volume24hBnb || 0, 4)} BNB</small></div>
         <div><span>{t('k_holders')}</span><b>{d.holders}</b></div>
@@ -40,6 +56,27 @@ export default function Token() {
         <div><span>{t('k_created')}</span><b>{ago(d.createdAt)}</b></div>
       </div>
       <div className={`pwide${d.graduated ? ' done' : ''}`}><i style={{ width: `${Math.max(1, pct)}%` }} /><span>{t('k_progress')} {pct}%</span></div>
+
+      {d.graduated && (
+        <div className="pancake-block">
+        <Win title={t('k_pancake')}>
+          <div className="pancake">
+            {pk?.reserveBnb != null ? (
+              <div className="kv pancake-kv">
+                <div><span>{t('pancake_pair')}</span><b><a href={pk.pairUrl} target="_blank" rel="noreferrer">{short(pk.pair || d.pair)}</a></b><small><a href={pk.infoUrl} target="_blank" rel="noreferrer">info</a></small></div>
+                <div><span>{t('pancake_reserves')}</span><b>{bnb(pk.reserveBnb, 4)} BNB</b><small>{tok(pk.reserveToken)} {d.symbol}</small></div>
+                <div><span>{t('pancake_price')}</span><b>{px(pk.priceBnb)} BNB</b><small>{usd(pk.priceBnb * rate)}</small></div>
+                <div><span>{t('pancake_trade')}</span><b><a href={pk.pancakeUrl} target="_blank" rel="noreferrer">PancakeSwap →</a></b></div>
+              </div>
+            ) : (
+              <p className="muted">{t('pancake_no_reserves')}{' '}<a href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>
+                {d.pair && <> · <a href={`https://bscscan.com/address/${d.pair}`} target="_blank" rel="noreferrer">{t('pancake_pair')} {short(d.pair)}</a></>}
+              </p>
+            )}
+          </div>
+        </Win>
+        </div>
+      )}
 
       <div className="work">
           <Win title={mode === 'mcap' ? t('k_mcap') : t('k_price')} flush bodyClass="chart-body" right={<>
@@ -66,17 +103,17 @@ export default function Token() {
                 <tbody>{trades.data.map((x) => (
                   <tr key={x.tx + x.side}>
                     <td className={x.side === 'buy' ? 'up' : 'down'}>{x.side}</td>
-                    <td><a href={`https://bscscan.com/tx/${x.tx}`} target="_blank" rel="noreferrer">{short(x.trader)}</a></td>
+                    <td><Agent address={x.trader} handle={x.traderHandle} href={`https://bscscan.com/tx/${x.tx}`} /></td>
                     <td className="r num">{bnb(x.bnb, 5)}</td><td className="r num">{tok(x.tokens)}</td><td className="r num">{usd(Number(x.price) * 1e9 * rate)}</td><td className="r dim">{ago(x.ts)}</td>
                   </tr>))}</tbody>
               </table>
             )}
           </Win>
-          <Win title={t('holders')} flush right={<span className="dim">{t('holders_hint')}</span>}>
+          <Win title={t('holders')} flush right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
             {holders.data?.length === 0 && <div className="empty">{t('no_holders')}</div>}
             {holders.data?.length > 0 && (
               <table><thead><tr><th>{t('agent')}</th><th className="r">{t('tokens')}</th><th className="r">%</th></tr></thead>
-                <tbody>{holders.data.map((h) => <tr key={h.holder}><td><a href={`https://bscscan.com/address/${h.holder}`} target="_blank" rel="noreferrer">{short(h.holder)}</a></td><td className="r num">{tok(h.balance)}</td><td className="r num">{h.pct}</td></tr>)}</tbody></table>
+                <tbody>{holders.data.map((h) => <tr key={h.holder}><td><Agent address={h.holder} handle={h.handle} /></td><td className="r num">{tok(h.balance)}</td><td className="r num">{h.pct}</td></tr>)}</tbody></table>
             )}
           </Win>
       </div>
