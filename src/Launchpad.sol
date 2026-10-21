@@ -76,6 +76,9 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     uint256 public pendingBuyback;
     /// @notice Pancake V2 router for post-graduation buybacks. Set once.
     IPancakeRouter02 public pancakeRouter;
+    /// @notice Max slippage for post-graduation DEX buybacks, in BPS (default 300 = 3%).
+    /// @dev Only affects `_swapBurnOrPend` minOut. Requires a new Launchpad deploy to take effect on mainnet.
+    uint256 public maxSlippageBps = 300;
 
     // ---------------------------------------------------------------- events
     event Created(address indexed token, address indexed creator, string name, string symbol);
@@ -100,6 +103,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     event BuybackPending(uint256 amount);
     event BuybackFlushed(uint256 amount);
     event PancakeRouterSet(address indexed router);
+    event MaxSlippageBpsUpdated(uint256 bps);
 
     // ---------------------------------------------------------------- errors
     error UnknownToken();
@@ -117,6 +121,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     error PlatformTokenAlreadySet();
     error PlatformTokenNotSet();
     error RouterAlreadySet();
+    error SlippageBpsTooHigh();
 
     constructor(address owner_, address feeVault_, address agentIdRegistry_) Ownable(owner_) {
         if (feeVault_ == address(0) || agentIdRegistry_ == address(0)) revert ZeroAddress();
@@ -411,15 +416,46 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         path[0] = wbnb;
         path[1] = token;
 
-        uint256 before = IERC20(token).balanceOf(address(this));
-        pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnb}(
-            0, path, address(this), block.timestamp
-        );
-        uint256 got = IERC20(token).balanceOf(address(this)) - before;
-        if (got > 0) {
-            LaunchToken(token).burn(got);
+        uint256 quoted = _quoteAmountsOut(bnb, path);
+        if (quoted == 0) {
+            // No route / empty reserves — park rather than swap with minOut=0.
+            pendingBuyback += bnb;
+            emit BuybackPending(bnb);
+            return;
         }
-        emit BuybackBurned(token, bnb, got);
+        uint256 amountOutMin = quoted - (quoted * maxSlippageBps) / BPS;
+
+        uint256 before = IERC20(token).balanceOf(address(this));
+        try pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnb}(
+            amountOutMin, path, address(this), block.timestamp
+        ) {
+            uint256 got = IERC20(token).balanceOf(address(this)) - before;
+            if (got > 0) {
+                LaunchToken(token).burn(got);
+            }
+            emit BuybackBurned(token, bnb, got);
+        } catch {
+            // Slippage / sandwich / transient router failure → keep BNB for later flush.
+            pendingBuyback += bnb;
+            emit BuybackPending(bnb);
+        }
+    }
+
+    /// @dev Spot quote via router.getAmountsOut; returns 0 if router/path unavailable.
+    function _quoteAmountsOut(uint256 amountIn, address[] memory path) internal view returns (uint256) {
+        try pancakeRouter.getAmountsOut(amountIn, path) returns (uint256[] memory amounts) {
+            if (amounts.length == 0) return 0;
+            return amounts[amounts.length - 1];
+        } catch {
+            return 0;
+        }
+    }
+
+    /// @notice Owner sets max DEX buyback slippage (BPS). Cap 5000 (50%) to avoid accidental disable.
+    function setMaxSlippageBps(uint256 bps) external onlyOwner {
+        if (bps > 5000) revert SlippageBpsTooHigh();
+        maxSlippageBps = bps;
+        emit MaxSlippageBpsUpdated(bps);
     }
 
     /// @notice Recover BNB that was force-fed into the contract (e.g. via selfdestruct). Never touches curve BNB,

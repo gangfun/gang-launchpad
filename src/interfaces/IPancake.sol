@@ -21,6 +21,8 @@ interface IWBNB {
 interface IPancakeRouter02 {
     function WETH() external view returns (address);
 
+    function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory amounts);
+
     function swapExactETHForTokensSupportingFeeOnTransferTokens(
         uint256 amountOutMin,
         address[] calldata path,

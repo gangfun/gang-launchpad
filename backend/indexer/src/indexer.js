@@ -44,22 +44,33 @@ export class Indexer {
   }
 
   async syncOnce() {
-    const head = await this.retry(() => this.client.getBlockNumber())
+    let head = await this.retry(() => this.client.getBlockNumber())
     let from = BigInt(getMeta(this.db, 'last_block') ?? (this.startBlock - 1n)) + 1n
     let span = this.batch
+    let beyondHits = 0
     while (from <= head) {
-      const to = from + span - 1n > head ? head : from + span - 1n
+      let to = from + span - 1n > head ? head : from + span - 1n
       let logs
       try {
         logs = await this.client.getLogs({ address: this.launchpad, events: EVENTS, fromBlock: from, toBlock: to })
+        beyondHits = 0
       } catch (e) {
         const msg = e.message || ''
         if (/beyond|future block|higher than/i.test(msg)) {
-          // tip moved between getBlockNumber and getLogs — refresh head and retry
+          // tip moved between getBlockNumber and getLogs — refresh head, clamp to, retry
           const h = await this.retry(() => this.client.getBlockNumber())
+          head = h
           if (from > h) break
-          span = this.batch
-          this.log(`getLogs beyond head, refresh tip -> ${h}`)
+          to = to > h ? h : to
+          beyondHits += 1
+          if (beyondHits >= 2 && span > 50n) {
+            span = span / 2n > 50n ? span / 2n : 50n
+            this.log(`getLogs beyond head x${beyondHits}, span -> ${span}, tip -> ${h}`)
+          } else {
+            this.log(`getLogs beyond head, clamp to=${to}, tip -> ${h}`)
+          }
+          // recompute to from from+span capped by refreshed head
+          to = from + span - 1n > head ? head : from + span - 1n
           await new Promise((r) => setTimeout(r, 200))
           continue
         }

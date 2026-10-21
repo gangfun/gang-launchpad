@@ -267,4 +267,132 @@ contract LaunchpadV4Test is BaseTest {
         uint256 pending = pad.pendingBuyback();
         assertEq(pending, (fees * pad.BUYBACK_BPS()) / 10_000);
     }
+
+    // ------------------------------------------------------------ buyback slippage (v4.1 code path; needs redeploy on mainnet)
+    function test_buyback_minOut_gtZero_burns() public {
+        _seedGang();
+        router = new MockPancakeRouter(wbnb);
+        router.setRate(1);
+        vm.prank(owner);
+        pad.setPancakeRouter(address(router));
+        assertEq(pad.maxSlippageBps(), 300);
+
+        for (uint256 i; i < 80; i++) {
+            address w = address(uint160(0xE0000 + i));
+            _mintAgent(w);
+            vm.deal(w, 10 ether);
+            vm.prank(w);
+            pad.buy{value: 2 ether}(address(gang), 0);
+        }
+        (,,, bool graduated,) = pad.curves(address(gang));
+        assertTrue(graduated);
+
+        // Clear leftover graduation fees first (may pend if router unfunded).
+        if (pad.accruedFees() > 0) {
+            pad.collectFees();
+        }
+        // Drain any pending from unfunded first collect so we isolate the funded path.
+        if (pad.pendingBuyback() > 0) {
+            // Fund router then flush
+            uint256 need = pad.pendingBuyback();
+            address h0 = address(uint160(0xE0000));
+            uint256 bal = gang.balanceOf(h0);
+            uint256 give = need < bal ? need : bal;
+            vm.prank(h0);
+            gang.transfer(address(router), give);
+            pad.flushBuyback();
+        }
+
+        _accrueFees(0.01 ether);
+        uint256 fees = pad.accruedFees();
+        uint256 buyback = (fees * pad.BUYBACK_BPS()) / 10_000;
+        // rate=1 → quote == buyback; minOut = buyback * 9700/10000
+        if (gang.balanceOf(address(router)) < buyback) {
+            address h2 = address(uint160(0xE0001));
+            vm.prank(h2);
+            gang.transfer(address(router), buyback);
+        }
+
+        uint256 supplyBefore = gang.totalSupply();
+        pad.collectFees();
+        assertEq(pad.pendingBuyback(), 0);
+        assertEq(gang.totalSupply(), supplyBefore - buyback);
+    }
+
+    function test_buyback_slippage_exceeded_pends() public {
+        _seedGang();
+        router = new MockPancakeRouter(wbnb);
+        router.setRate(1);
+        vm.prank(owner);
+        pad.setPancakeRouter(address(router));
+        // Tighten slippage so any shortfall fails minOut
+        vm.prank(owner);
+        pad.setMaxSlippageBps(0); // require exact quote
+
+        for (uint256 i; i < 80; i++) {
+            address w = address(uint160(0xE1000 + i));
+            _mintAgent(w);
+            vm.deal(w, 10 ether);
+            vm.prank(w);
+            pad.buy{value: 2 ether}(address(gang), 0);
+        }
+
+        if (pad.accruedFees() > 0) pad.collectFees();
+        // Ignore pending from unfunded collect
+        uint256 dust = pad.pendingBuyback();
+
+        _accrueFees(0.01 ether);
+        uint256 fees = pad.accruedFees();
+        uint256 buyback = (fees * pad.BUYBACK_BPS()) / 10_000;
+
+        // Fund router with LESS than quote so swap hits "slippage" require → catch → pend
+        address h0 = address(uint160(0xE1000));
+        uint256 under = buyback > 1 ? buyback - 1 : 0;
+        if (under > 0) {
+            vm.prank(h0);
+            gang.transfer(address(router), under);
+        }
+
+        uint256 pendingBefore = pad.pendingBuyback();
+        pad.collectFees();
+        assertEq(pad.pendingBuyback(), pendingBefore + buyback);
+        // ops still paid (20%); buyback parked
+        assertEq(pad.accruedFees(), 0);
+        assertEq(dust, pendingBefore); // sanity
+    }
+
+    function test_setMaxSlippageBps_ownerOnly_capped() public {
+        vm.expectRevert();
+        pad.setMaxSlippageBps(100);
+
+        vm.prank(owner);
+        pad.setMaxSlippageBps(500);
+        assertEq(pad.maxSlippageBps(), 500);
+
+        vm.prank(owner);
+        vm.expectRevert(Launchpad.SlippageBpsTooHigh.selector);
+        pad.setMaxSlippageBps(5001);
+    }
+
+    function test_buyback_noQuote_pends() public {
+        _seedGang();
+        router = new MockPancakeRouter(wbnb);
+        router.setRate(1);
+        router.setRevertQuote(true);
+        vm.prank(owner);
+        pad.setPancakeRouter(address(router));
+
+        for (uint256 i; i < 80; i++) {
+            address w = address(uint160(0xE2000 + i));
+            _mintAgent(w);
+            vm.deal(w, 10 ether);
+            vm.prank(w);
+            pad.buy{value: 2 ether}(address(gang), 0);
+        }
+
+        uint256 fees = pad.accruedFees();
+        uint256 buyback = (fees * pad.BUYBACK_BPS()) / 10_000;
+        pad.collectFees();
+        assertEq(pad.pendingBuyback(), buyback);
+    }
 }
