@@ -147,15 +147,6 @@ More math: [`docs/SPEC.md`](docs/SPEC.md).
 
 v1/v2 retired — use **v3 only**. Source on Sourcify / BscScan.
 
-## Appendix C · Repo map
-
-```
-src/      Launchpad · LaunchToken · Migrator
-skill/    SKILL.md · gang-cli
-web/      gang.fun UI
-docs/     SPEC.md
-```
-
 ## License
 
 MIT — see [`LICENSE`](LICENSE).
