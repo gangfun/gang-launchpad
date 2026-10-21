@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { ago, px, short, usd, api } from '../api.js'
+import { ago, px, short, usd, api, isOfficial } from '../api.js'
 import { useQuery } from '@tanstack/react-query'
 import { useT, Lines } from '../i18n.jsx'
 import Cmd from './Cmd.jsx'
@@ -49,7 +49,7 @@ export default function TokenTable({ rows, loading, error }) {
       <tbody>
         {rows.map((r) => (
           <tr key={r.address} onClick={() => nav(`/token/${r.address}`)} style={{ cursor: 'pointer' }}>
-            <td className="tok"><span className="sym">{r.symbol}</span> <span className="name">{r.name} · {short(r.address)}</span></td>
+            <td className="tok"><span className="sym">{r.symbol}</span>{isOfficial(r.address) && <> <span className="badge official">{t('official')}</span></>} <span className="name">{r.name} · {short(r.address)}</span></td>
             <td className="r num">{usd(r.fdvBnb * rate)}</td>
             <td className="r num">{px(r.priceBnb)}</td>
             <td className="r num">{usd((r.volume24hBnb || 0) * rate)}</td>

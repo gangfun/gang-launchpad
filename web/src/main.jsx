@@ -12,7 +12,7 @@ import Home from './pages/Home.jsx'
 import Token from './pages/Token.jsx'
 import Docs from './pages/Docs.jsx'
 
-const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 5000, staleTime: 2000, retry: 1 } } })
+const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 12_000, staleTime: 5_000, retry: 1 } } })
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <QueryClientProvider client={qc}>

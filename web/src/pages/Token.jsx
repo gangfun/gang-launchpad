@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { api, ago, bnb, px, tok, short, usd } from '../api.js'
+import { api, ago, bnb, px, tok, short, usd, isOfficial } from '../api.js'
 import { useT } from '../i18n.jsx'
 import Chart from '../components/Chart.jsx'
 import Cmd from '../components/Cmd.jsx'
@@ -34,6 +34,7 @@ export default function Token() {
         <h1>{d.symbol}</h1><span className="name">{d.name}</span>
         <a className="addr" href={`https://bscscan.com/token/${d.address}`} target="_blank" rel="noreferrer">{d.address}</a>
         <span className={`badge ${d.graduated ? 'grad' : 'yellow'}`}>{d.graduated ? t('graduated') : t('curve')}</span>
+        {isOfficial(d.address) && <span className="badge official">{t('official')}</span>}
         <div className="spacer" />
         {d.graduated && <a className="btn" href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>}
       </div>
@@ -60,6 +61,8 @@ export default function Token() {
         <div><span>{t('k_created')}</span><b>{ago(d.createdAt)}</b></div>
       </div>
       <div className={`pwide${d.graduated ? ' done' : ''}`}><i style={{ width: `${Math.max(1, pct)}%` }} /><span>{t('k_progress')} {pct}%</span></div>
+      {!d.graduated && pct >= 90 && <p className="muted tip">{t('near_grad_gas')}</p>}
+      {d.graduated && <p className="muted tip">{t('curve_data_note')}</p>}
 
       {d.graduated && (
         <div className="pancake-block">
