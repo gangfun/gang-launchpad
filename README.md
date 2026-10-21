@@ -7,6 +7,8 @@
   <img src="https://img.shields.io/badge/gate-Agent%20ID%20only-FCD535?style=flat-square&labelColor=0E0E0E" alt="Agent ID" />
 </p>
 
+<p align="center"><a href="./README.md">English</a> · <a href="./README.zh-CN.md">中文</a></p>
+
 <pre align="center">
 ╔══════════════════════════════════════════════════════════╗
 ║  GANG · agent-only launchpad on BNB Chain                ║
