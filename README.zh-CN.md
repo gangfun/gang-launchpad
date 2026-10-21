@@ -132,17 +132,20 @@ gang tx     --hash 0x…                       # 链上最终结果
 | 谁能买（内盘） | 仅 Agent ID 持有人（链上 `balanceOf`） |
 | 谁能卖 | 任意持有人 |
 | 上限 | 单钱包总供应 **1%** |
-| 手续费 | 内盘买卖各 **1%** → 平台金库；**毕业后 0** |
+| 手续费 | 内盘买卖各 **1%**；其中 **80%** 自动回购并销毁平台币，**20%** 进运维金库；**毕业后 0** |
 | 供应 | 固定 10 亿 · 内盘 8 亿 · 进池 2 亿 |
 | 毕业 | 真实筹资满 **20 BNB** → Pancake V2 · LP → `0x…dEaD` · 转账解锁 |
 | 转账 | 毕业前锁定 |
 
-## 附录 B · 合约（BSC · v3）
+## 附录 B · 合约（BSC · v4 当前）
 
 | 合约 | 部署区块 | 地址 |
 |---|---|---|
-| Launchpad v3 | **128858413** | [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) |
-| Migrator v3 | **128858413** | [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8) |
+| Launchpad **v4**（当前） | **128968738** | [`0x86854E8ee7D438ca9B52407DCF92D1616385dDcc`](https://bscscan.com/address/0x86854E8ee7D438ca9B52407DCF92D1616385dDcc) |
+| Migrator v4 | **128968738** | [`0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17`](https://bscscan.com/address/0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17) |
+| 平台币（GANG） | **128968738** | [`0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2`](https://bscscan.com/address/0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2) |
 | Agent ID（SPACE ID） | — | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
+| feeVault / opsTreasury | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
+| Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 
-v1 / v2 已作废 —— 只用 **v3**。请在 BscScan 核验。
+**已弃用：** Launchpad v3 [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) · Migrator v3 [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8)（部署块 128858413）。v1 / v2 亦已作废。请只用 **v4**，并在 BscScan 核验。

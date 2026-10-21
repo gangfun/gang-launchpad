@@ -70,7 +70,7 @@ contract InvariantTest is BaseTest {
 
     function invariant_bnbAccounting() public view {
         (, uint256 realBnb,, bool graduated,) = pad.curves(address(tok));
-        assertEq(address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending());
+        assertEq(address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending() + pad.pendingBuyback());
         if (!graduated) {
             assertEq(realBnb, pad.totalRealBnb());
             assertEq(realBnb, h.ghostBnbIn() - h.ghostBnbOut());

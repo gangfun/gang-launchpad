@@ -240,7 +240,7 @@ contract LaunchpadTest is BaseTest {
         // withdraw fails for a contract that still can't receive; the funds stay claimable
         vm.expectRevert(Launchpad.PayoutFailed.selector);
         w.withdraw(pad);
-        assertEq(address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending());
+        assertEq(address(pad).balance, pad.totalRealBnb() + pad.accruedFees() + pad.totalPending() + pad.pendingBuyback());
     }
 
     function test_withdraw_nothingPending() public {
@@ -254,9 +254,12 @@ contract LaunchpadTest is BaseTest {
         _buy(alice, 0.5 ether);
         uint256 fees = pad.accruedFees();
         pad.collectFees();
-        assertEq(vault.balance, fees);
+        uint256 ops = fees - (fees * pad.BUYBACK_BPS()) / 10_000;
+        assertEq(vault.balance, ops);
         assertEq(pad.accruedFees(), 0);
-        assertEq(address(pad).balance, _realBnb());
+        // no platformToken yet → 80% parked as pendingBuyback
+        assertEq(pad.pendingBuyback(), fees - ops);
+        assertEq(address(pad).balance, _realBnb() + pad.pendingBuyback());
     }
 
     function test_sweepExcess_onlyForceFedBnb() public {

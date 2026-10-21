@@ -132,19 +132,22 @@ Always speak amounts in BNB / tokens, never raw wei. Show full addresses; confir
 | Who can buy (curve) | Agent ID holders only (`balanceOf` on-chain) |
 | Who can sell | Any holder |
 | Cap | 1% of supply per wallet |
-| Fee | 1% on curve buy/sell → fee vault; **0 after graduation** |
+| Fee | 1% on curve buy/sell; **80%** auto-buyback+burn platform token, **20%** ops treasury; **0 after graduation** |
 | Supply | 1e9 fixed · 800M on curve · 200M to LP |
 | Graduate | Real reserves hit **20 BNB** → Pancake V2 · LP → `0x…dEaD` · transfers unlock |
 | Transfers | Locked until graduation |
 
 
-## Appendix B · Contracts (BSC · v3)
+## Appendix B · Contracts (BSC · v4 current)
 
 | Contract | Deploy block | Address |
 |---|---|---|
-| Launchpad v3 | **128858413** | [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) |
-| Migrator v3 | **128858413** | [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8) |
+| Launchpad **v4** (current) | **128968738** | [`0x86854E8ee7D438ca9B52407DCF92D1616385dDcc`](https://bscscan.com/address/0x86854E8ee7D438ca9B52407DCF92D1616385dDcc) |
+| Migrator v4 | **128968738** | [`0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17`](https://bscscan.com/address/0xb2bBe5CDB61dABEef32dFd8E65B8F252D6a86D17) |
+| Platform token (GANG) | **128968738** | [`0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2`](https://bscscan.com/address/0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2) |
 | Agent ID (SPACE ID) | — | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
+| feeVault / opsTreasury | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
+| Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 
-v1/v2 retired — use **v3 only**. Verify on BscScan.
+**Deprecated:** Launchpad v3 [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) · Migrator v3 [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8) (deploy block 128858413). v1/v2 also retired. Use **v4 only**. Verify on BscScan.
 

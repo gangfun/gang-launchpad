@@ -10,15 +10,18 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LaunchToken} from "./LaunchToken.sol";
 import {IMigrator} from "./interfaces/IMigrator.sol";
+import {IPancakeRouter02} from "./interfaces/IPancake.sol";
 
 /// @title Gang Launchpad
 /// @notice Agent-only bonding curve on BNB Chain. Buys require holding a SPACE ID Agent ID (.ai), the soulbound
 ///         NFT only a Binance Agentic Wallet can claim; sells are open. Each wallet may hold at most 1% of supply
-///         from the curve. 1% fee on both sides goes to the platform vault. At 20 BNB raised the remaining supply
+///         from the curve. 1% fee on both sides accrues on-contract: 80% auto buyback-and-burns the official
+///         platform token (GANG), 20% goes to the ops treasury (`feeVault`). At 20 BNB raised the remaining supply
 ///         and all BNB migrate to PancakeSwap V2 with LP burned, and the platform exits.
 ///
 ///         Trust model: the owner cannot touch curve BNB. The migrator is set once and never changed. The agent
-///         registry can only be changed through a 24h timelock that is announced on-chain.
+///         registry can only be changed through a 24h timelock that is announced on-chain. Protocol buybacks are
+///         fee-free, Agent-free, and wallet-cap-free so the treasury path cannot deadlock.
 contract Launchpad is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -36,13 +39,15 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     uint256 public constant MAX_PER_WALLET = 10_000_000 ether;
     uint256 public constant FEE_BPS = 100;
     uint256 public constant BPS = 10_000;
+    /// @dev Share of accruedFees used for platform-token buyback+burn; remainder goes to feeVault (opsTreasury).
+    uint256 public constant BUYBACK_BPS = 8000;
     uint256 public constant REGISTRY_TIMELOCK = 24 hours;
 
     // ---------------------------------------------------------------- storage
     struct Curve {
         address creator;
         uint128 realBnb; // BNB held for this token (excludes fees)
-        uint128 sold; // tokens sold out of CURVE_SUPPLY
+        uint128 sold; // tokens sold out of CURVE_SUPPLY (includes protocol buybacks)
         bool graduated;
         address pair;
     }
@@ -50,6 +55,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     mapping(address token => Curve) public curves;
     address[] public allTokens;
 
+    /// @notice Ops treasury: receives 20% of collected curve fees and 100% of swept excess. (v4: ex-100% fee sink.)
     address public feeVault;
     IMigrator public migrator;
     /// @notice SPACE ID "Agent ID" soulbound ERC-721 (.ai names), mintable only from a Binance Agentic Wallet.
@@ -63,6 +69,13 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     /// @notice BNB owed to accounts whose refund/payout transfer failed (contract wallets without receive()).
     mapping(address => uint256) public pendingWithdrawals;
     uint256 public totalPending;
+
+    /// @notice Official platform token (GANG). Set once via `seedPlatformToken`.
+    address public platformToken;
+    /// @notice BNB reserved for buyback while platformToken/router is not ready, or swap could not run.
+    uint256 public pendingBuyback;
+    /// @notice Pancake V2 router for post-graduation buybacks. Set once.
+    IPancakeRouter02 public pancakeRouter;
 
     // ---------------------------------------------------------------- events
     event Created(address indexed token, address indexed creator, string name, string symbol);
@@ -82,6 +95,11 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     event RegistryChangeProposed(address indexed registry, uint256 effectiveAt);
     event RegistryChangeCancelled(address indexed registry);
     event AgentIdRegistryUpdated(address indexed registry);
+    event PlatformTokenSeeded(address indexed token, string name, string symbol);
+    event BuybackBurned(address indexed token, uint256 bnbIn, uint256 tokensBurned);
+    event BuybackPending(uint256 amount);
+    event BuybackFlushed(uint256 amount);
+    event PancakeRouterSet(address indexed router);
 
     // ---------------------------------------------------------------- errors
     error UnknownToken();
@@ -96,6 +114,9 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     error WalletCapReached();
     error NothingPending();
     error TimelockActive();
+    error PlatformTokenAlreadySet();
+    error PlatformTokenNotSet();
+    error RouterAlreadySet();
 
     constructor(address owner_, address feeVault_, address agentIdRegistry_) Ownable(owner_) {
         if (feeVault_ == address(0) || agentIdRegistry_ == address(0)) revert ZeroAddress();
@@ -113,6 +134,22 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         curves[token] = Curve({creator: msg.sender, realBnb: 0, sold: 0, graduated: false, pair: address(0)});
         allTokens.push(token);
         emit Created(token, msg.sender, name, symbol);
+    }
+
+    /// @notice One-shot official platform token (GANG). Creates the curve and binds `platformToken` atomically.
+    function seedPlatformToken(string calldata name, string calldata symbol)
+        external
+        onlyOwner
+        returns (address token)
+    {
+        if (platformToken != address(0)) revert PlatformTokenAlreadySet();
+        if (address(migrator) == address(0)) revert MigratorNotSet();
+        token = address(new LaunchToken(name, symbol));
+        curves[token] = Curve({creator: msg.sender, realBnb: 0, sold: 0, graduated: false, pair: address(0)});
+        allTokens.push(token);
+        platformToken = token;
+        emit Created(token, msg.sender, name, symbol);
+        emit PlatformTokenSeeded(token, name, symbol);
     }
 
     // ---------------------------------------------------------------- buy
@@ -304,20 +341,91 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         }
     }
 
-    // ---------------------------------------------------------------- admin
-    /// @notice Anyone can push accrued fees to the vault.
+    // ---------------------------------------------------------------- fees / buyback
+    /// @notice Anyone can settle accrued fees: 20% → feeVault (ops), 80% → buyback+burn platform token.
     function collectFees() external nonReentrant {
         uint256 amount = accruedFees;
         accruedFees = 0;
-        (bool ok,) = feeVault.call{value: amount}("");
-        if (!ok) revert PayoutFailed();
-        emit FeesCollected(feeVault, amount);
+        uint256 buyback = (amount * BUYBACK_BPS) / BPS;
+        uint256 ops = amount - buyback;
+
+        if (ops > 0) {
+            (bool ok,) = feeVault.call{value: ops}("");
+            if (!ok) revert PayoutFailed();
+        }
+        emit FeesCollected(feeVault, ops);
+
+        if (buyback > 0) _buybackAndBurn(buyback);
+    }
+
+    /// @notice Permissionless: spend `pendingBuyback` once `platformToken` is set (and router if graduated).
+    function flushBuyback() external nonReentrant {
+        uint256 amount = pendingBuyback;
+        if (amount == 0) revert NothingPending();
+        if (platformToken == address(0)) revert PlatformTokenNotSet();
+        pendingBuyback = 0;
+        emit BuybackFlushed(amount);
+        _buybackAndBurn(amount);
+    }
+
+    /// @dev Protocol buyback: no Agent gate, no wallet cap, no fee accrual. Burns tokens to address(0).
+    function _buybackAndBurn(uint256 bnb) internal {
+        address token = platformToken;
+        if (token == address(0)) {
+            pendingBuyback += bnb;
+            emit BuybackPending(bnb);
+            return;
+        }
+
+        Curve storage c = curves[token];
+        if (!c.graduated) {
+            uint256 remaining = GRADUATION_BNB - c.realBnb;
+            uint256 spend = bnb < remaining ? bnb : remaining;
+            if (spend > 0) {
+                uint256 tokensOut = _tokensOut(c, spend);
+                c.realBnb += spend.toUint128();
+                c.sold += tokensOut.toUint128();
+                totalRealBnb += spend;
+                if (tokensOut > 0) {
+                    LaunchToken(token).burn(tokensOut);
+                }
+                emit BuybackBurned(token, spend, tokensOut);
+                if (c.realBnb == GRADUATION_BNB) _graduate(token, c);
+            }
+            uint256 leftover = bnb - spend;
+            if (leftover > 0) _swapBurnOrPend(token, leftover);
+        } else {
+            _swapBurnOrPend(token, bnb);
+        }
+    }
+
+    function _swapBurnOrPend(address token, uint256 bnb) internal {
+        if (address(pancakeRouter) == address(0)) {
+            pendingBuyback += bnb;
+            emit BuybackPending(bnb);
+            return;
+        }
+
+        address wbnb = pancakeRouter.WETH();
+        address[] memory path = new address[](2);
+        path[0] = wbnb;
+        path[1] = token;
+
+        uint256 before = IERC20(token).balanceOf(address(this));
+        pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnb}(
+            0, path, address(this), block.timestamp
+        );
+        uint256 got = IERC20(token).balanceOf(address(this)) - before;
+        if (got > 0) {
+            LaunchToken(token).burn(got);
+        }
+        emit BuybackBurned(token, bnb, got);
     }
 
     /// @notice Recover BNB that was force-fed into the contract (e.g. via selfdestruct). Never touches curve BNB,
-    ///         fees or deferred payouts.
+    ///         fees, deferred payouts, or pending buybacks. Excess goes 100% to ops (feeVault).
     function sweepExcess() external nonReentrant {
-        uint256 excess = address(this).balance - totalRealBnb - accruedFees - totalPending;
+        uint256 excess = address(this).balance - totalRealBnb - accruedFees - totalPending - pendingBuyback;
         if (excess == 0) revert ZeroAmount();
         (bool ok,) = feeVault.call{value: excess}("");
         if (!ok) revert PayoutFailed();
@@ -328,6 +436,14 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         if (vault == address(0)) revert ZeroAddress();
         feeVault = vault;
         emit FeeVaultUpdated(vault);
+    }
+
+    /// @notice One-shot Pancake V2 router for post-graduation buybacks.
+    function setPancakeRouter(address router) external onlyOwner {
+        if (router == address(0)) revert ZeroAddress();
+        if (address(pancakeRouter) != address(0)) revert RouterAlreadySet();
+        pancakeRouter = IPancakeRouter02(router);
+        emit PancakeRouterSet(router);
     }
 
     /// @notice One-shot. Once set, the migrator can never be changed, so the owner cannot redirect graduations.

@@ -3,8 +3,12 @@
 监听 Launchpad 的 `Created / Buy / Sell / Graduated` 事件写入 SQLite（Node 内置 `node:sqlite`），并提供网站和 Skill 用的 JSON 接口。
 
 ```bash
-GANG_LAUNCHPAD=0x... GANG_START_BLOCK=<部署区块> GANG_RPC_URL=https://bsc-rpc.publicnode.com npm start
+# v4 mainnet defaults (override as needed)
+GANG_LAUNCHPAD=0x86854E8ee7D438ca9B52407DCF92D1616385dDcc \
+GANG_START_BLOCK=128968738 \
+GANG_RPC_URL=https://bsc-rpc.publicnode.com npm start
 ```
+Wipe or raise `GANG_START_BLOCK` when switching from v3 so event history does not mix.
 
 | 接口 | 说明 |
 |---|---|

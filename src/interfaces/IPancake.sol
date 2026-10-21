@@ -17,3 +17,14 @@ interface IWBNB {
     function deposit() external payable;
     function transfer(address to, uint256 value) external returns (bool);
 }
+
+interface IPancakeRouter02 {
+    function WETH() external view returns (address);
+
+    function swapExactETHForTokensSupportingFeeOnTransferTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external payable;
+}

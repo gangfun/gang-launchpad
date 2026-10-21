@@ -31,6 +31,12 @@ contract LaunchToken is ERC20 {
         emit Unlocked();
     }
 
+    /// @notice Protocol buyback burn. OZ v5 rejects transfer(address(0)); use this instead.
+    function burn(uint256 amount) external {
+        if (msg.sender != launchpad) revert OnlyLaunchpad();
+        _burn(msg.sender, amount);
+    }
+
     function _update(address from, address to, uint256 value) internal override {
         if (locked && from != address(0) && from != launchpad && msg.sender != launchpad) revert TransfersLocked();
         super._update(from, to, value);

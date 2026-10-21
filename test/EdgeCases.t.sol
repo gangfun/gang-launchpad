@@ -74,8 +74,10 @@ contract EdgeCasesTest is BaseTest {
         uint256 fees = pad.accruedFees();
         assertGt(fees, 0);
         pad.collectFees();
-        assertEq(vault.balance, fees);
-        assertEq(address(pad).balance, 0);
+        uint256 ops = fees - (fees * pad.BUYBACK_BPS()) / 10_000;
+        assertEq(vault.balance, ops);
+        assertEq(pad.pendingBuyback(), fees - ops);
+        assertEq(address(pad).balance, pad.pendingBuyback());
     }
 
     function test_transferFromLockedBlocked() public {
