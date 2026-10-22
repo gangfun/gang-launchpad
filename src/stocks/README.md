@@ -11,10 +11,12 @@ Parallel launchpad for **A / bStock** quotes. **Does not modify** main-track `La
 
 ## Economics (locked)
 
-| Slice | BPS | Destination |
-|-------|-----|-------------|
-| Dividend | 100 (1%) | `DividendVault` → holders claim quote |
-| Platform | 100 (1%) | `PlatformFeeBucket` → 80% `BuybackBurner` / 20% feeVault |
+| Slice | BPS of notional | Destination |
+|-------|-----------------|-------------|
+| **Total tax** | **100 (1%)** | split 50/50 below |
+| Dividend | 50 (0.5%) | `DividendVault` → holders claim quote |
+| Platform | 50 (0.5%) | `PlatformFeeBucket` → 80% buyback-burn GANG / 20% feeVault |
+| User-facing | — | 1% = 0.5% dividend + 0.4% GANG burn + 0.1% vault |
 
 ## Modules
 
@@ -23,9 +25,9 @@ Parallel launchpad for **A / bStock** quotes. **Does not modify** main-track `La
 | `QuoteRegistry` | Whitelist quote + graduation amount |
 | `TaxLaunchToken` | Locked until graduate; pair hooks |
 | `DividendVault` | Share accounting + manual claim |
-| `PlatformFeeBucket` | Platform 1% accrual + 80/20 collect |
+| `PlatformFeeBucket` | Platform 0.5% accrual + 80/20 collect |
 | `BuybackBurner` | Stub quote→GANG burn |
-| `LaunchpadS` | ERC20-quote curve + 2% split |
+| `LaunchpadS` | ERC20-quote curve + 1% split (50/50) |
 | `MigratorS` | `TOKEN/quote` pair + LP burn |
 
 ## How to test (T0)

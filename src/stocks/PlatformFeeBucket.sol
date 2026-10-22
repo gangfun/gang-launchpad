@@ -7,7 +7,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {BuybackBurner} from "./BuybackBurner.sol";
 
 /// @title PlatformFeeBucket (Stocks track)
-/// @notice Holds the 1% platform tax. collectPlatform → 80% BuybackBurner / 20% feeVault.
+/// @notice Holds the platform half of the 1% trade tax (50 bps). collectPlatform → 80% BuybackBurner / 20% feeVault.
 /// @dev NEVER writes main-track Launchpad.accruedFees or calls main collectFees.
 contract PlatformFeeBucket is Ownable {
     using SafeERC20 for IERC20;

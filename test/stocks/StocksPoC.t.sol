@@ -16,7 +16,7 @@ import {MockSPCXB} from "./mocks/MockSPCXB.sol";
 import {MockGANG} from "./mocks/MockGANG.sol";
 import {MockPairFactory} from "./mocks/MockPairFactory.sol";
 
-/// @notice T0 Stocks PoC: create → buy/sell → 2% tax split → claim → graduate.
+/// @notice T0 Stocks PoC: create → buy/sell → 1% tax split (50/50) → claim → graduate.
 /// @dev IS_TESTNET_MIN_PARAMS: graduation = 1e18 MockSPCXB; agent gate off; wallet cap off.
 contract StocksPoCTest is Test {
     uint256 internal constant GRAD = 1 ether; // 1 MockSPCXB
@@ -89,7 +89,7 @@ contract StocksPoCTest is Test {
         pad.create("Bad", "BAD", junk);
     }
 
-    function test_BuySplitsTax2Percent() public {
+    function test_BuySplitsTax1Percent() public {
         // Keep spend << GRAD so graduation cap does not bind.
         uint256 spend = 0.1 ether;
         uint256 balBefore = spcxb.balanceOf(alice);
@@ -102,8 +102,8 @@ contract StocksPoCTest is Test {
         assertGt(tokensOut, 0);
         assertEq(spcxb.balanceOf(alice), balBefore - spend);
 
-        uint256 expectDiv = (spend * 100) / BPS;
-        uint256 expectPlat = (spend * 100) / BPS;
+        uint256 expectDiv = (spend * 50) / BPS;
+        uint256 expectPlat = (spend * 50) / BPS;
         uint256 expectNet = spend - expectDiv - expectPlat;
 
         (,, uint256 realQuote, uint256 sold, bool graduated,) = _curve();
@@ -151,7 +151,7 @@ contract StocksPoCTest is Test {
         vm.stopPrank();
 
         uint256 accrued = bucket.accruedQuote(address(spcxb));
-        assertEq(accrued, (spend * 100) / BPS);
+        assertEq(accrued, (spend * 50) / BPS);
 
         uint256 vaultBefore = spcxb.balanceOf(feeVault);
         uint256 burnerBefore = burner.quoteReceived(address(spcxb));

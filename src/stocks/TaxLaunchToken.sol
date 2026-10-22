@@ -5,7 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @title TaxLaunchToken (Stocks track)
 /// @notice Fixed-supply launch token. Locked until graduation; optional pair tax after unlock.
-/// @dev In-curve 2% tax is applied by LaunchpadS on quote (avoids double-tax). Post-grad tax on
+/// @dev In-curve 1% tax is applied by LaunchpadS on quote (avoids double-tax). Post-grad tax on
 ///      pair swaps is stubbed for PoC (setPair + taxSink); full DEX tax path can be expanded later.
 contract TaxLaunchToken is ERC20 {
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000 ether;

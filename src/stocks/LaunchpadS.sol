@@ -15,7 +15,7 @@ import {PlatformFeeBucket} from "./PlatformFeeBucket.sol";
 import {IMigratorS} from "./interfaces/IMigratorS.sol";
 
 /// @title LaunchpadS (Stocks track)
-/// @notice ERC20-quote bonding curve. 2% tax = 1% DividendVault + 1% PlatformFeeBucket.
+/// @notice ERC20-quote bonding curve. 1% tax = 0.5% DividendVault + 0.5% PlatformFeeBucket.
 /// @dev Parallel to main Launchpad; NEVER writes main accruedFees. Test params use tiny graduation.
 contract LaunchpadS is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -28,8 +28,8 @@ contract LaunchpadS is Ownable, ReentrancyGuard {
     uint256 public constant VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667;
     uint256 public constant K = VIRTUAL_QUOTE * VIRTUAL_TOKEN;
     uint256 public constant MAX_PER_WALLET = 10_000_000 ether; // 1%; tests may disable via flag
-    uint256 public constant DIVIDEND_TAX_BPS = 100; // 1%
-    uint256 public constant PLATFORM_TAX_BPS = 100; // 1%
+    uint256 public constant DIVIDEND_TAX_BPS = 50; // 0.5%
+    uint256 public constant PLATFORM_TAX_BPS = 50; // 0.5%
     uint256 public constant BPS = 10_000;
 
     struct Curve {
