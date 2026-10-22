@@ -91,9 +91,13 @@ export default function Token() {
         <div><span>{t('k_mcap')}</span><b>{usd(d.fdvBnb * rate)}</b><small>{bnb(d.fdvBnb, 2)} BNB</small></div>
         <div><span>{t('k_price')}</span><b>{px(d.priceBnb)} BNB</b><small>{usd(d.priceBnb * rate)}</small></div>
         <div><span>{t('k_raised')}</span><b>{d.graduated ? '20 / 20 BNB' : `${bnb(d.raisedBnb, 4)} / 20 BNB`}</b><small>{d.graduated ? t('graduated') : usd(d.raisedBnb * rate)}</small></div>
-        <div><span>{t('k_vol')}</span><b>{usd((d.volume24hBnb || 0) * rate)}</b><small>{bnb(d.volume24hBnb || 0, 4)} BNB</small></div>
-        <div><span>{t('k_holders')}</span><b>{d.holders}</b></div>
-        <div><span>{t('k_trades')}</span><b>{d.trades}</b></div>
+        <div><span>{t('k_vol')}</span><b>{usd((d.volume24hBnb || 0) * rate)}</b><small>{bnb(d.volume24hBnb || 0, 4)} BNB{d.graduated && d.volumeSource === 'dex' ? ` · ${t('vol_dex')}` : ''}</small></div>
+        <div><span>{t('k_holders')}</span>
+          <b>{d.holders ?? 0}</b>
+          {d.graduated && d.holdersAgent != null && (
+            <small>{t('holders_agent_split', { agent: d.holdersAgent, other: d.holdersOther })}</small>
+          )}
+        </div>
         <div><span>{t('k_created')}</span><b>{ago(d.createdAt)}</b></div>
       </div>
       <div className={`pwide${d.graduated ? ' done' : ''}`}><i style={{ width: `${Math.max(1, pct)}%` }} /><span>{t('k_progress')} {pct}%</span></div>

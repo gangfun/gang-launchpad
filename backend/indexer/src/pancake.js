@@ -151,6 +151,19 @@ async function fetchDexOhlcvBase(pair) {
   }
 }
 
+/** Sum quote (WBNB) volume from GT 1m candles over the last 24h. */
+export async function sumDexVolume24hBnb(pair) {
+  if (!pair) return null
+  const base = await fetchDexOhlcvBase(pair)
+  if (!base.length) return null
+  const cut = Math.floor(Date.now() / 1000) - 86400
+  let sum = 0
+  for (const c of base) {
+    if (c.t >= cut) sum += c.v || 0
+  }
+  return sum
+}
+
 /**
  * Fallback: recent Pancake V2 Swap logs → OHLCV (BNB per token).
  * Soft-launch friendly — capped block span so public RPC stays happy.

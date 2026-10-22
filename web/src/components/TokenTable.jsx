@@ -3,6 +3,7 @@ import { ago, px, short, usd, api, isOfficial } from '../api.js'
 import { useQuery } from '@tanstack/react-query'
 import { useT, Lines } from '../i18n.jsx'
 import Cmd from './Cmd.jsx'
+import TokenAvatar from './TokenAvatar.jsx'
 
 function ColdStart() {
   const { t } = useT()
@@ -37,21 +38,46 @@ function ColdStart() {
 
 const pancakeHref = (r) => `https://pancakeswap.finance/swap?outputCurrency=${r.address}&chain=bsc`
 
-function RowCells({ r, rate, t }) {
+function MarketCard({ r, rate, t, onOpen }) {
   return (
-    <>
-      <td className="tok"><span className="sym">{r.symbol}</span>{isOfficial(r.address) && <> <span className="badge official">{t('official')}</span></>} <span className="name">{r.name} · {short(r.address)}</span></td>
-      <td className="r num">{usd(r.fdvBnb * rate)}</td>
-      <td className="r num">{px(r.priceBnb)}</td>
-      <td className="r num">{usd((r.volume24hBnb || 0) * rate)}</td>
-      <td className="r num">{r.trades24h ?? 0}</td>
-      <td className="r num">{r.holders}</td>
-      <td>{r.graduated
-        ? <><span className="badge grad">{t('graduated')}</span>{' '}
-          <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a></>
-        : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}</td>
-      <td className="r dim">{ago(r.lastTradeAt || r.createdAt)}</td>
-    </>
+    <button
+      type="button"
+      className="market-card"
+      onClick={() => onOpen(r.address)}
+    >
+      <div className="market-card-top">
+        <TokenAvatar symbol={r.symbol} address={r.address} size={44} />
+        <div className="market-card-id">
+          <div className="market-card-sym">
+            <span className="sym">{r.symbol}</span>
+            {isOfficial(r.address) && <span className="badge official">{t('official')}</span>}
+            {r.graduated && <span className="badge grad">{t('graduated')}</span>}
+          </div>
+          <span className="name">{r.name}</span>
+        </div>
+        <span className="market-card-age dim">{ago(r.lastTradeAt || r.createdAt)}</span>
+      </div>
+      <div className="market-card-stats">
+        <div>
+          <span>{t('col_mcap')}</span>
+          <b className="num">{usd(r.fdvBnb * rate)}</b>
+        </div>
+        <div>
+          <span>{t('col_vol')}</span>
+          <b className="num">{usd((r.volume24hBnb || 0) * rate)}</b>
+        </div>
+        <div className="market-card-foot">
+          {r.graduated
+            ? <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a>
+            : (
+              <>
+                <span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span>
+                <span className="dim">{r.progressPct}%</span>
+              </>
+            )}
+        </div>
+      </div>
+    </button>
   )
 }
 
@@ -59,48 +85,15 @@ export default function TokenTable({ rows, loading, error, listRef, onScroll, ha
   const nav = useNavigate()
   const { t } = useT()
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
+  const open = (addr) => nav(`/token/${addr}`)
   if (loading) return <div className="empty">{t('loading')}</div>
   if (error) return <div className="empty err">{t('api_error')}</div>
   if (!rows?.length) return <ColdStart />
   return (
     <div className="list-scroll market-list" ref={listRef} onScroll={onScroll}>
-      <div className="market-scroll"><table>
-        <thead><tr>
-          <th>{t('col_token')}</th><th className="r">{t('col_mcap')}</th><th className="r">{t('col_price')}</th><th className="r">{t('col_vol')}</th><th className="r">{t('col_trades')}</th><th className="r">{t('col_holders')}</th><th>{t('col_curve')}</th><th className="r">{t('col_age')}</th>
-        </tr></thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.address} onClick={() => nav(`/token/${r.address}`)} style={{ cursor: 'pointer' }}>
-              <RowCells r={r} rate={rate} t={t} />
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-      <div className="market-cards" role="list">
+      <div className="market-grid" role="list">
         {rows.map((r) => (
-          <button
-            type="button"
-            key={r.address}
-            className="mcard"
-            role="listitem"
-            onClick={() => nav(`/token/${r.address}`)}
-          >
-            <div className="mcard-head">
-              <span className="sym">{r.symbol}</span>
-              {isOfficial(r.address) && <span className="badge official">{t('official')}</span>}
-              <span className="name">{r.name} · {short(r.address)}</span>
-            </div>
-            <div className="mcard-metrics">
-              <div><span>{t('col_mcap')}</span><b className="num">{usd(r.fdvBnb * rate)}</b></div>
-              <div><span>{t('col_price')}</span><b className="num">{px(r.priceBnb)}</b></div>
-              <div className="mcard-curve">
-                {r.graduated
-                  ? <><span className="badge grad">{t('graduated')}</span>{' '}
-                    <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a></>
-                  : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}
-              </div>
-            </div>
-          </button>
+          <MarketCard key={r.address} r={r} rate={rate} t={t} onOpen={open} />
         ))}
       </div>
       {loadingMore && <div className="list-foot">{t('loading')}</div>}
