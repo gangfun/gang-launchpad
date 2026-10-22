@@ -9,6 +9,7 @@ import Win from '../components/Win.jsx'
 import Agent from '../components/Agent.jsx'
 
 const TRADES_PAGE = 30
+const HOLDERS_PAGE = 50
 
 export default function Token() {
   const { t } = useT()
@@ -35,7 +36,21 @@ export default function Token() {
   }, [loadMore])
   // Reset scroll when filter/sort changes
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = 0 }, [tradeSide, tradeSort])
-  const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20), refetchInterval: 15_000 })
+  const holdersRef = useRef(null)
+  const holders = useInfiniteQuery({
+    queryKey: ['holders', address],
+    queryFn: ({ pageParam }) => api.holders(address, { limit: HOLDERS_PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last?.hasMore ? last.nextOffset : undefined),
+    refetchInterval: 15_000,
+  })
+  const loadMoreHolders = useCallback(() => {
+    if (holders.hasNextPage && !holders.isFetchingNextPage) holders.fetchNextPage()
+  }, [holders.hasNextPage, holders.isFetchingNextPage, holders.fetchNextPage])
+  const onHoldersScroll = useCallback((e) => {
+    const el = e.currentTarget
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 96) loadMoreHolders()
+  }, [loadMoreHolders])
   const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res), refetchInterval: 15_000 })
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   if (q.isLoading) return <main className="wrap"><div className="empty">{t('loading')}</div></main>
@@ -49,6 +64,7 @@ export default function Token() {
   const pk = d.pancake
   const showDexPrice = d.graduated && pk?.priceBnb != null && pk.priceBnb > 0
   const tradeRows = trades.data?.pages.flatMap((p) => p.items || []) || []
+  const holderRows = holders.data?.pages.flatMap((p) => p.items || []) || []
   return (
     <main className="wrap">
       <div className="ident">
@@ -154,12 +170,18 @@ export default function Token() {
               )}
             </div>
           </Win>
-          <Win title={t('holders')} flush bodyClass="list-scroll" right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
-            {holders.data?.length === 0 && <div className="empty">{t('no_holders')}</div>}
-            {holders.data?.length > 0 && (
-              <table><thead><tr><th>{t('agent')}</th><th className="r">{t('tokens')}</th><th className="r">%</th></tr></thead>
-                <tbody>{holders.data.map((h) => <tr key={h.holder}><td><Agent address={h.holder} handle={h.handle} /></td><td className="r num">{tok(h.balance)}</td><td className="r num">{h.pct}</td></tr>)}</tbody></table>
-            )}
+          <Win title={t('holders')} flush right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
+            <div className="list-scroll" ref={holdersRef} onScroll={onHoldersScroll}>
+              {holderRows.length === 0 && !holders.isLoading && <div className="empty">{t('no_holders')}</div>}
+              {holderRows.length > 0 && (
+                <table><thead><tr><th>{t('agent')}</th><th className="r">{t('tokens')}</th><th className="r">%</th></tr></thead>
+                  <tbody>{holderRows.map((h) => <tr key={h.holder}><td><Agent address={h.holder} handle={h.handle} /></td><td className="r num">{tok(h.balance)}</td><td className="r num">{h.pct}</td></tr>)}</tbody></table>
+              )}
+              {holders.isFetchingNextPage && <div className="list-foot">{t('loading')}</div>}
+              {holders.hasNextPage && !holders.isFetchingNextPage && (
+                <button type="button" className="more discreet" onClick={loadMoreHolders}>{t('load_more')}</button>
+              )}
+            </div>
           </Win>
       </div>
     </main>

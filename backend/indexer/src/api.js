@@ -35,7 +35,6 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
              (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24 FROM tokens t WHERE address=?`),
     candles: db.prepare(`SELECT (CAST(ts AS INTEGER) / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS t, price, bnb, id FROM trades WHERE token=? AND ts>=? ORDER BY id`),
-    holders: db.prepare("SELECT holder, balance FROM holders WHERE token=? AND balance!='0' ORDER BY CAST(balance AS REAL) DESC LIMIT ?"),
     search: db.prepare(`SELECT address, name, symbol, graduated, last_price FROM tokens
              WHERE lower(address) LIKE ? OR lower(symbol) LIKE ? OR lower(name) LIKE ? ORDER BY trades DESC, created_ts DESC LIMIT 8`),
     stats: db.prepare(`SELECT (SELECT COUNT(*) FROM tokens) AS tokens, (SELECT COUNT(*) FROM tokens WHERE graduated=1) AS graduated,
@@ -141,13 +140,24 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           })
         }
         if (p[2] === 'holders') {
-          const rows = q.holders.all(addr, limit)
+          const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
+          const raw = db.prepare(
+            "SELECT holder, balance FROM holders WHERE token=? AND balance!='0' ORDER BY CAST(balance AS REAL) DESC LIMIT ? OFFSET ?",
+          ).all(addr, limit + 1, offset)
+          const hasMore = raw.length > limit
+          const rows = hasMore ? raw.slice(0, limit) : raw
           const handles = getHandleMap(db, rows.map((r) => r.holder))
-          return json(res, 200, rows.map((r) => ({
-            holder: r.holder, balance: fmtTok(r.balance),
-            pct: Number(BigInt(r.balance) * 10000n / 10n ** 27n) / 100,
-            handle: handles[r.holder] || null,
-          })))
+          return json(res, 200, {
+            items: rows.map((r) => ({
+              holder: r.holder, balance: fmtTok(r.balance),
+              pct: Number(BigInt(r.balance) * 10000n / 10n ** 27n) / 100,
+              handle: handles[r.holder] || null,
+            })),
+            hasMore,
+            nextOffset: hasMore ? offset + limit : null,
+            limit,
+            offset,
+          })
         }
         if (p[2] === 'candles') {
           const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[url.searchParams.get('res') || '5m'] || 300

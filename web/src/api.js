@@ -9,7 +9,7 @@ export const api = {
   tokens: (sort, limit = 20) => get(`/tokens?sort=${sort}&limit=${limit}`),
   token: (a) => get(`/tokens/${a}`),
   trades: (a, { limit = 30, offset = 0, side = 'all', sort = 'ts_desc' } = {}) => get(`/tokens/${a}/trades?limit=${limit}&offset=${offset}&side=${encodeURIComponent(side)}&sort=${encodeURIComponent(sort)}`),
-  holders: (a, limit = 20) => get(`/tokens/${a}/holders?limit=${limit}`),
+  holders: (a, { limit = 50, offset = 0 } = {}) => get(`/tokens/${a}/holders?limit=${limit}&offset=${offset}`),
   candles: (a, res) => get(`/tokens/${a}/candles?res=${res}`),
   search: (q) => get(`/search?q=${encodeURIComponent(q)}`),
 }

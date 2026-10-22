@@ -16,8 +16,8 @@ Wipe or raise `GANG_START_BLOCK` when switching from v3 so event history does no
 | `GET /stats` | 代币数、毕业数、成交数、24h 成交量、累计手续费 |
 | `GET /tokens?sort=new\|hot\|graduated\|progress&limit=50` | 榜单。hot 按 24h 成交量 |
 | `GET /tokens/:addr` | 单个代币：价格、FDV、进度、持有人数、24h 量 |
-| `GET /tokens/:addr/trades?limit=50` | 成交记录，新到旧 |
-| `GET /tokens/:addr/holders?limit=50` | 持有人和占比 |
+| `GET /tokens/:addr/trades?limit=50&offset=0&side=all|buy|sell&sort=ts_desc|ts_asc|amount_desc` | 成交；返回 `{items,hasMore,nextOffset}` |
+| `GET /tokens/:addr/holders?limit=50&offset=0` | 持有人和占比；返回 `{items,hasMore,nextOffset}` |
 | `GET /tokens/:addr/candles?res=1m\|5m\|15m\|1h\|4h\|1d&since=<ts>` | OHLCV，价格单位 BNB/token，量单位 BNB |
 
 价格由事件里的储备状态按曲线公式重算，不依赖额外 RPC 调用；`getLogs` 区间会根据 RPC 限制自动收缩。

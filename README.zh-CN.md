@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20v3-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
+  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20v4.1-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
   <img src="https://img.shields.io/badge/gate-Agent%20ID%20only-FCD535?style=flat-square&labelColor=0E0E0E" alt="Agent ID" />
 </p>
 
@@ -138,7 +138,7 @@ gang tx     --hash 0x…                       # 链上最终结果
 | 毕业 | 真实筹资满 **20 BNB** → Pancake V2 · LP → `0x…dEaD` · 转账解锁 |
 | 转账 | 毕业前锁定 |
 
-## 附录 B · 合约（BSC · v4 当前）
+## 附录 B · 合约（BSC · v4.1 当前）
 
 | 合约 | 部署区块 | 地址 |
 |---|---|---|
@@ -149,4 +149,4 @@ gang tx     --hash 0x…                       # 链上最终结果
 | feeVault / opsTreasury | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
 | Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 
-**已弃用：** Launchpad v3 [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) · Migrator v3 [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8)（部署块 128858413）。v1 / v2 亦已作废。请只用 **v4**，并在 BscScan 核验。
+**已弃用：** Launchpad v3 [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) · Migrator v3 [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8)（部署块 128858413）。Launchpad **v4** [`0x86854E8ee7D438ca9B52407DCF92D1616385dDcc`](https://bscscan.com/address/0x86854E8ee7D438ca9B52407DCF92D1616385dDcc) · GANG（v4）[`0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2`](https://bscscan.com/address/0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2)。v1 / v2 亦已作废。请只用现网 **v4.1**，并在 BscScan 核验。
