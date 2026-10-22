@@ -62,7 +62,6 @@ export default function Token() {
   const d = q.data
   const pct = d.graduated ? 100 : d.progressPct
   const pk = d.pancake
-  const showDexPrice = d.graduated && pk?.priceBnb != null && pk.priceBnb > 0
   const tradeRows = trades.data?.pages.flatMap((p) => p.items || []) || []
   const holderRows = holders.data?.pages.flatMap((p) => p.items || []) || []
   return (
@@ -89,8 +88,8 @@ export default function Token() {
       </div>
 
       <div className="kv">
-        <div><span>{t('k_mcap')}</span><b>{usd((showDexPrice ? pk.fdvBnb : d.fdvBnb) * rate)}</b><small>{bnb(showDexPrice ? pk.fdvBnb : d.fdvBnb, 2)} BNB</small></div>
-        <div><span>{t('k_price')}</span><b>{px(showDexPrice ? pk.priceBnb : d.priceBnb)} BNB</b><small>{usd((showDexPrice ? pk.priceBnb : d.priceBnb) * rate)}</small></div>
+        <div><span>{t('k_mcap')}</span><b>{usd(d.fdvBnb * rate)}</b><small>{bnb(d.fdvBnb, 2)} BNB</small></div>
+        <div><span>{t('k_price')}</span><b>{px(d.priceBnb)} BNB</b><small>{usd(d.priceBnb * rate)}</small></div>
         <div><span>{t('k_raised')}</span><b>{bnb(d.raisedBnb, 4)} / 20 BNB</b><small>{usd(d.raisedBnb * rate)}</small></div>
         <div><span>{t('k_vol')}</span><b>{usd((d.volume24hBnb || 0) * rate)}</b><small>{bnb(d.volume24hBnb || 0, 4)} BNB</small></div>
         <div><span>{t('k_holders')}</span><b>{d.holders}</b></div>
@@ -99,7 +98,7 @@ export default function Token() {
       </div>
       <div className={`pwide${d.graduated ? ' done' : ''}`}><i style={{ width: `${Math.max(1, pct)}%` }} /><span>{t('k_progress')} {pct}%</span></div>
       {!d.graduated && pct >= 90 && <p className="muted tip">{t('near_grad_gas')}</p>}
-      {d.graduated && <p className="muted tip">{t('curve_data_note')}</p>}
+      {d.graduated && <p className="muted tip">{t('holders_curve_note')}</p>}
 
       {d.graduated && (
         <div className="pancake-block">
@@ -123,10 +122,17 @@ export default function Token() {
       )}
 
       <div className="work">
-          <Win title={mode === 'mcap' ? t('k_mcap') : t('k_price')} flush bodyClass="chart-body" right={<>
+          <Win title={mode === 'mcap' ? t('k_mcap') : t('k_price')} flush bodyClass={d.graduated ? 'chart-body chart-body-grad' : 'chart-body'} right={<>
             <div className="seg">{['mcap', 'price'].map((m) => <button key={m} className={m === mode ? 'on' : ''} onClick={() => setMode(m)}>{t(`chart_${m}`)}</button>)}</div>
             <div className="seg">{['1m', '5m', '15m', '1h', '4h', '1d'].map((r) => <button key={r} className={r === res ? 'on' : ''} onClick={() => setRes(r)}>{r}</button>)}</div>
           </>}>
+            {d.graduated && (
+              <div className="chart-banner">
+                {t('chart_curve_ended')}{' '}
+                <a href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">PancakeSwap</a>
+                {d.pair && <> · <a href={`https://dexscreener.com/bsc/${d.pair}`} target="_blank" rel="noreferrer">DexScreener</a></>}
+              </div>
+            )}
             <Chart candles={candles.data} mode={mode} rate={rate} />
           </Win>
           <Win title={t('buy_title')}>

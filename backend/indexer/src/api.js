@@ -25,6 +25,28 @@ pollBnb(); setInterval(pollBnb, 60_000)
 
 export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
   const client = makeClient(rpcUrls)
+
+  /** Graduated + pair → overwrite priceBnb/fdvBnb from Pancake (readPair has 30s TTL). Curve tokens unchanged. */
+  async function withDexPrice(row, { includePancake = false } = {}) {
+    if (!row?.graduated || !row.pair) return row
+    const pk = await readPair(client, row.pair, row.address)
+    const out = { ...row }
+    if (pk && pk.priceBnb > 0) {
+      out.priceBnb = String(pk.priceBnb)
+      out.fdvBnb = String(pk.fdvBnb)
+      out.priceSource = 'pancake'
+    }
+    if (includePancake) {
+      out.pancake = pk || {
+        pair: row.pair,
+        pairUrl: `https://bscscan.com/address/${row.pair}`,
+        pancakeUrl: `https://pancakeswap.finance/swap?outputCurrency=${row.address}&chain=bsc`,
+        infoUrl: `https://pancakeswap.finance/info/v2/pairs/${row.pair}`,
+      }
+    }
+    return out
+  }
+
   const q = {
     list: (order, where = '1=1') => db.prepare(`
       SELECT t.*, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
@@ -35,7 +57,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
              (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24 FROM tokens t WHERE address=?`),
     candles: db.prepare(`SELECT (CAST(ts AS INTEGER) / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS t, price, bnb, id FROM trades WHERE token=? AND ts>=? ORDER BY id`),
-    search: db.prepare(`SELECT address, name, symbol, graduated, last_price FROM tokens
+    search: db.prepare(`SELECT address, name, symbol, graduated, pair, last_price FROM tokens
              WHERE lower(address) LIKE ? OR lower(symbol) LIKE ? OR lower(name) LIKE ? ORDER BY trades DESC, created_ts DESC LIMIT 8`),
     stats: db.prepare(`SELECT (SELECT COUNT(*) FROM tokens) AS tokens, (SELECT COUNT(*) FROM tokens WHERE graduated=1) AS graduated,
              (SELECT COUNT(*) FROM trades) AS trades, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE ts>?) AS vol24,
@@ -65,7 +87,11 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         const qs = (url.searchParams.get('q') || '').trim().toLowerCase()
         if (qs.length < 2) return json(res, 200, [])
         const like = qs.startsWith('0x') ? `${qs}%` : `%${qs}%`
-        return json(res, 200, q.search.all(like, like, like).map((r) => ({ address: r.address, name: r.name, symbol: r.symbol, graduated: !!r.graduated, priceBnb: formatEther(BigInt(r.last_price)) })))
+        const hits = q.search.all(like, like, like).map((r) => ({
+          address: r.address, name: r.name, symbol: r.symbol, graduated: !!r.graduated, pair: r.pair,
+          priceBnb: formatEther(BigInt(r.last_price)),
+        }))
+        return json(res, 200, await Promise.all(hits.map((r) => withDexPrice(r))))
       }
       if (p[0] === 'stats') { const s = q.stats.get(day()); return json(res, 200, { launchpad, bnbUsd, ...s, vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0', fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0' }) }
       if (p[0] === 'tokens' && !p[1]) {
@@ -74,35 +100,25 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         const where = sort === 'graduated' ? 'graduated=1' : sort === 'hot' || sort === 'progress' ? 'graduated=0' : '1=1'
         const rows = q.list(orders[sort] || orders.new, where).all(day(), day(), limit)
         const handles = getHandleMap(db, rows.map((r) => r.creator))
-        return json(res, 200, rows.map((r) => ({
+        const mapped = rows.map((r) => ({
           ...tokRow(r),
           volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
           creatorHandle: handles[r.creator] || null,
-        })))
+        }))
+        // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
+        return json(res, 200, await Promise.all(mapped.map((r) => withDexPrice(r))))
       }
       if (p[0] === 'tokens' && p[1]) {
         const addr = p[1].toLowerCase(); const t = q.one.get(day(), day(), addr)
         if (!t) return json(res, 404, { error: 'not found' })
         if (!p[2]) {
           const handles = getHandleMap(db, [t.creator])
-          const body = {
+          const body = await withDexPrice({
             ...tokRow(t),
             volume24hBnb: t.vol24 ? formatEther(BigInt(Math.round(t.vol24))) : '0',
             creatorHandle: handles[t.creator] || null,
             creatorUrl: t.creator ? `https://bscscan.com/address/${t.creator}` : null,
-          }
-          if (t.graduated && t.pair) {
-            body.pancake = await readPair(client, t.pair, t.address)
-            // Always expose pair links even if reserves fail.
-            if (!body.pancake) {
-              body.pancake = {
-                pair: t.pair,
-                pairUrl: `https://bscscan.com/address/${t.pair}`,
-                pancakeUrl: `https://pancakeswap.finance/swap?outputCurrency=${t.address}&chain=bsc`,
-                infoUrl: `https://pancakeswap.finance/info/v2/pairs/${t.pair}`,
-              }
-            }
-          }
+          }, { includePancake: true })
           return json(res, 200, body)
         }
         if (p[2] === 'trades') {

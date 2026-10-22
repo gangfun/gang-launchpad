@@ -137,6 +137,14 @@ td.r, th.r { text-align: right; }
 /* chart fills the card body but never drives its size (absolute), so row height comes from the how-to card */
 .win > .b.chart-body { position: relative; min-height: 360px; }
 .chart { position: absolute; inset: 0; }
+.chart-body-grad .chart { top: 28px; }
+.chart-banner {
+  position: absolute; z-index: 2; left: 0; right: 0; top: 0;
+  height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: var(--text-2); background: rgba(14,14,14,.92);
+  border-bottom: 1px solid var(--line-2);
+}
+.chart-banner a { color: var(--yellow); }
 .legend { position: absolute; top: 8px; left: 12px; display: flex; gap: 12px; font-size: 11px; color: var(--text-2); pointer-events: none; z-index: 2; }
 .legend span:first-child { color: var(--text-3); }
 .win { display: flex; flex-direction: column; }

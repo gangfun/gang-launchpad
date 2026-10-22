@@ -7,14 +7,14 @@ const PAIR_ABI = parseAbi([
   'function token1() view returns (address)',
 ])
 
-const cache = new Map() // pair -> { at, data }
+const cache = new Map() // pair -> { at, data }; TTL 30s — shared by list/detail/search
 
 /** Best-effort Pancake V2 pair snapshot. Returns null on any failure. */
 export async function readPair(client, pair, token) {
   if (!pair || !client) return null
   const key = pair.toLowerCase()
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < 30_000) return hit.data
+  if (hit && Date.now() - hit.at < 30_000) return hit.data // 30s in-memory TTL
   try {
     const [token0, token1, reserves] = await Promise.all([
       client.readContract({ address: pair, abi: PAIR_ABI, functionName: 'token0' }),
