@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, bnb, usd } from '../api.js'
+import { api, bnb, usd, isOfficial } from '../api.js'
 import { useT, Lines } from '../i18n.jsx'
 import TokenTable from '../components/TokenTable.jsx'
 import Cmd from '../components/Cmd.jsx'
@@ -8,11 +8,23 @@ import Win from '../components/Win.jsx'
 
 const TABS = ['hot', 'new', 'progress', 'graduated']
 
+/** 「最热」: pin official GANG first (API also pins; this is belt-and-suspenders). */
+function pinOfficialHot(rows, tab) {
+  if (!rows?.length || tab !== 'hot') return rows
+  const i = rows.findIndex((r) => isOfficial(r.address))
+  if (i <= 0) return rows
+  const next = rows.slice()
+  const [row] = next.splice(i, 1)
+  next.unshift(row)
+  return next
+}
+
 export default function Home() {
   const { t } = useT()
   const [tab, setTab] = useState('hot')
   const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
   const q = useQuery({ queryKey: ['tokens', tab], queryFn: () => api.tokens(tab, 50) })
+  const rows = useMemo(() => pinOfficialHot(q.data, tab), [q.data, tab])
   const apiDown = q.isError || stats.isError
   return (
     <main className="wrap">
@@ -29,7 +41,7 @@ export default function Home() {
         </div>
       </section>
       <Win title={t('nav_markets')} flush right={<div className="tabs">{TABS.map((k) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{t(`tab_${k}`)}</button>)}</div>}>
-        <TokenTable rows={q.data} loading={q.isLoading} error={apiDown ? (q.error || stats.error) : null} />
+        <TokenTable rows={rows} loading={q.isLoading} error={apiDown ? (q.error || stats.error) : null} />
       </Win>
     </main>
   )

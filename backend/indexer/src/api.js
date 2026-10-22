@@ -123,6 +123,13 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
             if (vb !== va) return vb - va
             return Number(b.fdvBnb || 0) - Number(a.fdvBnb || 0)
           })
+          // Official platform token (GANG) always first on 「最热」
+          const pin = (process.env.GANG_PLATFORM_TOKEN || '0x0c6302401aa5325C2E36F170f52C00B1d220B405').toLowerCase()
+          const i = priced.findIndex((r) => (r.address || '').toLowerCase() === pin)
+          if (i > 0) {
+            const [row] = priced.splice(i, 1)
+            priced.unshift(row)
+          }
         }
         return json(res, 200, priced)
       }
