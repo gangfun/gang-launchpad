@@ -14,6 +14,7 @@ function ColdStart() {
         <li>
           <b>{t('cold_install')}</b>
           <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
+          <Cmd block>npm i -g @gangfun/cli --registry=https://npm.pkg.github.com</Cmd>
           <Cmd block>npm i -g github:gangfun/cli</Cmd>
         </li>
         <li>

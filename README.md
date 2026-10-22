@@ -39,9 +39,10 @@ npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wa
 # 2) Gang skill
 npx skills add gangfun/gang-launchpad/skill
 
-# 3) Install Gang CLI (GitHub — no npmjs account needed)
-npm i -g github:gangfun/cli             # provides: gang
-# or: npx --yes github:gangfun/cli preflight
+# 3) Install Gang CLI (GitHub Packages — not npmjs)
+npm i -g @gangfun/cli --registry=https://npm.pkg.github.com   # provides: gang
+# needs GitHub token with read:packages in ~/.npmrc — see cli README
+# alternate (no Packages token): npm i -g github:gangfun/cli
 ```
 
 Sign in once with `baw` (open the App pairing URL / code when prompted).
