@@ -57,6 +57,15 @@ contract DividendVault is Ownable {
         emit MinimumShareBalanceUpdated(amount);
     }
 
+    /// @notice LaunchpadU (or owner) may raise the floor for taxed tokens (never lower).
+    function ensureMinimumShareBalance(uint256 amount) external {
+        if (msg.sender != launchpad && msg.sender != owner()) revert OnlyLaunchpad();
+        if (amount > minimumShareBalance) {
+            minimumShareBalance = amount;
+            emit MinimumShareBalanceUpdated(amount);
+        }
+    }
+
     function registerToken(address token, address quote) external {
         if (msg.sender != launchpad) revert OnlyLaunchpad();
         if (token == address(0) || quote == address(0)) revert ZeroAddress();

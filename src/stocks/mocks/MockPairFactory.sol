@@ -15,6 +15,10 @@ contract MockPair is IPairS {
         (token0, token1) = a < b ? (a, b) : (b, a);
     }
 
+    function getReserves() external view returns (uint112, uint112, uint32) {
+        return (uint112(reserve0), uint112(reserve1), uint32(block.timestamp));
+    }
+
     function mint(address to) external returns (uint256 liquidity) {
         uint256 bal0 = IERC20(token0).balanceOf(address(this));
         uint256 bal1 = IERC20(token1).balanceOf(address(this));

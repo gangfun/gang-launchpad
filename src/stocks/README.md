@@ -69,3 +69,19 @@ CHAPEL_PRIVATE_KEY=0x… \
 ```
 
 Script asserts `block.chainid == 97` and reverts on 56. Deploys MockSPCXB + MockGANG + MockPairFactory + stocks stack with IS_TESTNET_MIN_PARAMS (graduation 1e18).
+
+
+## Tip A · LaunchpadU (any-pool + normal/taxed)
+
+Unified create on **test / Chapel only** (branch `cursor/any-pool-tax-tip-a`):
+
+```bash
+forge test --match-path 'test/stocks/AnyPoolTaxTipA.t.sol' -vv
+```
+
+| Mode | Token | In-curve fee | Post-grad tax |
+|------|-------|--------------|---------------|
+| `taxed=false` | `LaunchToken` | v4.1: 1% → PlatformFeeBucket (80/20 feeVault) | **0** |
+| `taxed=true` | `TaxLaunchToken` | 0.5% DividendVault + 0.5% platform; min share 10000e18 | stub → Tip B |
+
+Taxed create requires a liquid Pancake-like pair (or quote ERC20 with `getPair(quote,WBNB)` reserves). QuoteRegistry is optional.
