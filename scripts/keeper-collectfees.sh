@@ -56,13 +56,14 @@ log_line() {
   fi
 }
 
-wei_to_ether() { cast --from-wei "$1" ether; }
+# cast may print "123 [1.23e2]" — keep first token only
+wei_only() { awk '{print $1}' <<<"$1"; }
+wei_to_ether() { cast --from-wei "$(wei_only "$1")" ether; }
+gt_wei() { python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$(wei_only "$1")" "$(wei_only "$2")"; }
 
-gt_wei() { python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$1" "$2"; }
-
-ACCRUED="$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")"
-PENDING="$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")"
-FEE_VAULT="$(cast call "$LAUNCHPAD" "feeVault()(address)" --rpc-url "$BSC_RPC")"
+ACCRUED="$(wei_only "$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")")"
+PENDING="$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")"
+FEE_VAULT="$(wei_only "$(cast call "$LAUNCHPAD" "feeVault()(address)" --rpc-url "$BSC_RPC")")"
 MAX_WEI="$(cast --to-wei "$MAX_ACCRUED_ETHER" ether)"
 
 log_line "$(ts) launchpad=${LAUNCHPAD} expected_keeper=${EXPECTED_KEEPER}"
