@@ -19,8 +19,8 @@ export default function Layout() {
           <NavLink to="/launch">{t('nav_launch')}</NavLink>
           <NavLink to="/docs">{t('nav_guide')}</NavLink>
           <span className="nav-soc">
-            <XLink href={X_URL} className="soc-link" label={t('social_x_a11y')} />
             <a href={GITHUB_CLI} className="soc-link" target="_blank" rel="noreferrer">{t('nav_github')}</a>
+            <XLink href={X_URL} className="soc-link" label={t('social_x_a11y')} />
           </span>
         </nav>
         <div className="spacer" />
@@ -31,8 +31,8 @@ export default function Layout() {
       <footer className="footer"><div className="wrap">
         <span>gang.fun</span>
         <span className="footer-links">
-          <XLink href={X_URL} className="soc-link" label={t('social_x_a11y')} />
           <a href={GITHUB_CLI} target="_blank" rel="noreferrer">{t('nav_github')}</a>
+          <XLink href={X_URL} className="soc-link" label={t('social_x_a11y')} />
           <a href={`https://bscscan.com/address/${LAUNCHPAD}`} target="_blank" rel="noreferrer">{short(LAUNCHPAD)}</a>
         </span>
       </div></footer>
