@@ -35,6 +35,8 @@ function ColdStart() {
   )
 }
 
+const pancakeHref = (r) => `https://pancakeswap.finance/swap?outputCurrency=${r.address}&chain=bsc`
+
 function RowCells({ r, rate, t }) {
   return (
     <>
@@ -44,7 +46,10 @@ function RowCells({ r, rate, t }) {
       <td className="r num">{usd((r.volume24hBnb || 0) * rate)}</td>
       <td className="r num">{r.trades24h ?? 0}</td>
       <td className="r num">{r.holders}</td>
-      <td>{r.graduated ? <span className="badge grad">{t('graduated')}</span> : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}</td>
+      <td>{r.graduated
+        ? <><span className="badge grad">{t('graduated')}</span>{' '}
+          <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a></>
+        : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}</td>
       <td className="r dim">{ago(r.lastTradeAt || r.createdAt)}</td>
     </>
   )
@@ -90,7 +95,8 @@ export default function TokenTable({ rows, loading, error }) {
               <div><span>{t('col_price')}</span><b className="num">{px(r.priceBnb)}</b></div>
               <div className="mcard-curve">
                 {r.graduated
-                  ? <span className="badge grad">{t('graduated')}</span>
+                  ? <><span className="badge grad">{t('graduated')}</span>{' '}
+                    <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a></>
                   : <><span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span><span className="dim">{r.progressPct}%</span></>}
               </div>
             </div>

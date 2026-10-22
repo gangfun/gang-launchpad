@@ -39,7 +39,7 @@ export default function Search() {
         <div className="dd">
           {rows.length === 0 && !isAddr(q) && <button disabled className="dim">{t('no_results')}</button>}
           {rows.length === 0 && isAddr(q) && <button onClick={() => go(q)}>{short(q)} <span className="dim">→</span></button>}
-          {rows.map((r, i) => <button key={r.address} className={i === sel ? 'on' : ''} onMouseEnter={() => setSel(i)} onClick={() => go(r.address)}>{r.symbol} <span className="dim">{r.name} · {short(r.address)}</span></button>)}
+          {rows.map((r, i) => <button key={r.address} className={i === sel ? 'on' : ''} onMouseEnter={() => setSel(i)} onClick={() => go(r.address)}>{r.symbol} {r.graduated && <span className="badge grad">{t('graduated')}</span>} <span className="dim">{r.name} · {short(r.address)}</span></button>)}
         </div>
       )}
     </div>

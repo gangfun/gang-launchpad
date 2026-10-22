@@ -90,7 +90,7 @@ export default function Token() {
       <div className="kv">
         <div><span>{t('k_mcap')}</span><b>{usd(d.fdvBnb * rate)}</b><small>{bnb(d.fdvBnb, 2)} BNB</small></div>
         <div><span>{t('k_price')}</span><b>{px(d.priceBnb)} BNB</b><small>{usd(d.priceBnb * rate)}</small></div>
-        <div><span>{t('k_raised')}</span><b>{bnb(d.raisedBnb, 4)} / 20 BNB</b><small>{usd(d.raisedBnb * rate)}</small></div>
+        <div><span>{t('k_raised')}</span><b>{d.graduated ? '20 / 20 BNB' : `${bnb(d.raisedBnb, 4)} / 20 BNB`}</b><small>{d.graduated ? t('graduated') : usd(d.raisedBnb * rate)}</small></div>
         <div><span>{t('k_vol')}</span><b>{usd((d.volume24hBnb || 0) * rate)}</b><small>{bnb(d.volume24hBnb || 0, 4)} BNB</small></div>
         <div><span>{t('k_holders')}</span><b>{d.holders}</b></div>
         <div><span>{t('k_trades')}</span><b>{d.trades}</b></div>
@@ -136,7 +136,15 @@ export default function Token() {
             <Chart candles={candles.data} mode={mode} rate={rate} />
           </Win>
           <Win title={t('buy_title')}>
-            {d.graduated ? <p className="muted">{t('sell_note')}</p> : (
+            {d.graduated ? (
+              <div className="grad-trade">
+                <p className="muted">{t('sell_note')}</p>
+                <a className="btn" href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>
+                {d.pair && (
+                  <a className="btn ghost" href={`https://dexscreener.com/bsc/${d.pair}`} target="_blank" rel="noreferrer">DexScreener →</a>
+                )}
+              </div>
+            ) : (
               <div className="howto"><ol>
                 <li><b>{t('step_install')}</b><Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd></li>
                 <li><b>{t('step_preflight')}</b><Cmd block>gang preflight</Cmd></li>

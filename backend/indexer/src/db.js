@@ -29,6 +29,10 @@ export function openDb(path) {
     );
     CREATE INDEX IF NOT EXISTS handles_checked ON handles(checked_ts);
   `)
+  // Repair: older indexer zeroed real_bnb on Graduated → UI showed 0/20
+  try {
+    db.prepare("UPDATE tokens SET real_bnb='20000000000000000000' WHERE graduated=1 AND CAST(real_bnb AS REAL) < 1e19").run()
+  } catch { /* ignore */ }
   return db
 }
 

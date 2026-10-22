@@ -6,16 +6,21 @@ import { readPair } from './pancake.js'
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
-const tokRow = (r) => ({
-  address: r.address, name: r.name, symbol: r.symbol, creator: r.creator,
-  createdAt: r.created_ts, createdTx: r.created_tx,
-  graduated: !!r.graduated, pair: r.pair, graduatedAt: r.graduated_ts,
-  raisedBnb: formatEther(BigInt(r.real_bnb)), progressPct: Number((BigInt(r.real_bnb) * 10000n) / GRAD) / 100,
-  soldTokens: fmtTok(r.sold), priceBnb: formatEther(BigInt(r.last_price)), fdvBnb: formatEther(BigInt(r.last_price) * 1000000000n),
-  trades: r.trades, lastTradeAt: r.last_trade_ts,
-  volume24hBnb: r.vol24 != null ? formatEther(BigInt(r.vol24)) : undefined,
-  trades24h: r.n24, holders: r.holders,
-})
+const tokRow = (r) => {
+  const graduated = !!r.graduated
+  // Graduated curve is full: never show 0/20 (indexer used to zero real_bnb on Graduated)
+  const raisedWei = graduated ? GRAD : BigInt(r.real_bnb || '0')
+  return {
+    address: r.address, name: r.name, symbol: r.symbol, creator: r.creator,
+    createdAt: r.created_ts, createdTx: r.created_tx,
+    graduated, pair: r.pair, graduatedAt: r.graduated_ts,
+    raisedBnb: formatEther(raisedWei), progressPct: graduated ? 100 : Number((raisedWei * 10000n) / GRAD) / 100,
+    soldTokens: fmtTok(r.sold), priceBnb: formatEther(BigInt(r.last_price)), fdvBnb: formatEther(BigInt(r.last_price) * 1000000000n),
+    trades: r.trades, lastTradeAt: r.last_trade_ts,
+    volume24hBnb: r.vol24 != null ? formatEther(BigInt(r.vol24)) : undefined,
+    trades24h: r.n24, holders: r.holders,
+  }
+}
 
 let bnbUsd = 0
 async function pollBnb() {
@@ -97,7 +102,8 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
       if (p[0] === 'tokens' && !p[1]) {
         const sort = url.searchParams.get('sort') || 'new'
         const orders = { new: 'created_ts DESC', hot: 'vol24 DESC, n24 DESC, created_ts DESC', graduated: 'graduated_ts DESC', progress: 'CAST(real_bnb AS REAL) DESC' }
-        const where = sort === 'graduated' ? 'graduated=1' : sort === 'hot' || sort === 'progress' ? 'graduated=0' : '1=1'
+        // hot/new keep graduated visible (badge); progress = curve-only; graduated tab = graduated-only
+        const where = sort === 'graduated' ? 'graduated=1' : sort === 'progress' ? 'graduated=0' : '1=1'
         const rows = q.list(orders[sort] || orders.new, where).all(day(), day(), limit)
         const handles = getHandleMap(db, rows.map((r) => r.creator))
         const mapped = rows.map((r) => ({
@@ -106,7 +112,15 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           creatorHandle: handles[r.creator] || null,
         }))
         // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
-        return json(res, 200, await Promise.all(mapped.map((r) => withDexPrice(r))))
+        const priced = await Promise.all(mapped.map((r) => withDexPrice(r)))
+        if (sort === 'hot') {
+          priced.sort((a, b) => {
+            const va = Number(a.volume24hBnb || 0), vb = Number(b.volume24hBnb || 0)
+            if (vb !== va) return vb - va
+            return Number(b.fdvBnb || 0) - Number(a.fdvBnb || 0)
+          })
+        }
+        return json(res, 200, priced)
       }
       if (p[0] === 'tokens' && p[1]) {
         const addr = p[1].toLowerCase(); const t = q.one.get(day(), day(), addr)

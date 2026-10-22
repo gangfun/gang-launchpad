@@ -20,7 +20,7 @@ export class Indexer {
     this.stmts = {
       insTok: db.prepare('INSERT OR IGNORE INTO tokens(address,name,symbol,creator,created_block,created_ts,created_tx,last_price) VALUES(?,?,?,?,?,?,?,?)'),
       updTok: db.prepare('UPDATE tokens SET real_bnb=?, sold=?, last_price=?, trades=trades+1, last_trade_ts=? WHERE address=?'),
-      grad: db.prepare('UPDATE tokens SET graduated=1, pair=?, graduated_ts=?, real_bnb=\'0\' WHERE address=?'),
+      grad: db.prepare("UPDATE tokens SET graduated=1, pair=?, graduated_ts=?, real_bnb='20000000000000000000' WHERE address=?"),
       insTrade: db.prepare('INSERT OR IGNORE INTO trades(token,side,trader,bnb,fee,tokens,real_bnb,price,block,ts,tx,log_index) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)'),
       getSold: db.prepare('SELECT sold FROM tokens WHERE address=?'),
       holder: db.prepare('INSERT INTO holders(token,holder,balance) VALUES(?,?,?) ON CONFLICT(token,holder) DO UPDATE SET balance=excluded.balance'),
