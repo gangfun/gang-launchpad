@@ -206,8 +206,11 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
     const tf = (url.searchParams.get('res') || url.searchParams.get('interval') || '5m').toLowerCase()
     const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 300
     const since = Number(url.searchParams.get('since') || 0)
-    let out = stockCandlesFromTrades(db, addr, res_, since, r.created_ts, r.last_price || '6250000000')
-    // Graduated Chapel: no GeckoTerminal — best-effort Swap logs on MockPair
+    const curve = stockCandlesFromTrades(db, addr, res_, since, r.created_ts, r.last_price || '6250000000')
+    let out = curve
+    // Graduated Chapel: no GeckoTerminal — best-effort Swap logs on MockPair.
+    // If DEX empty (common on Chapel mock pairs), keep curve candles (merge drops the
+    // graduation bucket when dex=[] and live=0).
     if (r.graduated && r.pair && stocksClient) {
       const dex = await fetchSwapOhlcv(stocksClient, {
         pair: r.pair,
@@ -221,7 +224,8 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
         const pk = await readPair(stocksClient, r.pair, addr)
         live = pk?.priceBnb > 0 ? pk.priceBnb : 0
       } catch { /* ignore */ }
-      out = mergeCurveAndDex(out, dex, r.graduated_ts, res_, live)
+      const merged = mergeCurveAndDex(curve, dex, r.graduated_ts, res_, live)
+      out = (merged && merged.length) ? merged : curve
     }
     sendJson(res, 200, out, { noStore: true })
     return true
