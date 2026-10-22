@@ -4,7 +4,7 @@ const dict = {
   en: {
     nav_markets: 'markets', nav_guide: 'guide', nav_github: 'github', search_ph: 'address or symbol', no_results: 'no match',
     hero_1: 'Built for agents.',
-    hero_2: ['Only Agent ID holders can buy on the curve.', 'One wallet, one percent.', '20 BNB graduates to PancakeSwap. LP burned, fees end.'],
+    hero_2: ['Only Agent ID holders can buy on the curve.', 'One wallet, one percent.', '20 BNB graduates to PancakeSwap. LP burned, fees end.', '80% of platform fees buy back and burn GANG.'],
     stat_tokens: 'tokens', stat_graduated: 'graduated', stat_vol: '24h volume', stat_trades: 'trades',
     tab_hot: 'hot', tab_new: 'new', tab_progress: 'closest', tab_graduated: 'graduated',
     col_token: 'token', col_mcap: 'mcap', col_price: 'price · BNB', col_vol: '24h vol', col_trades: '24h tx', col_holders: 'holders', col_curve: 'curve', col_age: 'age',
@@ -54,7 +54,7 @@ const dict = {
   'zh-CN': {
     nav_markets: '行情', nav_guide: '指南', nav_github: 'github', search_ph: '合约地址或代币', no_results: '无结果',
     hero_1: '为 Agent 而建。',
-    hero_2: ['持有 Agent ID 的钱包才能在内盘买入。', '每个钱包最多 1%。', '筹满 20 BNB 毕业到 PancakeSwap，LP 销毁，不再收费。'],
+    hero_2: ['持有 Agent ID 的钱包才能在内盘买入。', '每个钱包最多 1%。', '筹满 20 BNB 毕业到 PancakeSwap，LP 销毁，不再收费。', '80%平台手续费回购并销毁GANG'],
     stat_tokens: '代币', stat_graduated: '已毕业', stat_vol: '24h 成交额', stat_trades: '成交笔数',
     tab_hot: '热门', tab_new: '最新', tab_progress: '临近毕业', tab_graduated: '已毕业',
     col_token: '代币', col_mcap: '市值', col_price: '价格 · BNB', col_vol: '24h 量', col_trades: '24h 笔', col_holders: '持有', col_curve: '进度', col_age: '时间',
@@ -104,7 +104,7 @@ const dict = {
   'zh-TW': {
     nav_markets: '行情', nav_guide: '指南', nav_github: 'github', search_ph: '合約地址或代幣', no_results: '無結果',
     hero_1: '為 Agent 而建。',
-    hero_2: ['持有 Agent ID 的錢包才能在內盤買入。', '每個錢包最多 1%。', '籌滿 20 BNB 畢業到 PancakeSwap，LP 銷毀，不再收費。'],
+    hero_2: ['持有 Agent ID 的錢包才能在內盤買入。', '每個錢包最多 1%。', '籌滿 20 BNB 畢業到 PancakeSwap，LP 銷毀，不再收費。', '80%平台手續費回購並銷毀GANG'],
     stat_tokens: '代幣', stat_graduated: '已畢業', stat_vol: '24h 成交额', stat_trades: '成交筆數',
     tab_hot: '熱門', tab_new: '最新', tab_progress: '臨近畢業', tab_graduated: '已畢業',
     col_token: '代幣', col_mcap: '市值', col_price: '價格 · BNB', col_vol: '24h 量', col_trades: '24h 筆', col_holders: '持有', col_curve: '進度', col_age: '時間',
