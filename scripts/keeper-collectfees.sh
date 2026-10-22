@@ -57,14 +57,20 @@ log_line() {
   fi
 }
 
-# cast may print "123 [1.23e2]" — keep first token only
-wei_only() { awk '{print $1}' <<<"$1"; }
-wei_to_ether() { cast --from-wei "$(wei_only "$1")" ether; }
-gt_wei() { python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$(wei_only "$1")" "$(wei_only "$2")"; }
+# cast may print "123 [1.23e2]" — keep first token of first line
+wei_only() { awk 'NR==1{print $1; exit}'; }
+wei_to_ether() { cast --from-wei "$(printf "%s" "$1" | wei_only)" ether; }
+gt_wei() {
+  local a b
+  a="$(printf "%s" "$1" | wei_only)"
+  b="$(printf "%s" "$2" | wei_only)"
+  python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$a" "$b"
+}
+u256() { cast call "$1" "$2" --rpc-url "$BSC_RPC" | wei_only; }
 
-ACCRUED="$(wei_only "$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")")"
-PENDING="$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")"
-FEE_VAULT="$(wei_only "$(cast call "$LAUNCHPAD" "feeVault()(address)" --rpc-url "$BSC_RPC")")"
+ACCRUED="$(u256 "$LAUNCHPAD" "accruedFees()(uint256)")"
+PENDING="$(u256 "$LAUNCHPAD" "pendingBuyback()(uint256)")"
+FEE_VAULT="$(cast call "$LAUNCHPAD" "feeVault()(address)" --rpc-url "$BSC_RPC" | wei_only)"
 MAX_WEI="$(cast --to-wei "$MAX_ACCRUED_ETHER" ether)"
 
 log_line "$(ts) launchpad=${LAUNCHPAD} expected_keeper=${EXPECTED_KEEPER}"
@@ -108,7 +114,7 @@ if [[ "$ACCRUED" != "0" ]]; then
   cast send "$LAUNCHPAD" "collectFees()" --rpc-url "$BSC_RPC" --private-key "$KEEPER_PRIVATE_KEY"
 fi
 
-PENDING="$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")"
+PENDING="$(u256 "$LAUNCHPAD" "pendingBuyback()(uint256)")"
 if [[ "$PENDING" != "0" ]]; then
   log_line "$(ts) BROADCAST flushBuyback…"
   cast send "$LAUNCHPAD" "flushBuyback()" --rpc-url "$BSC_RPC" --private-key "$KEEPER_PRIVATE_KEY"
@@ -116,4 +122,4 @@ else
   log_line "$(ts) pendingBuyback=0 — no flush"
 fi
 
-log_line "$(ts) done accrued=$(wei_to_ether "$(wei_only "$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")")")BNB pending=$(wei_to_ether "$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")")BNB"
+log_line "$(ts) done accrued=$(wei_to_ether "$(u256 "$LAUNCHPAD" "accruedFees()(uint256)")")BNB pending=$(wei_to_ether "$(u256 "$LAUNCHPAD" "pendingBuyback()(uint256)")")BNB"
