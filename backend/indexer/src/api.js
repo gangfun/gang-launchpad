@@ -34,7 +34,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
     one: db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM holders WHERE token=t.address AND balance!='0') AS holders,
              (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24 FROM tokens t WHERE address=?`),
-    trades: db.prepare('SELECT side,trader,bnb,fee,tokens,price,block,ts,tx FROM trades WHERE token=? ORDER BY ts DESC, id DESC LIMIT ?'),
+    trades: db.prepare('SELECT side,trader,bnb,fee,tokens,price,block,ts,tx FROM trades WHERE token=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?'),
     candles: db.prepare(`SELECT (CAST(ts AS INTEGER) / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS t, price, bnb, id FROM trades WHERE token=? AND ts>=? ORDER BY id`),
     holders: db.prepare("SELECT holder, balance FROM holders WHERE token=? AND balance!='0' ORDER BY CAST(balance AS REAL) DESC LIMIT ?"),
     search: db.prepare(`SELECT address, name, symbol, graduated, last_price FROM tokens
@@ -108,13 +108,22 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           return json(res, 200, body)
         }
         if (p[2] === 'trades') {
-          const rows = q.trades.all(addr, limit)
+          const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
+          const raw = q.trades.all(addr, limit + 1, offset)
+          const hasMore = raw.length > limit
+          const rows = hasMore ? raw.slice(0, limit) : raw
           const handles = getHandleMap(db, rows.map((r) => r.trader))
-          return json(res, 200, rows.map((r) => ({
-            ...r,
-            bnb: formatEther(BigInt(r.bnb)), fee: formatEther(BigInt(r.fee)), tokens: fmtTok(r.tokens), price: formatEther(BigInt(r.price)),
-            traderHandle: handles[r.trader] || null,
-          })))
+          return json(res, 200, {
+            items: rows.map((r) => ({
+              ...r,
+              bnb: formatEther(BigInt(r.bnb)), fee: formatEther(BigInt(r.fee)), tokens: fmtTok(r.tokens), price: formatEther(BigInt(r.price)),
+              traderHandle: handles[r.trader] || null,
+            })),
+            hasMore,
+            nextOffset: hasMore ? offset + limit : null,
+            limit,
+            offset,
+          })
         }
         if (p[2] === 'holders') {
           const rows = q.holders.all(addr, limit)

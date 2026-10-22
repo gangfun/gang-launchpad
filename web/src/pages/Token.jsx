@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, ago, bnb, px, tok, short, usd, isOfficial } from '../api.js'
 import { useT } from '../i18n.jsx'
 import Chart from '../components/Chart.jsx'
@@ -8,13 +8,21 @@ import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
 import Agent from '../components/Agent.jsx'
 
+const TRADES_PAGE = 30
+
 export default function Token() {
   const { t } = useT()
   const { address } = useParams()
   const [res, setRes] = useState('5m')
   const [mode, setMode] = useState('mcap')
   const q = useQuery({ queryKey: ['token', address], queryFn: () => api.token(address), refetchInterval: 15_000 })
-  const trades = useQuery({ queryKey: ['trades', address], queryFn: () => api.trades(address, 60), refetchInterval: 15_000 })
+  const trades = useInfiniteQuery({
+    queryKey: ['trades', address],
+    queryFn: ({ pageParam }) => api.trades(address, { limit: TRADES_PAGE, offset: pageParam }),
+    initialPageParam: 0,
+    getNextPageParam: (last) => (last?.hasMore ? last.nextOffset : undefined),
+    refetchInterval: 15_000,
+  })
   const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20), refetchInterval: 15_000 })
   const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res), refetchInterval: 15_000 })
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
@@ -28,6 +36,7 @@ export default function Token() {
   const pct = d.graduated ? 100 : d.progressPct
   const pk = d.pancake
   const showDexPrice = d.graduated && pk?.priceBnb != null && pk.priceBnb > 0
+  const tradeRows = trades.data?.pages.flatMap((p) => p.items || []) || []
   return (
     <main className="wrap">
       <div className="ident">
@@ -102,12 +111,12 @@ export default function Token() {
               </ol></div>
             )}
           </Win>
-          <Win title={t('trades')} flush>
-            {trades.data?.length === 0 && <div className="empty">{t('no_trades')}</div>}
-            {trades.data?.length > 0 && (
+          <Win title={t('trades')} flush bodyClass="list-scroll">
+            {tradeRows.length === 0 && !trades.isLoading && <div className="empty">{t('no_trades')}</div>}
+            {tradeRows.length > 0 && (
               <table>
                 <thead><tr><th>{t('side')}</th><th>{t('agent')}</th><th className="r">{t('bnb')}</th><th className="r">{t('tokens')}</th><th className="r">{t('k_mcap')}</th><th className="r">{t('age')}</th></tr></thead>
-                <tbody>{trades.data.map((x) => (
+                <tbody>{tradeRows.map((x) => (
                   <tr key={x.tx + x.side}>
                     <td className={x.side === 'buy' ? 'up' : 'down'}>{x.side}</td>
                     <td><Agent address={x.trader} handle={x.traderHandle} href={`https://bscscan.com/tx/${x.tx}`} /></td>
@@ -115,8 +124,18 @@ export default function Token() {
                   </tr>))}</tbody>
               </table>
             )}
+            {trades.hasNextPage && (
+              <button
+                type="button"
+                className="more"
+                disabled={trades.isFetchingNextPage}
+                onClick={() => trades.fetchNextPage()}
+              >
+                {trades.isFetchingNextPage ? t('loading') : t('load_more')}
+              </button>
+            )}
           </Win>
-          <Win title={t('holders')} flush right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
+          <Win title={t('holders')} flush bodyClass="list-scroll" right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
             {holders.data?.length === 0 && <div className="empty">{t('no_holders')}</div>}
             {holders.data?.length > 0 && (
               <table><thead><tr><th>{t('agent')}</th><th className="r">{t('tokens')}</th><th className="r">%</th></tr></thead>

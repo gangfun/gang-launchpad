@@ -306,4 +306,35 @@ td.r, th.r { text-align: right; }
 .pancake-kv { margin: 0; box-shadow: none; border: 0; }
 .pancake p a { color: var(--yellow); }
 
+/* ---------- list cards (trades / holders): fixed height + internal scroll ---------- */
+.win > .b.list-scroll {
+  max-height: 420px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-2) transparent;
+}
+.win > .b.list-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--s1);
+  z-index: 1;
+}
+.win > .b.list-scroll .more {
+  display: block;
+  width: 100%;
+  height: 40px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: var(--s2);
+  color: var(--text-2);
+  font-family: var(--px);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.win > .b.list-scroll .more:hover:not(:disabled) { color: var(--yellow); }
+.win > .b.list-scroll .more:disabled { opacity: .55; cursor: default; }
+
 .tip { margin: 8px 0 0; font-size: 12px; }
