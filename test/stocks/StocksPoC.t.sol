@@ -12,9 +12,9 @@ import {LaunchpadS} from "../../src/stocks/LaunchpadS.sol";
 import {MigratorS} from "../../src/stocks/MigratorS.sol";
 import {TaxLaunchToken} from "../../src/stocks/TaxLaunchToken.sol";
 
-import {MockSPCXB} from "./mocks/MockSPCXB.sol";
-import {MockGANG} from "./mocks/MockGANG.sol";
-import {MockPairFactory} from "./mocks/MockPairFactory.sol";
+import {MockSPCXB} from "../../src/stocks/mocks/MockSPCXB.sol";
+import {MockGANG} from "../../src/stocks/mocks/MockGANG.sol";
+import {MockPairFactory} from "../../src/stocks/mocks/MockPairFactory.sol";
 
 /// @notice T0 Stocks PoC: create → buy/sell → 1% tax split (50/50) → claim → graduate.
 /// @dev IS_TESTNET_MIN_PARAMS: graduation = 1e18 MockSPCXB; agent gate off; wallet cap off.

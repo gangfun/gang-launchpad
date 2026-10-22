@@ -54,3 +54,18 @@ VIRTUAL_QUOTE ≈ 0.333e18
 - Chapel deploy scripts without chain-56 broadcast
 - Optional `buyWithBNB` + mock router
 - Frontend Stocks env pointing at test addresses
+
+## Chapel deploy (M2 · chainId 97 only)
+
+```bash
+# Dry-run (no broadcast)
+./script/stocks/deploy-chapel.sh
+
+# Broadcast — requires CHAPEL_PRIVATE_KEY or TESTNET_PRIVATE_KEY
+# NEVER use DEPLOYER_PRIVATE_KEY / chain 56
+CHAPEL_RPC_URL=https://bsc-testnet-rpc.publicnode.com \
+CHAPEL_PRIVATE_KEY=0x… \
+./script/stocks/deploy-chapel.sh --broadcast
+```
+
+Script asserts `block.chainid == 97` and reverts on 56. Deploys MockSPCXB + MockGANG + MockPairFactory + stocks stack with IS_TESTNET_MIN_PARAMS (graduation 1e18).
