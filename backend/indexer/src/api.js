@@ -2,7 +2,7 @@ import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
 import { getMeta } from './db.js'
-import { readPair, fetchDexOhlcv, fetchSwapOhlcv, mergeCurveAndDex } from './pancake.js'
+import { readPair, fetchDexOhlcv, mergeCurveAndDex } from './pancake.js'
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
@@ -68,7 +68,11 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
              (SELECT COUNT(*) FROM trades) AS trades, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE ts>?) AS vol24,
              (SELECT SUM(CAST(fee AS REAL)) FROM trades) AS fees`),
   }
-  const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'access-control-allow-origin': '*' }); res.end(JSON.stringify(body)) }
+  const json = (res, code, body, opts = {}) => {
+    const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*' }
+    if (opts.noStore) headers['cache-control'] = 'no-store'
+    res.writeHead(code, headers); res.end(JSON.stringify(body))
+  }
   const day = () => Math.floor(Date.now() / 1000) - 86400
 
   const server = http.createServer(async (req, res) => {
@@ -190,7 +194,9 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           })
         }
         if (p[2] === 'candles') {
-          const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[url.searchParams.get('res') || '5m'] || 300
+          // Accept res= (frontend) and interval= (alias); map UI labels → seconds
+          const tf = (url.searchParams.get('res') || url.searchParams.get('interval') || '5m').toLowerCase()
+          const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 300
           const since = Number(url.searchParams.get('since') || 0)
           const out = []; let cur = null
           // opening candle at creation so a token with no trades still has a chart (curve opens at 6.25e-9 BNB)
@@ -202,19 +208,15 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
             else { cur.h = Math.max(cur.h, px); cur.l = Math.min(cur.l, px); cur.c = px; cur.v += v }
           }
           if (cur) out.push(cur)
-          // Graduated: append Pancake/DEX OHLCV so mcap tracks live FDV (not frozen curve last)
+          // Graduated: append DEX OHLCV (GT 1m base → resample to res_). No Swap RPC scan on
+          // the request path — it hung interval switches (nginx timeout, chart stuck on prior tf).
           if (t.graduated && t.pair) {
-            let dex = await fetchDexOhlcv(t.pair, res_)
-            if (!dex.length) {
-              dex = await fetchSwapOhlcv(client, {
-                pair: t.pair, token: addr, fromTs: t.graduated_ts || t.created_ts, resSec: res_,
-              })
-            }
+            const dex = await fetchDexOhlcv(t.pair, res_)
             const pk = await readPair(client, t.pair, addr)
             const live = pk?.priceBnb > 0 ? pk.priceBnb : 0
-            return json(res, 200, mergeCurveAndDex(out, dex, t.graduated_ts, res_, live))
+            return json(res, 200, mergeCurveAndDex(out, dex, t.graduated_ts, res_, live), { noStore: true })
           }
-          return json(res, 200, out)
+          return json(res, 200, out, { noStore: true })
         }
       }
       json(res, 404, { error: 'unknown route' })

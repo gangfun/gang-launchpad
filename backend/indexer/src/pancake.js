@@ -57,31 +57,80 @@ export async function readPair(client, pair, token) {
   }
 }
 
-/** Map our chart res (seconds) → GeckoTerminal timeframe + aggregate. */
-function geckoParams(resSec) {
-  if (resSec <= 60) return { timeframe: 'minute', aggregate: 1 }
-  if (resSec <= 300) return { timeframe: 'minute', aggregate: 5 }
-  if (resSec <= 900) return { timeframe: 'minute', aggregate: 15 }
-  if (resSec <= 3600) return { timeframe: 'hour', aggregate: 1 }
-  if (resSec <= 14400) return { timeframe: 'hour', aggregate: 4 }
-  return { timeframe: 'day', aggregate: 1 }
+/**
+ * Resample OHLCV bars into coarser buckets (open=first, close=last, h/l extrema, v sum).
+ * Used so one GT 1m base serves 5m/15m/1h/4h/1d without per-interval upstream calls.
+ */
+export function resampleCandles(candles, resSec) {
+  if (!candles?.length) return []
+  const sec = Math.max(1, Number(resSec) || 60)
+  if (sec <= 60) {
+    // Already 1m (or finer): snap to exact 1m buckets in case upstream drifts
+    const out = []
+    let cur = null
+    for (const c of candles) {
+      const t = Math.floor(c.t / 60) * 60
+      if (!cur || cur.t !== t) {
+        if (cur) out.push(cur)
+        cur = { t, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v || 0 }
+      } else {
+        cur.h = Math.max(cur.h, c.h)
+        cur.l = Math.min(cur.l, c.l)
+        cur.c = c.c
+        cur.v += c.v || 0
+      }
+    }
+    if (cur) out.push(cur)
+    return out
+  }
+  const out = []
+  let cur = null
+  for (const c of candles) {
+    const t = Math.floor(c.t / sec) * sec
+    if (!cur || cur.t !== t) {
+      if (cur) out.push(cur)
+      cur = { t, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v || 0 }
+    } else {
+      cur.h = Math.max(cur.h, c.h)
+      cur.l = Math.min(cur.l, c.l)
+      cur.c = c.c
+      cur.v += c.v || 0
+    }
+  }
+  if (cur) out.push(cur)
+  return out
 }
 
 /**
  * DEX OHLCV in BNB-per-token (same unit as curve candles).
- * Primary: GeckoTerminal pool candles (currency=token → quote/WBNB).
- * Returns [] on failure (caller stitches live price).
+ * Fetch GT 1m once per pair (cached), resample to requested interval so
+ * 1m/5m/15m/1h/4h/1d actually differ and switching stays fast under GT rate limits.
+ * Returns [] on failure (caller stitches live price; swap fallback is optional/slow).
  */
 export async function fetchDexOhlcv(pair, resSec, { limit = 500 } = {}) {
   if (!pair) return []
-  const key = `${pair.toLowerCase()}:${resSec}`
+  const sec = Math.max(1, Number(resSec) || 60)
+  const key = `${pair.toLowerCase()}:${sec}`
   const hit = ohlcvCache.get(key)
   if (hit && Date.now() - hit.at < 20_000) return hit.candles
 
-  const { timeframe, aggregate } = geckoParams(resSec)
-  const url = `https://api.geckoterminal.com/api/v2/networks/bsc/pools/${pair.toLowerCase()}/ohlcv/${timeframe}?aggregate=${aggregate}&limit=${Math.min(limit, 1000)}&currency=token`
+  const base = await fetchDexOhlcvBase(pair)
+  if (!base.length) return []
+  const candles = resampleCandles(base, sec)
+  const sliced = limit > 0 ? candles.slice(-Math.min(limit, 1000)) : candles
+  ohlcvCache.set(key, { at: Date.now(), candles: sliced })
+  return sliced
+}
+
+/** One GT minute/aggregate=1 pull per pair; shared by all chart intervals. */
+async function fetchDexOhlcvBase(pair) {
+  const key = `${pair.toLowerCase()}:base1m`
+  const hit = ohlcvCache.get(key)
+  if (hit && Date.now() - hit.at < 20_000) return hit.candles
+
+  const url = `https://api.geckoterminal.com/api/v2/networks/bsc/pools/${pair.toLowerCase()}/ohlcv/minute?aggregate=1&limit=1000&currency=token`
   try {
-    const r = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8000) })
+    const r = await fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(6000) })
     if (!r.ok) return []
     const j = await r.json()
     const list = j?.data?.attributes?.ohlcv_list
