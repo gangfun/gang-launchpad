@@ -14,10 +14,11 @@ export default function Layout() {
       <header className="bar"><div className="wrap">
         <NavLink to="/" className="logo"><Logo /></NavLink>
         <nav className="nav">
-          <NavLink to="/" end>{t('nav_markets')}</NavLink>
-          <NavLink to="/stocks">{t('nav_stocks')}</NavLink>
-          <NavLink to="/launch">{t('nav_launch')}</NavLink>
-          <NavLink to="/docs">{t('nav_guide')}</NavLink>
+          <span className="nav-links">
+            <NavLink to="/" end>{t('nav_markets')}</NavLink>
+            <NavLink to="/stocks">{t('nav_stocks')}</NavLink>
+            <NavLink to="/docs">{t('nav_guide')}</NavLink>
+          </span>
           <span className="nav-soc">
             <a href={GITHUB_CLI} className="soc-link" target="_blank" rel="noreferrer">{t('nav_github')}</a>
             <XLink href={X_URL} className="soc-link" label={t('social_x_a11y')} />
