@@ -5,6 +5,7 @@ import { useT, Lines } from '../i18n.jsx'
 import TokenTable from '../components/TokenTable.jsx'
 import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
+import AgentBuyersCounter from '../components/AgentBuyersCounter.jsx'
 
 const TABS = ['hot', 'new', 'progress', 'graduated']
 const PAGE = 24
@@ -24,7 +25,7 @@ export default function Home() {
   const { t } = useT()
   const [tab, setTab] = useState('hot')
   const listRef = useRef(null)
-  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats })
+  const stats = useQuery({ queryKey: ['stats'], queryFn: api.stats, refetchInterval: 20_000 })
   const q = useInfiniteQuery({
     queryKey: ['tokens', tab],
     queryFn: ({ pageParam }) => api.tokens(tab, { limit: PAGE, offset: pageParam }),
@@ -48,10 +49,21 @@ export default function Home() {
   return (
     <main className="wrap">
       <section className="hero">
-        <span className="tag">BNB Chain · Binance Agentic Wallet</span>
-        <h1>{t('hero_1')}</h1>
-        <Lines k="hero_2" className="hero-lines" />
-        <Cmd>npx skills add gangfun/gang-launchpad/skill</Cmd>
+        <div className="hero-grid">
+          <div className="hero-main">
+            <span className="tag">BNB Chain · Binance Agentic Wallet</span>
+            <h1>{t('hero_1')}</h1>
+            <Lines k="hero_2" className="hero-lines" />
+            <Cmd>npx skills add gangfun/gang-launchpad/skill</Cmd>
+          </div>
+          <aside className="hero-aside">
+            <AgentBuyersCounter
+              value={stats.data?.agentBuyers}
+              loading={stats.isLoading}
+              error={stats.isError}
+            />
+          </aside>
+        </div>
         <div className="stats">
           <div className="stat"><b>{stats.isError ? '!' : (stats.data?.tokens ?? '—')}</b><span>{t('stat_tokens')}</span></div>
           <div className="stat"><b>{stats.isError ? '!' : (stats.data?.graduated ?? '—')}</b><span>{t('stat_graduated')}</span></div>

@@ -2,6 +2,7 @@ import { openDb } from './db.js'
 import { Indexer } from './indexer.js'
 import { startApi } from './api.js'
 import { refreshHandles } from './handles.js'
+import { refreshAgentBuyers, seedBuyersFromTrades } from './agentBuyers.js'
 
 const DEFAULT_RPCS = 'https://bsc-rpc.publicnode.com,https://bsc.publicnode.com'
 const urls = (process.env.GANG_RPC_URLS || process.env.GANG_RPC_URL || DEFAULT_RPCS)
@@ -20,6 +21,7 @@ const cfg = {
   batch: Number(process.env.GANG_BATCH || 50),
 }
 const db = openDb(cfg.db)
+seedBuyersFromTrades(db)
 const ix = new Indexer({ db, rpcUrls: cfg.rpcUrls, launchpad: cfg.launchpad, startBlock: cfg.startBlock, batch: cfg.batch })
 const once = process.argv.includes('--once')
 // Serve API immediately so deploys aren't blocked on long backfills.
@@ -32,5 +34,6 @@ try {
 }
 if (!once) {
   refreshHandles(db, ix.client).catch((e) => console.error('handle refresh:', e.message))
+  refreshAgentBuyers(db, ix.client).catch((e) => console.error('agent buyers:', e.message))
   ix.run()
 }

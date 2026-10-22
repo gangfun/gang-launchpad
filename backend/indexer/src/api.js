@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
+import { countAgentBuyers, refreshAgentBuyers, seedBuyersFromTrades } from './agentBuyers.js'
 import { getMeta } from './db.js'
 import { readPair, fetchDexOhlcv, mergeCurveAndDex, sumDexVolume24hBnb } from './pancake.js'
 import { getGraduatedHolderStats } from './holdersLive.js'
@@ -31,6 +32,14 @@ pollBnb(); setInterval(pollBnb, 60_000)
 
 export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
   const client = makeClient(rpcUrls)
+  seedBuyersFromTrades(db)
+  let agentBuyerRefresh = 0
+  const maybeRefreshAgentBuyers = async () => {
+    const now = Date.now()
+    if (now - agentBuyerRefresh < 25_000) return
+    agentBuyerRefresh = now
+    try { await refreshAgentBuyers(db, client, { limit: 60 }) } catch { /* non-fatal */ }
+  }
 
   /** Graduated + pair → overwrite priceBnb/fdvBnb from Pancake (readPair has 30s TTL). Curve tokens unchanged. */
   async function withDexPrice(row, { includePancake = false } = {}) {
@@ -128,7 +137,20 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         }))
         return json(res, 200, await Promise.all(hits.map(async (r) => withGraduatedKpis(await withDexPrice(r)))))
       }
-      if (p[0] === 'stats') { const s = q.stats.get(day()); return json(res, 200, { launchpad, bnbUsd, ...s, vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0', fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0' }) }
+      if (p[0] === 'stats' && !p[1]) {
+        void maybeRefreshAgentBuyers()
+        const s = q.stats.get(day())
+        return json(res, 200, {
+          launchpad, bnbUsd, ...s,
+          vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0',
+          fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0',
+          agentBuyers: countAgentBuyers(db),
+        })
+      }
+      if (p[0] === 'stats' && p[1] === 'agent-buyers') {
+        await maybeRefreshAgentBuyers()
+        return json(res, 200, { agentBuyers: countAgentBuyers(db), launchpad })
+      }
       if (p[0] === 'tokens' && !p[1]) {
         const sort = url.searchParams.get('sort') || 'new'
         const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
