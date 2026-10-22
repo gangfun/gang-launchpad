@@ -7,6 +7,7 @@ import Chart from '../components/Chart.jsx'
 import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
 import Agent from '../components/Agent.jsx'
+import TokenAvatar from '../components/TokenAvatar.jsx'
 
 const TRADES_PAGE = 30
 const HOLDERS_PAGE = 50
@@ -67,6 +68,7 @@ export default function Token() {
   return (
     <main className="wrap">
       <div className="ident">
+        <TokenAvatar symbol={d.symbol} address={d.address} logoUrl={d.logoUrl} size={48} />
         <h1>{d.symbol}</h1><span className="name">{d.name}</span>
         <a className="addr" href={`https://bscscan.com/token/${d.address}`} target="_blank" rel="noreferrer">{d.address}</a>
         <span className={`badge ${d.graduated ? 'grad' : 'yellow'}`}>{d.graduated ? t('graduated') : t('curve')}</span>

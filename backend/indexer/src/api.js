@@ -1,10 +1,28 @@
 import http from 'node:http'
+import fs from 'node:fs'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
 import { countAgentBuyers, refreshAgentBuyers, seedBuyersFromTrades } from './agentBuyers.js'
 import { getMeta } from './db.js'
 import { readPair, fetchDexOhlcv, mergeCurveAndDex, sumDexVolume24hBnb } from './pancake.js'
 import { getGraduatedHolderStats } from './holdersLive.js'
+import {
+  getLogoMap, initMediaTable, logoFilePath, parseDataUrl, saveTokenLogo, setLogoRow,
+} from './media.js'
+
+async function readJson(req, maxBytes = 700_000) {
+  const chunks = []
+  let n = 0
+  for await (const chunk of req) {
+    n += chunk.length
+    if (n > maxBytes) throw new Error('body too large')
+    chunks.push(chunk)
+  }
+  if (!chunks.length) return {}
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+const ADDR_RE = /^0x[a-fA-F0-9]{40}$/
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
@@ -31,6 +49,7 @@ async function pollBnb() {
 pollBnb(); setInterval(pollBnb, 60_000)
 
 export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
+  initMediaTable(db)
   const client = makeClient(rpcUrls)
   seedBuyersFromTrades(db)
   let agentBuyerRefresh = 0
@@ -161,10 +180,12 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         const pin = (process.env.GANG_PLATFORM_TOKEN || '0x0c6302401aa5325C2E36F170f52C00B1d220B405').toLowerCase()
         const enrich = async (rows) => {
           const handles = getHandleMap(db, rows.map((r) => r.creator))
+          const logos = getLogoMap(db, rows.map((r) => r.address))
           const mapped = rows.map((r) => ({
             ...tokRow(r),
             volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
             creatorHandle: handles[r.creator] || null,
+            logoUrl: logos[r.address.toLowerCase()] ? `/tokens/${r.address}/logo` : undefined,
           }))
           // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
           return Promise.all(mapped.map(async (r) => withGraduatedKpis(await withDexPrice(r))))
@@ -210,15 +231,43 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         })
       }
       if (p[0] === 'tokens' && p[1]) {
-        const addr = p[1].toLowerCase(); const t = q.one.get(day(), day(), addr)
+        const addr = p[1].toLowerCase()
+        if (p[2] === 'logo') {
+          if (req.method === 'POST') {
+            if (!ADDR_RE.test(addr)) return json(res, 400, { error: 'invalid address' })
+            const exists = db.prepare('SELECT 1 FROM tokens WHERE address=?').get(addr)
+            if (!exists) return json(res, 404, { error: 'token not indexed yet' })
+            const body = await readJson(req)
+            const parsed = parseDataUrl(body.image)
+            if (!parsed) return json(res, 400, { error: 'expected data:image/*;base64,... (max 512KB)' })
+            const saved = saveTokenLogo(addr, parsed)
+            setLogoRow(db, addr, parsed.mime, saved.file)
+            return json(res, 200, { ok: true, address: addr, logoUrl: `/tokens/${addr}/logo`, bytes: saved.bytes })
+          }
+          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          const logos = getLogoMap(db, [addr])
+          if (!logos[addr]) return json(res, 404, { error: 'no logo' })
+          const full = logoFilePath(addr)
+          if (!full) return json(res, 404, { error: 'no logo file' })
+          const mime = logos[addr].mime || 'image/png'
+          res.writeHead(200, {
+            'content-type': mime,
+            'cache-control': 'public, max-age=300',
+            'access-control-allow-origin': '*',
+          })
+          return res.end(fs.readFileSync(full))
+        }
+        const t = q.one.get(day(), day(), addr)
         if (!t) return json(res, 404, { error: 'not found' })
         if (!p[2]) {
           const handles = getHandleMap(db, [t.creator])
+          const logos = getLogoMap(db, [addr])
           const body = await withGraduatedKpis(await withDexPrice({
             ...tokRow(t),
             volume24hBnb: t.vol24 ? formatEther(BigInt(Math.round(t.vol24))) : '0',
             creatorHandle: handles[t.creator] || null,
             creatorUrl: t.creator ? `https://bscscan.com/address/${t.creator}` : null,
+            logoUrl: logos[addr] ? `/tokens/${addr}/logo` : undefined,
           }, { includePancake: true }), { detail: true })
           return json(res, 200, body)
         }
@@ -301,6 +350,14 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           }
           return json(res, 200, out, { noStore: true })
         }
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        })
+        return res.end()
       }
       json(res, 404, { error: 'unknown route' })
     } catch (e) { json(res, 500, { error: e.message }) }

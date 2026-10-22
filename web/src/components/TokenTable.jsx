@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom'
-import { ago, px, short, usd, api, isOfficial } from '../api.js'
+import { ago, usd, api, isOfficial } from '../api.js'
 import { useQuery } from '@tanstack/react-query'
 import { useT, Lines } from '../i18n.jsx'
 import Cmd from './Cmd.jsx'
@@ -31,6 +31,8 @@ function ColdStart() {
       </ol>
       <p className="cold-docs">
         <Link to="/docs">{t('cold_docs')}</Link>
+        {' · '}
+        <Link to="/launch">{t('nav_launch')}</Link>
       </p>
     </div>
   )
@@ -38,44 +40,66 @@ function ColdStart() {
 
 const pancakeHref = (r) => `https://pancakeswap.finance/swap?outputCurrency=${r.address}&chain=bsc`
 
+function Chip({ kind, children }) {
+  return <span className={`chip chip-${kind}`}>{children}</span>
+}
+
 function MarketCard({ r, rate, t, onOpen }) {
+  const mcap = usd(r.fdvBnb * rate)
+  const vol = usd((r.volume24hBnb || 0) * rate)
+  const age = ago(r.lastTradeAt || r.createdAt)
+  const pct = r.graduated ? 100 : r.progressPct
+
   return (
     <button
       type="button"
       className="market-card"
       onClick={() => onOpen(r.address)}
     >
-      <div className="market-card-top">
-        <TokenAvatar symbol={r.symbol} address={r.address} size={44} />
-        <div className="market-card-id">
-          <div className="market-card-sym">
+      <div className="market-card-head">
+        <TokenAvatar symbol={r.symbol} address={r.address} logoUrl={r.logoUrl} size={52} className="market-card-av" />
+        <div className="market-card-title">
+          <div className="market-card-symrow">
             <span className="sym">{r.symbol}</span>
-            {isOfficial(r.address) && <span className="badge official">{t('official')}</span>}
-            {r.graduated && <span className="badge grad">{t('graduated')}</span>}
+            <span className="market-card-chips">
+              {isOfficial(r.address) && <Chip kind="official">{t('official')}</Chip>}
+              {r.graduated && <Chip kind="grad">{t('graduated')}</Chip>}
+            </span>
           </div>
           <span className="name">{r.name}</span>
         </div>
-        <span className="market-card-age dim">{ago(r.lastTradeAt || r.createdAt)}</span>
+        <span className="market-card-age">{age}</span>
       </div>
-      <div className="market-card-stats">
-        <div>
-          <span>{t('col_mcap')}</span>
-          <b className="num">{usd(r.fdvBnb * rate)}</b>
-        </div>
+
+      <div className="market-card-mcap">
+        <span className="label">{t('col_mcap')}</span>
+        <b className="num mcap-num">{mcap}</b>
+      </div>
+
+      <div className="market-card-metrics">
         <div>
           <span>{t('col_vol')}</span>
-          <b className="num">{usd((r.volume24hBnb || 0) * rate)}</b>
+          <b className="num">{vol}</b>
         </div>
-        <div className="market-card-foot">
-          {r.graduated
-            ? <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>{t('trade_on_pancake')} →</a>
-            : (
-              <>
-                <span className="pbar"><i style={{ width: `${Math.max(2, r.progressPct)}%` }} /></span>
-                <span className="dim">{r.progressPct}%</span>
-              </>
-            )}
+        <div>
+          <span>{r.graduated ? t('col_curve') : t('k_progress')}</span>
+          <b className="num">{r.graduated ? t('graduated') : `${pct}%`}</b>
         </div>
+      </div>
+
+      <div className="market-card-progress">
+        {r.graduated
+          ? (
+            <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+              {t('trade_on_pancake')} →
+            </a>
+          )
+          : (
+            <>
+              <span className="pbar market-pbar"><i style={{ width: `${Math.max(2, pct)}%` }} /></span>
+              <span className="progress-pct">{pct}%</span>
+            </>
+          )}
       </div>
     </button>
   )
