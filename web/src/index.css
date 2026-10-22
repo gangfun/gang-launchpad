@@ -512,3 +512,56 @@ td.r, th.r { text-align: right; }
 .sort-sel:focus { outline: 1px solid var(--yellow); }
 
 .tip { margin: 8px 0 0; font-size: 12px; }
+
+/* Dev logo upload (test-only page) */
+.dev-banner {
+  margin: 12px 0 0;
+  padding: 8px 12px;
+  background: #FCD535;
+  color: #000;
+  font: 12px/1.4 ui-monospace, monospace;
+  letter-spacing: .03em;
+  border-radius: 4px;
+}
+.dev-logo-form {
+  display: grid;
+  gap: 12px;
+  max-width: 420px;
+}
+.dev-logo-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted, #888);
+}
+.dev-logo-form input[type="text"],
+.dev-logo-form input:not([type]) {
+  font: 13px ui-monospace, monospace;
+  padding: 8px 10px;
+  background: #111;
+  border: 1px solid #333;
+  color: #eee;
+  border-radius: 4px;
+}
+.dev-logo-form button {
+  justify-self: start;
+  padding: 8px 14px;
+  background: #FCD535;
+  color: #000;
+  border: 0;
+  border-radius: 4px;
+  font: 600 12px ui-monospace, monospace;
+  cursor: pointer;
+}
+.dev-logo-form button:disabled { opacity: .5; cursor: wait; }
+.dev-logo-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dev-logo-preview img {
+  border-radius: 8px;
+  object-fit: cover;
+  background: #222;
+}
+.dev-logo-status { white-space: pre-wrap; word-break: break-all; }

@@ -6,7 +6,7 @@ import TokenTable from '../components/TokenTable.jsx'
 import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
 import AgentBuyersCounter from '../components/AgentBuyersCounter.jsx'
-import { stockTrackPlaceholders, stocksConfigured } from '../stocksConfig.js'
+import { stocksConfigured } from '../stocksConfig.js'
 
 const TABS = ['hot', 'new', 'progress', 'graduated']
 const TRACKS = ['all', 'main', 'stocks']
@@ -39,7 +39,16 @@ export default function Home() {
     refetchInterval: 30_000,
     enabled: wantMain,
   })
-  const stockRows = useMemo(() => (wantStocks ? stockTrackPlaceholders() : []), [wantStocks])
+  const sq = useQuery({
+    queryKey: ['stock-tokens'],
+    queryFn: () => api.stockTokens({ limit: 100 }),
+    refetchInterval: 30_000,
+    enabled: wantStocks,
+  })
+  const stockRows = useMemo(() => {
+    if (!wantStocks) return []
+    return (sq.data?.items || []).map((r) => ({ ...r, track: 'stocks' }))
+  }, [wantStocks, sq.data])
   const mainRows = useMemo(() => {
     if (!wantMain) return []
     const raw = pinOfficialHot(q.data?.pages.flatMap((p) => p.items || []) || [], tab)
@@ -59,10 +68,10 @@ export default function Home() {
     if (el.scrollHeight - el.scrollTop - el.clientHeight < 96) loadMore()
   }, [loadMore])
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = 0 }, [tab, track])
-  const apiDown = wantMain && (q.isError || stats.isError)
-  const emptyHint = track === 'stocks' && !stocksConfigured()
+  const apiDown = (wantMain && (q.isError || stats.isError)) || (wantStocks && track === 'stocks' && sq.isError)
+  const emptyHint = track === 'stocks' && !stocksConfigured() && !stockRows.length
     ? t('stocks_env_hint')
-    : track === 'stocks' && !stockRows.length
+    : track === 'stocks' && !sq.isLoading && !stockRows.length
       ? t('stocks_empty')
       : null
   return (
@@ -116,8 +125,8 @@ export default function Home() {
       >
         <TokenTable
           rows={rows}
-          loading={wantMain && q.isLoading}
-          error={apiDown ? (q.error || stats.error) : null}
+          loading={(wantMain && q.isLoading) || (track === 'stocks' && sq.isLoading)}
+          error={apiDown ? (q.error || stats.error || sq.error) : null}
           listRef={listRef}
           onScroll={onListScroll}
           hasMore={wantMain && !!q.hasNextPage}

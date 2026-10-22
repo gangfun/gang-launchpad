@@ -8,6 +8,7 @@ const get = (p) => fetch(`${API}${p}`).then((r) => { if (!r.ok) throw new Error(
 export const api = {
   stats: () => get('/stats'),
   tokens: (sort, { limit = 24, offset = 0 } = {}) => get(`/tokens?sort=${encodeURIComponent(sort)}&limit=${limit}&offset=${offset}`),
+  stockTokens: ({ limit = 50, offset = 0 } = {}) => get(`/stocks/tokens?limit=${limit}&offset=${offset}`),
   token: (a) => get(`/tokens/${a}`),
   trades: (a, { limit = 30, offset = 0, side = 'all', sort = 'ts_desc' } = {}) => get(`/tokens/${a}/trades?limit=${limit}&offset=${offset}&side=${encodeURIComponent(side)}&sort=${encodeURIComponent(sort)}`),
   holders: (a, { limit = 50, offset = 0 } = {}) => get(`/tokens/${a}/holders?limit=${limit}&offset=${offset}`),

@@ -42,13 +42,54 @@ const tokRow = (r) => {
   }
 }
 
+
+const GRAD_QUOTE = 10n ** 18n // Chapel test graduation ≈ 1 MockSPCXB
+const stockRow = (r, stocks) => {
+  const graduated = !!r.graduated
+  const raisedWei = graduated ? GRAD_QUOTE : BigInt(r.real_quote || '0')
+  const quote = (r.quote || stocks?.quote || '').toLowerCase()
+  const quoteIsMock = stocks?.quote && quote === stocks.quote
+  return {
+    track: 'stocks',
+    address: r.address,
+    name: r.name,
+    symbol: r.symbol,
+    creator: r.creator,
+    createdAt: r.created_ts,
+    createdTx: r.created_tx,
+    graduated,
+    pair: r.pair,
+    graduatedAt: r.graduated_ts,
+    quoteAddress: quote || null,
+    quoteSymbol: stocks?.quoteSymbol || 'SPCXB',
+    quoteLabel: quoteIsMock ? (stocks?.quoteLabel || 'MockSPCXB') : (stocks?.quoteSymbol || 'SPCXB'),
+    taxBps: stocks?.taxBps || 100,
+    divSplit: '50/50',
+    dividendVault: stocks?.dividendVault || null,
+    raisedQuote: formatEther(raisedWei),
+    progressPct: graduated ? 100 : Number((raisedWei * 10000n) / GRAD_QUOTE) / 100,
+    soldTokens: fmtTok(r.sold),
+    priceQuote: formatEther(BigInt(r.last_price || '0')),
+    // Keep fdvBnb/volume24hBnb nullish so FE does not invent BNB mcap for stocks
+    fdvBnb: 0,
+    volume24hBnb: 0,
+    trades: r.trades,
+    lastTradeAt: r.last_trade_ts,
+    pairLabel: r.pair
+      ? `${r.symbol}/${stocks?.quoteSymbol || 'SPCXB'}`
+      : `${r.symbol}/${stocks?.quoteSymbol || 'SPCXB'}`,
+    chainId: 97,
+    explorer: 'https://testnet.bscscan.com',
+  }
+}
+
 let bnbUsd = 0
 async function pollBnb() {
   try { const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT'); const j = await r.json(); if (j.price) bnbUsd = Number(j.price) } catch { /* keep last */ }
 }
 pollBnb(); setInterval(pollBnb, 60_000)
 
-export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
+export function startApi(db, { port = 8787, launchpad, rpcUrls, stocks = null }) {
   initMediaTable(db)
   const client = makeClient(rpcUrls)
   seedBuyersFromTrades(db)
@@ -144,7 +185,13 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           ])
           rpcOk = true
         } catch { /* leave false */ }
-        return json(res, 200, { ok: true, launchpad, lastBlock, tokens, rpcOk })
+        const stockTokens = Number(db.prepare('SELECT COUNT(*) AS n FROM stock_tokens').get()?.n || 0)
+        const stocksLastBlock = Number(getMeta(db, 'stocks_last_block') || 0)
+        return json(res, 200, {
+          ok: true, launchpad, lastBlock, tokens, rpcOk,
+          stockTokens, stocksLastBlock, stocksLaunchpad: stocks?.launchpad || null,
+          apiSource: 'local',
+        })
       }
       if (p[0] === 'search') {
         const qs = (url.searchParams.get('q') || '').trim().toLowerCase()
@@ -159,16 +206,48 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
       if (p[0] === 'stats' && !p[1]) {
         void maybeRefreshAgentBuyers()
         const s = q.stats.get(day())
+        const stockTokens = Number(db.prepare('SELECT COUNT(*) AS n FROM stock_tokens').get()?.n || 0)
         return json(res, 200, {
           launchpad, bnbUsd, ...s,
           vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0',
           fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0',
           agentBuyers: countAgentBuyers(db),
+          stockTokens,
+          apiSource: 'local',
         })
       }
       if (p[0] === 'stats' && p[1] === 'agent-buyers') {
         await maybeRefreshAgentBuyers()
         return json(res, 200, { agentBuyers: countAgentBuyers(db), launchpad })
+      }
+
+      if (p[0] === 'stocks' && p[1] === 'tokens' && !p[2]) {
+        if (!stocks?.launchpad) return json(res, 200, { items: [], hasMore: false, nextOffset: null, limit, offset: 0 })
+        const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
+        const raw = db.prepare(`
+          SELECT t.*,
+            (SELECT SUM(CAST(quote_in AS REAL)) FROM stock_trades WHERE token=t.address AND ts>?) AS vol24,
+            (SELECT COUNT(*) FROM stock_trades WHERE token=t.address AND ts>?) AS n24
+          FROM stock_tokens t
+          ORDER BY COALESCE(last_trade_ts, created_ts) DESC
+          LIMIT ? OFFSET ?
+        `).all(day(), day(), limit + 1, offset)
+        const hasMore = raw.length > limit
+        const page = hasMore ? raw.slice(0, limit) : raw
+        const logos = getLogoMap(db, page.map((r) => r.address))
+        const items = page.map((r) => {
+          const row = stockRow(r, stocks)
+          const logo = logos[r.address.toLowerCase()]
+          return {
+            ...row,
+            volume24hQuote: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
+            trades24h: r.n24 || 0,
+            logoUrl: logo ? `/tokens/${r.address}/logo` : undefined,
+          }
+        })
+        return json(res, 200, {
+          items, hasMore, nextOffset: hasMore ? offset + items.length : null, limit, offset, track: 'stocks',
+        })
       }
       if (p[0] === 'tokens' && !p[1]) {
         const sort = url.searchParams.get('sort') || 'new'
@@ -236,6 +315,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           if (req.method === 'POST') {
             if (!ADDR_RE.test(addr)) return json(res, 400, { error: 'invalid address' })
             const exists = db.prepare('SELECT 1 FROM tokens WHERE address=?').get(addr)
+              || db.prepare('SELECT 1 FROM stock_tokens WHERE address=?').get(addr)
             if (!exists) return json(res, 404, { error: 'token not indexed yet' })
             const body = await readJson(req)
             const parsed = parseDataUrl(body.image)

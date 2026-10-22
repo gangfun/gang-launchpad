@@ -47,9 +47,13 @@ function Chip({ kind, children }) {
 
 function MarketCard({ r, rate, t, onOpen }) {
   const isStock = r.track === 'stocks'
-  const mcap = isStock || !(r.fdvBnb > 0) ? '—' : usd(r.fdvBnb * rate)
+  const mcap = isStock
+    ? (r.pairLabel || `${r.symbol || '?'}/${r.quoteSymbol || 'SPCXB'}`)
+    : (!(r.fdvBnb > 0) ? '—' : usd(r.fdvBnb * rate))
   const vol = isStock || !((r.volume24hBnb || 0) > 0) ? '—' : usd((r.volume24hBnb || 0) * rate)
-  const age = isStock ? t('stocks_chapel') : ago(r.lastTradeAt || r.createdAt)
+  const age = isStock
+    ? (r.lastTradeAt || r.createdAt ? ago(r.lastTradeAt || r.createdAt) : t('stocks_chapel'))
+    : ago(r.lastTradeAt || r.createdAt)
   const pct = r.graduated ? 100 : r.progressPct
 
   return (
@@ -107,7 +111,8 @@ function MarketCard({ r, rate, t, onOpen }) {
             {r.dividendVault
               ? `${t('stocks_div_vault')} ${short(r.dividendVault)}`
               : t('stocks_div_pending')}
-            {r.quoteAddress ? ` · ${r.quoteSymbol}/${short(r.quoteAddress)}` : ''}
+            {r.pair ? ` · pair ${short(r.pair)}` : ''}
+            {r.quoteAddress ? ` · ${r.quoteLabel || r.quoteSymbol}/${short(r.quoteAddress)}` : ''}
           </span>
         ) : r.graduated ? (
           <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>

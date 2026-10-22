@@ -26,32 +26,3 @@ export const STOCKS_ADDR_ROWS = [
   ['dividend vault', STOCKS_DIVIDEND_VAULT],
   ['migrator', STOCKS_MIGRATOR],
 ].filter(([, v]) => v)
-
-/**
- * Chapel env → market-list placeholders (no fake mcap/vol).
- * Shown under 币股 / 全部 until a stocks indexer exists.
- */
-export function stockTrackPlaceholders() {
-  if (!stocksConfigured()) return []
-  return [{
-    address: STOCKS_LAUNCHPAD,
-    track: 'stocks',
-    placeholder: true,
-    symbol: 'LaunchpadS',
-    name: 'Chapel stocks curve',
-    quoteSymbol: STOCKS_QUOTE_SYMBOL,
-    quoteAddress: STOCKS_QUOTE,
-    quoteLabel: STOCKS_CHAIN_ID === 97 ? 'MockSPCXB' : 'SPCXB',
-    taxBps: STOCKS_TAX_BPS,
-    divSplit: STOCKS_DIV_SPLIT,
-    dividendVault: STOCKS_DIVIDEND_VAULT || null,
-    fdvBnb: 0,
-    volume24hBnb: 0,
-    progressPct: 0,
-    graduated: false,
-    createdAt: null,
-    lastTradeAt: null,
-    logoUrl: null,
-    creator: null,
-  }]
-}
