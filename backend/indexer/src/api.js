@@ -2,7 +2,7 @@ import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
 import { getMeta } from './db.js'
-import { readPair } from './pancake.js'
+import { readPair, fetchDexOhlcv, fetchSwapOhlcv, mergeCurveAndDex } from './pancake.js'
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
@@ -202,6 +202,18 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
             else { cur.h = Math.max(cur.h, px); cur.l = Math.min(cur.l, px); cur.c = px; cur.v += v }
           }
           if (cur) out.push(cur)
+          // Graduated: append Pancake/DEX OHLCV so mcap tracks live FDV (not frozen curve last)
+          if (t.graduated && t.pair) {
+            let dex = await fetchDexOhlcv(t.pair, res_)
+            if (!dex.length) {
+              dex = await fetchSwapOhlcv(client, {
+                pair: t.pair, token: addr, fromTs: t.graduated_ts || t.created_ts, resSec: res_,
+              })
+            }
+            const pk = await readPair(client, t.pair, addr)
+            const live = pk?.priceBnb > 0 ? pk.priceBnb : 0
+            return json(res, 200, mergeCurveAndDex(out, dex, t.graduated_ts, res_, live))
+          }
           return json(res, 200, out)
         }
       }
