@@ -1,10 +1,10 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import { formatEther } from 'viem'
-import { getHandleMap, makeClient } from './handles.js'
+import { getHandleMap, makeClient, makeStocksClient } from './handles.js'
 import { countAgentBuyers, refreshAgentBuyers, seedBuyersFromTrades } from './agentBuyers.js'
 import { getMeta } from './db.js'
-import { readPair, fetchDexOhlcv, mergeCurveAndDex, sumDexVolume24hBnb } from './pancake.js'
+import { readPair, fetchDexOhlcv, fetchSwapOhlcv, mergeCurveAndDex, sumDexVolume24hBnb } from './pancake.js'
 import { getGraduatedHolderStats } from './holdersLive.js'
 import {
   getLogoMap, initMediaTable, logoFilePath, parseDataUrl, saveTokenLogo, setLogoRow,
@@ -83,15 +83,156 @@ const stockRow = (r, stocks) => {
   }
 }
 
+
+function stockCandlesFromTrades(db, addr, resSec, since, createdTs, openPriceWei) {
+  const out = []
+  let cur = null
+  const open0 = Number(formatEther(BigInt(openPriceWei || '6250000000')))
+  const t0 = Math.floor((createdTs || 0) / resSec) * resSec
+  if (t0 >= since) cur = { t: t0, o: open0, h: open0, l: open0, c: open0, v: 0 }
+  const rows = db.prepare(
+    `SELECT (CAST(ts AS INTEGER) / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS t, price, quote_in, id
+     FROM stock_trades WHERE token=? AND ts>=? ORDER BY id`,
+  ).all(resSec, resSec, addr, since)
+  for (const r of rows) {
+    const px = Number(formatEther(BigInt(r.price)))
+    const v = Number(formatEther(BigInt(r.quote_in || '0')))
+    if (!cur || cur.t !== r.t) {
+      if (cur) out.push(cur)
+      const o = cur ? cur.c : px
+      cur = { t: r.t, o, h: Math.max(o, px), l: Math.min(o, px), c: px, v }
+    } else {
+      cur.h = Math.max(cur.h, px)
+      cur.l = Math.min(cur.l, px)
+      cur.c = px
+      cur.v += v
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, limit) {
+  const dayAgo = Math.floor(Date.now() / 1000) - 86400
+  const r = db.prepare(`
+    SELECT t.*,
+      (SELECT SUM(CAST(quote_in AS REAL)) FROM stock_trades WHERE token=t.address AND ts>?) AS vol24,
+      (SELECT COUNT(*) FROM stock_trades WHERE token=t.address AND ts>?) AS n24
+    FROM stock_tokens t WHERE t.address=?
+  `).get(dayAgo, dayAgo, addr)
+  if (!r) return false
+  const logos = getLogoMap(db, [addr])
+  const base = {
+    ...stockRow(r, stocks),
+    volume24hQuote: r.vol24 != null ? formatEther(BigInt(Math.round(Number(r.vol24)))) : '0',
+    trades24h: r.n24 || 0,
+    logoUrl: logos[addr] ? `/tokens/${addr}/logo` : undefined,
+    creatorUrl: r.creator ? `https://testnet.bscscan.com/address/${r.creator}` : null,
+  }
+  // Live pair spot (quote per token) when graduated
+  if (r.graduated && r.pair && stocksClient) {
+    try {
+      const pk = await readPair(stocksClient, r.pair, addr)
+      if (pk?.priceBnb > 0) {
+        base.priceQuote = String(pk.priceBnb)
+        base.pancake = {
+          ...pk,
+          quoteSymbol: stocks?.quoteSymbol || 'SPCXB',
+          pancakeUrl: `https://testnet.bscscan.com/address/${r.pair}`,
+          pairUrl: `https://testnet.bscscan.com/address/${r.pair}`,
+          infoUrl: `https://testnet.bscscan.com/address/${r.pair}`,
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  if (!p[2]) {
+    json(res, 200, base)
+    return true
+  }
+  if (p[2] === 'trades') {
+    const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
+    const sideRaw = (url.searchParams.get('side') || 'all').toLowerCase()
+    const side = sideRaw === 'buy' || sideRaw === 'sell' ? sideRaw : 'all'
+    const sortRaw = (url.searchParams.get('sort') || 'ts_desc').toLowerCase()
+    const sorts = {
+      ts_desc: 'ts DESC, id DESC',
+      ts_asc: 'ts ASC, id ASC',
+      amount_desc: 'CAST(quote_in AS REAL) DESC, id DESC',
+    }
+    const sort = sorts[sortRaw] ? sortRaw : 'ts_desc'
+    const sideClause = side === 'all' ? '' : ' AND side=?'
+    const stmt = db.prepare(
+      `SELECT side,trader,quote_in,tax_div,tax_plat,tokens,price,block,ts,tx FROM stock_trades WHERE token=?${sideClause} ORDER BY ${sorts[sort]} LIMIT ? OFFSET ?`,
+    )
+    const args = side === 'all' ? [addr, limit + 1, offset] : [addr, side, limit + 1, offset]
+    const raw = stmt.all(...args)
+    const hasMore = raw.length > limit
+    const rows = hasMore ? raw.slice(0, limit) : raw
+    json(res, 200, {
+      items: rows.map((x) => ({
+        side: x.side,
+        trader: x.trader,
+        bnb: formatEther(BigInt(x.quote_in || '0')), // FE column reused as quote amount
+        fee: formatEther(BigInt((BigInt(x.tax_div || '0') + BigInt(x.tax_plat || '0')).toString())),
+        tokens: fmtTok(x.tokens),
+        price: formatEther(BigInt(x.price || '0')),
+        block: x.block,
+        ts: x.ts,
+        tx: x.tx,
+        quote: true,
+      })),
+      hasMore,
+      nextOffset: hasMore ? offset + limit : null,
+      limit,
+      offset,
+      side,
+      sort,
+      track: 'stocks',
+    })
+    return true
+  }
+  if (p[2] === 'holders') {
+    // Stocks holders not indexed yet — empty honest response
+    json(res, 200, { items: [], hasMore: false, nextOffset: null, limit, offset: 0, track: 'stocks', note: 'stocks holders not indexed' })
+    return true
+  }
+  if (p[2] === 'candles') {
+    const tf = (url.searchParams.get('res') || url.searchParams.get('interval') || '5m').toLowerCase()
+    const res_ = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }[tf] || 300
+    const since = Number(url.searchParams.get('since') || 0)
+    let out = stockCandlesFromTrades(db, addr, res_, since, r.created_ts, r.last_price || '6250000000')
+    // Graduated Chapel: no GeckoTerminal — best-effort Swap logs on MockPair
+    if (r.graduated && r.pair && stocksClient) {
+      const dex = await fetchSwapOhlcv(stocksClient, {
+        pair: r.pair,
+        token: addr,
+        fromTs: r.graduated_ts || r.created_ts,
+        resSec: res_,
+        maxBlocks: 12_000n,
+      })
+      let live = 0
+      try {
+        const pk = await readPair(stocksClient, r.pair, addr)
+        live = pk?.priceBnb > 0 ? pk.priceBnb : 0
+      } catch { /* ignore */ }
+      out = mergeCurveAndDex(out, dex, r.graduated_ts, res_, live)
+    }
+    json(res, 200, out, { noStore: true })
+    return true
+  }
+  return false
+}
+
 let bnbUsd = 0
 async function pollBnb() {
   try { const r = await fetch('https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT'); const j = await r.json(); if (j.price) bnbUsd = Number(j.price) } catch { /* keep last */ }
 }
 pollBnb(); setInterval(pollBnb, 60_000)
 
-export function startApi(db, { port = 8787, launchpad, rpcUrls, stocks = null }) {
+export function startApi(db, { port = 8787, launchpad, rpcUrls, stocks = null, stocksRpcUrls = null }) {
   initMediaTable(db)
   const client = makeClient(rpcUrls)
+  const stocksClient = stocksRpcUrls?.length ? makeStocksClient(stocksRpcUrls) : null
   seedBuyersFromTrades(db)
   let agentBuyerRefresh = 0
   const maybeRefreshAgentBuyers = async () => {
@@ -338,7 +479,11 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls, stocks = null })
           return res.end(fs.readFileSync(full))
         }
         const t = q.one.get(day(), day(), addr)
-        if (!t) return json(res, 404, { error: 'not found' })
+        if (!t) {
+          const handled = await respondStockToken(db, res, addr, stocks, stocksClient, p, url, limit)
+          if (handled) return
+          return json(res, 404, { error: 'not found' })
+        }
         if (!p[2]) {
           const handles = getHandleMap(db, [t.creator])
           const logos = getLogoMap(db, [addr])

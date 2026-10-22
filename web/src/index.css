@@ -565,3 +565,15 @@ td.r, th.r { text-align: right; }
   background: #222;
 }
 .dev-logo-status { white-space: pre-wrap; word-break: break-all; }
+
+/* BAW connect + claim (TEST wave2) */
+.baw-connect { display: flex; align-items: center; gap: 8px; }
+.baw-btn { font-size: 12px; padding: 6px 10px; white-space: nowrap; }
+.baw-err { color: #F6465D; font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.baw-connect.on .baw-btn { opacity: .9; }
+.stocks-hero-actions { margin-top: 12px; }
+.claim-div { display: flex; flex-direction: column; gap: 10px; }
+.claim-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.baw-agent { margin-top: 8px; font-size: 12px; color: #8a8a8a; }
+.baw-agent summary { cursor: pointer; }
+.ok a { color: #0ECB81; }

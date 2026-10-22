@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { useT, Lines } from '../i18n.jsx'
 import Cmd from './Cmd.jsx'
 import TokenAvatar from './TokenAvatar.jsx'
-import { STOCKS_EXPLORER } from '../stocksConfig.js'
 
 function ColdStart() {
   const { t } = useT()
@@ -16,8 +15,8 @@ function ColdStart() {
         <li>
           <b>{t('cold_install')}</b>
           <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
-          <Cmd block>npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com</Cmd>
-          <Cmd block>npm i -g github:gangfun/cli</Cmd>
+          <Cmd block>npm i -g @gangfun/cli@0.1.4</Cmd>
+          <Cmd block>npx @gangfun/cli preflight</Cmd>
         </li>
         <li>
           <b>{t('cold_preflight')}</b>
@@ -131,10 +130,6 @@ export default function TokenTable({ rows, loading, error, listRef, onScroll, ha
   const { t } = useT()
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
   const open = (r) => {
-    if (r?.track === 'stocks') {
-      if (r.address) window.open(`${STOCKS_EXPLORER}/address/${r.address}`, '_blank', 'noreferrer')
-      return
-    }
     nav(`/token/${r.address}`)
   }
   if (loading) return <div className="empty">{t('loading')}</div>

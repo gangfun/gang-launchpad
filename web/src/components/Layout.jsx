@@ -4,6 +4,7 @@ import { GITHUB_CLI, LAUNCHPAD, short } from '../api.js'
 import Search from './Search.jsx'
 import Logo from './Logo.jsx'
 import { XLink } from './SocialIcon.jsx'
+import ConnectBaw from './ConnectBaw.jsx'
 
 const X_URL = 'https://x.com/gangfunmeme'
 
@@ -26,6 +27,7 @@ export default function Layout() {
         </nav>
         <div className="spacer" />
         <Search />
+        <ConnectBaw compact />
         <div className="lang">{LANGS.map(([k, label]) => <button key={k} className={k === lang ? 'on' : ''} onClick={() => setLang(k)}>{label}</button>)}</div>
       </div></header>
       <Outlet />

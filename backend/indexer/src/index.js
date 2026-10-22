@@ -58,6 +58,7 @@ if (!once) {
     launchpad: cfg.launchpad,
     rpcUrls: cfg.rpcUrls,
     stocks: stocksCfg,
+    stocksRpcUrls: cfg.stocksRpcUrls,
   })
 }
 

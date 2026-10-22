@@ -10,31 +10,19 @@ Node ≥ 18. Also install Binance Agentic Wallet CLI (`baw`):
 
 ```bash
 npm i -g @binance/agentic-wallet
-npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com
+# Primary — public npm (https://www.npmjs.com/package/@gangfun/cli)
+npm i -g @gangfun/cli
+# or pin: npm i -g @gangfun/cli@0.1.4
+npx @gangfun/cli preflight
 ```
 
-Package: [GitHub Packages `@gangfun/cli`](https://github.com/gangfun/cli/pkgs/npm/cli). GitHub Packages needs auth — one-liner: `npm login --registry=https://npm.pkg.github.com` (use a token with `read:packages`). Or put the token in `~/.npmrc` (or `NODE_AUTH_TOKEN`):
+**Backup** (only if npmjs unreachable): `npm i -g github:gangfun/cli` or GitHub Packages (`--registry=https://npm.pkg.github.com`, needs `read:packages`).
 
-```ini
-@gangfun:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
-
-Then you can omit the `--registry` flag: `npm i -g @gangfun/cli@0.1.3`.
-
-**Alternate** (no Packages token; installs from the public git repo `main` tip = `@gangfun/cli@0.1.3` / Launchpad v4.1):
-
-```bash
-npm i -g github:gangfun/cli
-# or one-shot:
-npx --yes github:gangfun/cli preflight
-```
-
-If a previous global is stale, clear it then reinstall:
+If a previous global is stale:
 
 ```bash
 npm uninstall -g @gangfun/cli
-npm i -g github:gangfun/cli
+npm i -g @gangfun/cli@0.1.4
 ```
 
 After install, run `gang preflight` — Launchpad must be `0x315Ba2e8952D06094CC636b2B84229FA32fb23A7` (v4.1). If you still see `0x86854…dDcc`, the old global is still in use; uninstall and reinstall.
@@ -84,4 +72,4 @@ Buy / sell / create: **preview → you confirm → execute**. `requestId` expire
 
 ## Version
 
-`0.1.3` · repo [gangfun/cli](https://github.com/gangfun/cli) · distribute via [GitHub Packages](https://github.com/gangfun/cli/pkgs/npm/cli) (not npmjs)
+`0.1.4` · repo [gangfun/cli](https://github.com/gangfun/cli) · [npmjs `@gangfun/cli`](https://www.npmjs.com/package/@gangfun/cli); GitHub Packages / `github:` backup only

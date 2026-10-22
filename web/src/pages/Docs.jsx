@@ -25,8 +25,8 @@ export default function Docs() {
       <Cmd block>npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet</Cmd>
       <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
       <Cmd block>npm i -g @binance/agentic-wallet</Cmd>
-      <Cmd block>npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com</Cmd>
-      <Cmd block>npm i -g github:gangfun/cli</Cmd>
+      <Cmd block>npm i -g @gangfun/cli</Cmd>
+      <Cmd block>npx @gangfun/cli preflight</Cmd>
       <Lines k="g_s2_then" />
       <h2>03 {t('g_s3')}</h2>
       <Cmd block>gang preflight</Cmd>
