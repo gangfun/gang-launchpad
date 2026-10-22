@@ -307,34 +307,65 @@ td.r, th.r { text-align: right; }
 .pancake p a { color: var(--yellow); }
 
 /* ---------- list cards (trades / holders): fixed height + internal scroll ---------- */
-.win > .b.list-scroll {
+.win > .b.list-scroll,
+.list-scroll {
   max-height: 420px;
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: var(--line-2) transparent;
 }
-.win > .b.list-scroll thead th {
+.win > .b.list-scroll thead th,
+.list-scroll thead th {
   position: sticky;
   top: 0;
   background: var(--s1);
   z-index: 1;
 }
-.win > .b.list-scroll .more {
+.win > .b.list-scroll .more,
+.list-scroll .more {
   display: block;
   width: 100%;
-  height: 40px;
+  height: 36px;
   border: 0;
   border-top: 1px solid var(--line);
-  background: var(--s2);
-  color: var(--text-2);
+  background: transparent;
+  color: var(--text-3);
   font-family: var(--px);
   font-size: 11px;
   letter-spacing: .08em;
   text-transform: uppercase;
   cursor: pointer;
 }
-.win > .b.list-scroll .more:hover:not(:disabled) { color: var(--yellow); }
-.win > .b.list-scroll .more:disabled { opacity: .55; cursor: default; }
+.list-scroll .more.discreet { height: 28px; opacity: .7; }
+.win > .b.list-scroll .more:hover:not(:disabled),
+.list-scroll .more:hover:not(:disabled) { color: var(--yellow); opacity: 1; }
+.win > .b.list-scroll .more:disabled,
+.list-scroll .more:disabled { opacity: .55; cursor: default; }
+.list-scroll .list-foot {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+  font-family: var(--px);
+  font-size: 11px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  border-top: 1px solid var(--line);
+}
+.sort-sel {
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--line-2);
+  background: var(--s1);
+  color: var(--text-2);
+  font-family: var(--px);
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.sort-sel:focus { outline: 1px solid var(--yellow); }
 
 .tip { margin: 8px 0 0; font-size: 12px; }

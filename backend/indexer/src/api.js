@@ -34,7 +34,6 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
     one: db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM holders WHERE token=t.address AND balance!='0') AS holders,
              (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24 FROM tokens t WHERE address=?`),
-    trades: db.prepare('SELECT side,trader,bnb,fee,tokens,price,block,ts,tx FROM trades WHERE token=? ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?'),
     candles: db.prepare(`SELECT (CAST(ts AS INTEGER) / CAST(? AS INTEGER)) * CAST(? AS INTEGER) AS t, price, bnb, id FROM trades WHERE token=? AND ts>=? ORDER BY id`),
     holders: db.prepare("SELECT holder, balance FROM holders WHERE token=? AND balance!='0' ORDER BY CAST(balance AS REAL) DESC LIMIT ?"),
     search: db.prepare(`SELECT address, name, symbol, graduated, last_price FROM tokens
@@ -109,7 +108,21 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         }
         if (p[2] === 'trades') {
           const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
-          const raw = q.trades.all(addr, limit + 1, offset)
+          const sideRaw = (url.searchParams.get('side') || 'all').toLowerCase()
+          const side = sideRaw === 'buy' || sideRaw === 'sell' ? sideRaw : 'all'
+          const sortRaw = (url.searchParams.get('sort') || 'ts_desc').toLowerCase()
+          const sorts = {
+            ts_desc: 'ts DESC, id DESC',
+            ts_asc: 'ts ASC, id ASC',
+            amount_desc: 'CAST(bnb AS REAL) DESC, id DESC',
+          }
+          const sort = sorts[sortRaw] ? sortRaw : 'ts_desc'
+          const sideClause = side === 'all' ? '' : ' AND side=?'
+          const stmt = db.prepare(
+            `SELECT side,trader,bnb,fee,tokens,price,block,ts,tx FROM trades WHERE token=?${sideClause} ORDER BY ${sorts[sort]} LIMIT ? OFFSET ?`,
+          )
+          const args = side === 'all' ? [addr, limit + 1, offset] : [addr, side, limit + 1, offset]
+          const raw = stmt.all(...args)
           const hasMore = raw.length > limit
           const rows = hasMore ? raw.slice(0, limit) : raw
           const handles = getHandleMap(db, rows.map((r) => r.trader))
@@ -123,6 +136,8 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
             nextOffset: hasMore ? offset + limit : null,
             limit,
             offset,
+            side,
+            sort,
           })
         }
         if (p[2] === 'holders') {

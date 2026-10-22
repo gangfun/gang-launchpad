@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { api, ago, bnb, px, tok, short, usd, isOfficial } from '../api.js'
@@ -15,14 +15,26 @@ export default function Token() {
   const { address } = useParams()
   const [res, setRes] = useState('5m')
   const [mode, setMode] = useState('mcap')
+  const [tradeSide, setTradeSide] = useState('all')
+  const [tradeSort, setTradeSort] = useState('ts_desc')
+  const listRef = useRef(null)
   const q = useQuery({ queryKey: ['token', address], queryFn: () => api.token(address), refetchInterval: 15_000 })
   const trades = useInfiniteQuery({
-    queryKey: ['trades', address],
-    queryFn: ({ pageParam }) => api.trades(address, { limit: TRADES_PAGE, offset: pageParam }),
+    queryKey: ['trades', address, tradeSide, tradeSort],
+    queryFn: ({ pageParam }) => api.trades(address, { limit: TRADES_PAGE, offset: pageParam, side: tradeSide, sort: tradeSort }),
     initialPageParam: 0,
     getNextPageParam: (last) => (last?.hasMore ? last.nextOffset : undefined),
     refetchInterval: 15_000,
   })
+  const loadMore = useCallback(() => {
+    if (trades.hasNextPage && !trades.isFetchingNextPage) trades.fetchNextPage()
+  }, [trades.hasNextPage, trades.isFetchingNextPage, trades.fetchNextPage])
+  const onListScroll = useCallback((e) => {
+    const el = e.currentTarget
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 96) loadMore()
+  }, [loadMore])
+  // Reset scroll when filter/sort changes
+  useEffect(() => { if (listRef.current) listRef.current.scrollTop = 0 }, [tradeSide, tradeSort])
   const holders = useQuery({ queryKey: ['holders', address], queryFn: () => api.holders(address, 20), refetchInterval: 15_000 })
   const candles = useQuery({ queryKey: ['candles', address, res], queryFn: () => api.candles(address, res), refetchInterval: 15_000 })
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
@@ -111,29 +123,36 @@ export default function Token() {
               </ol></div>
             )}
           </Win>
-          <Win title={t('trades')} flush bodyClass="list-scroll">
-            {tradeRows.length === 0 && !trades.isLoading && <div className="empty">{t('no_trades')}</div>}
-            {tradeRows.length > 0 && (
-              <table>
-                <thead><tr><th>{t('side')}</th><th>{t('agent')}</th><th className="r">{t('bnb')}</th><th className="r">{t('tokens')}</th><th className="r">{t('k_mcap')}</th><th className="r">{t('age')}</th></tr></thead>
-                <tbody>{tradeRows.map((x) => (
-                  <tr key={x.tx + x.side}>
-                    <td className={x.side === 'buy' ? 'up' : 'down'}>{x.side}</td>
-                    <td><Agent address={x.trader} handle={x.traderHandle} href={`https://bscscan.com/tx/${x.tx}`} /></td>
-                    <td className="r num">{bnb(x.bnb, 5)}</td><td className="r num">{tok(x.tokens)}</td><td className="r num">{usd(Number(x.price) * 1e9 * rate)}</td><td className="r dim">{ago(x.ts)}</td>
-                  </tr>))}</tbody>
-              </table>
-            )}
-            {trades.hasNextPage && (
-              <button
-                type="button"
-                className="more"
-                disabled={trades.isFetchingNextPage}
-                onClick={() => trades.fetchNextPage()}
-              >
-                {trades.isFetchingNextPage ? t('loading') : t('load_more')}
-              </button>
-            )}
+          <Win title={t('trades')} flush right={<>
+            <div className="seg">
+              {[['all', 'filter_all'], ['buy', 'filter_buy'], ['sell', 'filter_sell']].map(([v, k]) => (
+                <button key={v} type="button" className={tradeSide === v ? 'on' : ''} onClick={() => setTradeSide(v)}>{t(k)}</button>
+              ))}
+            </div>
+            <select className="sort-sel" value={tradeSort} onChange={(e) => setTradeSort(e.target.value)} aria-label={t('sort')}>
+              <option value="ts_desc">{t('sort_newest')}</option>
+              <option value="ts_asc">{t('sort_oldest')}</option>
+              <option value="amount_desc">{t('sort_amount')}</option>
+            </select>
+          </>}>
+            <div className="list-scroll" ref={listRef} onScroll={onListScroll}>
+              {tradeRows.length === 0 && !trades.isLoading && <div className="empty">{t('no_trades')}</div>}
+              {tradeRows.length > 0 && (
+                <table>
+                  <thead><tr><th>{t('side')}</th><th>{t('agent')}</th><th className="r">{t('bnb')}</th><th className="r">{t('tokens')}</th><th className="r">{t('k_mcap')}</th><th className="r">{t('age')}</th></tr></thead>
+                  <tbody>{tradeRows.map((x) => (
+                    <tr key={x.tx + x.side + x.ts}>
+                      <td className={x.side === 'buy' ? 'up' : 'down'}>{x.side}</td>
+                      <td><Agent address={x.trader} handle={x.traderHandle} href={`https://bscscan.com/tx/${x.tx}`} /></td>
+                      <td className="r num">{bnb(x.bnb, 5)}</td><td className="r num">{tok(x.tokens)}</td><td className="r num">{usd(Number(x.price) * 1e9 * rate)}</td><td className="r dim">{ago(x.ts)}</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+              {trades.isFetchingNextPage && <div className="list-foot">{t('loading')}</div>}
+              {trades.hasNextPage && !trades.isFetchingNextPage && (
+                <button type="button" className="more discreet" onClick={loadMore}>{t('load_more')}</button>
+              )}
+            </div>
           </Win>
           <Win title={t('holders')} flush bodyClass="list-scroll" right={<span className="dim">{d.graduated ? t('holders_frozen') : t('holders_hint')}</span>}>
             {holders.data?.length === 0 && <div className="empty">{t('no_holders')}</div>}
