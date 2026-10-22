@@ -180,6 +180,16 @@ td.r, th.r { text-align: right; }
 .footer { margin-top: 64px; padding: 20px 0 40px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 
+/* ---------- home markets: fixed height + internal scroll (same family as trades) ---------- */
+.market-list.list-scroll {
+  max-height: min(560px, 70vh);
+}
+@media (max-width: 720px) {
+  .market-list.list-scroll {
+    max-height: min(420px, 65vh);
+  }
+}
+
 /* ---------- market cards (mobile list; hidden on desktop) ---------- */
 .market-cards { display: none; }
 .mcard {

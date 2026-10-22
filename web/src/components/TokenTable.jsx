@@ -55,7 +55,7 @@ function RowCells({ r, rate, t }) {
   )
 }
 
-export default function TokenTable({ rows, loading, error }) {
+export default function TokenTable({ rows, loading, error, listRef, onScroll, hasMore, loadingMore, onLoadMore }) {
   const nav = useNavigate()
   const { t } = useT()
   const rate = useQuery({ queryKey: ['stats'], queryFn: api.stats }).data?.bnbUsd || 0
@@ -63,7 +63,7 @@ export default function TokenTable({ rows, loading, error }) {
   if (error) return <div className="empty err">{t('api_error')}</div>
   if (!rows?.length) return <ColdStart />
   return (
-    <>
+    <div className="list-scroll market-list" ref={listRef} onScroll={onScroll}>
       <div className="market-scroll"><table>
         <thead><tr>
           <th>{t('col_token')}</th><th className="r">{t('col_mcap')}</th><th className="r">{t('col_price')}</th><th className="r">{t('col_vol')}</th><th className="r">{t('col_trades')}</th><th className="r">{t('col_holders')}</th><th>{t('col_curve')}</th><th className="r">{t('col_age')}</th>
@@ -103,6 +103,10 @@ export default function TokenTable({ rows, loading, error }) {
           </button>
         ))}
       </div>
-    </>
+      {loadingMore && <div className="list-foot">{t('loading')}</div>}
+      {hasMore && !loadingMore && (
+        <button type="button" className="more discreet" onClick={onLoadMore}>{t('load_more')}</button>
+      )}
+    </div>
   )
 }

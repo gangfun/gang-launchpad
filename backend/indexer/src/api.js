@@ -57,7 +57,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
       SELECT t.*, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24,
              (SELECT COUNT(*) FROM holders WHERE token=t.address AND balance!='0') AS holders
-      FROM tokens t WHERE ${where} ORDER BY ${order} LIMIT ?`),
+      FROM tokens t WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`),
     one: db.prepare(`SELECT t.*, (SELECT COUNT(*) FROM holders WHERE token=t.address AND balance!='0') AS holders,
              (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE token=t.address AND ts>?) AS vol24,
              (SELECT COUNT(*) FROM trades WHERE token=t.address AND ts>?) AS n24 FROM tokens t WHERE address=?`),
@@ -105,33 +105,61 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
       if (p[0] === 'stats') { const s = q.stats.get(day()); return json(res, 200, { launchpad, bnbUsd, ...s, vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0', fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0' }) }
       if (p[0] === 'tokens' && !p[1]) {
         const sort = url.searchParams.get('sort') || 'new'
+        const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))
         const orders = { new: 'created_ts DESC', hot: 'vol24 DESC, n24 DESC, created_ts DESC', graduated: 'graduated_ts DESC', progress: 'CAST(real_bnb AS REAL) DESC' }
         // hot/new keep graduated visible (badge); progress = curve-only; graduated tab = graduated-only
         const where = sort === 'graduated' ? 'graduated=1' : sort === 'progress' ? 'graduated=0' : '1=1'
-        const rows = q.list(orders[sort] || orders.new, where).all(day(), day(), limit)
-        const handles = getHandleMap(db, rows.map((r) => r.creator))
-        const mapped = rows.map((r) => ({
-          ...tokRow(r),
-          volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
-          creatorHandle: handles[r.creator] || null,
-        }))
-        // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
-        const priced = await Promise.all(mapped.map((r) => withDexPrice(r)))
-        if (sort === 'hot') {
+        const orderSql = orders[sort] || orders.new
+        const pin = (process.env.GANG_PLATFORM_TOKEN || '0x0c6302401aa5325C2E36F170f52C00B1d220B405').toLowerCase()
+        const enrich = async (rows) => {
+          const handles = getHandleMap(db, rows.map((r) => r.creator))
+          const mapped = rows.map((r) => ({
+            ...tokRow(r),
+            volume24hBnb: r.vol24 ? formatEther(BigInt(Math.round(r.vol24))) : '0',
+            creatorHandle: handles[r.creator] || null,
+          }))
+          // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
+          return Promise.all(mapped.map((r) => withDexPrice(r)))
+        }
+        const hotSort = (priced) => {
           priced.sort((a, b) => {
             const va = Number(a.volume24hBnb || 0), vb = Number(b.volume24hBnb || 0)
             if (vb !== va) return vb - va
             return Number(b.fdvBnb || 0) - Number(a.fdvBnb || 0)
           })
-          // Official platform token (GANG) always first on 「最热」
-          const pin = (process.env.GANG_PLATFORM_TOKEN || '0x0c6302401aa5325C2E36F170f52C00B1d220B405').toLowerCase()
-          const i = priced.findIndex((r) => (r.address || '').toLowerCase() === pin)
-          if (i > 0) {
-            const [row] = priced.splice(i, 1)
-            priced.unshift(row)
-          }
+          return priced
         }
-        return json(res, 200, priced)
+
+        let items
+        let hasMore
+        if (sort === 'hot') {
+          // Pin GANG on page 1 only; exclude it from the rest stream so it never duplicates.
+          const pinRows = q.list(orderSql, `(${where}) AND lower(address)='${pin}'`).all(day(), day(), 1, 0)
+          const pinPresent = pinRows.length > 0
+          const restWhere = `(${where}) AND lower(address)!='${pin}'`
+          const restOffset = pinPresent ? Math.max(0, offset === 0 ? 0 : offset - 1) : offset
+          const wantRest = pinPresent && offset === 0 ? Math.max(0, limit - 1) : limit
+          const restRaw = q.list(orderSql, restWhere).all(day(), day(), wantRest + 1, restOffset)
+          hasMore = restRaw.length > wantRest
+          const restPage = hasMore ? restRaw.slice(0, wantRest) : restRaw
+          items = hotSort(await enrich(restPage))
+          if (offset === 0 && pinPresent) {
+            const [pinItem] = await enrich(pinRows)
+            items = [pinItem, ...items]
+          }
+        } else {
+          const raw = q.list(orderSql, where).all(day(), day(), limit + 1, offset)
+          hasMore = raw.length > limit
+          items = await enrich(hasMore ? raw.slice(0, limit) : raw)
+        }
+        return json(res, 200, {
+          items,
+          hasMore,
+          nextOffset: hasMore ? offset + items.length : null,
+          limit,
+          offset,
+          sort,
+        })
       }
       if (p[0] === 'tokens' && p[1]) {
         const addr = p[1].toLowerCase(); const t = q.one.get(day(), day(), addr)
