@@ -38,7 +38,6 @@ export default function Docs() {
       <Cmd block>gang execute --request-id …</Cmd>
       <Cmd block>gang tx --hash 0x…</Cmd>
       <Lines k="g_s6_p" className="oneline" />
-      <p><a href="/launch">{t('nav_launch')}</a> — logo upload (indexer test path).</p>
       <h2 id="token-logos">07 token logos</h2>
       <p>See <code>docs/TOKEN_LOGO_METADATA.md</code> in the repo. Summary: <code>Launchpad.create(name, symbol)</code> and <code>LaunchToken</code> (plain ERC-20) have no URI/metadata field today. The site can store a logo off-chain via <code>POST /tokens/:addr/logo</code> after the token is indexed.</p>
       <h2>{t('g_rules')}</h2>

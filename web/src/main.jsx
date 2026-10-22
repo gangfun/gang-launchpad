@@ -1,6 +1,6 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import '@fontsource/geist-mono/400.css'
 import '@fontsource/geist-mono/500.css'
@@ -12,7 +12,6 @@ import Home from './pages/Home.jsx'
 import Token from './pages/Token.jsx'
 import Docs from './pages/Docs.jsx'
 import Stocks from './pages/Stocks.jsx'
-import Launch from './pages/Launch.jsx'
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 12_000, staleTime: 5_000, retry: 1 } } })
 createRoot(document.getElementById('root')).render(
@@ -25,7 +24,7 @@ createRoot(document.getElementById('root')).render(
               <Route index element={<Home />} />
               <Route path="/token/:address" element={<Token />} />
               <Route path="/docs" element={<Docs />} />
-              <Route path="/launch" element={<Launch />} />
+              <Route path="/launch" element={<Navigate to="/" replace />} />
               <Route path="/stocks" element={<Stocks />} />
               <Route path="*" element={<main className="wrap"><div className="empty">404</div></main>} />
             </Route>

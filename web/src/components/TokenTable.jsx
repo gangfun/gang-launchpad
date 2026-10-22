@@ -31,8 +31,6 @@ function ColdStart() {
       </ol>
       <p className="cold-docs">
         <Link to="/docs">{t('cold_docs')}</Link>
-        {' · '}
-        <Link to="/launch">{t('nav_launch')}</Link>
       </p>
     </div>
   )
@@ -56,15 +54,13 @@ function MarketCard({ r, rate, t, onOpen }) {
       className="market-card"
       onClick={() => onOpen(r.address)}
     >
-      <div className="market-card-head">
-        <TokenAvatar symbol={r.symbol} address={r.address} logoUrl={r.logoUrl} size={52} className="market-card-av" />
-        <div className="market-card-title">
+      <div className="market-card-top">
+        <TokenAvatar symbol={r.symbol} address={r.address} logoUrl={r.logoUrl} size={36} className="market-card-av" />
+        <div className="market-card-id">
           <div className="market-card-symrow">
             <span className="sym">{r.symbol}</span>
-            <span className="market-card-chips">
-              {isOfficial(r.address) && <Chip kind="official">{t('official')}</Chip>}
-              {r.graduated && <Chip kind="grad">{t('graduated')}</Chip>}
-            </span>
+            {isOfficial(r.address) && <Chip kind="official">{t('official')}</Chip>}
+            {r.graduated && <Chip kind="grad">{t('graduated')}</Chip>}
           </div>
           <span className="name">{r.name}</span>
         </div>
@@ -72,22 +68,22 @@ function MarketCard({ r, rate, t, onOpen }) {
       </div>
 
       <div className="market-card-mcap">
-        <span className="label">{t('col_mcap')}</span>
         <b className="num mcap-num">{mcap}</b>
+        <span className="label">{t('col_mcap')}</span>
       </div>
 
-      <div className="market-card-metrics">
-        <div>
+      <div className="market-card-meta">
+        <div className="meta-cell">
           <span>{t('col_vol')}</span>
           <b className="num">{vol}</b>
         </div>
-        <div>
+        <div className="meta-cell meta-right">
           <span>{r.graduated ? t('col_curve') : t('k_progress')}</span>
           <b className="num">{r.graduated ? t('graduated') : `${pct}%`}</b>
         </div>
       </div>
 
-      <div className="market-card-progress">
+      <div className="market-card-foot">
         {r.graduated
           ? (
             <a className="dex-link" href={pancakeHref(r)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
@@ -95,10 +91,7 @@ function MarketCard({ r, rate, t, onOpen }) {
             </a>
           )
           : (
-            <>
-              <span className="pbar market-pbar"><i style={{ width: `${Math.max(2, pct)}%` }} /></span>
-              <span className="progress-pct">{pct}%</span>
-            </>
+            <span className="pbar market-pbar"><i style={{ width: `${Math.max(2, pct)}%` }} /></span>
           )}
       </div>
     </button>
