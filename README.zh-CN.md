@@ -126,6 +126,16 @@ gang tx     --hash 0x…                       # 链上最终结果
 
 ---
 
+
+## 运维 · 手续费 keeper（VPS）
+
+每日 permissionless 结算：`scripts/keeper-collectfees.sh`（默认 dry-run）。
+
+- Keeper 地址：`0xb6f1f1bfb92476abb0998b425de0dec5f927cfc7`（只付 gas；充 ≥0.05 BNB）
+- 私钥**只**放 VPS：`/opt/gang/keeper/.env` → `KEEPER_PRIVATE_KEY=`（禁止进 git）
+- cron 示例（上海 10:00）：`0 10 * * * /opt/gang/keeper/keeper-collectfees.sh --broadcast --log-dir /opt/gang/keeper/logs`
+- `accruedFees==0` 跳过；超过 0.2 BNB 拒绝自动广播（可用 `--max-accrued` 覆盖）
+
 ## 附录 A · 规则（极简）
 
 | | |

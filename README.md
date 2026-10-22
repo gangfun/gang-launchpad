@@ -126,6 +126,16 @@ Always speak amounts in BNB / tokens, never raw wei. Show full addresses; confir
 
 ---
 
+
+## Ops · fee keeper (VPS)
+
+Permissionless daily settle: `scripts/keeper-collectfees.sh` (default dry-run).
+
+- Keeper address: `0xb6f1f1bfb92476abb0998b425de0dec5f927cfc7` (gas only; fund ≥0.05 BNB)
+- Key **only** on VPS: `/opt/gang/keeper/.env` → `KEEPER_PRIVATE_KEY=` (never commit)
+- Cron example (Asia/Shanghai 10:00): `0 10 * * * /opt/gang/keeper/keeper-collectfees.sh --broadcast --log-dir /opt/gang/keeper/logs`
+- Skips when `accruedFees==0`; refuses auto-broadcast if accrued > 0.2 BNB (override `--max-accrued`)
+
 ## Appendix A · Rules (minimal)
 
 | | |
