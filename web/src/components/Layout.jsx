@@ -13,7 +13,7 @@ export default function Layout() {
         <nav className="nav">
           <NavLink to="/" end>{t('nav_markets')}</NavLink>
           <NavLink to="/docs">{t('nav_guide')}</NavLink>
-          <a href="https://github.com/gangfun/cli" target="_blank" rel="noreferrer">{t('nav_github')}</a>
+          <a href="https://github.com/gangfun/gang-launchpad" target="_blank" rel="noreferrer">{t('nav_github')}</a>
         </nav>
         <div className="spacer" />
         <Search />
