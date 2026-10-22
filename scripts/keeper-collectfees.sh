@@ -3,6 +3,7 @@
 # Default: dry-run (read-only). Broadcast ONLY with --broadcast and KEEPER_PRIVATE_KEY.
 # No contract role. Never commit keys. VPS env: /opt/gang/keeper/.env
 set -euo pipefail
+export PATH="/root/.foundry/bin:/usr/local/bin:$PATH"
 
 LAUNCHPAD="${LAUNCHPAD:-0x315Ba2e8952D06094CC636b2B84229FA32fb23A7}"
 EXPECTED_KEEPER="${EXPECTED_KEEPER:-0xb6f1f1bfb92476abb0998b425de0dec5f927cfc7}"
@@ -107,7 +108,7 @@ if [[ "$ACCRUED" != "0" ]]; then
   cast send "$LAUNCHPAD" "collectFees()" --rpc-url "$BSC_RPC" --private-key "$KEEPER_PRIVATE_KEY"
 fi
 
-PENDING="$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")"
+PENDING="$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")"
 if [[ "$PENDING" != "0" ]]; then
   log_line "$(ts) BROADCAST flushBuyback…"
   cast send "$LAUNCHPAD" "flushBuyback()" --rpc-url "$BSC_RPC" --private-key "$KEEPER_PRIVATE_KEY"
@@ -115,4 +116,4 @@ else
   log_line "$(ts) pendingBuyback=0 — no flush"
 fi
 
-log_line "$(ts) done accrued=$(wei_to_ether "$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")")BNB pending=$(wei_to_ether "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")BNB"
+log_line "$(ts) done accrued=$(wei_to_ether "$(wei_only "$(cast call "$LAUNCHPAD" "accruedFees()(uint256)" --rpc-url "$BSC_RPC")")")BNB pending=$(wei_to_ether "$(wei_only "$(cast call "$LAUNCHPAD" "pendingBuyback()(uint256)" --rpc-url "$BSC_RPC")")")BNB"
