@@ -16,7 +16,7 @@ metadata:
       bins: [baw]
       label: Binance Agentic Wallet CLI
     - kind: node
-      package: 'github:gangfun/cli'
+      package: '@gangfun/cli'
       bins: [gang]
       label: Gang CLI
 ---

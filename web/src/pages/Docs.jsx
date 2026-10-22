@@ -1,9 +1,18 @@
 import Cmd from '../components/Cmd.jsx'
-import { GITHUB_CLI, LAUNCHPAD } from '../api.js'
+import { GITHUB_CLI, LAUNCHPAD, short } from '../api.js'
 import { useT, Lines } from '../i18n.jsx'
+import {
+  STOCKS_CHAIN_ID,
+  STOCKS_EXPLORER,
+  STOCKS_LAUNCHPAD,
+  STOCKS_QUOTE,
+  STOCKS_DIVIDEND_VAULT,
+  stocksConfigured,
+} from '../stocksConfig.js'
 
 export default function Docs() {
   const { t } = useT()
+  const ready = stocksConfigured()
   return (
     <main className="wrap doc">
       <h1>{t('g_title')}</h1>
@@ -16,8 +25,8 @@ export default function Docs() {
       <Cmd block>npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet</Cmd>
       <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
       <Cmd block>npm i -g @binance/agentic-wallet</Cmd>
-      <Cmd block>npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com</Cmd>
-      <Cmd block>npm i -g github:gangfun/cli</Cmd>
+      <Cmd block>npm i -g @gangfun/cli</Cmd>
+      <Cmd block>npx @gangfun/cli preflight</Cmd>
       <Lines k="g_s2_then" />
       <h2>03 {t('g_s3')}</h2>
       <Cmd block>gang preflight</Cmd>
@@ -38,6 +47,27 @@ export default function Docs() {
       <Cmd block>gang execute --request-id …</Cmd>
       <Cmd block>gang tx --hash 0x…</Cmd>
       <Lines k="g_s6_p" className="oneline" />
+      <h2 id="stocks">07 {t('g_stocks')}</h2>
+      <Lines k="g_stocks_intro" />
+      <p><b>{t('g_stocks_quote')}</b> — {t('g_stocks_quote_p')}</p>
+      <p><b>{t('g_stocks_tax')}</b> — {t('g_stocks_tax_p')}</p>
+      <p><b>{t('g_stocks_flow')}</b> — {t('g_stocks_flow_p')}</p>
+      <Cmd block>{'gang create --name "…" --symbol …   # agent path; quote = SPCXB / MockSPCXB on Chapel'}</Cmd>
+      <Cmd block>gang execute --request-id …</Cmd>
+      <Cmd block>{'gang buy --token 0x…   # curve priced in quote ERC-20, not BNB'}</Cmd>
+      {ready && (
+        <table><tbody>
+          <tr><td>LaunchpadS</td><td><a href={`${STOCKS_EXPLORER}/address/${STOCKS_LAUNCHPAD}`} target="_blank" rel="noreferrer">{short(STOCKS_LAUNCHPAD)}</a></td></tr>
+          <tr><td>quote · MockSPCXB</td><td><a href={`${STOCKS_EXPLORER}/address/${STOCKS_QUOTE}`} target="_blank" rel="noreferrer">{short(STOCKS_QUOTE)}</a></td></tr>
+          {STOCKS_DIVIDEND_VAULT && (
+            <tr><td>DividendVault</td><td><a href={`${STOCKS_EXPLORER}/address/${STOCKS_DIVIDEND_VAULT}`} target="_blank" rel="noreferrer">{short(STOCKS_DIVIDEND_VAULT)}</a></td></tr>
+          )}
+          <tr><td>chain</td><td>Chapel {STOCKS_CHAIN_ID}</td></tr>
+        </tbody></table>
+      )}
+      <div className="callout"><Lines k="g_stocks_note" /></div>
+      <h2 id="token-logos">08 token logos</h2>
+      <p>See <code>docs/TOKEN_LOGO_METADATA.md</code> in the repo. Summary: <code>Launchpad.create(name, symbol)</code> and <code>LaunchToken</code> (plain ERC-20) have no URI/metadata field today. The site can store a logo off-chain via <code>POST /tokens/:addr/logo</code> after the token is indexed.</p>
       <h2>{t('g_rules')}</h2>
       <table><tbody>
         <tr><td>{t('r_who')}</td><td>{t('r_who_v')}</td></tr>

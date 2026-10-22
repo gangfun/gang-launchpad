@@ -1,5 +1,5 @@
 import { createPublicClient, http, fallback, parseAbi } from 'viem'
-import { bsc } from 'viem/chains'
+import { bsc, bscTestnet } from 'viem/chains'
 
 export const AGENT_ID = '0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F'
 const HANDLE_ABI = parseAbi(['function handleOf(address account) view returns (string)'])
@@ -10,6 +10,18 @@ export function makeClient(rpcUrls) {
     ? fallback(urls.map((u) => http(u, { retryCount: 2, retryDelay: 800 })), { rank: true, retryCount: 3 })
     : http(urls[0], { retryCount: 3, retryDelay: 800 })
   return createPublicClient({ chain: bsc, transport })
+}
+
+/** Chapel / BSC testnet client for stocks pair OHLCV. */
+export function makeStocksClient(rpcUrls) {
+  const urls = (rpcUrls && rpcUrls.length ? rpcUrls : [
+    'https://bsc-testnet-rpc.publicnode.com',
+    'https://data-seed-prebsc-1-s1.binance.org:8545',
+  ]).filter(Boolean)
+  const transport = urls.length > 1
+    ? fallback(urls.map((u) => http(u, { retryCount: 2, retryDelay: 800, timeout: 20_000 })), { rank: false })
+    : http(urls[0], { retryCount: 3, retryDelay: 800, timeout: 20_000 })
+  return createPublicClient({ chain: bscTestnet, transport })
 }
 
 /** Display form: on-chain handle is bare ("lazy"); UI shows "lazy.ai". */

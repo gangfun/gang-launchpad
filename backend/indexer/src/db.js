@@ -35,6 +35,22 @@ export function openDb(path) {
       first_buy_ts INTEGER
     );
     CREATE INDEX IF NOT EXISTS curve_buyers_agent ON curve_buyers(is_agent);
+    CREATE TABLE IF NOT EXISTS stock_tokens (
+      address TEXT PRIMARY KEY,
+      name TEXT, symbol TEXT, creator TEXT, quote TEXT,
+      created_block INTEGER, created_ts INTEGER, created_tx TEXT,
+      real_quote TEXT DEFAULT '0', sold TEXT DEFAULT '0',
+      graduated INTEGER DEFAULT 0, pair TEXT, graduated_ts INTEGER,
+      last_price TEXT DEFAULT '0', trades INTEGER DEFAULT 0, last_trade_ts INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS stock_trades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      token TEXT, side TEXT, trader TEXT,
+      quote_in TEXT, tax_div TEXT, tax_plat TEXT, tokens TEXT, real_quote TEXT, price TEXT,
+      block INTEGER, ts INTEGER, tx TEXT, log_index INTEGER,
+      UNIQUE(tx, log_index)
+    );
+    CREATE INDEX IF NOT EXISTS stock_trades_token_ts ON stock_trades(token, ts);
   `)
   // Repair: older indexer zeroed real_bnb on Graduated → UI showed 0/20
   try {

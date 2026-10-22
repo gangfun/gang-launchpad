@@ -25,7 +25,7 @@ export async function tokenInfo(token, me) {
   if (creator === '0x0000000000000000000000000000000000000000') {
     throw new Error(
       `not a Gang token: ${token} (launchpad ${CONFIG.launchpad}). ` +
-      `Upgrade: npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com  OR  ` +
+      `Upgrade: npm i -g @gangfun/cli@0.1.4  OR  ` +
       `export GANG_LAUNCHPAD=0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`
     )
   }

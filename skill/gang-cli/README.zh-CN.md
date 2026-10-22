@@ -10,31 +10,19 @@ Node ≥ 18。另需安装 Binance Agentic Wallet CLI（`baw`）：
 
 ```bash
 npm i -g @binance/agentic-wallet
-npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com
+# 主路径 — 公共 npm（https://www.npmjs.com/package/@gangfun/cli）
+npm i -g @gangfun/cli
+# 或钉死：npm i -g @gangfun/cli@0.1.4
+npx @gangfun/cli preflight
 ```
 
-包地址：[GitHub Packages `@gangfun/cli`](https://github.com/gangfun/cli/pkgs/npm/cli)。GitHub Packages 需要登录——一句：`npm login --registry=https://npm.pkg.github.com`（token 需带 `read:packages`）。或把 token 写进 `~/.npmrc`（或环境变量 `NODE_AUTH_TOKEN`）：
-
-```ini
-@gangfun:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
-
-配好后可省略 `--registry`：`npm i -g @gangfun/cli@0.1.3`。
-
-**备选**（不需要 Packages token；从公开 git 仓 `main` tip 装 = `@gangfun/cli@0.1.3` / Launchpad v4.1）：
-
-```bash
-npm i -g github:gangfun/cli
-# 或一次性：
-npx --yes github:gangfun/cli preflight
-```
+**备选**（仅当 npmjs 不可达）：`npm i -g github:gangfun/cli`，或 GitHub Packages（`--registry=https://npm.pkg.github.com`，需 `read:packages`）。
 
 若之前装过旧全局包，先卸再装：
 
 ```bash
 npm uninstall -g @gangfun/cli
-npm i -g github:gangfun/cli
+npm i -g @gangfun/cli@0.1.4
 ```
 
 装完跑 `gang preflight`——Launchpad 必须是 `0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`（v4.1）。若仍看到 `0x86854…dDcc`，说明旧全局还在，卸掉重装。
@@ -84,4 +72,4 @@ gang tx --hash <0x..>
 
 ## 版本
 
-`0.1.3` · 仓库 [gangfun/cli](https://github.com/gangfun/cli) · 分发走 [GitHub Packages](https://github.com/gangfun/cli/pkgs/npm/cli)（不上 npmjs）
+`0.1.4` · 仓库 [gangfun/cli](https://github.com/gangfun/cli) · 分发走 [npmjs `@gangfun/cli`](https://www.npmjs.com/package/@gangfun/cli)；GitHub Packages / `github:` 仅作备选

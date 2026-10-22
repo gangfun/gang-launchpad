@@ -7,6 +7,8 @@ import Chart from '../components/Chart.jsx'
 import Cmd from '../components/Cmd.jsx'
 import Win from '../components/Win.jsx'
 import Agent from '../components/Agent.jsx'
+import TokenAvatar from '../components/TokenAvatar.jsx'
+import ClaimDividend from '../components/ClaimDividend.jsx'
 
 const TRADES_PAGE = 30
 const HOLDERS_PAGE = 50
@@ -67,8 +69,9 @@ export default function Token() {
   return (
     <main className="wrap">
       <div className="ident">
+        <TokenAvatar symbol={d.symbol} address={d.address} logoUrl={d.logoUrl} size={48} />
         <h1>{d.symbol}</h1><span className="name">{d.name}</span>
-        <a className="addr" href={`https://bscscan.com/token/${d.address}`} target="_blank" rel="noreferrer">{d.address}</a>
+        <a className="addr" href={`${d.explorer || 'https://bscscan.com'}/token/${d.address}`} target="_blank" rel="noreferrer">{d.address}</a>
         <span className={`badge ${d.graduated ? 'grad' : 'yellow'}`}>{d.graduated ? t('graduated') : t('curve')}</span>
         {isOfficial(d.address) && <span className="badge official">{t('official')}</span>}
         <div className="spacer" />
@@ -144,7 +147,12 @@ export default function Token() {
             </div>
           </Win>
           <Win title={t('buy_title')}>
-            {d.graduated ? (
+            {d.track === 'stocks' ? (
+              <div className="howto">
+                <p className="muted">{t('stocks_buy_p')}</p>
+                <Cmd block>{`# BAW / Agent only — no MetaMask\nbaw / gang → LaunchpadS buy ${d.address}`}</Cmd>
+              </div>
+            ) : d.graduated ? (
               <div className="grad-trade">
                 <p className="muted">{t('sell_note')}</p>
                 <a className="btn" href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">{t('trade_on_pancake')} →</a>
@@ -161,6 +169,11 @@ export default function Token() {
               </ol></div>
             )}
           </Win>
+          {d.track === 'stocks' && (
+            <Win title={t('stocks_claim')}>
+              <ClaimDividend tokenAddress={d.address} />
+            </Win>
+          )}
           <Win title={t('trades')} flush right={<>
             <div className="seg">
               {[['all', 'filter_all'], ['buy', 'filter_buy'], ['sell', 'filter_sell']].map(([v, k]) => (
