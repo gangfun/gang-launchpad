@@ -128,12 +128,16 @@ export default function Token() {
           </>}>
             {d.graduated && (
               <div className="chart-banner">
-                {t('chart_curve_ended')}{' '}
-                <a href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">PancakeSwap</a>
-                {d.pair && <> · <a href={`https://dexscreener.com/bsc/${d.pair}`} target="_blank" rel="noreferrer">DexScreener</a></>}
+                <span className="chart-banner-text">{t('chart_curve_ended')}</span>
+                <span className="chart-banner-links">
+                  <a href={pk?.pancakeUrl || `https://pancakeswap.finance/swap?outputCurrency=${d.address}&chain=bsc`} target="_blank" rel="noreferrer">PancakeSwap</a>
+                  {d.pair && <> · <a href={`https://dexscreener.com/bsc/${d.pair}`} target="_blank" rel="noreferrer">DexScreener</a></>}
+                </span>
               </div>
             )}
-            <Chart candles={candles.data} mode={mode} rate={rate} />
+            <div className="chart-plot">
+              <Chart candles={candles.data} mode={mode} rate={rate} />
+            </div>
           </Win>
           <Win title={t('buy_title')}>
             {d.graduated ? (

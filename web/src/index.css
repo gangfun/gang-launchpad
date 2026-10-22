@@ -140,18 +140,28 @@ td.r, th.r { text-align: right; }
 /* 2×2 grid: row 1 = chart | how-to (equal height), row 2 = trades | holders (equal height). all edges line up. */
 .work { display: grid; grid-template-columns: minmax(0, 1fr) 380px; grid-template-rows: auto auto; gap: 16px; align-items: stretch; }
 .work > * { min-width: 0; }
-/* chart fills the card body but never drives its size (absolute), so row height comes from the how-to card */
-.win > .b.chart-body { position: relative; min-height: 360px; }
-.chart { position: absolute; inset: 0; }
-.chart-body-grad .chart { top: 28px; }
-.chart-banner {
-  position: absolute; z-index: 2; left: 0; right: 0; top: 0;
-  height: 28px; padding: 0 10px; display: flex; align-items: center; gap: 6px;
-  font-size: 11px; color: var(--text-2); background: rgba(14,14,14,.92);
-  border-bottom: 1px solid var(--line-2);
+/* chart card: banner (flow) + plot (flex fill). plot hosts absolute chart/legend so they never overlap the banner */
+.win > .b.chart-body {
+  position: relative; min-height: 360px;
+  display: flex; flex-direction: column;
 }
+.chart-banner {
+  position: relative; z-index: 3; flex: 0 0 auto;
+  min-height: 28px; padding: 6px 10px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  font-size: 11px; line-height: 1.4; color: var(--text-2);
+  background: rgba(14,14,14,.96); border-bottom: 1px solid var(--line-2);
+}
+.chart-banner-text { flex: 1 1 auto; min-width: 12em; }
+.chart-banner-links { flex: 0 0 auto; white-space: nowrap; }
 .chart-banner a { color: var(--yellow); }
-.legend { position: absolute; top: 8px; left: 12px; display: flex; gap: 12px; font-size: 11px; color: var(--text-2); pointer-events: none; z-index: 2; }
+.chart-plot { position: relative; flex: 1 1 auto; min-height: 300px; }
+.chart { position: absolute; inset: 0; }
+.legend {
+  position: absolute; top: 8px; left: 12px; right: 12px;
+  display: flex; flex-wrap: wrap; gap: 4px 12px;
+  font-size: 11px; color: var(--text-2); pointer-events: none; z-index: 2;
+}
 .legend span:first-child { color: var(--text-3); }
 .win { display: flex; flex-direction: column; }
 .win > .b { flex: 1; display: flex; flex-direction: column; }
@@ -282,6 +292,9 @@ td.r, th.r { text-align: right; }
 
   /* token page light overflow pass */
   .win > .b.chart-body { min-height: 240px; }
+  .chart-plot { min-height: 200px; }
+  .chart-banner { padding: 6px 10px; gap: 2px 8px; }
+  .chart-banner-text { min-width: 100%; } /* links wrap to next row on H5 */
   .ident { padding: 24px 0 14px; gap: 8px 10px; }
   .ident h1 { font-size: 22px; line-height: 28px; }
   .ident .addr { word-break: break-all; font-size: 11px; }
