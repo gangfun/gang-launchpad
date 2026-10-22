@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Daily permissionless collectFees (+ optional flushBuyback) for Launchpad v4.1.
-# Default: dry-run (read-only). Broadcast ONLY with --broadcast and KEEPER_PRIVATE_KEY.
-# No contract role. Never commit keys. VPS env: /opt/gang/keeper/.env
+# Default: dry-run. Broadcast ONLY with --broadcast + KEEPER_PRIVATE_KEY.
+# No contract role. Never commit keys. VPS: /opt/gang/keeper/.env
 set -euo pipefail
-export PATH="/root/.foundry/bin:/usr/local/bin:$PATH"
+export PATH="/root/.foundry/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 LAUNCHPAD="${LAUNCHPAD:-0x315Ba2e8952D06094CC636b2B84229FA32fb23A7}"
 EXPECTED_KEEPER="${EXPECTED_KEEPER:-0xb6f1f1bfb92476abb0998b425de0dec5f927cfc7}"
@@ -17,10 +17,9 @@ usage() {
   cat <<U
 Usage: $0 [--broadcast] [--max-accrued <ether>] [--log-dir <path>]
 
-Default is dry-run: reads accruedFees / pendingBuyback, prints plan.
---broadcast requires KEEPER_PRIVATE_KEY (env or sourced from \$KEEPER_ENV).
-Derived sender must match EXPECTED_KEEPER (${EXPECTED_KEEPER}).
-If accruedFees > max (default ${MAX_ACCRUED_ETHER} BNB), refuse broadcast.
+Default dry-run. --broadcast needs KEEPER_PRIVATE_KEY (env or \$KEEPER_ENV).
+Sender must match EXPECTED_KEEPER (${EXPECTED_KEEPER}).
+Refuse auto-broadcast if accruedFees > max (default ${MAX_ACCRUED_ETHER} BNB).
 U
 }
 
@@ -34,43 +33,41 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v cast >/dev/null; then
-  echo "cast required (foundry)" >&2
-  exit 3
-fi
+command -v cast >/dev/null || { echo "cast required" >&2; exit 3; }
+command -v python3 >/dev/null || { echo "python3 required" >&2; exit 3; }
 
 if [[ -z "${KEEPER_PRIVATE_KEY:-}" && -f "$KEEPER_ENV" ]]; then
   set -a
   # shellcheck disable=SC1091
   source <(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$KEEPER_ENV" || true)
   set +a
+  BSC_RPC="${BSC_RPC:-${BSC_RPC_URL:-https://bsc-dataseed.binance.org}}"
 fi
 
 ts() { date -u +'%Y-%m-%dT%H:%M:%SZ'; }
-
 log_line() {
-  local line="$1"
-  echo "$line"
+  echo "$1"
   if [[ -n "$LOG_DIR" ]]; then
     mkdir -p "$LOG_DIR"
-    echo "$line" >>"$LOG_DIR/keeper-collectfees.log"
+    echo "$1" >>"$LOG_DIR/keeper-collectfees.log"
   fi
 }
 
-# cast may print "123 [1.23e2]" — keep first token of first line
-wei_only() { awk 'NR==1{print $1; exit}'; }
-wei_to_ether() { cast --from-wei "$(printf "%s" "$1" | wei_only)" ether; }
-gt_wei() {
-  local a b
-  a="$(printf "%s" "$1" | wei_only)"
-  b="$(printf "%s" "$2" | wei_only)"
-  python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$a" "$b"
+# cast call --json → ["123"] or "0xabc…"; never the "123 [1.23e2]" pretty form
+u256() {
+  cast call "$1" "$2" --rpc-url "$BSC_RPC" --json \
+    | python3 -c 'import sys,json; v=json.load(sys.stdin); print(v[0] if isinstance(v,list) else v)'
 }
-u256() { cast call "$1" "$2" --rpc-url "$BSC_RPC" | wei_only; }
+addr() {
+  cast call "$1" "$2" --rpc-url "$BSC_RPC" --json \
+    | python3 -c 'import sys,json; v=json.load(sys.stdin); print(v[0] if isinstance(v,list) else v)'
+}
+wei_to_ether() { cast --from-wei "$1" ether; }
+gt_wei() { python3 -c "import sys; sys.exit(0 if int(sys.argv[1]) > int(sys.argv[2]) else 1)" "$1" "$2"; }
 
 ACCRUED="$(u256 "$LAUNCHPAD" "accruedFees()(uint256)")"
 PENDING="$(u256 "$LAUNCHPAD" "pendingBuyback()(uint256)")"
-FEE_VAULT="$(cast call "$LAUNCHPAD" "feeVault()(address)" --rpc-url "$BSC_RPC" | wei_only)"
+FEE_VAULT="$(addr "$LAUNCHPAD" "feeVault()(address)")"
 MAX_WEI="$(cast --to-wei "$MAX_ACCRUED_ETHER" ether)"
 
 log_line "$(ts) launchpad=${LAUNCHPAD} expected_keeper=${EXPECTED_KEEPER}"
@@ -88,7 +85,7 @@ if [[ "$ACCRUED" != "0" ]] && gt_wei "$ACCRUED" "$MAX_WEI"; then
 fi
 
 if [[ "$BROADCAST" -eq 0 ]]; then
-  log_line "$(ts) DRY-RUN only. VPS: KEEPER_ENV=${KEEPER_ENV} $0 --broadcast [--log-dir /opt/gang/keeper/logs]"
+  log_line "$(ts) DRY-RUN only. VPS: $0 --broadcast --log-dir /opt/gang/keeper/logs"
   exit 0
 fi
 
@@ -97,7 +94,7 @@ if [[ "$OVER_MAX" -eq 1 ]]; then
 fi
 
 if [[ -z "${KEEPER_PRIVATE_KEY:-}" ]]; then
-  echo "ERROR: --broadcast set but KEEPER_PRIVATE_KEY missing (env or ${KEEPER_ENV})." >&2
+  echo "ERROR: --broadcast but KEEPER_PRIVATE_KEY missing" >&2
   exit 4
 fi
 
