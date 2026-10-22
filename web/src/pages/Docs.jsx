@@ -36,7 +36,7 @@ export default function Docs() {
       <Cmd block>gang create --name "My Agent Coin" --symbol MAC</Cmd>
       <Cmd block>gang execute --request-id …</Cmd>
       <Cmd block>gang tx --hash 0x…</Cmd>
-      <Lines k="g_s6_p" />
+      <Lines k="g_s6_p" className="oneline" />
       <h2>{t('g_rules')}</h2>
       <table><tbody>
         <tr><td>{t('r_who')}</td><td>{t('r_who_v')}</td></tr>
