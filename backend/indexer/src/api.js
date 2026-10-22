@@ -84,6 +84,12 @@ const stockRow = (r, stocks) => {
 }
 
 
+function sendJson(res, code, body, opts = {}) {
+  const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*' }
+  if (opts.noStore) headers['cache-control'] = 'no-store'
+  res.writeHead(code, headers); res.end(JSON.stringify(body))
+}
+
 function stockCandlesFromTrades(db, addr, resSec, since, createdTs, openPriceWei) {
   const out = []
   let cur = null
@@ -146,7 +152,7 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
     } catch { /* ignore */ }
   }
   if (!p[2]) {
-    json(res, 200, base)
+    sendJson(res, 200, base)
     return true
   }
   if (p[2] === 'trades') {
@@ -168,7 +174,7 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
     const raw = stmt.all(...args)
     const hasMore = raw.length > limit
     const rows = hasMore ? raw.slice(0, limit) : raw
-    json(res, 200, {
+    sendJson(res, 200, {
       items: rows.map((x) => ({
         side: x.side,
         trader: x.trader,
@@ -193,7 +199,7 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
   }
   if (p[2] === 'holders') {
     // Stocks holders not indexed yet — empty honest response
-    json(res, 200, { items: [], hasMore: false, nextOffset: null, limit, offset: 0, track: 'stocks', note: 'stocks holders not indexed' })
+    sendJson(res, 200, { items: [], hasMore: false, nextOffset: null, limit, offset: 0, track: 'stocks', note: 'stocks holders not indexed' })
     return true
   }
   if (p[2] === 'candles') {
@@ -217,7 +223,7 @@ async function respondStockToken(db, res, addr, stocks, stocksClient, p, url, li
       } catch { /* ignore */ }
       out = mergeCurveAndDex(out, dex, r.graduated_ts, res_, live)
     }
-    json(res, 200, out, { noStore: true })
+    sendJson(res, 200, out, { noStore: true })
     return true
   }
   return false
@@ -304,11 +310,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls, stocks = null, s
              (SELECT COUNT(*) FROM trades) AS trades, (SELECT SUM(CAST(bnb AS REAL)) FROM trades WHERE ts>?) AS vol24,
              (SELECT SUM(CAST(fee AS REAL)) FROM trades) AS fees`),
   }
-  const json = (res, code, body, opts = {}) => {
-    const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*' }
-    if (opts.noStore) headers['cache-control'] = 'no-store'
-    res.writeHead(code, headers); res.end(JSON.stringify(body))
-  }
+  const json = sendJson
   const day = () => Math.floor(Date.now() / 1000) - 86400
 
   const server = http.createServer(async (req, res) => {
