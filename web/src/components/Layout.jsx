@@ -1,8 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useT, LANGS } from '../i18n.jsx'
-import { LAUNCHPAD, short } from '../api.js'
+import { GITHUB_CLI, LAUNCHPAD, short } from '../api.js'
 import Search from './Search.jsx'
 import Logo from './Logo.jsx'
+
+const X_URL = 'https://x.com/0xLazy'
 
 export default function Layout() {
   const { t, lang, setLang } = useT()
@@ -12,8 +14,10 @@ export default function Layout() {
         <NavLink to="/" className="logo"><Logo /></NavLink>
         <nav className="nav">
           <NavLink to="/" end>{t('nav_markets')}</NavLink>
+          <NavLink to="/stocks">{t('nav_stocks')}</NavLink>
           <NavLink to="/docs">{t('nav_guide')}</NavLink>
-          <a href="https://github.com/gangfun/gang-launchpad" target="_blank" rel="noreferrer">{t('nav_github')}</a>
+          <a href={X_URL} target="_blank" rel="noreferrer">{t('nav_x')}</a>
+          <a href={GITHUB_CLI} target="_blank" rel="noreferrer">{t('nav_github')}</a>
         </nav>
         <div className="spacer" />
         <Search />
@@ -22,7 +26,11 @@ export default function Layout() {
       <Outlet />
       <footer className="footer"><div className="wrap">
         <span>gang.fun</span>
-        <a href={`https://bscscan.com/address/${LAUNCHPAD}`} target="_blank" rel="noreferrer">{short(LAUNCHPAD)}</a>
+        <span className="footer-links">
+          <a href={X_URL} target="_blank" rel="noreferrer">{t('nav_x')}</a>
+          <a href={GITHUB_CLI} target="_blank" rel="noreferrer">{t('nav_github')}</a>
+          <a href={`https://bscscan.com/address/${LAUNCHPAD}`} target="_blank" rel="noreferrer">{short(LAUNCHPAD)}</a>
+        </span>
       </div></footer>
     </>
   )

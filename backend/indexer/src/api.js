@@ -2,7 +2,8 @@ import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
 import { getMeta } from './db.js'
-import { readPair, fetchDexOhlcv, mergeCurveAndDex } from './pancake.js'
+import { readPair, fetchDexOhlcv, mergeCurveAndDex, sumDexVolume24hBnb } from './pancake.js'
+import { getGraduatedHolderStats } from './holdersLive.js'
 
 const GRAD = 20n * 10n ** 18n
 const fmtTok = (s) => formatEther(BigInt(s))
@@ -47,6 +48,31 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         pairUrl: `https://bscscan.com/address/${row.pair}`,
         pancakeUrl: `https://pancakeswap.finance/swap?outputCurrency=${row.address}&chain=bsc`,
         infoUrl: `https://pancakeswap.finance/info/v2/pairs/${row.pair}`,
+      }
+    }
+    return out
+  }
+
+  /** Post-graduation KPIs: DEX 24h volume; on detail, live holder totals split by Agent ID. */
+  async function withGraduatedKpis(row, { detail = false } = {}) {
+    if (!row?.graduated || !row.pair) return row
+    const out = { ...row }
+    const vol = await sumDexVolume24hBnb(row.pair)
+    if (vol != null && Number.isFinite(vol)) {
+      out.volume24hBnb = String(vol)
+      out.volumeSource = 'dex'
+    }
+    if (detail) {
+      const hs = await getGraduatedHolderStats(db, client, {
+        token: row.address,
+        pair: row.pair,
+        graduatedTs: row.graduatedAt,
+      })
+      if (hs) {
+        out.holders = hs.holders
+        out.holdersAgent = hs.holdersAgent
+        out.holdersOther = hs.holdersOther
+        out.holdersSource = 'onchain'
       }
     }
     return out
@@ -100,7 +126,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
           address: r.address, name: r.name, symbol: r.symbol, graduated: !!r.graduated, pair: r.pair,
           priceBnb: formatEther(BigInt(r.last_price)),
         }))
-        return json(res, 200, await Promise.all(hits.map((r) => withDexPrice(r))))
+        return json(res, 200, await Promise.all(hits.map(async (r) => withGraduatedKpis(await withDexPrice(r)))))
       }
       if (p[0] === 'stats') { const s = q.stats.get(day()); return json(res, 200, { launchpad, bnbUsd, ...s, vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0', fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0' }) }
       if (p[0] === 'tokens' && !p[1]) {
@@ -119,7 +145,7 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
             creatorHandle: handles[r.creator] || null,
           }))
           // Graduated list rows get live Pancake price/mcap (cached 30s in readPair)
-          return Promise.all(mapped.map((r) => withDexPrice(r)))
+          return Promise.all(mapped.map(async (r) => withGraduatedKpis(await withDexPrice(r))))
         }
         const hotSort = (priced) => {
           priced.sort((a, b) => {
@@ -166,12 +192,12 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         if (!t) return json(res, 404, { error: 'not found' })
         if (!p[2]) {
           const handles = getHandleMap(db, [t.creator])
-          const body = await withDexPrice({
+          const body = await withGraduatedKpis(await withDexPrice({
             ...tokRow(t),
             volume24hBnb: t.vol24 ? formatEther(BigInt(Math.round(t.vol24))) : '0',
             creatorHandle: handles[t.creator] || null,
             creatorUrl: t.creator ? `https://bscscan.com/address/${t.creator}` : null,
-          }, { includePancake: true })
+          }, { includePancake: true }), { detail: true })
           return json(res, 200, body)
         }
         if (p[2] === 'trades') {

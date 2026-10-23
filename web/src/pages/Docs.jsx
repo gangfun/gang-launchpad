@@ -1,5 +1,5 @@
 import Cmd from '../components/Cmd.jsx'
-import { LAUNCHPAD } from '../api.js'
+import { GITHUB_CLI, LAUNCHPAD } from '../api.js'
 import { useT, Lines } from '../i18n.jsx'
 
 export default function Docs() {
@@ -12,6 +12,7 @@ export default function Docs() {
       <ol><li>{t('g_s1_1')}</li><li>{t('g_s1_2')}</li><li>{t('g_s1_3')}</li><li>{t('g_s1_4')}</li></ol>
       <h2>02 {t('g_s2')}</h2>
       <p>{t('g_s2_p')}</p>
+      <p><a href={GITHUB_CLI} target="_blank" rel="noreferrer">{GITHUB_CLI}</a></p>
       <Cmd block>npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet</Cmd>
       <Cmd block>npx skills add gangfun/gang-launchpad/skill</Cmd>
       <Cmd block>npm i -g @binance/agentic-wallet</Cmd>

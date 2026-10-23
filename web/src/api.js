@@ -1,4 +1,5 @@
 export const API = import.meta.env.VITE_API_URL || '/api'
+export const GITHUB_CLI = 'https://github.com/gangfun/cli'
 export const LAUNCHPAD = import.meta.env.VITE_LAUNCHPAD || '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7'
 /** Official platform token (GANG). Prefer env; default = live v4 seed. */
 export const PLATFORM_TOKEN = (import.meta.env.VITE_PLATFORM_TOKEN || '0x0c6302401aa5325C2E36F170f52C00B1d220B405').toLowerCase()
