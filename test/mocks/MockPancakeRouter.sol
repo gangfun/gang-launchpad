@@ -56,5 +56,24 @@ contract MockPancakeRouter is IPancakeRouter02 {
         require(IERC20(path[1]).transfer(to, out), "xfer");
     }
 
+    /// @dev Present so the mock still matches IPancakeRouter02 after the OPT5C quote→token helper.
+    ///      Mainline tests do not call it.
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 /* deadline */
+    ) external override {
+        require(!revertSwap, "swap");
+        require(path.length >= 2, "path");
+        require(IERC20(path[0]).transferFrom(msg.sender, address(this), amountIn), "pull");
+        uint256 out = amountIn * rate;
+        uint256 bal = IERC20(path[path.length - 1]).balanceOf(address(this));
+        if (out > bal) out = bal;
+        require(out >= amountOutMin, "slippage");
+        require(IERC20(path[path.length - 1]).transfer(to, out), "xfer");
+    }
+
     receive() external payable {}
 }

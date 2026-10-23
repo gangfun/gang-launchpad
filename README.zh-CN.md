@@ -3,20 +3,22 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20v4.1-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
-  <img src="https://img.shields.io/badge/gate-Agent%20ID%20only-FCD535?style=flat-square&labelColor=0E0E0E" alt="Agent ID" />
+  <img src="https://img.shields.io/badge/BNB%20Chain-BSC-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
+  <img src="https://img.shields.io/badge/gate-BAW%20Dev%20%2B%20Agent%20ID-FCD535?style=flat-square&labelColor=0E0E0E" alt="BAW" />
 </p>
 
 <p align="center"><a href="./README.md">English</a> · <a href="./README.zh-CN.md">中文</a></p>
 
 <pre align="center">
 ╔══════════════════════════════════════════════════════════╗
-║  GANG · BNB Chain 上仅 Agent 可买的发射台                ║
+║  GANG · BNB Chain 发射台 · 内盘 + 帮派池               ║
 ║  用 Binance Agentic Wallet 交易 · gang.fun               ║
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**只有持有 SPACE ID Agent ID（`.ai`）的钱包能在内盘买入。** Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。
+**创建仅限 BAW Dev。内盘买入和卖出都需要 SPACE ID Agent ID（`.ai`）。** Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。
+
+软启动在 BSC。BNB 主轨毕业线是 **20 BNB**。帮派池（任意池）在创建时锁定 `gradAmt`，大约 **15 BNB** 等值，来自运营覆盖或现货。
 
 ---
 
@@ -103,11 +105,13 @@ gang tx     --hash 0x…                       # 链上最终结果
 
 ### 创建
 
-- 谁都可以创建（创建费 0）。之后只有持有 Agent ID 的钱包能在内盘买。
+- **仅 BAW Dev**（`isDev` / owner `setDev`）。创建费为 0。之后内盘买卖都要有 Agent ID。
 
 ### 已毕业代币
 
-- 若命令返回 `graduated: true`，曲线已关闭 —— 用返回的 `pair` 去 **PancakeSwap V2** 交易。毕业后平台费为 0。
+- 若命令返回 `graduated: true`，曲线已关闭 —— 用返回的 `pair` 去 **PancakeSwap V2** 交易。
+- 无税 BNB 主轨：毕业后平台费为 0。
+- 有税帮派池：外盘交易另收 **1%**。Keeper 调用 `process` 后，这笔税才进入分红和平台桶。
 
 ---
 
@@ -136,27 +140,63 @@ gang tx     --hash 0x…                       # 链上最终结果
 - cron 示例（上海 10:00）：`0 10 * * * /opt/gang/keeper/keeper-collectfees.sh --broadcast --log-dir /opt/gang/keeper/logs`
 - `accruedFees==0` 跳过；超过 0.2 BNB 拒绝自动广播（可用 `--max-accrued` 覆盖）
 
-## 附录 A · 规则（极简）
+## 附录 A · 规则（软启动）
 
 | | |
 |---|---|
-| 谁能买（内盘） | 仅 Agent ID 持有人（链上 `balanceOf`） |
-| 谁能卖 | 任意持有人 |
-| 上限 | 单钱包总供应 **1%** |
-| 手续费 | 内盘买卖各 **1%**；其中 **80%** 自动回购并销毁平台币，**20%** 进运维金库；**毕业后 0** |
+| 链 | BSC |
+| 谁能创建 | **仅 BAW Dev**（`isDev` / `setDev`） |
+| 谁能在内盘买 / 卖 | **仅 BAW Agent ID** |
+| 毕业之后 | 任何人都可以在 Pancake 池交易。有税代币仍交外盘税。 |
+| 上限 | 曲线阶段单钱包总供应 **1%**（`10_000_000` 枚） |
 | 供应 | 固定 10 亿 · 内盘 8 亿 · 进池 2 亿 |
-| 毕业 | 真实筹资满 **20 BNB** → Pancake V2 · LP → `0x…dEaD` · 转账解锁 |
+| 无税 | 内盘 **1%** → **80%** 回购并销毁 GANG · **20%** 金库（`feeVault`） |
+| 有税 | 内盘 **和** 外盘各 **1%** → **50%** 分红（持仓份额 ≥ `TAXED_MIN_SHARE` = 100 万枚）· 另外 **50%** 再按 **80/20** 分给回购 / 金库 |
+| BNB 主轨 | 满 **20 BNB** 毕业 · LP 进 `0x…dEaD` · 转账解锁 · 毕业后平台费为 0 |
+| 帮派池（任意池） | 创建时锁定 `gradAmt`（运营 `graduationQuoteAmount` 或现货，约 **15 BNB** 等值）· `virtualQuote = floor(gradAmt / 3)` · 有税轨同时走 PostGrad |
 | 转账 | 毕业前锁定 |
+| 回购 | quote → GANG，烧到 `0x…dEaD`。Smart Router 路径是 exact-input（`collectPlatformSmart`）。`minGangOut` 由链下给出。 |
 
-## 附录 B · 合约（BSC · v4.1 当前）
+## 附录 B · 已部署的 BNB 主轨（BSC）
+
+下表是已经公开的 v4.1 BNB 曲线地址。帮派池（`LaunchpadU` / `LaunchpadS`）的源码在本仓库，供软启动使用；这里不把它们写成主网部署。本仓库里的 `Launchpad` 源码是软启动包（Dev 白名单、内盘卖出也要 Agent、一次性 `setPlatformToken`）。`0x315B…` 链上实际字节码以 BscScan 为准。
 
 | 合约 | 部署区块 | 地址 |
 |---|---|---|
-| Launchpad **v4.1**（当前） | **128977029** | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) |
+| Launchpad v4.1（已部署的 BNB 曲线） | **128977029** | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) |
 | Migrator v4.1 | **128977029** | [`0xFcB6278b6FE3f2e3F567bb49cBf8d8883bcE96E9`](https://bscscan.com/address/0xFcB6278b6FE3f2e3F567bb49cBf8d8883bcE96E9) |
 | 平台币（GANG） | **128977029** | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) |
 | Agent ID（SPACE ID） | — | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
-| feeVault / opsTreasury | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
+| feeVault / 运维金库 | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
 | Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 
-**已弃用：** Launchpad v3 [`0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb`](https://bscscan.com/address/0xBfBB10db587DdFDF38c888cB80C5124f1Aa3C0Eb) · Migrator v3 [`0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8`](https://bscscan.com/address/0x4b1E5a7602c7f7964c08364241c1FE59CB4095C8)（部署块 128858413）。Launchpad **v4** [`0x86854E8ee7D438ca9B52407DCF92D1616385dDcc`](https://bscscan.com/address/0x86854E8ee7D438ca9B52407DCF92D1616385dDcc) · GANG（v4）[`0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2`](https://bscscan.com/address/0xDA519ED3Ed0880C96610390467b1A8Eb43f16ab2)。v1 / v2 亦已作废。请只用现网 **v4.1**，并在 BscScan 核验。
+## 附录 C · OPT5C（简）
+
+源码在 `src/stocks/`，外加软启动版 `Launchpad`。`script/DeployMainnetDraft.s.sol` 会主动 revert，不会广播。
+
+- 每条曲线 `virtualQuote = floor(gradAmt / 3)`，创建时锁定。
+- `LaunchpadS` PostGrad：内外盘都是 **1%**，分成与有税 `LaunchpadU` 相同。
+- 运营覆盖：`QuoteRegistry.graduationQuoteAmount > 0` 时锁定该 `gradAmt`，跳过 V2 现货。
+- 卡住的 quote 分两步清：`requestFlush`，满 **7 天** 后 `flushStuckQuoteToTreasury`。成功的 `collectPlatform` / `collectPlatformSmart` 会清掉这条请求。
+- Smart Router 回购：`collectPlatformSmart` → `buybackAndBurnSmart`。quote 必须 exact-input 花完（`balance == before - amountIn`），否则 `IncompleteQuoteSpend`。
+- `TAXED_MIN_SHARE = 1_000_000 ether`（100 万枚）。
+- 毕业后 pair 兑换按 **9975/10000**（Pancake 0.25%）。转账钩子里不做 swap。
+- `LaunchpadU` / `LaunchpadS` 和手续费合约使用 **Ownable2Step**。
+
+## 附录 D · 仅 Chapel 测试网（chainId 97）
+
+来自 tip `chapel-opt5c-202610231325` 的测试网地址。不是主网地址。
+
+| | 地址 |
+|---|---|
+| LaunchpadU | `0xB12f0033B747c01c261AA97565473a19ae2195C3` |
+| LaunchpadS | `0x9CA02C10fF73857F2C6ae2d2803660Ca988c52A7` |
+| BucketU | `0x4b5A2fAF01637b3de0fc02630e52991b22Fd0eE5` |
+| BucketS | `0x80565663BB74dA75A79E82b4dEa899E1E85a3A74` |
+| BurnerU | `0x38D021Cd9419760ceCA24559d9381BB8EBda2B64` |
+| BurnerS | `0x7De78eDE466d33260947D65999581faF62cB56D1` |
+| HandlerU | `0x1eE4DdB60F7E7B5DA32D74eA41C0043E7C1eEDb3` |
+| HandlerS | `0xeD91DeFe0a3E5c17e6492c6CbA570C362D0aB52A` |
+| VaultU | `0x957bEc2Aa87c6B196c968a4e2a2E8f19C36d5AC8` |
+| VaultS | `0x11140E0353770b27c432bCBd0D4eA445F10679eA` |
+| RegistryU | `0xDEf94E028A5c314c63d84769b347B7656EFF1D07` |
