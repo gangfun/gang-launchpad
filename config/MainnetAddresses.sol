@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 /// @title MainnetAddresses (BSC chainId 56 reference — NOT for Chapel)
-/// @notice Live v4.1 main-track refs + shared deps. LaunchpadU/S / Grad15 / tax stocks are NOT deployed yet.
+/// @notice Live v4.1 main-track refs + shared deps. LaunchpadU/S OPT5C mainnet addresses are in the README (2026-10-23). This library does not embed those pads. Chapel addresses are not these values.
 /// @dev Import for docs / guarded DeployMainnetDraft only. Do NOT treat Chapel tip pads as these values.
 library MainnetAddresses {
     // ---- Live v4.1 main track (already on BSC) ----

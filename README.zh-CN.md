@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/BNB%20Chain-BSC-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
+  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20mainnet%20%C2%B7%2056-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
+  <img src="https://img.shields.io/badge/status-soft%20launch%20%C2%B7%20not%20audited-FCD535?style=flat-square&labelColor=0E0E0E" alt="Not audited" />
   <img src="https://img.shields.io/badge/gate-BAW%20Dev%20%2B%20Agent%20ID-FCD535?style=flat-square&labelColor=0E0E0E" alt="BAW" />
 </p>
 
@@ -16,9 +17,18 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**创建仅限 BAW Dev。内盘买入和卖出都需要 SPACE ID Agent ID（`.ai`）。** Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。
+**创建仅限 BAW Dev。内盘买入和卖出是 BAW Agent**（SPACE ID Agent ID，`.ai`）。Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。**walletCap 开启**（曲线阶段单钱包总供应 1%）。
 
-软启动在 BSC。BNB 主轨毕业线是 **20 BNB**。帮派池（任意池）在创建时锁定 `gradAmt`，大约 **15 BNB** 等值，来自运营覆盖或现货。
+**软启动 · 未审计。** 已在 BSC 主网（chainId 56）上线：[gang.fun](https://gang.fun)。不要把这些合约说成已审计。Chapel（chainId 97）不是这次部署。
+
+| 轨道 | 地址 | 毕业 |
+|---|---|---|
+| Soft Launchpad（BNB） | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) | **20 BNB** |
+| GANG（平台币） | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) | — |
+| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) | 现货 Grad15 ≈ **15 BNB** 等值，创建时锁定 |
+| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) | 现货 Grad15 ≈ **15 BNB** 等值，创建时锁定 |
+
+U/S 上 `virtualQuote = floor(gradAmt / 3)`。QuoteRegistry 是白名单。`graduationQuoteAmount` 为 **0** 表示现货 Grad15；大于 0 则锁定该 quote 数量。毕业后 **1%** 税先累积，再由 keeper 调用 `process()`（DEX 约 0.3%）。转账钩子不得 swap。回购销毁的是 **GANG**。
 
 ---
 
@@ -111,7 +121,7 @@ gang tx     --hash 0x…                       # 链上最终结果
 
 - 若命令返回 `graduated: true`，曲线已关闭 —— 用返回的 `pair` 去 **PancakeSwap V2** 交易。
 - 无税 BNB 主轨：毕业后平台费为 0。
-- 有税帮派池：外盘交易另收 **1%**。Keeper 调用 `process` 后，这笔税才进入分红和平台桶。
+- 有税帮派池（LaunchpadU / LaunchpadS）：毕业后 **1%** 税先累积。Keeper 调用 `process()` 卖掉（DEX 约 0.3%），再进入分红和平台桶。转账钩子不得 swap。回购销毁 **GANG**。
 
 ---
 
@@ -144,22 +154,23 @@ gang tx     --hash 0x…                       # 链上最终结果
 
 | | |
 |---|---|
-| 链 | BSC |
+| 链 | BSC **主网**（chainId 56）· [gang.fun](https://gang.fun) · **未审计** |
 | 谁能创建 | **仅 BAW Dev**（`isDev` / `setDev`） |
-| 谁能在内盘买 / 卖 | **仅 BAW Agent ID** |
+| 谁能在内盘买 / 卖 | **仅 BAW Agent**（Agent ID） |
 | 毕业之后 | 任何人都可以在 Pancake 池交易。有税代币仍交外盘税。 |
-| 上限 | 曲线阶段单钱包总供应 **1%**（`10_000_000` 枚） |
+| 上限 | **walletCap 开启** · 曲线阶段单钱包总供应 **1%**（`10_000_000` 枚） |
 | 供应 | 固定 10 亿 · 内盘 8 亿 · 进池 2 亿 |
 | 无税 | 内盘 **1%** → **80%** 回购并销毁 GANG · **20%** 金库（`feeVault`） |
 | 有税 | 内盘 **和** 外盘各 **1%** → **50%** 分红（持仓份额 ≥ `TAXED_MIN_SHARE` = 100 万枚）· 另外 **50%** 再按 **80/20** 分给回购 / 金库 |
 | BNB 主轨 | 满 **20 BNB** 毕业 · LP 进 `0x…dEaD` · 转账解锁 · 毕业后平台费为 0 |
-| 帮派池（任意池） | 创建时锁定 `gradAmt`（运营 `graduationQuoteAmount` 或现货，约 **15 BNB** 等值）· `virtualQuote = floor(gradAmt / 3)` · 有税轨同时走 PostGrad |
+| LaunchpadU / LaunchpadS | 现货 Grad15 ≈ **15 BNB** 等值，创建时锁定 · `virtualQuote = floor(gradAmt / 3)` · QuoteRegistry 白名单 · `graduationQuoteAmount` **0** = 现货 Grad15 |
+| PostGrad | **1%** 税先累积 · keeper `process()`（DEX 约 0.3%）· 转账钩子**不得** swap · 平台币 **GANG** |
 | 转账 | 毕业前锁定 |
 | 回购 | quote → GANG，烧到 `0x…dEaD`。Smart Router 路径是 exact-input（`collectPlatformSmart`）。`minGangOut` 由链下给出。 |
 
-## 附录 B · 已部署的 BNB 主轨（BSC）
+## 附录 B · Soft Launchpad，BNB 主轨（BSC 主网）
 
-下表是已经公开的 v4.1 BNB 曲线地址。帮派池（`LaunchpadU` / `LaunchpadS`）的源码在本仓库，供软启动使用；这里不把它们写成主网部署。本仓库里的 `Launchpad` 源码是软启动包（Dev 白名单、内盘卖出也要 Agent、一次性 `setPlatformToken`）。`0x315B…` 链上实际字节码以 BscScan 为准。
+软启动的现网地址。**未审计。** 本仓库里的 `Launchpad` 源码是软启动包（Dev 白名单、内盘卖出也要 Agent、一次性 `setPlatformToken`）。`0x315B…` 链上实际字节码以 BscScan 为准。LaunchpadU / LaunchpadS 见附录 C。
 
 | 合约 | 部署区块 | 地址 |
 |---|---|---|
@@ -170,33 +181,55 @@ gang tx     --hash 0x…                       # 链上最终结果
 | feeVault / 运维金库 | — | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
 | Pancake V2 Router | — | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
 
-## 附录 C · OPT5C（简）
+## 附录 C · OPT5C，BSC 主网（chainId 56）
 
-源码在 `src/stocks/`，外加软启动版 `Launchpad`。`script/DeployMainnetDraft.s.sol` 会主动 revert，不会广播。
+2026-10-23 广播。**软启动，未审计。** 站点：[gang.fun](https://gang.fun)。下面是主网地址。Chapel（chainId 97）不是这次部署，测试网地址不在这里列出。本仓库的 `script/DeployMainnetDraft.s.sol` 仍会 revert，并不是打出下列地址的那次广播。
 
-- 每条曲线 `virtualQuote = floor(gradAmt / 3)`，创建时锁定。
-- `LaunchpadS` PostGrad：内外盘都是 **1%**，分成与有税 `LaunchpadU` 相同。
-- 运营覆盖：`QuoteRegistry.graduationQuoteAmount > 0` 时锁定该 `gradAmt`，跳过 V2 现货。
-- 卡住的 quote 分两步清：`requestFlush`，满 **7 天** 后 `flushStuckQuoteToTreasury`。成功的 `collectPlatform` / `collectPlatformSmart` 会清掉这条请求。
-- Smart Router 回购：`collectPlatformSmart` → `buybackAndBurnSmart`。quote 必须 exact-input 花完（`balance == before - amountIn`），否则 `IncompleteQuoteSpend`。
-- `TAXED_MIN_SHARE = 1_000_000 ether`（100 万枚）。
-- 毕业后 pair 兑换按 **9975/10000**（Pancake 0.25%）。转账钩子里不做 swap。
-- `LaunchpadU` / `LaunchpadS` 和手续费合约使用 **Ownable2Step**。
+LaunchpadU 和 LaunchpadS 的 `agentGateEnabled` 与 `walletCapEnabled` 都是 true。BuybackBurner 的 `gang` 是 GANG。BuybackBurner 的 `smartRouter` 是 Pancake Smart Router。
 
-## 附录 D · 仅 Chapel 测试网（chainId 97）
-
-来自 tip `chapel-opt5c-202610231325` 的测试网地址。不是主网地址。
+### 共用（主网已有）
 
 | | 地址 |
 |---|---|
-| LaunchpadU | `0xB12f0033B747c01c261AA97565473a19ae2195C3` |
-| LaunchpadS | `0x9CA02C10fF73857F2C6ae2d2803660Ca988c52A7` |
-| BucketU | `0x4b5A2fAF01637b3de0fc02630e52991b22Fd0eE5` |
-| BucketS | `0x80565663BB74dA75A79E82b4dEa899E1E85a3A74` |
-| BurnerU | `0x38D021Cd9419760ceCA24559d9381BB8EBda2B64` |
-| BurnerS | `0x7De78eDE466d33260947D65999581faF62cB56D1` |
-| HandlerU | `0x1eE4DdB60F7E7B5DA32D74eA41C0043E7C1eEDb3` |
-| HandlerS | `0xeD91DeFe0a3E5c17e6492c6CbA570C362D0aB52A` |
-| VaultU | `0x957bEc2Aa87c6B196c968a4e2a2E8f19C36d5AC8` |
-| VaultS | `0x11140E0353770b27c432bCBd0D4eA445F10679eA` |
-| RegistryU | `0xDEf94E028A5c314c63d84769b347B7656EFF1D07` |
+| Soft Launchpad | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) |
+| GANG | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) |
+| feeVault | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
+| Keeper | `0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7` |
+| AgentIdRegistry | [`0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F`](https://bscscan.com/address/0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F) |
+| Pancake V2 Router | `0x10ED43C718714eb63d5aA57B78B54704E256024E` |
+| Pancake Smart Router | `0x13f4EA83D0bd40E75C8222255bc855a974568Dd4` |
+| WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+| 部署者 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3` |
+
+### LaunchpadU
+
+| | 地址 |
+|---|---|
+| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) |
+| QuoteRegistry | `0x1a90B418023933A5D162Ab96b7adB3864B201e05` |
+| DividendVault | `0x1D9a511cd15FDcD2Fad24512D74b38C2cE02b2DF` |
+| PlatformFeeBucket | `0xdEd4D0022879ad1268C754a49F7aDF1bD130b18C` |
+| PostGradTaxHandler | `0xb8714dF76Bea4AeE2F961daBFc3a0584B057D855` |
+| BuybackBurner | `0xc2bffC6a87eA6ae07180A7Ab05aE6406B255d81F` |
+| MigratorS | `0xCE065aa82d4d387d1491d5046600b764c39b05CA` |
+
+### LaunchpadS
+
+| | 地址 |
+|---|---|
+| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) |
+| QuoteRegistry | `0xa7aed928eca3E437A57b4018C7a19B81b79b1bc7` |
+| DividendVault | `0x20b5e893447623AC893f4Fb86A51930A588402Aa` |
+| PlatformFeeBucket | `0x30a49540b06476c4089097869B3920ea47C1537e` |
+| PostGradTaxHandler | `0x35ea5f0d80A8bd91a7Ea39FeCD746aACA76957EA` |
+| BuybackBurner | `0xceA0C99522Dc26Cb64609aA758DE6671281D8D6D` |
+| MigratorS | `0x4f2A02a56f9e1AB2E9b4469569C9D1E724C1dcDb` |
+
+- Soft 轨毕业线是 **20 BNB**。U/S 在创建时锁定现货 Grad15（≈ **15 BNB** 等值）。`virtualQuote = floor(gradAmt / 3)`。
+- QuoteRegistry 是白名单。`graduationQuoteAmount == 0` 锁定现货 Grad15。**大于 0** 则锁定该 `gradAmt`，跳过 V2 现货。
+- 创建是 **BAW Dev**。内盘买卖是 **BAW Agent**。**walletCap 开启。**
+- `LaunchpadS` 的 PostGrad 与有税 `LaunchpadU` 相同：内外盘都是 **1%**。这 **1%** 先累积，keeper 调用 `process()` 经 router 卖掉（DEX 约 0.3%）。转账钩子不得 swap。平台币是 **GANG**。
+- 卡住的 quote 分两步清：`requestFlush`，满 **7 天** 后 `flushStuckQuoteToTreasury`。成功的 `collectPlatform` / `collectPlatformSmart` 会清掉这条请求。
+- Smart Router 回购：`collectPlatformSmart` → `buybackAndBurnSmart`。quote 必须 exact-input 花完（`balance == before - amountIn`），否则 `IncompleteQuoteSpend`。
+- `TAXED_MIN_SHARE = 1_000_000 ether`（100 万枚）。
+- `LaunchpadU` / `LaunchpadS` 和手续费合约使用 **Ownable2Step**。
