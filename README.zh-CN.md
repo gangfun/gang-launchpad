@@ -17,16 +17,17 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**创建仅限 BAW Dev。内盘买入和卖出是 BAW Agent**（SPACE ID Agent ID，`.ai`）。Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。**walletCap 开启**（曲线阶段单钱包总供应 1%）。
+**新的创建走 LaunchpadV2**（BSC 主网）。Soft Launchpad、LaunchpadU、LaunchpadS 合约还在；这三条的创建已归档。**内盘买入和卖出是 BAW Agent**（SPACE ID Agent ID，`.ai`）。Agent ID 从 Binance Agentic Wallet 领取。由你的 agent 跑 CLI；需要时在币安 App 里确认。CLI **不持有私钥**。**walletCap 开启**（曲线阶段单钱包总供应 1%）。
 
-**软启动 · 未审计。** 已在 BSC 主网（chainId 56）上线：[gang.fun](https://gang.fun)。不要把这些合约说成已审计。Chapel（chainId 97）不是这次部署。
+**软启动 · 未审计。** 已在 BSC 主网（chainId 56）上线：[gang.fun](https://gang.fun)。不要把这些合约说成已审计。Chapel（chainId 97）不是这次部署。LaunchpadV2 地址与 startBlock `129311617`：[docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md)。
 
 | 轨道 | 地址 | 毕业 |
 |---|---|---|
-| Soft Launchpad（BNB） | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) | **20 BNB** |
+| LaunchpadV2（创建） | [`0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E`](https://bscscan.com/address/0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E) | ≈ **15 BNB** 等值，创建时锁定 |
+| Soft Launchpad（BNB） | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) | **20 BNB** · 创建已归档 |
 | GANG（平台币） | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) | — |
-| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) | 现货 Grad15 ≈ **15 BNB** 等值，创建时锁定 |
-| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) | 现货 Grad15 ≈ **15 BNB** 等值，创建时锁定 |
+| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) | 现货 Grad15 ≈ **15 BNB** 等值 · 创建已归档 |
+| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) | 现货 Grad15 ≈ **15 BNB** 等值 · 创建已归档 |
 
 U/S 上 `virtualQuote = floor(gradAmt / 3)`。QuoteRegistry 是白名单。`graduationQuoteAmount` 为 **0** 表示现货 Grad15；大于 0 则锁定该 quote 数量。毕业后 **1%** 税先累积，再由 keeper 调用 `process()`（DEX 约 0.3%）。转账钩子不得 swap。回购销毁的是 **GANG**。
 
@@ -115,7 +116,8 @@ gang tx     --hash 0x…                       # 链上最终结果
 
 ### 创建
 
-- **仅 BAW Dev**（`isDev` / owner `setDev`）。创建费为 0。之后内盘买卖都要有 Agent ID。
+- 新的创建走 **LaunchpadV2**。Soft / U / S 的创建已归档，合约仍在。地址：[docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md)。
+- 已归档的 Soft 创建是 **BAW Dev**（`isDev` / owner `setDev`）。创建费为 0。内盘买卖都要有 Agent ID。
 
 ### 已毕业代币
 
@@ -233,3 +235,19 @@ LaunchpadU 和 LaunchpadS 的 `agentGateEnabled` 与 `walletCapEnabled` 都是 t
 - Smart Router 回购：`collectPlatformSmart` → `buybackAndBurnSmart`。quote 必须 exact-input 花完（`balance == before - amountIn`），否则 `IncompleteQuoteSpend`。
 - `TAXED_MIN_SHARE = 1_000_000 ether`（100 万枚）。
 - `LaunchpadU` / `LaunchpadS` 和手续费合约使用 **Ownable2Step**。
+
+## 附录 D · LaunchpadV2，BSC 主网（chainId 56）
+
+2026-10-23 广播。**未审计。** 新的创建走 LaunchpadV2。Soft Launchpad、LaunchpadU、LaunchpadS 合约还在；这三条的创建已归档。startBlock **129311617**。源码：`src/launchpad-v2/`（PoolCheck 是 public library）。与 Soft/U/S 的差异：[docs/launchpad-v2/DIFF-VS-LIVE.md](./docs/launchpad-v2/DIFF-VS-LIVE.md)。完整表：[docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md)。
+
+| 合约 | 地址 |
+|---|---|
+| LaunchpadV2 | [`0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E`](https://bscscan.com/address/0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E) |
+| MigratorV2 | [`0x2D54351657647824c92a36c309A8ed40715968F6`](https://bscscan.com/address/0x2D54351657647824c92a36c309A8ed40715968F6) |
+| QuoteRegistry | `0x053C2868e54921afEd7742bbb4c4fDA99a12060D` |
+| DividendVault | `0x5e2Dd1D439b251d64B4147D8947445f83f3A2D62` |
+| PlatformFeeBucket | `0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111` |
+| PostGradTaxHandler | `0xa2bd8e511Cf01aA8F9693a841FD6ee6E30253e29` |
+| PoolCheck（library） | `0xd2B159820749f178503E4faBCB18A7Ae4492bDb3` |
+
+复用：BuybackBurner `0x2aC14C462901F990ae7647D6AcafEaf50Cc8f8dF`，feeVault `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4`，GANG `0x0c6302401aa5325C2E36F170f52C00B1d220B405`。

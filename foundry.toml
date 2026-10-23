@@ -12,8 +12,17 @@ fs_permissions = [{ access = "read", path = "./" }]
 # LaunchpadU is over the EIP-170 limit without IR (~26.3KB). Compile that file
 # (and files that import it, i.e. the draft deploy script) with IR (~24.3KB).
 # Main Launchpad stays on the default pipeline.
+# LaunchpadV2 was compiled with via-ir (the REFPOOL pack's foundry.toml).
+# PoolCheck is a public library so the pad stays under EIP-170.
 additional_compiler_profiles = [{ name = "via-ir", via_ir = true }]
-compilation_restrictions = [{ paths = "src/stocks/LaunchpadU.sol", via_ir = true }]
+compilation_restrictions = [
+    { paths = "src/stocks/LaunchpadU.sol", via_ir = true },
+    { paths = "src/launchpad-v2/**", via_ir = true },
+]
+
+# Deployed LaunchpadV2 sources are kept as broadcast. forge fmt skips them.
+[fmt]
+ignore = ["src/launchpad-v2/**", "test/launchpad-v2/**", "script/DeployWireMainnetV2.s.sol"]
 
 [fuzz]
 runs = 1000

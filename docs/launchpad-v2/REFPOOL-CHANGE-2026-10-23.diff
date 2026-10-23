@@ -1,0 +1,1129 @@
+diff -ruN -x l gang-v2/launchpad-v2/README.md gang-v2-fix/README.md
+--- gang-v2/launchpad-v2/README.md	2026-10-23 18:03:44
++++ gang-v2-fix/README.md	2026-10-23 18:48:20
+@@ -32,3 +32,28 @@
+ - BuybackBurner `0x2aC14C462901F990ae7647D6AcafEaf50Cc8f8dF`
+ - feeVault `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4`
+ - GANG `0x0c6302401aa5325C2E36F170f52C00B1d220B405`
++
++## REFPOOL (2026-10-23) — dev-supplied reference pool, V2 pair or V3 pool
++
++`create(name, symbol, logoURI, taxed, quote, refPool)`:
++- `quote == address(0)` → WBNB, target = 15 BNB, `refPool` ignored.
++- `QuoteRegistry.graduationAmount(quote) > 0` → ops override, `refPool` optional (validated if given).
++- otherwise `refPool` is REQUIRED: a canonical Pancake V2 pair or V3 pool containing `quote`.
++  - V2: price from reserves. V3: TWAP over `twapWindow` (default 1800s) via `observe()`, spot fallback.
++  - other side == WBNB → target = 15 BNB in that pool.
++  - other side != WBNB (USDT, USD1, …) → owner must have `setBridgePool(asset, assetWbnbPool)`; 15 BNB is converted
++    to the asset through the bridge, then to quote through the reference pool.
++  - reference pool must hold ≥ `MIN_REF_DEPTH_BNB` (1 BNB) worth of the other side, else `ThinReferencePool`.
++- Both tracks share the same input rules (untaxed no longer rejects pool input).
++
++Owner wiring (in addition to the existing list): `setV3Factory(0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865)`;
++`setBridgePool(USDT, <USDT/WBNB V3 0.05% pool>)` and the same for USD1 / other stables you want to accept.
++FE preview: `graduationAmountOf(quote, refPool)` (reverts with the same errors as create).
++
++Removed: `defaultGraduationQuoteAmount` / `setDefaultGraduationQuoteAmount`, `MIN_RESERVE_WBNB`,
++`PoolCheck.resolveQuoteAndPair / resolveQuoteIdentity / spotGradAmt / hasReserves`.
++New file: `src/libraries/TickMath.sol` (Uniswap V3 core, GPL-2.0-or-later).
++
++Verified on BSC mainnet fork (`test/V2E2E.t.sol`, 8 tests): NVDAB via V3 NVDAB/USDT 0.25% → 52.50 NVDAB
++(spot-derived 52.45); via V2 NVDAB/WBNB → 52.49; USDT quote → 11,222 USDT; fake pool / wrong quote / no pool revert;
++full create → graduate → DEX tax → process → V2 + Smart Router buyback.
+diff -ruN -x l gang-v2/launchpad-v2/docs/REFPOOL-CHANGE-2026-10-23.md gang-v2-fix/docs/REFPOOL-CHANGE-2026-10-23.md
+--- gang-v2/launchpad-v2/docs/REFPOOL-CHANGE-2026-10-23.md	1970-01-01 08:00:00
++++ gang-v2-fix/docs/REFPOOL-CHANGE-2026-10-23.md	2026-10-23 18:51:05
+@@ -0,0 +1,45 @@
++# REFPOOL 改动说明（2026-10-23）
++
++**目的：** 兑现需求「Dev 可用任意在 BSC 上有池子的代币作底池，募到 ≈15 BNB 等值发射」。Dev 自己填参考池地址，合约不再只认 V2 quote/WBNB。
++
++## 改了什么
++
++| 文件 | 改动 |
++|---|---|
++| `src/PoolCheck.sol` | 重写。`inspect` 识别 V2 pair / V3 pool 并到对应工厂验证是官方池（`PoolNotFactory`）；`counterOf` 校验 quote 在池内；`depthOf` 读对手资产深度；`convert` 按池价把一种资产换算成另一种（V2 储备比、V3 `observe()` TWAP，观测不足时回退 `slot0` 现货） |
++| `src/libraries/TickMath.sol` | 新增，Uniswap V3 `getSqrtRatioAtTick`，用于 TWAP tick → 价格 |
++| `src/LaunchpadV2.sol` | `create` 改为 `(…, taxed, quote, refPool)`，两轨统一；新增 `v3Factory`、`twapWindow`（默认 1800s）、`bridgePoolOf` 及 setter；`_lockGradAmt` 按「WBNB → 覆盖值 → 参考池」三级决定 gradAmt，对手资产非 WBNB 时经桥接池换算；参考池对手侧深度 ≥ 1 BNB 等值；新增 `graduationAmountOf(quote, refPool)` 预览；删除 `defaultGraduationQuoteAmount` 与 `MIN_RESERVE_WBNB` |
++| `test/LaunchpadV2.t.sol` | create 调用改为 6 参数；`ThinWbnbReserve` → `ThinReferencePool` |
++| `test/V2E2E.t.sol` | 新增 8 个主网 fork 测试 |
++
++## 没改的
++
++`TaxLaunchToken`、`DividendVault`、`PlatformFeeBucket`、`MigratorV2`、曲线数学与毕业流程均未动。
++
++## 同批清理（2026-10-23 第二次）
++
++| 文件 | 删除 / 修改 |
++|---|---|
++| `src/LaunchpadV2.sol` | 删 `isDev`、`setDev`、`_requireDev`、`NotDev`、`DevUpdated`（create 由 Agent 门控制，白名单已无意义） |
++| `src/BuybackBurner.sol` | 删 `maxSlippageBps`、`setMaxSlippageBps`、`_quoteAmountsOut`、`NoRoute`、`SlippageBpsTooHigh`、`MaxSlippageBpsUpdated`（minOut 一律由调用方给出） |
++| `src/QuoteRegistry.sol` | 删 `nativeSwapEnabled` 字段、`setNativeSwapEnabled`、`nativeSwapEnabled()`；`QuoteUpdated` 事件减为 3 个参数；`quotes()` getter 的返回元组相应减少一个字段 |
++| `src/PostGradTaxHandler.sol` | 继承改为 `Ownable2Step`（此前只改了 import） |
++
++未做：重新部署 BuybackBurner 是部署决策，不在源码范围。
++
++## 安全要点
++
++- 假池：V2 用 `getPair(token0, token1) == pool`，V3 用 `getPool(token0, token1, fee) == pool`，非工厂池一律 revert。
++- 价格操纵：V3 默认 30 分钟 TWAP；V2 仍是现货，Dev 填薄 V2 池时可被夹，前端应展示池深并提示。
++- 桥接池由 owner 登记且必须是「资产/WBNB」的官方池，防止用假桥接池抬高 15 BNB 的换算值。
++- 参考池不是毕业池：毕业仍在我们自己新建的 V2 token/quote 对，LP 烧至 dead。
++
++## 测试
++
++- 单元：15 / 15。
++- fork（BSC 主网，真实 NVDAB、USDT、Pancake V2/V3 工厂与池）：8 / 8，见 README REFPOOL 节数据。
++
++## 前端 / 运营变更
++
++- create 多一个 `refPool` 参数；建议前端让用户先填池子地址，调 `graduationAmountOf(quote, refPool)` 显示「需募集 X 枚 ≈ Y 美元」及池子深度，失败时按 revert 原因提示。
++- 部署清单加 `setV3Factory` 与各稳定币的 `setBridgePool`。
+diff -ruN -x l gang-v2/launchpad-v2/src/BuybackBurner.sol gang-v2-fix/src/BuybackBurner.sol
+--- gang-v2/launchpad-v2/src/BuybackBurner.sol	2026-10-23 18:01:20
++++ gang-v2-fix/src/BuybackBurner.sol	2026-10-23 18:50:39
+@@ -26,8 +26,6 @@
+     address public wbnb;
+     address public gang;
+     address public smartRouter;
+-    /// @notice Max slippage for quote→GANG when caller passes minGangOut=0 (default 3%). Legacy; V2 path requires minGangOut>0.
+-    uint256 public maxSlippageBps = 300;
+ 
+     mapping(address => uint256) public quoteReceived;
+ 
+@@ -35,7 +33,6 @@
+     event SmartRouterSet(address indexed smartRouter);
+     event WbnbSet(address indexed wbnb);
+     event GangSet(address indexed gang);
+-    event MaxSlippageBpsUpdated(uint256 bps);
+     event BuybackBurned(address indexed quote, uint256 quoteIn, uint256 gangBurned);
+ 
+     error ZeroAddress();
+@@ -44,9 +41,7 @@
+     error SmartRouterNotSet();
+     error GangNotSet();
+     error WbnbNotSet();
+-    error SlippageBpsTooHigh();
+     error SwapFailed();
+-    error NoRoute();
+     error InsufficientGangOut();
+     error IncompleteQuoteSpend();
+ 
+@@ -80,12 +75,6 @@
+         emit GangSet(gang_);
+     }
+ 
+-    function setMaxSlippageBps(uint256 bps) external onlyOwner {
+-        if (bps > 1_000) revert SlippageBpsTooHigh();
+-        maxSlippageBps = bps;
+-        emit MaxSlippageBpsUpdated(bps);
+-    }
+-
+     /// @notice Pull `amountIn` quote, swap to GANG on Pancake V2, burn to DEAD.
+     /// @param minGangOut Caller slippage floor from off-chain quote (Finding M2: never derive minOut in same tx).
+     function buybackAndBurn(address quote, uint256 amountIn, uint256 minGangOut) external nonReentrant {
+@@ -167,12 +156,4 @@
+         }
+     }
+ 
+-    function _quoteAmountsOut(uint256 amountIn, address[] memory path) internal view returns (uint256) {
+-        try router.getAmountsOut(amountIn, path) returns (uint256[] memory amounts) {
+-            if (amounts.length == 0) return 0;
+-            return amounts[amounts.length - 1];
+-        } catch {
+-            return 0;
+-        }
+-    }
+ }
+diff -ruN -x l gang-v2/launchpad-v2/src/LaunchpadV2.sol gang-v2-fix/src/LaunchpadV2.sol
+--- gang-v2/launchpad-v2/src/LaunchpadV2.sol	2026-10-23 18:02:52
++++ gang-v2-fix/src/LaunchpadV2.sol	2026-10-23 18:50:39
+@@ -18,7 +18,10 @@
+ import {PostGradTaxHandler} from "./PostGradTaxHandler.sol";
+ 
+ /// @title LaunchpadV2 (dual-track · untaxed / taxed)
+-/// @notice One pad, `create(..., bool taxed)`. Both tracks: BAW gate, walletCap 1%, bonding 1%→80/20.
++/// @notice One pad, `create(..., bool taxed, quote, refPool)`. Both tracks: BAW gate, walletCap 1%, bonding 1%→80/20.
++///         The dev supplies the reference pool (Pancake V2 pair or V3 pool) that prices the quote; the graduation
++///         target is ≈ TARGET_GRAD_BNB worth of quote at that pool's price (V3 TWAP, spot fallback). If the pool's
++///         other side is not WBNB, an owner-registered bridge pool (e.g. USDT/WBNB) converts it.
+ ///         Untaxed: LaunchToken, post-grad no tax.
+ ///         Taxed: TaxLaunchToken OUTER_TAX 1% on pair trades → 50% DivVault (>10k holders) / 40% buyback / 10% vault.
+ /// @dev Lazy 2026-10-23 locked defaults. NO mainnet broadcast from this pack.
+@@ -40,7 +43,8 @@
+     /// @dev Lazy: holders need balance **strictly >** 10_000 tokens (vault uses `<=` floor).
+     uint256 public constant TAXED_MIN_SHARE = 10_000 ether;
+     uint256 public constant TARGET_GRAD_BNB = 15 ether;
+-    uint256 public constant MIN_RESERVE_WBNB = 1 ether;
++    /// @dev Reference pool must hold at least this much (in BNB terms) of the counter asset.
++    uint256 public constant MIN_REF_DEPTH_BNB = 1 ether;
+     uint256 public constant MIN_GRAD_AMT = 1e6;
+ 
+     struct Curve {
+@@ -61,17 +65,19 @@
+     PlatformFeeBucket public immutable platformBucket;
+     PostGradTaxHandler public immutable taxHandler;
+     address public immutable wbnb;
+-    address public pairFactory;
++    address public pairFactory; // Pancake V2 factory
++    address public v3Factory; // Pancake V3 factory (dev may pass V3 pools as reference)
++    /// @notice V3 TWAP window in seconds for reference-pool pricing (0 = spot). Falls back to spot when the
++    ///         pool's observation buffer cannot cover the window.
++    uint32 public twapWindow = 1800;
++    /// @notice counter asset (e.g. USDT) => canonical pool against WBNB used to express it in BNB.
++    mapping(address => address) public bridgePoolOf;
+     IMigratorV2 public migrator;
+ 
+     IERC721 public agentIdRegistry;
+     bool public agentGateEnabled = true;
+     bool public walletCapEnabled = true;
+-    uint256 public defaultGraduationQuoteAmount = 15 ether;
+ 
+-    /// @notice Legacy Dev allowlist (create ignores; kept for ABI / ops).
+-    mapping(address => bool) public isDev;
+-
+     mapping(address token => Curve) public curves;
+     mapping(address token => string) public logoURIOf;
+     address[] public allTokens;
+@@ -110,9 +116,10 @@
+     event MigratorSet(address indexed migrator);
+     event PairFactorySet(address indexed factory);
+     event AgentGateUpdated(bool enabled, address registry);
+-    event DevUpdated(address indexed account, bool enabled);
+     event WalletCapUpdated(bool enabled);
+-    event DefaultGraduationUpdated(uint256 amount);
++    event V3FactorySet(address indexed factory);
++    event TwapWindowUpdated(uint32 window);
++    event BridgePoolSet(address indexed asset, address indexed pool);
+ 
+     error UnknownToken();
+     error AlreadyGraduated();
+@@ -123,10 +130,10 @@
+     error MigratorAlreadySet();
+     error ZeroAddress();
+     error NotAgent();
+-    error NotDev();
+     error WalletCapReached();
+-    error TaxedRequiresPairOrQuote();
+-    error UntaxedRequiresQuote();
++    error RefPoolRequired();
++    error NoBridgePool();
++    error BridgeNotWbnb();
+ 
+     constructor(
+         address owner_,
+@@ -167,63 +174,67 @@
+         emit AgentGateUpdated(enabled, registry);
+     }
+ 
+-    function setDev(address account, bool enabled) external onlyOwner {
+-        if (account == address(0)) revert ZeroAddress();
+-        isDev[account] = enabled;
+-        emit DevUpdated(account, enabled);
+-    }
+-
+     function setWalletCapEnabled(bool enabled) external onlyOwner {
+         walletCapEnabled = enabled;
+         emit WalletCapUpdated(enabled);
+     }
+ 
+-    function setDefaultGraduationQuoteAmount(uint256 amount) external onlyOwner {
+-        if (amount == 0) revert ZeroAmount();
+-        defaultGraduationQuoteAmount = amount;
+-        emit DefaultGraduationUpdated(amount);
++    function setV3Factory(address factory_) external onlyOwner {
++        v3Factory = factory_;
++        emit V3FactorySet(factory_);
+     }
+ 
++    function setTwapWindow(uint32 window) external onlyOwner {
++        twapWindow = window;
++        emit TwapWindowUpdated(window);
++    }
++
++    /// @notice Register the canonical `asset`/WBNB pool used to express `asset` in BNB (V2 pair or V3 pool).
++    ///         Pass pool = address(0) to remove.
++    function setBridgePool(address asset, address pool) external onlyOwner {
++        if (asset == address(0) || asset == wbnb) revert ZeroAddress();
++        if (pool != address(0)) {
++            PoolCheck.PoolInfo memory info = PoolCheck.inspect(_cfg(), pool);
++            if (PoolCheck.counterOf(info, asset) != wbnb) revert BridgeNotWbnb();
++        }
++        bridgePoolOf[asset] = pool;
++        emit BridgePoolSet(asset, pool);
++    }
++
++    function _cfg() internal view returns (PoolCheck.Cfg memory) {
++        return PoolCheck.Cfg({wbnb: wbnb, v2Factory: pairFactory, v3Factory: v3Factory, twapWindow: twapWindow});
++    }
++
+     // ---------------------------------------------------------------- create
++    /// @param quote   Quote ERC20 the curve is denominated in (address(0) = WBNB).
++    /// @param refPool Pancake V2 pair or V3 pool containing `quote`, used to price the ≈15 BNB target.
++    ///                Ignored when quote == WBNB or when QuoteRegistry has an ops override for `quote`.
+     function create(
+         string calldata name,
+         string calldata symbol,
+         string calldata logoURI,
+         bool taxed,
+-        address pairOrQuote
++        address quote,
++        address refPool
+     ) external returns (address token) {
+         if (address(migrator) == address(0)) revert MigratorNotSet();
+         _requireAgent();
+ 
+-        address quote;
+-        address refPair;
+-        uint256 lockedGrad;
++        if (quote == address(0)) quote = wbnb;
++        (uint256 lockedGrad, address refUsed) = _lockGradAmt(quote, refPool);
++
+         if (taxed) {
+-            if (pairOrQuote == address(0)) revert TaxedRequiresPairOrQuote();
+-            if (pairFactory == address(0)) revert ZeroAddress();
+-            (quote, refPair) = PoolCheck.resolveQuoteIdentity(pairOrQuote, wbnb, pairFactory);
+-            lockedGrad = _lockGradAmt(quote, refPair);
+             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
+             token = address(new TaxLaunchToken(name, symbol));
+             TaxLaunchToken(token).exclude(address(dividendVault), true);
+             TaxLaunchToken(token).exclude(address(platformBucket), true);
+             dividendVault.registerToken(token, quote);
+         } else {
+-            quote = pairOrQuote == address(0) ? wbnb : pairOrQuote;
+-            if (quote == address(0)) revert UntaxedRequiresQuote();
+-            if (quote == wbnb) {
+-                lockedGrad = TARGET_GRAD_BNB;
+-            } else {
+-                if (pairFactory == address(0)) revert ZeroAddress();
+-                (address qResolved, address pair) = PoolCheck.resolveQuoteIdentity(quote, wbnb, pairFactory);
+-                if (qResolved != quote) revert UntaxedRequiresQuote();
+-                refPair = pair;
+-                lockedGrad = _lockGradAmt(quote, pair);
+-            }
+             token = address(new LaunchToken(name, symbol));
+         }
+ 
+         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
++        address refPair = refUsed;
+         _writeCurve(token, quote, lockedGrad, taxed, refPair);
+         logoURIOf[token] = logoURI;
+         allTokens.push(token);
+@@ -384,10 +395,6 @@
+         if (agentGateEnabled && !isAgent(msg.sender)) revert NotAgent();
+     }
+ 
+-    function _requireDev() internal view {
+-        if (!isDev[msg.sender]) revert NotDev();
+-    }
+-
+     function walletRoom(address token, address buyer) public view returns (uint256) {
+         if (!walletCapEnabled) return type(uint256).max;
+         uint256 bal = IERC20(token).balanceOf(buyer);
+@@ -413,27 +420,58 @@
+         return uint256(c.gradAmt) - uint256(c.realQuote);
+     }
+ 
++    /// @notice Preview the graduation amount for (quote, refPool). Reverts with the same errors as `create`.
++    function graduationAmountOf(address quote, address refPool) external view returns (uint256) {
++        if (quote == address(0)) quote = wbnb;
++        (uint256 g,) = _lockGradAmt(quote, refPool);
++        return g;
++    }
++
++    /// @notice WBNB / ops-override preview only (no pool needed). 0 when a reference pool is required.
+     function graduationAmountOf(address quote) external view returns (uint256) {
+-        return _previewGradAmt(quote);
++        if (quote == address(0) || quote == wbnb) return TARGET_GRAD_BNB;
++        return quoteRegistry.graduationAmount(quote);
+     }
+ 
+     // ---------------------------------------------------------------- internal
+-    function _lockGradAmt(address quote, address pair) internal view returns (uint256) {
+-        if (quote == wbnb) return TARGET_GRAD_BNB;
+-        uint256 ov = quoteRegistry.graduationAmount(quote);
+-        if (ov > 0) return ov;
+-        if (pair == address(0)) revert PoolCheck.PairEmpty();
+-        return PoolCheck.spotGradAmt(pair, wbnb, TARGET_GRAD_BNB, MIN_RESERVE_WBNB);
+-    }
++    /// @dev Graduation amount in quote units:
++    ///      1. quote == WBNB → TARGET_GRAD_BNB.
++    ///      2. QuoteRegistry ops override > 0 → that amount (refPool optional, validated if given).
++    ///      3. Otherwise price via the dev-supplied reference pool. counter == WBNB → target = 15 BNB;
++    ///         else target = 15 BNB expressed in counter via bridgePoolOf[counter]. The reference pool must hold
++    ///         ≥ MIN_REF_DEPTH_BNB worth of the counter asset.
++    function _lockGradAmt(address quote, address refPool) internal view returns (uint256 gradAmt, address refUsed) {
++        if (quote == wbnb) return (TARGET_GRAD_BNB, address(0));
+ 
+-    function _previewGradAmt(address quote) internal view returns (uint256) {
+-        if (quote == address(0) || quote == wbnb) return TARGET_GRAD_BNB;
++        PoolCheck.Cfg memory cfg = _cfg();
+         uint256 ov = quoteRegistry.graduationAmount(quote);
+-        if (ov > 0) return ov;
+-        if (pairFactory == address(0)) return defaultGraduationQuoteAmount;
+-        address pair = IPairFactoryV2(pairFactory).getPair(quote, wbnb);
+-        if (pair == address(0) || !PoolCheck.hasReserves(pair)) return defaultGraduationQuoteAmount;
+-        return PoolCheck.spotGradAmt(pair, wbnb, TARGET_GRAD_BNB, MIN_RESERVE_WBNB);
++        if (ov > 0) {
++            if (refPool != address(0)) PoolCheck.counterOf(PoolCheck.inspect(cfg, refPool), quote);
++            return (ov, refPool);
++        }
++
++        if (refPool == address(0)) revert RefPoolRequired();
++        PoolCheck.PoolInfo memory info = PoolCheck.inspect(cfg, refPool);
++        address counter = PoolCheck.counterOf(info, quote);
++
++        uint256 targetCounter;
++        if (counter == wbnb) {
++            targetCounter = TARGET_GRAD_BNB;
++        } else {
++            address bridge = bridgePoolOf[counter];
++            if (bridge == address(0)) revert NoBridgePool();
++            PoolCheck.PoolInfo memory bInfo = PoolCheck.inspect(cfg, bridge);
++            if (PoolCheck.counterOf(bInfo, counter) != wbnb) revert BridgeNotWbnb();
++            targetCounter = PoolCheck.convert(cfg, bInfo, bridge, counter, TARGET_GRAD_BNB);
++        }
++
++        // depth floor: counter side of the reference pool ≥ MIN_REF_DEPTH_BNB worth
++        uint256 minDepth = Math.mulDiv(targetCounter, MIN_REF_DEPTH_BNB, TARGET_GRAD_BNB);
++        if (PoolCheck.depthOf(info, refPool, counter) < minDepth) revert PoolCheck.ThinReferencePool();
++
++        gradAmt = PoolCheck.convert(cfg, info, refPool, quote, targetCounter);
++        if (gradAmt == 0) revert PoolCheck.GradAmtZero();
++        refUsed = refPool;
+     }
+ 
+     function _graduate(address token, Curve storage c) internal {
+diff -ruN -x l gang-v2/launchpad-v2/src/PoolCheck.sol gang-v2-fix/src/PoolCheck.sol
+--- gang-v2/launchpad-v2/src/PoolCheck.sol	2026-10-23 18:01:20
++++ gang-v2-fix/src/PoolCheck.sol	2026-10-23 18:43:08
+@@ -1,154 +1,169 @@
+ // SPDX-License-Identifier: MIT
+ pragma solidity 0.8.28;
+ 
++import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
++import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+ import {IUniswapV2PairLite} from "./interfaces/IUniswapV2PairLite.sol";
+ import {IPairFactoryV2} from "./interfaces/IMigratorV2.sol";
++import {TickMath} from "./libraries/TickMath.sol";
+ 
+-/// @title PoolCheck (Tip A · any-pool)
+-/// @notice Resolve quote from a Pancake V2-style pair (or quote+WBNB getPair) and require reserves.
+-///         Also compute create-time spot graduation amount ≈ targetBnb * reserveQuote / reserveWbnb.
+-/// @dev Finding M1 (2026-10-23): NEVER trust an arbitrary pair CA. Always require
+-///      `factory.getPair(quote, wbnb) == pair` so fake/manipulable pairs cannot set gradAmt.
++interface IV3PoolLite {
++    function token0() external view returns (address);
++    function token1() external view returns (address);
++    function fee() external view returns (uint24);
++    function liquidity() external view returns (uint128);
++    /// @dev Pancake V3 packs feeProtocol as uint32 (Uniswap: uint8). Declared uint32 so both decode.
++    function slot0()
++        external
++        view
++        returns (uint160 sqrtPriceX96, int24 tick, uint16, uint16, uint16, uint32, bool);
++    function observe(uint32[] calldata secondsAgos)
++        external
++        view
++        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
++}
++
++interface IV3FactoryLite {
++    function getPool(address tokenA, address tokenB, uint24 fee) external view returns (address pool);
++}
++
++/// @title PoolCheck — dev-supplied reference pool (Pancake V2 pair or V3 pool)
++/// @notice The dev passes the pool CA they want the graduation target priced against. We verify it is the
++///         canonical factory pool, read the quote's price from it (V3: TWAP via observe(), spot fallback;
++///         V2: reserves), and convert a target amount of the counter asset into quote units.
++/// @dev Counter asset conversion to WBNB (for "≈15 BNB") is done by the caller via a bridge pool.
+ library PoolCheck {
++    enum PoolKind { None, V2, V3 }
++
++    struct Cfg {
++        address wbnb;
++        address v2Factory;
++        address v3Factory;
++        uint32 twapWindow; // seconds; 0 = spot only
++    }
++
++    struct PoolInfo {
++        PoolKind kind;
++        address token0;
++        address token1;
++        uint24 fee;
++    }
++
++    uint256 private constant Q96 = 2 ** 96;
++
+     error ZeroAddress();
+-    error PairEmpty();
+-    error PairNoReserves();
+-    error NotWbnbPair();
+-    error InvalidPairOrQuote();
+-    error ThinWbnbReserve();
++    error NotContract();
++    error UnknownPoolType();
++    error PoolNotFactory();
++    error V3FactoryNotSet();
++    error QuoteNotInPool();
++    error PoolNoLiquidity();
++    error ThinReferencePool();
+     error GradAmtZero();
+-    error PairNotFactory();
+ 
+-    /// @dev `pairOrQuote` may be a pair CA, or an ERC20 quote (then factory.getPair(quote, wbnb)).
+-    ///      Pair CA path: still resolved only if factory.getPair(quote,wbnb) returns that exact pair.
+-    /// @return quote Non-WBNB side of the liquid pair.
+-    /// @return pair  The factory-registered pair that holds reserves.
+-    function resolveQuoteAndPair(address pairOrQuote, address wbnb, address factory)
+-        internal
+-        view
+-        returns (address quote, address pair)
+-    {
+-        if (pairOrQuote == address(0) || wbnb == address(0) || factory == address(0)) revert ZeroAddress();
++    // ------------------------------------------------------------------ inspect
++    /// @notice Detect V2/V3 and verify the pool is registered in the respective factory.
++    function inspect(Cfg memory cfg, address pool) internal view returns (PoolInfo memory info) {
++        if (pool == address(0)) revert ZeroAddress();
++        if (pool.code.length == 0) revert NotContract();
+ 
+-        if (_looksLikePair(pairOrQuote)) {
+-            // Candidate pair — extract quote, then REQUIRE factory canonical match (M1).
+-            quote = _quoteFromPair(pairOrQuote, wbnb);
+-            address canonical = IPairFactoryV2(factory).getPair(quote, wbnb);
+-            if (canonical == address(0)) revert PairEmpty();
+-            if (canonical != pairOrQuote) revert PairNotFactory();
+-            pair = canonical;
+-        } else {
+-            quote = pairOrQuote;
+-            pair = IPairFactoryV2(factory).getPair(quote, wbnb);
+-            if (pair == address(0)) revert PairEmpty();
+-            // Sanity: pair must contain quote + wbnb
+-            _quoteFromPair(pair, wbnb);
+-            if (!_pairContains(pair, quote)) revert InvalidPairOrQuote();
++        if (_isV2(pool)) {
++            info.kind = PoolKind.V2;
++            info.token0 = IUniswapV2PairLite(pool).token0();
++            info.token1 = IUniswapV2PairLite(pool).token1();
++            if (cfg.v2Factory == address(0)) revert ZeroAddress();
++            if (IPairFactoryV2(cfg.v2Factory).getPair(info.token0, info.token1) != pool) revert PoolNotFactory();
++            return info;
+         }
++        if (_isV3(pool)) {
++            info.kind = PoolKind.V3;
++            info.token0 = IV3PoolLite(pool).token0();
++            info.token1 = IV3PoolLite(pool).token1();
++            info.fee = IV3PoolLite(pool).fee();
++            if (cfg.v3Factory == address(0)) revert V3FactoryNotSet();
++            if (IV3FactoryLite(cfg.v3Factory).getPool(info.token0, info.token1, info.fee) != pool) revert PoolNotFactory();
++            if (IV3PoolLite(pool).liquidity() == 0) revert PoolNoLiquidity();
++            return info;
++        }
++        revert UnknownPoolType();
++    }
+ 
+-        _requireReserves(pair);
++    /// @notice The other token of the pool. Reverts if `quote` is not in the pool.
++    function counterOf(PoolInfo memory info, address quote) internal pure returns (address) {
++        if (quote == info.token0) return info.token1;
++        if (quote == info.token1) return info.token0;
++        revert QuoteNotInPool();
+     }
+ 
+-    /// @dev Resolve quote (+ optional pair) WITHOUT requiring reserves.
+-    ///      Used when QuoteRegistry.graduationQuoteAmount override is set (ops GradAmt).
+-    ///      Pair-CA input still requires factory canonical match (M1). Quote-only may return pair=0.
+-    function resolveQuoteIdentity(address pairOrQuote, address wbnb, address factory)
+-        internal
+-        view
+-        returns (address quote, address pair)
+-    {
+-        if (pairOrQuote == address(0) || wbnb == address(0) || factory == address(0)) revert ZeroAddress();
+-
+-        if (_looksLikePair(pairOrQuote)) {
+-            quote = _quoteFromPair(pairOrQuote, wbnb);
+-            address canonical = IPairFactoryV2(factory).getPair(quote, wbnb);
+-            if (canonical == address(0)) revert PairEmpty();
+-            if (canonical != pairOrQuote) revert PairNotFactory();
+-            pair = canonical;
+-        } else {
+-            quote = pairOrQuote;
+-            pair = IPairFactoryV2(factory).getPair(quote, wbnb);
+-            if (pair != address(0)) {
+-                _quoteFromPair(pair, wbnb);
+-                if (!_pairContains(pair, quote)) revert InvalidPairOrQuote();
+-            }
++    /// @notice Pool depth of `token` (V2 reserve / V3 balance).
++    function depthOf(PoolInfo memory info, address pool, address token) internal view returns (uint256) {
++        if (info.kind == PoolKind.V2) {
++            (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pool).getReserves();
++            return token == info.token0 ? uint256(r0) : uint256(r1);
+         }
++        return IERC20(token).balanceOf(pool);
+     }
+ 
+-    /// @notice Spot graduation quote amount locked at create: `targetBnb * rQuote / rWbnb`.
+-    /// @dev Reverts if WBNB reserve below `minReserveWbnb` (thin / dust pool) or result is 0.
+-    function spotGradAmt(address pair, address wbnb, uint256 targetBnb, uint256 minReserveWbnb)
++    // ------------------------------------------------------------------ convert
++    /// @notice How many `tokenOut` are worth `amountOther` of the pool's other token, at pool price.
++    function convert(Cfg memory cfg, PoolInfo memory info, address pool, address tokenOut, uint256 amountOther)
+         internal
+         view
+-        returns (uint256 gradAmt)
++        returns (uint256 amountOut)
+     {
+-        if (pair == address(0) || wbnb == address(0)) revert ZeroAddress();
+-        if (targetBnb == 0) revert GradAmtZero();
++        bool outIs0 = tokenOut == info.token0;
++        if (!outIs0 && tokenOut != info.token1) revert QuoteNotInPool();
+ 
+-        address t0 = IUniswapV2PairLite(pair).token0();
+-        address t1 = IUniswapV2PairLite(pair).token1();
+-        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
+-
+-        uint256 rWbnb;
+-        uint256 rQuote;
+-        if (t0 == wbnb) {
+-            rWbnb = uint256(r0);
+-            rQuote = uint256(r1);
+-        } else if (t1 == wbnb) {
+-            rWbnb = uint256(r1);
+-            rQuote = uint256(r0);
+-        } else {
+-            revert NotWbnbPair();
++        if (info.kind == PoolKind.V2) {
++            (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pool).getReserves();
++            if (r0 == 0 || r1 == 0) revert PoolNoLiquidity();
++            return outIs0 ? Math.mulDiv(amountOther, r0, r1) : Math.mulDiv(amountOther, r1, r0);
+         }
+ 
+-        if (rWbnb == 0 || rQuote == 0) revert PairNoReserves();
+-        if (rWbnb < minReserveWbnb) revert ThinWbnbReserve();
++        uint160 sqrtP = _v3SqrtPrice(cfg, pool);
++        uint256 priceX96 = Math.mulDiv(sqrtP, sqrtP, Q96); // token1 per token0, Q96
++        if (priceX96 == 0) revert PoolNoLiquidity();
++        // tokenOut == token0: amountOther is token1 → out = other / price
++        // tokenOut == token1: amountOther is token0 → out = other * price
++        return outIs0 ? Math.mulDiv(amountOther, Q96, priceX96) : Math.mulDiv(amountOther, priceX96, Q96);
++    }
+ 
+-        gradAmt = (targetBnb * rQuote) / rWbnb;
+-        if (gradAmt == 0) revert GradAmtZero();
++    /// @dev TWAP over cfg.twapWindow when the pool's observation buffer allows; otherwise spot (slot0).
++    function _v3SqrtPrice(Cfg memory cfg, address pool) private view returns (uint160) {
++        if (cfg.twapWindow > 0) {
++            uint32[] memory ago = new uint32[](2);
++            ago[0] = cfg.twapWindow;
++            ago[1] = 0;
++            try IV3PoolLite(pool).observe(ago) returns (int56[] memory cum, uint160[] memory) {
++                int56 delta = cum[1] - cum[0];
++                int56 window = int56(uint56(cfg.twapWindow));
++                int24 meanTick = int24(delta / window);
++                if (delta < 0 && (delta % window != 0)) meanTick--;
++                return TickMath.getSqrtRatioAtTick(meanTick);
++            } catch {}
++        }
++        (uint160 sqrtP,,,,,,) = IV3PoolLite(pool).slot0();
++        return sqrtP;
+     }
+ 
+-    function hasReserves(address pair) internal view returns (bool) {
+-        if (pair == address(0)) return false;
+-        try IUniswapV2PairLite(pair).getReserves() returns (uint112 r0, uint112 r1, uint32) {
+-            return r0 > 0 && r1 > 0;
++    // ------------------------------------------------------------------ detection
++    function _isV2(address pool) private view returns (bool) {
++        try IUniswapV2PairLite(pool).getReserves() returns (uint112, uint112, uint32) {
++            return true;
+         } catch {
+             return false;
+         }
+     }
+ 
+-    function _requireReserves(address pair) private view {
+-        if (!hasReserves(pair)) revert PairNoReserves();
+-    }
+-
+-    function _looksLikePair(address maybe) private view returns (bool) {
+-        try IUniswapV2PairLite(maybe).token0() returns (address) {
+-            try IUniswapV2PairLite(maybe).token1() returns (address) {
+-                try IUniswapV2PairLite(maybe).getReserves() returns (uint112, uint112, uint32) {
+-                    return true;
+-                } catch {
+-                    return false;
+-                }
++    function _isV3(address pool) private view returns (bool) {
++        try IV3PoolLite(pool).fee() returns (uint24) {
++            try IV3PoolLite(pool).slot0() returns (uint160, int24, uint16, uint16, uint16, uint32, bool) {
++                return true;
+             } catch {
+                 return false;
+             }
+         } catch {
+             return false;
+         }
+-    }
+-
+-    function _quoteFromPair(address pair, address wbnb) private view returns (address quote) {
+-        address t0 = IUniswapV2PairLite(pair).token0();
+-        address t1 = IUniswapV2PairLite(pair).token1();
+-        if (t0 == wbnb) quote = t1;
+-        else if (t1 == wbnb) quote = t0;
+-        else revert NotWbnbPair();
+-        if (quote == address(0)) revert ZeroAddress();
+-    }
+-
+-    function _pairContains(address pair, address token) private view returns (bool) {
+-        address t0 = IUniswapV2PairLite(pair).token0();
+-        address t1 = IUniswapV2PairLite(pair).token1();
+-        return t0 == token || t1 == token;
+     }
+ }
+diff -ruN -x l gang-v2/launchpad-v2/src/PostGradTaxHandler.sol gang-v2-fix/src/PostGradTaxHandler.sol
+--- gang-v2/launchpad-v2/src/PostGradTaxHandler.sol	2026-10-23 18:01:20
++++ gang-v2-fix/src/PostGradTaxHandler.sol	2026-10-23 18:50:39
+@@ -24,7 +24,7 @@
+     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+ }
+ 
+-contract PostGradTaxHandler is IPostGradTaxHandler, Ownable, ReentrancyGuard {
++contract PostGradTaxHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGuard {
+     using SafeERC20 for IERC20;
+ 
+     uint256 public constant BPS = 10_000;
+diff -ruN -x l gang-v2/launchpad-v2/src/QuoteRegistry.sol gang-v2-fix/src/QuoteRegistry.sol
+--- gang-v2/launchpad-v2/src/QuoteRegistry.sol	2026-10-23 18:01:10
++++ gang-v2-fix/src/QuoteRegistry.sol	2026-10-23 18:50:39
+@@ -14,12 +14,11 @@
+     struct QuoteInfo {
+         bool enabled;
+         uint256 graduationQuoteAmount;
+-        bool nativeSwapEnabled;
+     }
+ 
+     mapping(address => QuoteInfo) public quotes;
+ 
+-    event QuoteUpdated(address indexed quote, bool enabled, uint256 graduationQuoteAmount, bool nativeSwapEnabled);
++    event QuoteUpdated(address indexed quote, bool enabled, uint256 graduationQuoteAmount);
+ 
+     error ZeroAddress();
+ 
+@@ -27,21 +26,10 @@
+ 
+     function setQuote(address quote, bool enabled, uint256 graduationQuoteAmount) external onlyOwner {
+         if (quote == address(0)) revert ZeroAddress();
+-        quotes[quote] = QuoteInfo({
+-            enabled: enabled,
+-            graduationQuoteAmount: graduationQuoteAmount,
+-            nativeSwapEnabled: false
+-        });
+-        emit QuoteUpdated(quote, enabled, graduationQuoteAmount, false);
++        quotes[quote] = QuoteInfo({enabled: enabled, graduationQuoteAmount: graduationQuoteAmount});
++        emit QuoteUpdated(quote, enabled, graduationQuoteAmount);
+     }
+ 
+-    function setNativeSwapEnabled(address quote, bool enabled) external onlyOwner {
+-        if (quote == address(0)) revert ZeroAddress();
+-        quotes[quote].nativeSwapEnabled = enabled;
+-        QuoteInfo memory q = quotes[quote];
+-        emit QuoteUpdated(quote, q.enabled, q.graduationQuoteAmount, enabled);
+-    }
+-
+     function isQuoted(address quote) external view returns (bool) {
+         return quotes[quote].enabled;
+     }
+@@ -51,9 +39,5 @@
+         QuoteInfo memory q = quotes[quote];
+         if (!q.enabled) return 0;
+         return q.graduationQuoteAmount;
+-    }
+-
+-    function nativeSwapEnabled(address quote) external view returns (bool) {
+-        return quotes[quote].nativeSwapEnabled;
+     }
+ }
+diff -ruN -x l gang-v2/launchpad-v2/src/libraries/TickMath.sol gang-v2-fix/src/libraries/TickMath.sol
+--- gang-v2/launchpad-v2/src/libraries/TickMath.sol	1970-01-01 08:00:00
++++ gang-v2-fix/src/libraries/TickMath.sol	2026-10-23 18:43:08
+@@ -0,0 +1,43 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++pragma solidity 0.8.28;
++
++/// @title TickMath (Uniswap V3 core, trimmed to getSqrtRatioAtTick)
++/// @notice sqrt(1.0001^tick) * 2^96. Used by PoolCheck to turn a V3 TWAP tick into a price.
++library TickMath {
++    int24 internal constant MIN_TICK = -887272;
++    int24 internal constant MAX_TICK = -MIN_TICK;
++
++    error TickOutOfRange();
++
++    function getSqrtRatioAtTick(int24 tick) internal pure returns (uint160 sqrtPriceX96) {
++        unchecked {
++            uint256 absTick = tick < 0 ? uint256(-int256(tick)) : uint256(int256(tick));
++            if (absTick > uint256(int256(MAX_TICK))) revert TickOutOfRange();
++
++            uint256 ratio = absTick & 0x1 != 0 ? 0xfffcb933bd6fad37aa2d162d1a594001 : 0x100000000000000000000000000000000;
++            if (absTick & 0x2 != 0) ratio = (ratio * 0xfff97272373d413259a46990580e213a) >> 128;
++            if (absTick & 0x4 != 0) ratio = (ratio * 0xfff2e50f5f656932ef12357cf3c7fdcc) >> 128;
++            if (absTick & 0x8 != 0) ratio = (ratio * 0xffe5caca7e10e4e61c3624eaa0941cd0) >> 128;
++            if (absTick & 0x10 != 0) ratio = (ratio * 0xffcb9843d60f6159c9db58835c926644) >> 128;
++            if (absTick & 0x20 != 0) ratio = (ratio * 0xff973b41fa98c081472e6896dfb254c0) >> 128;
++            if (absTick & 0x40 != 0) ratio = (ratio * 0xff2ea16466c96a3843ec78b326b52861) >> 128;
++            if (absTick & 0x80 != 0) ratio = (ratio * 0xfe5dee046a99a2a811c461f1969c3053) >> 128;
++            if (absTick & 0x100 != 0) ratio = (ratio * 0xfcbe86c7900a88aedcffc83b479aa3a4) >> 128;
++            if (absTick & 0x200 != 0) ratio = (ratio * 0xf987a7253ac413176f2b074cf7815e54) >> 128;
++            if (absTick & 0x400 != 0) ratio = (ratio * 0xf3392b0822b70005940c7a398e4b70f3) >> 128;
++            if (absTick & 0x800 != 0) ratio = (ratio * 0xe7159475a2c29b7443b29c7fa6e889d9) >> 128;
++            if (absTick & 0x1000 != 0) ratio = (ratio * 0xd097f3bdfd2022b8845ad8f792aa5825) >> 128;
++            if (absTick & 0x2000 != 0) ratio = (ratio * 0xa9f746462d870fdf8a65dc1f90e061e5) >> 128;
++            if (absTick & 0x4000 != 0) ratio = (ratio * 0x70d869a156d2a1b890bb3df62baf32f7) >> 128;
++            if (absTick & 0x8000 != 0) ratio = (ratio * 0x31be135f97d08fd981231505542fcfa6) >> 128;
++            if (absTick & 0x10000 != 0) ratio = (ratio * 0x9aa508b5b7a84e1c677de54f3e99bc9) >> 128;
++            if (absTick & 0x20000 != 0) ratio = (ratio * 0x5d6af8dedb81196699c329225ee604) >> 128;
++            if (absTick & 0x40000 != 0) ratio = (ratio * 0x2216e584f5fa1ea926041bedfe98) >> 128;
++            if (absTick & 0x80000 != 0) ratio = (ratio * 0x48a170391f7dc42444e8fa2) >> 128;
++
++            if (tick > 0) ratio = type(uint256).max / ratio;
++            // Q128.128 -> Q64.96, rounding up
++            sqrtPriceX96 = uint160((ratio >> 32) + (ratio % (1 << 32) == 0 ? 0 : 1));
++        }
++    }
++}
+diff -ruN -x l gang-v2/launchpad-v2/test/LaunchpadV2.t.sol gang-v2-fix/test/LaunchpadV2.t.sol
+--- gang-v2/launchpad-v2/test/LaunchpadV2.t.sol	2026-10-23 18:03:02
++++ gang-v2-fix/test/LaunchpadV2.t.sol	2026-10-23 18:45:54
+@@ -115,12 +115,12 @@
+     function test_create_rejectsNonAgent() public {
+         vm.prank(stranger);
+         vm.expectRevert(LaunchpadV2.NotAgent.selector);
+-        pad.create("X", "X", "", false, address(quoteTok));
++        pad.create("X", "X", "", false, address(quoteTok), liquidPair);
+     }
+ 
+     function test_create_agentCanCreateUntaxed() public {
+         vm.prank(agent);
+-        address t = pad.create("Ok", "OK", "", false, address(quoteTok));
++        address t = pad.create("Ok", "OK", "", false, address(quoteTok), liquidPair);
+         assertTrue(t != address(0));
+         (,,,,,, bool graduated, bool taxed,,) = pad.curves(t);
+         assertFalse(graduated);
+@@ -129,7 +129,7 @@
+ 
+     function test_create_agentCanCreateTaxed() public {
+         vm.prank(agent);
+-        address t = pad.create("Tax", "TAX", "", true, address(quoteTok));
++        address t = pad.create("Tax", "TAX", "", true, address(quoteTok), liquidPair);
+         assertTrue(t != address(0));
+         (,,,,,,, bool taxed,,) = pad.curves(t);
+         assertTrue(taxed);
+@@ -139,7 +139,7 @@
+ 
+     function test_buy_rejectsNonAgent() public {
+         vm.prank(agent);
+-        address t = pad.create("T", "T", "", false, address(quoteTok));
++        address t = pad.create("T", "T", "", false, address(quoteTok), liquidPair);
+         quoteTok.mintUnlimited(stranger, 10 ether);
+         vm.startPrank(stranger);
+         quoteTok.approve(address(pad), type(uint256).max);
+@@ -151,7 +151,7 @@
+     // ---------------- walletCap 1% ----------------
+     function test_walletCap_1pct() public {
+         vm.prank(agent);
+-        address t = pad.create("Cap", "CAP", "", false, address(quoteTok));
++        address t = pad.create("Cap", "CAP", "", false, address(quoteTok), liquidPair);
+ 
+         // Buy a large amount — should cap at MAX_PER_WALLET
+         vm.prank(agent);
+@@ -164,7 +164,7 @@
+     // ---------------- bonding 1% → 80/20 (both tracks) ----------------
+     function test_untaxed_bondingFee_allToPlatform() public {
+         vm.prank(agent);
+-        address t = pad.create("U", "U", "", false, address(quoteTok));
++        address t = pad.create("U", "U", "", false, address(quoteTok), liquidPair);
+ 
+         uint256 beforeBucket = quoteTok.balanceOf(address(bucket));
+         uint256 beforeVault = quoteTok.balanceOf(address(vault));
+@@ -186,7 +186,7 @@
+ 
+     function test_taxed_bondingFee_noDividend_allToPlatform() public {
+         vm.prank(agent);
+-        address t = pad.create("Tx", "TX", "", true, address(quoteTok));
++        address t = pad.create("Tx", "TX", "", true, address(quoteTok), liquidPair);
+ 
+         uint256 beforeVault = quoteTok.balanceOf(address(vault));
+         vm.prank(agent);
+@@ -198,7 +198,7 @@
+ 
+     function test_platformCollect_80_20() public {
+         vm.prank(agent);
+-        address t = pad.create("F", "F", "", false, address(quoteTok));
++        address t = pad.create("F", "F", "", false, address(quoteTok), liquidPair);
+         vm.prank(agent);
+         pad.buy(t, 1 ether, 0);
+ 
+@@ -221,7 +221,7 @@
+         registry.setQuote(address(quoteTok), false, 0);
+ 
+         vm.prank(agent);
+-        address t = pad.create("Spot", "SP", "", false, address(quoteTok));
++        address t = pad.create("Spot", "SP", "", false, address(quoteTok), liquidPair);
+         assertEq(pad.gradAmtOf(t), 15 ether);
+     }
+ 
+@@ -235,8 +235,8 @@
+         MockPair(thinPair).mint(address(0xdead));
+ 
+         vm.prank(agent);
+-        vm.expectRevert(PoolCheck.ThinWbnbReserve.selector);
+-        pad.create("Thin", "TH", "", false, address(thinQ));
++        vm.expectRevert(PoolCheck.ThinReferencePool.selector);
++        pad.create("Thin", "TH", "", false, address(thinQ), thinPair);
+     }
+ 
+     function test_anyQuote_noWhitelistRequired() public {
+@@ -250,7 +250,7 @@
+         MockPair(p).mint(address(0xdead));
+ 
+         vm.prank(agent);
+-        address t = pad.create("Any", "ANY", "", false, address(other));
++        address t = pad.create("Any", "ANY", "", false, address(other), p);
+         // spot = 15 * 30/30 = 15
+         assertEq(pad.gradAmtOf(t), 15 ether);
+     }
+@@ -262,7 +262,7 @@
+ 
+         // Register a fake token via pad create taxed
+         vm.prank(agent);
+-        address t = pad.create("D", "D", "", true, address(quoteTok));
++        address t = pad.create("D", "D", "", true, address(quoteTok), liquidPair);
+ 
+         // Operator setShare: exactly 10k → 0; 10k+1 → kept
+         vm.startPrank(address(pad));
+@@ -276,7 +276,7 @@
+     // ---------------- untaxed graduate → no outer tax ----------------
+     function test_untaxed_graduate_noTaxHandler() public {
+         vm.prank(agent);
+-        address t = pad.create("Ug", "UG", "", false, address(quoteTok));
++        address t = pad.create("Ug", "UG", "", false, address(quoteTok), liquidPair);
+ 
+         // Fill curve to graduate (gradAmt = 15 ether override)
+         _buyUntilGrad(t, agent);
+@@ -292,7 +292,7 @@
+     // ---------------- taxed graduate → pair tax + process split ----------------
+     function test_taxed_outerPairTax_andProcessSplit() public {
+         vm.prank(agent);
+-        address t = pad.create("Tg", "TG", "", true, address(quoteTok));
++        address t = pad.create("Tg", "TG", "", true, address(quoteTok), liquidPair);
+ 
+         _buyUntilGrad(t, agent);
+ 
+@@ -348,7 +348,7 @@
+ 
+     function test_taxed_nonPairTransfer_noTax() public {
+         vm.prank(agent);
+-        address t = pad.create("Np", "NP", "", true, address(quoteTok));
++        address t = pad.create("Np", "NP", "", true, address(quoteTok), liquidPair);
+         _buyUntilGrad(t, agent);
+ 
+         uint256 amt = 100 ether;
+diff -ruN -x l gang-v2/launchpad-v2/test/V2E2E.t.sol gang-v2-fix/test/V2E2E.t.sol
+--- gang-v2/launchpad-v2/test/V2E2E.t.sol	1970-01-01 08:00:00
++++ gang-v2-fix/test/V2E2E.t.sol	2026-10-23 18:46:26
+@@ -0,0 +1,195 @@
++// SPDX-License-Identifier: MIT
++pragma solidity 0.8.28;
++
++import {Test, console} from "forge-std/Test.sol";
++import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
++import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
++import {LaunchpadV2} from "../src/LaunchpadV2.sol";
++import {MigratorV2} from "../src/MigratorV2.sol";
++import {QuoteRegistry} from "../src/QuoteRegistry.sol";
++import {DividendVault} from "../src/DividendVault.sol";
++import {PlatformFeeBucket} from "../src/PlatformFeeBucket.sol";
++import {PostGradTaxHandler} from "../src/PostGradTaxHandler.sol";
++import {BuybackBurner} from "../src/BuybackBurner.sol";
++import {TaxLaunchToken} from "../src/TaxLaunchToken.sol";
++import {PoolCheck, IV3FactoryLite, IV3PoolLite} from "../src/PoolCheck.sol";
++import {TickMath} from "../src/libraries/TickMath.sol";
++import {IPancakeRouter02} from "../src/interfaces/IPancake.sol";
++
++contract MockAgent { mapping(address => uint256) public balanceOf; function set(address a, uint256 b) external { balanceOf[a] = b; } }
++contract FakeV2Pair { address public token0; address public token1; constructor(address a, address b) { (token0, token1) = a < b ? (a, b) : (b, a); } function getReserves() external pure returns (uint112, uint112, uint32) { return (1e24, 1e24, 0); } }
++
++interface ISmartRouter {
++    struct ExactInputParams { bytes path; address recipient; uint256 amountIn; uint256 amountOutMinimum; }
++    function exactInput(ExactInputParams calldata) external payable returns (uint256);
++    function swapExactTokensForTokens(uint256 amountIn, uint256 amountOutMin, address[] calldata path, address to) external payable returns (uint256);
++    function multicall(bytes[] calldata data) external payable returns (bytes[] memory);
++}
++
++/// BSC mainnet fork: LaunchpadV2 with dev-supplied reference pools (V3 NVDAB/USDT, V2 NVDAB/WBNB, V3 USDT/WBNB).
++contract V2E2EForkTest is Test {
++    address constant NVDAB = 0x02Fca66C1D1aFB4E2A7884261eB00F63598a7436;
++    address constant NVDAB_USDT_V3 = 0x8FB4243b553aC29BA088aCf00B9B7dA24bD6690C; // 0.25%, deepest; also NVDAB whale
++    address constant NVDAB_WBNB_V2 = 0x217e9ed14C797dF4597512D2245c00cA93e5a567;
++    address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
++    address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
++    address constant GANG = 0x0c6302401aa5325C2E36F170f52C00B1d220B405;
++    address constant V2_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
++    address constant V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
++    address constant V2_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
++    address constant SMART_ROUTER = 0x13f4EA83D0bd40E75C8222255bc855a974568Dd4;
++    address constant DEAD = 0x000000000000000000000000000000000000dEaD;
++    uint256 constant Q96 = 2 ** 96;
++
++    address owner = makeAddr("owner"); address feeVault = makeAddr("feeVault"); address dev = makeAddr("dev"); address keeper = makeAddr("keeper");
++    QuoteRegistry reg; DividendVault div; PlatformFeeBucket bucket; PostGradTaxHandler handler; BuybackBurner burner; LaunchpadV2 pad; MigratorV2 mig; MockAgent agent;
++    address token; address pair; address trader = makeAddr("trader"); address bridge;
++
++    function setUp() public {
++        vm.startPrank(owner);
++        reg = new QuoteRegistry(owner); div = new DividendVault(owner); bucket = new PlatformFeeBucket(owner, feeVault);
++        handler = new PostGradTaxHandler(owner, address(div), address(bucket)); burner = new BuybackBurner(owner); agent = new MockAgent();
++        pad = new LaunchpadV2(owner, address(reg), address(div), address(bucket), address(handler), WBNB, V2_FACTORY);
++        mig = new MigratorV2(V2_FACTORY, address(pad));
++        pad.setMigrator(address(mig)); pad.setAgentGate(true, address(agent)); agent.set(dev, 1);
++        pad.setV3Factory(V3_FACTORY);
++        bridge = IV3FactoryLite(V3_FACTORY).getPool(WBNB, USDT, 500); require(bridge != address(0), "no USDT/WBNB 0.05% pool");
++        pad.setBridgePool(USDT, bridge);
++        div.setLaunchpad(address(pad)); bucket.setLaunchpad(address(pad)); div.setOperator(address(handler), true); bucket.setOperator(address(handler), true);
++        handler.setRouter(V2_ROUTER); handler.setKeeper(keeper);
++        burner.setRouter(V2_ROUTER); burner.setWbnb(WBNB); burner.setGang(GANG); bucket.setBurner(address(burner)); bucket.setKeeper(keeper);
++        vm.stopPrank();
++    }
++
++    function _give(address to, uint256 amt) internal { vm.prank(NVDAB_USDT_V3); IERC20(NVDAB).transfer(to, amt); }
++
++    /// USDT per 1 unit of `tok` in Q96, read from a V3 pool whose other side is USDT (spot).
++    function _usdtPerQ96(address pool, address tok) internal view returns (uint256) {
++        (uint160 sqrtP,,,,,,) = IV3PoolLite(pool).slot0();
++        uint256 p1per0 = Math.mulDiv(sqrtP, sqrtP, Q96);
++        return IV3PoolLite(pool).token0() == tok ? p1per0 : Math.mulDiv(Q96, Q96, p1per0);
++    }
++
++    // ---------------------------------------------------------------- pricing sanity
++    function test_tickMath_matchesLivePools() public view {
++        address[2] memory pools = [NVDAB_USDT_V3, bridge];
++        for (uint256 i; i < 2; i++) {
++            (uint160 sqrtP, int24 tick,,,,,) = IV3PoolLite(pools[i]).slot0();
++            assertLe(TickMath.getSqrtRatioAtTick(tick), sqrtP, "lower bound");
++            assertGt(TickMath.getSqrtRatioAtTick(tick + 1), sqrtP, "upper bound");
++        }
++    }
++
++    function test_gradAmt_v3RefPool_matches15Bnb() public view {
++        uint256 g = pad.graduationAmountOf(NVDAB, NVDAB_USDT_V3);
++        uint256 expected = Math.mulDiv(15e18, _usdtPerQ96(bridge, WBNB), _usdtPerQ96(NVDAB_USDT_V3, NVDAB));
++        console.log("gradAmt NVDAB via V3 (e15)", g / 1e15, "expected from spot (e15)", expected / 1e15);
++        assertApproxEqRel(g, expected, 0.1e18, "within 10% of spot (TWAP drift)"); // TWAP vs spot
++    }
++
++    function test_gradAmt_v2RefPool() public view {
++        uint256 g = pad.graduationAmountOf(NVDAB, NVDAB_WBNB_V2);
++        console.log("gradAmt NVDAB via V2 NVDAB/WBNB (e15)", g / 1e15);
++        assertGt(g, 0);
++    }
++
++    function test_gradAmt_usdtQuote_viaBridgeAsRef() public view {
++        uint256 g = pad.graduationAmountOf(USDT, bridge); // counter == WBNB, no bridge needed
++        console.log("gradAmt USDT (e18)", g / 1e18);
++        assertApproxEqRel(g, Math.mulDiv(15e18, _usdtPerQ96(bridge, WBNB), Q96), 0.1e18);
++    }
++
++    function test_fakePool_reverts() public {
++        FakeV2Pair fake = new FakeV2Pair(NVDAB, WBNB);
++        vm.expectRevert(PoolCheck.PoolNotFactory.selector);
++        pad.graduationAmountOf(NVDAB, address(fake));
++    }
++
++    function test_quoteNotInPool_reverts() public {
++        vm.expectRevert(PoolCheck.QuoteNotInPool.selector);
++        pad.graduationAmountOf(GANG, NVDAB_USDT_V3);
++    }
++
++    function test_noRefPool_reverts() public {
++        vm.expectRevert(LaunchpadV2.RefPoolRequired.selector);
++        pad.graduationAmountOf(NVDAB, address(0));
++    }
++
++    // ---------------------------------------------------------------- full flow with V3 reference pool
++    function test_e2e_nvdab_taxed_v3ref() public {
++        vm.prank(dev);
++        token = pad.create("Alpha", "ALPHA", "", true, NVDAB, NVDAB_USDT_V3);
++        uint256 g = pad.gradAmtOf(token);
++        assertEq(pad.virtualQuoteOf(token), g / 3, "vq = grad/3");
++        assertEq(div.minimumShareBalance(), 10_000 ether, "min share >10k");
++        console.log("locked gradAmt NVDAB (e15)", g / 1e15);
++
++        uint256 n;
++        for (uint256 i = 0; i < 300; i++) {
++            if (pad.graduationRemaining(token) == 0) break;
++            address b = address(uint160(0xB0000 + i)); agent.set(b, 1); _give(b, 1e18);
++            vm.startPrank(b); IERC20(NVDAB).approve(address(pad), type(uint256).max); pad.buy(token, 1e18, 0); vm.stopPrank(); n++;
++        }
++        (, , , uint128 sold, , , bool graduated, , address pair_, ) = pad.curves(token); pair = pair_;
++        console.log("buyers", n, "sold(M)", uint256(sold) / 1e24);
++        assertTrue(graduated, "graduated");
++        assertEq(IERC20(NVDAB).balanceOf(address(div)), 0, "V2: no bonding dividend");
++        assertGt(bucket.accruedQuote(NVDAB), 0, "V2: bonding fee to bucket");
++        assertApproxEqAbs(uint256(sold), 800_000_000 ether, 1e18, "sold ~800M");
++        assertTrue(pair != address(0) && IERC20(pair).balanceOf(DEAD) > 0, "LP burned");
++        assertEq(TaxLaunchToken(token).pair(), pair); assertEq(TaxLaunchToken(token).taxHandler(), address(handler));
++        assertEq(div.shares(token, pair), 0, "pair no shares"); assertEq(div.shares(token, address(mig)), 0, "migrator no shares");
++        console.log("pair NVDAB (e15)", IERC20(NVDAB).balanceOf(pair) / 1e15, "pair token (M)", IERC20(token).balanceOf(pair) / 1e24);
++        _stageDex(); _stageProcess(); _stageBuyback(); _stageSmart();
++    }
++
++    function _stageDex() internal {
++        _give(trader, 2e18);
++        vm.startPrank(trader);
++        IERC20(NVDAB).approve(V2_ROUTER, type(uint256).max); IERC20(token).approve(V2_ROUTER, type(uint256).max);
++        address[] memory p = new address[](2); p[0] = NVDAB; p[1] = token;
++        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(1e18, 0, p, trader, block.timestamp);
++        uint256 got = IERC20(token).balanceOf(trader); assertGt(got, 0, "dex buy");
++        uint256 acc1 = handler.accruedTax(token); assertGt(acc1, 0, "tax accrued on buy");
++        assertEq(div.shares(token, trader), got > 10_000 ether ? got : 0, "trader share synced");
++        p[0] = token; p[1] = NVDAB;
++        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(got / 2, 0, p, trader, block.timestamp);
++        vm.stopPrank();
++        assertGt(handler.accruedTax(token), acc1, "tax accrued on sell");
++    }
++
++    function _stageProcess() internal {
++        vm.expectRevert(); vm.prank(trader); handler.process(token, 1);
++        uint256 vaultBefore = IERC20(NVDAB).balanceOf(address(div)); uint256 bucketBefore = bucket.accruedQuote(NVDAB);
++        vm.prank(keeper); uint256 qOut = handler.process(token, 1);
++        assertGt(qOut, 0); assertEq(IERC20(NVDAB).balanceOf(address(div)) - vaultBefore, qOut / 2, "50% to vault");
++        assertEq(bucket.accruedQuote(NVDAB) - bucketBefore, qOut - qOut / 2, "50% to bucket");
++        address holder = address(uint160(0xB0000)); uint256 pend = div.pending(token, holder);
++        if (pend > 0) { vm.prank(holder); div.claim(token); }
++    }
++
++    function _stageBuyback() internal {
++        uint256 deadBefore = IERC20(GANG).balanceOf(DEAD); uint256 vaultFeeBefore = IERC20(NVDAB).balanceOf(feeVault);
++        uint256 total = bucket.accruedQuote(NVDAB);
++        vm.prank(keeper); bucket.collectPlatform(NVDAB, 1);
++        console.log("V2 buyback GANG burned (e18)", (IERC20(GANG).balanceOf(DEAD) - deadBefore) / 1e18);
++        assertEq(IERC20(NVDAB).balanceOf(feeVault) - vaultFeeBefore, total - (total * 8000) / 10000, "20% to feeVault");
++    }
++
++    function _stageSmart() internal {
++        address[] memory p = new address[](2);
++        vm.startPrank(trader); p[0] = NVDAB; p[1] = token;
++        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(5e17, 0, p, trader, block.timestamp); vm.stopPrank();
++        vm.prank(keeper); handler.process(token, 1);
++        uint256 amt = (bucket.accruedQuote(NVDAB) * 8000) / 10000;
++        bytes memory path = abi.encodePacked(NVDAB, uint24(2500), USDT, uint24(500), WBNB);
++        bytes[] memory calls = new bytes[](2);
++        calls[0] = abi.encodeWithSelector(ISmartRouter.exactInput.selector, ISmartRouter.ExactInputParams(path, address(2), amt, 0));
++        address[] memory v2p = new address[](2); v2p[0] = WBNB; v2p[1] = GANG;
++        calls[1] = abi.encodeWithSelector(ISmartRouter.swapExactTokensForTokens.selector, 0, 1, v2p, address(1));
++        bytes memory swapData = abi.encodeWithSelector(ISmartRouter.multicall.selector, calls);
++        uint256 deadBefore = IERC20(GANG).balanceOf(DEAD);
++        vm.prank(keeper); bucket.collectPlatformSmart(NVDAB, 1, swapData);
++        console.log("Smart buyback GANG burned (e18)", (IERC20(GANG).balanceOf(DEAD) - deadBefore) / 1e18);
++    }
++}
