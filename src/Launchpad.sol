@@ -13,15 +13,19 @@ import {IMigrator} from "./interfaces/IMigrator.sol";
 import {IPancakeRouter02} from "./interfaces/IPancake.sol";
 
 /// @title Gang Launchpad
-/// @notice Agent-only bonding curve on BNB Chain. Buys require holding a SPACE ID Agent ID (.ai), the soulbound
-///         NFT only a Binance Agentic Wallet can claim; sells are open. Each wallet may hold at most 1% of supply
-///         from the curve. 1% fee on both sides accrues on-contract: 80% auto buyback-and-burns the official
-///         platform token (GANG), 20% goes to the ops treasury (`feeVault`). At 20 BNB raised the remaining supply
-///         and all BNB migrate to PancakeSwap V2 with LP burned, and the platform exits.
+/// @notice BNB bonding curve on BNB Chain (pack delta vs live v4.1):
+///         - create: BAW Dev allowlist only (`isDev` / `setDev`) — not open, not any-Agent.
+///         - buy AND sell on bonding: SPACE ID Agent ID required.
+///         Each wallet may hold at most 1% of supply from the curve. 1% fee on both sides accrues on-contract:
+///         80% auto buyback-and-burns the official platform token (GANG), 20% goes to the ops treasury (`feeVault`).
+///         The platform token is bound exactly once: either seeded here, or `setPlatformToken(liveGANG)` for redeploys.
+///         At 20 BNB raised the remaining supply and all BNB migrate to PancakeSwap V2 with LP burned.
 ///
 ///         Trust model: the owner cannot touch curve BNB. The migrator is set once and never changed. The agent
 ///         registry can only be changed through a 24h timelock that is announced on-chain. Protocol buybacks are
 ///         fee-free, Agent-free, and wallet-cap-free so the treasury path cannot deadlock.
+/// @dev Live mainnet v4.1 still has open create + open sell. This pack source overrides both for new deploys /
+///      upgrade review — do not treat as bytecode of 0x315B…23A7 until Lazy redeploys/upgrades.
 contract Launchpad is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -42,6 +46,8 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     /// @dev Share of accruedFees used for platform-token buyback+burn; remainder goes to feeVault (opsTreasury).
     uint256 public constant BUYBACK_BPS = 8000;
     uint256 public constant REGISTRY_TIMELOCK = 24 hours;
+    /// @dev Burn sink for an externally bound platform token (foreign ERC20s expose no `burn()`).
+    address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
     // ---------------------------------------------------------------- storage
     struct Curve {
@@ -63,6 +69,10 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     address public pendingRegistry;
     uint256 public pendingRegistryAt;
 
+    /// @notice BAW Dev allowlist: only these addresses may `create`. Owner sets post-deploy
+    ///         (team BAW wallets). Wallet-layer Developer Mode is separate; on-chain gate is this map.
+    mapping(address => bool) public isDev;
+
     uint256 public accruedFees;
     /// @notice Sum of realBnb over all live curves. Lets `sweepExcess` recover force-fed BNB without touching user funds.
     uint256 public totalRealBnb;
@@ -70,8 +80,13 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     mapping(address => uint256) public pendingWithdrawals;
     uint256 public totalPending;
 
-    /// @notice Official platform token (GANG). Set once via `seedPlatformToken`.
+    /// @notice Official platform token (GANG). Set exactly once, either via `seedPlatformToken` (new curve) or
+    ///         `setPlatformToken` (already-deployed token, e.g. live mainnet GANG). Never changeable afterwards.
     address public platformToken;
+    /// @notice Optional buyback keeper. When set, `collectFees` parks the buyback share in `pendingBuyback` and
+    ///         only the keeper (or owner) executes it via `keeperFlushBuyback(amount, minOut)` with an off-chain minOut,
+    ///         so a permissionless caller cannot be sandwiched. When zero, buybacks run inline as before.
+    address public buybackKeeper;
     /// @notice BNB reserved for buyback while platformToken/router is not ready, or swap could not run.
     uint256 public pendingBuyback;
     /// @notice Pancake V2 router for post-graduation buybacks. Set once.
@@ -99,11 +114,14 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     event RegistryChangeCancelled(address indexed registry);
     event AgentIdRegistryUpdated(address indexed registry);
     event PlatformTokenSeeded(address indexed token, string name, string symbol);
+    event PlatformTokenBound(address indexed token);
+    event BuybackKeeperSet(address indexed keeper);
     event BuybackBurned(address indexed token, uint256 bnbIn, uint256 tokensBurned);
     event BuybackPending(uint256 amount);
     event BuybackFlushed(uint256 amount);
     event PancakeRouterSet(address indexed router);
     event MaxSlippageBpsUpdated(uint256 bps);
+    event DevUpdated(address indexed account, bool enabled);
 
     // ---------------------------------------------------------------- errors
     error UnknownToken();
@@ -115,6 +133,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     error MigratorAlreadySet();
     error ZeroAddress();
     error NotAgent();
+    error NotDev();
     error WalletCapReached();
     error NothingPending();
     error TimelockActive();
@@ -122,6 +141,9 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     error PlatformTokenNotSet();
     error RouterAlreadySet();
     error SlippageBpsTooHigh();
+    error NotKeeper();
+    error NoCode();
+    error InsufficientPending();
 
     constructor(address owner_, address feeVault_, address agentIdRegistry_) Ownable(owner_) {
         if (feeVault_ == address(0) || agentIdRegistry_ == address(0)) revert ZeroAddress();
@@ -132,9 +154,10 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- create
-    /// @notice Deploys a new LaunchToken and opens its bonding curve. No creation fee.
+    /// @notice Deploys a new LaunchToken and opens its bonding curve. No creation fee. BAW Dev only.
     function create(string calldata name, string calldata symbol) external returns (address token) {
         if (address(migrator) == address(0)) revert MigratorNotSet();
+        _requireDev();
         token = address(new LaunchToken(name, symbol));
         curves[token] = Curve({creator: msg.sender, realBnb: 0, sold: 0, graduated: false, pair: address(0)});
         allTokens.push(token);
@@ -155,6 +178,23 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         platformToken = token;
         emit Created(token, msg.sender, name, symbol);
         emit PlatformTokenSeeded(token, name, symbol);
+    }
+
+    /// @notice One-shot: bind an already-deployed platform token (live GANG 0x0c63…B405) instead of seeding a
+    ///         new curve. Mutually exclusive with `seedPlatformToken`; cannot be changed once set.
+    /// @dev Buybacks for a bound token always go through Pancake and burn by transfer to DEAD.
+    function setPlatformToken(address token) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (token.code.length == 0) revert NoCode();
+        if (platformToken != address(0)) revert PlatformTokenAlreadySet();
+        platformToken = token;
+        emit PlatformTokenBound(token);
+    }
+
+    /// @notice Owner sets (or clears with address(0)) the buyback keeper. See `buybackKeeper`.
+    function setBuybackKeeper(address keeper) external onlyOwner {
+        buybackKeeper = keeper;
+        emit BuybackKeeperSet(keeper);
     }
 
     // ---------------------------------------------------------------- buy
@@ -188,7 +228,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- sell
-    /// @notice Sell on the curve. No gate.
+    /// @notice Sell on the curve. Caller must hold an Agent ID (bonding buy/sell both Agent-only).
     function sell(address token, uint256 tokensIn, uint256 minBnbOut)
         external
         nonReentrant
@@ -196,6 +236,7 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     {
         Curve storage c = _live(token);
         if (tokensIn == 0) revert ZeroAmount();
+        if (!isAgent(msg.sender)) revert NotAgent();
 
         uint256 bnbOut = _bnbOut(c, tokensIn);
         uint256 fee = (bnbOut * FEE_BPS) / BPS;
@@ -268,6 +309,17 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
     function walletRoom(address token, address buyer) public view returns (uint256) {
         uint256 bal = IERC20(token).balanceOf(buyer);
         return bal >= MAX_PER_WALLET ? 0 : MAX_PER_WALLET - bal;
+    }
+
+    /// @notice Owner marks BAW Dev wallets allowed to create.
+    function setDev(address account, bool enabled) external onlyOwner {
+        if (account == address(0)) revert ZeroAddress();
+        isDev[account] = enabled;
+        emit DevUpdated(account, enabled);
+    }
+
+    function _requireDev() internal view {
+        if (!isDev[msg.sender]) revert NotDev();
     }
 
     /// @notice True if `account` holds an Agent ID NFT (on-chain proof of a Binance Agentic Wallet).
@@ -360,21 +412,49 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         }
         emit FeesCollected(feeVault, ops);
 
-        if (buyback > 0) _buybackAndBurn(buyback);
+        if (buyback > 0) {
+            if (buybackKeeper != address(0)) {
+                pendingBuyback += buyback;
+                emit BuybackPending(buyback);
+            } else {
+                _buybackAndBurn(buyback, 0);
+            }
+        }
     }
 
-    /// @notice Permissionless: spend `pendingBuyback` once `platformToken` is set (and router if graduated).
+    /// @notice Spend all of `pendingBuyback` with the on-chain quote as slippage floor.
+    ///         Permissionless while no keeper is configured; keeper/owner only otherwise.
     function flushBuyback() external nonReentrant {
+        _requireKeeperIfSet();
         uint256 amount = pendingBuyback;
         if (amount == 0) revert NothingPending();
         if (platformToken == address(0)) revert PlatformTokenNotSet();
         pendingBuyback = 0;
         emit BuybackFlushed(amount);
-        _buybackAndBurn(amount);
+        _buybackAndBurn(amount, 0);
     }
 
-    /// @dev Protocol buyback: no Agent gate, no wallet cap, no fee accrual. Burns tokens to address(0).
-    function _buybackAndBurn(uint256 bnb) internal {
+    /// @notice Keeper/owner: spend `amount` of `pendingBuyback` with an explicit `minTokensOut` computed off-chain.
+    ///         Lets the keeper chunk large balances and refuse manipulated prices.
+    function keeperFlushBuyback(uint256 amount, uint256 minTokensOut) external nonReentrant {
+        if (msg.sender != buybackKeeper && msg.sender != owner()) revert NotKeeper();
+        if (amount == 0 || minTokensOut == 0) revert ZeroAmount();
+        if (amount > pendingBuyback) revert InsufficientPending();
+        if (platformToken == address(0)) revert PlatformTokenNotSet();
+        pendingBuyback -= amount;
+        emit BuybackFlushed(amount);
+        _buybackAndBurn(amount, minTokensOut);
+    }
+
+    function _requireKeeperIfSet() internal view {
+        address k = buybackKeeper;
+        if (k != address(0) && msg.sender != k && msg.sender != owner()) revert NotKeeper();
+    }
+
+    /// @dev Protocol buyback: no Agent gate, no wallet cap, no fee accrual.
+    ///      `minTokensOut` > 0 overrides the on-chain quote floor for the DEX leg (keeper path); curve leg ignores it
+    ///      because the curve price is deterministic.
+    function _buybackAndBurn(uint256 bnb, uint256 minTokensOut) internal {
         address token = platformToken;
         if (token == address(0)) {
             pendingBuyback += bnb;
@@ -383,6 +463,11 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         }
 
         Curve storage c = curves[token];
+        if (c.creator == address(0)) {
+            // Externally bound token (live GANG): never had a curve here, always buy on Pancake.
+            _swapBurnOrPend(token, bnb, minTokensOut);
+            return;
+        }
         if (!c.graduated) {
             uint256 remaining = GRADUATION_BNB - c.realBnb;
             uint256 spend = bnb < remaining ? bnb : remaining;
@@ -398,13 +483,13 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
                 if (c.realBnb == GRADUATION_BNB) _graduate(token, c);
             }
             uint256 leftover = bnb - spend;
-            if (leftover > 0) _swapBurnOrPend(token, leftover);
+            if (leftover > 0) _swapBurnOrPend(token, leftover, minTokensOut);
         } else {
-            _swapBurnOrPend(token, bnb);
+            _swapBurnOrPend(token, bnb, minTokensOut);
         }
     }
 
-    function _swapBurnOrPend(address token, uint256 bnb) internal {
+    function _swapBurnOrPend(address token, uint256 bnb, uint256 minTokensOut) internal {
         if (address(pancakeRouter) == address(0)) {
             pendingBuyback += bnb;
             emit BuybackPending(bnb);
@@ -416,28 +501,38 @@ contract Launchpad is Ownable2Step, ReentrancyGuard {
         path[0] = wbnb;
         path[1] = token;
 
-        uint256 quoted = _quoteAmountsOut(bnb, path);
-        if (quoted == 0) {
-            // No route / empty reserves — park rather than swap with minOut=0.
-            pendingBuyback += bnb;
-            emit BuybackPending(bnb);
-            return;
+        uint256 amountOutMin = minTokensOut;
+        if (amountOutMin == 0) {
+            uint256 quoted = _quoteAmountsOut(bnb, path);
+            if (quoted == 0) {
+                // No route / empty reserves — park rather than swap with minOut=0.
+                pendingBuyback += bnb;
+                emit BuybackPending(bnb);
+                return;
+            }
+            amountOutMin = quoted - (quoted * maxSlippageBps) / BPS;
         }
-        uint256 amountOutMin = quoted - (quoted * maxSlippageBps) / BPS;
 
         uint256 before = IERC20(token).balanceOf(address(this));
         try pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens{value: bnb}(
             amountOutMin, path, address(this), block.timestamp
         ) {
             uint256 got = IERC20(token).balanceOf(address(this)) - before;
-            if (got > 0) {
-                LaunchToken(token).burn(got);
-            }
+            if (got > 0) _burnPlatform(token, got);
             emit BuybackBurned(token, bnb, got);
         } catch {
             // Slippage / sandwich / transient router failure → keep BNB for later flush.
             pendingBuyback += bnb;
             emit BuybackPending(bnb);
+        }
+    }
+
+    /// @dev Own LaunchToken → real burn (supply shrinks). Externally bound token → transfer to DEAD (no `burn()`).
+    function _burnPlatform(address token, uint256 amount) internal {
+        if (curves[token].creator != address(0)) {
+            LaunchToken(token).burn(amount);
+        } else {
+            IERC20(token).safeTransfer(DEAD, amount);
         }
     }
 

@@ -15,8 +15,14 @@ contract LaunchpadTest is BaseTest {
         assertEq(pad.tokenCount(), 1);
     }
 
-    function test_create_noFee_anyoneCanCreate() public {
+    function test_create_noFee_devOnly() public {
         uint256 before = human.balance;
+        vm.prank(human);
+        vm.expectRevert(Launchpad.NotDev.selector);
+        pad.create("Nope", "NO");
+
+        vm.prank(owner);
+        pad.setDev(human, true);
         vm.prank(human);
         pad.create("B", "B");
         assertEq(human.balance, before);
@@ -211,11 +217,13 @@ contract LaunchpadTest is BaseTest {
         pad.buy{value: 0.01 ether}(address(tok), 0);
     }
 
-    function test_gate_sellOpenToAnyone() public {
+    function test_gate_sellRequiresAgent() public {
         uint256 out = _buy(alice, 0.01 ether);
-        _fillCurve(); // unlock so alice can hand tokens to a human... but curve is closed then.
-        // On a live curve the only holders are agents, so "anyone" == any holder. Verified by _sell above.
         assertGt(out, 0);
+        vm.prank(human);
+        vm.expectRevert(Launchpad.NotAgent.selector);
+        pad.sell(address(tok), 1 ether, 0);
+        _sell(alice, out);
     }
 
     function test_gate_soulbound() public {

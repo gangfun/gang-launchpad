@@ -29,6 +29,7 @@ contract MigrationForkTest is Test {
         pad = new Launchpad(address(this), makeAddr("vault"), AGENT_ID);
         migrator = new Migrator(FACTORY, WBNB, address(pad));
         pad.setMigrator(address(migrator));
+        pad.setDev(address(this), true);
         tok = LaunchToken(pad.create("Gang Fork", "CFK"));
         vm.deal(alice, 100 ether);
     }

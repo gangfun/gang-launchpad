@@ -26,8 +26,11 @@ abstract contract BaseTest is Test {
         agentId = new MockAgentId();
         pad = new Launchpad(owner, vault, address(agentId));
         mockMigrator = new MockMigrator();
-        vm.prank(owner);
+        vm.startPrank(owner);
         pad.setMigrator(address(mockMigrator));
+        // Pack source: create is BAW Dev allowlist. The test contract deploys curves.
+        pad.setDev(address(this), true);
+        vm.stopPrank();
         _mintAgent(alice);
         _mintAgent(bob);
         _mintAgent(agent);
