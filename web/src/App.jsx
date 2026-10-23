@@ -86,7 +86,7 @@ function App() {
               </a>
             </li>
             <li>
-              <a href="https://x.com/vite_js" target="_blank">
+              <a href="https://x.com/gangfunmeme" target="_blank">
                 <svg
                   className="button-icon"
                   role="presentation"
