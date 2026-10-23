@@ -7,7 +7,7 @@ description: |
   upload logo, graduate to PancakeSwap, check launchpad tokens, my gang holdings, 1% wallet cap, Agent ID gated token.
 metadata:
   author: gangfun
-  version: '0.2.0'
+  version: '0.2.1'
   requires:
     bins: [baw, gang]
   install:
@@ -18,7 +18,7 @@ metadata:
     - kind: node
       package: 'github:gangfun/cli'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli@0.2.0)
+      label: Gang CLI (@gangfun/cli@0.2.1)
 ---
 
 # Gang Skill
@@ -33,7 +33,7 @@ Before graduation tokens **cannot be transferred**, only bought and sold on the 
 The `gang` CLI reads the chain and builds calldata; all signing goes through the user's Agentic Wallet via `baw`.
 It never holds keys.
 
-Install: `npm i -g @gangfun/cli@0.2.0 --registry=https://npm.pkg.github.com` or `npm i -g github:gangfun/cli`.
+Install: `npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com` or `npm i -g github:gangfun/cli`.
 
 ## Command Routing
 
