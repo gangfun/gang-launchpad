@@ -17,16 +17,17 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**Create is BAW Dev only. Bonding-curve buys and sells are BAW Agent** (SPACE ID Agent ID, `.ai`). Claim the ID from a Binance Agentic Wallet. Your agent runs the CLI; you approve in the Binance App when asked. The CLI never holds keys. **walletCap is on** (1% of supply per wallet on the curve).
+**New creates use LaunchpadV2** on BSC mainnet. Soft Launchpad, LaunchpadU, and LaunchpadS remain deployed; create on those contracts is archived. **Bonding-curve buys and sells are BAW Agent** (SPACE ID Agent ID, `.ai`). Claim the ID from a Binance Agentic Wallet. Your agent runs the CLI; you approve in the Binance App when asked. The CLI never holds keys. **walletCap is on** (1% of supply per wallet on the curve).
 
-**Soft launch · not audited.** Live on BSC mainnet (chainId 56) at [gang.fun](https://gang.fun). Do not describe these contracts as audited. Chapel (chainId 97) is not this deployment.
+**Soft launch · not audited.** Live on BSC mainnet (chainId 56) at [gang.fun](https://gang.fun). Do not describe these contracts as audited. Chapel (chainId 97) is not this deployment. LaunchpadV2 addresses and startBlock `129311617`: [docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md).
 
 | Rail | Address | Graduation |
 |---|---|---|
-| Soft Launchpad (BNB) | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) | **20 BNB** |
+| LaunchpadV2 (create) | [`0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E`](https://bscscan.com/address/0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E) | ≈ **15 BNB** equivalent, locked at create |
+| Soft Launchpad (BNB) | [`0x315Ba2e8952D06094CC636b2B84229FA32fb23A7`](https://bscscan.com/address/0x315Ba2e8952D06094CC636b2B84229FA32fb23A7) | **20 BNB** · create archived |
 | GANG (platform token) | [`0x0c6302401aa5325C2E36F170f52C00B1d220B405`](https://bscscan.com/address/0x0c6302401aa5325C2E36F170f52C00B1d220B405) | — |
-| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) | spot Grad15 ≈ **15 BNB** equivalent, locked at create |
-| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) | spot Grad15 ≈ **15 BNB** equivalent, locked at create |
+| LaunchpadU | [`0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4`](https://bscscan.com/address/0x245a42cE8337DECe0f1C04f8430C90C8D98b88e4) | spot Grad15 ≈ **15 BNB** equivalent · create archived |
+| LaunchpadS | [`0x80C5e29417f8037A9e4CC5320878386826732e89`](https://bscscan.com/address/0x80C5e29417f8037A9e4CC5320878386826732e89) | spot Grad15 ≈ **15 BNB** equivalent · create archived |
 
 On U/S, `virtualQuote = floor(gradAmt / 3)`. QuoteRegistry is a whitelist. `graduationQuoteAmount` of **0** means spot Grad15; a positive override locks that quote amount instead. Post-grad **1%** tax accumulates until a keeper calls `process()` (~0.3% DEX). The transfer hook must not swap. Buybacks burn **GANG**.
 
@@ -115,7 +116,8 @@ gang tx     --hash 0x…                       # what landed on-chain
 
 ### Create
 
-- **BAW Dev only** (`isDev` / owner `setDev`). Creation fee is 0. Bonding buys and sells after that require an Agent ID.
+- New creates go to **LaunchpadV2**. Soft / U / S create is archived; those contracts remain. Addresses: [docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md).
+- Archived Soft create was **BAW Dev** (`isDev` / owner `setDev`). Creation fee is 0. Bonding buys and sells require an Agent ID.
 
 ### Graduated tokens
 
@@ -233,4 +235,20 @@ Broadcast 2026-10-23. **Soft launch, not audited.** Site: [gang.fun](https://gan
 - Smart Router buyback: `collectPlatformSmart` → `buybackAndBurnSmart`. The quote spend must be exact-input (`balance == before - amountIn`) or the call reverts `IncompleteQuoteSpend`.
 - `TAXED_MIN_SHARE = 1_000_000 ether` (1,000,000 tokens).
 - `LaunchpadU` / `LaunchpadS` and the fee contracts use **Ownable2Step**.
+
+## Appendix D · LaunchpadV2 on BSC mainnet (chainId 56)
+
+Broadcast 2026-10-23. **Not audited.** New creates use LaunchpadV2. Soft Launchpad, LaunchpadU, and LaunchpadS remain deployed; create on those contracts is archived. startBlock **129311617**. Source: `src/launchpad-v2/` (PoolCheck is a public library). Delta vs Soft/U/S: [docs/launchpad-v2/DIFF-VS-LIVE.md](./docs/launchpad-v2/DIFF-VS-LIVE.md). Full table: [docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md](./docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md).
+
+| Contract | Address |
+|---|---|
+| LaunchpadV2 | [`0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E`](https://bscscan.com/address/0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E) |
+| MigratorV2 | [`0x2D54351657647824c92a36c309A8ed40715968F6`](https://bscscan.com/address/0x2D54351657647824c92a36c309A8ed40715968F6) |
+| QuoteRegistry | `0x053C2868e54921afEd7742bbb4c4fDA99a12060D` |
+| DividendVault | `0x5e2Dd1D439b251d64B4147D8947445f83f3A2D62` |
+| PlatformFeeBucket | `0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111` |
+| PostGradTaxHandler | `0xa2bd8e511Cf01aA8F9693a841FD6ee6E30253e29` |
+| PoolCheck (library) | `0xd2B159820749f178503E4faBCB18A7Ae4492bDb3` |
+
+Reused: BuybackBurner `0x2aC14C462901F990ae7647D6AcafEaf50Cc8f8dF`, feeVault `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4`, GANG `0x0c6302401aa5325C2E36F170f52C00B1d220B405`.
 
