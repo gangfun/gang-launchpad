@@ -51,15 +51,15 @@
 2. 领取 **SPACE ID Agent ID**（`.ai`）。
 3. 打开 **Developer Mode** 与 **Trade all tokens**（卖出需要后者）。
 
-### B. 安装 skill + CLI（`@gangfun/cli@0.2.0`）
+### B. 安装 skill + CLI（npm 上的 `@gangfun/cli`，≥0.3.0）
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
 npx skills add gangfun/gang-launchpad/skill
 
 npm i -g @binance/agentic-wallet
-npm i -g @gangfun/cli@0.2.0 --registry=https://npm.pkg.github.com
-# 或: npm i -g github:gangfun/cli
+npm i -g @gangfun/cli@latest
+# 或（git 最新）: npm i -g github:gangfun/cli
 ```
 
 登录：`baw auth signin`。

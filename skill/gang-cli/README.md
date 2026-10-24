@@ -10,15 +10,10 @@ Node ≥ 18. Also install Binance Agentic Wallet CLI (`baw`):
 
 ```bash
 npm i -g @binance/agentic-wallet
-npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com
+npm i -g @gangfun/cli@latest
 ```
 
-Package: [GitHub Packages `@gangfun/cli`](https://github.com/gangfun/cli/pkgs/npm/cli). Auth:
-
-```ini
-@gangfun:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
-```
+Package: [`@gangfun/cli` on npm](https://www.npmjs.com/package/@gangfun/cli) (public registry, no auth). Upgrade with the same command.
 
 **Alternate** (public git tip):
 
@@ -86,7 +81,7 @@ Graduated tokens are hidden unless `--include-graduated` is passed.
 
 `gang watch` polls and prints NDJSON. The minimum interval is 3s with `<addr>` and 10s for the whole market. With `<addr>` it emits `trade` / `progress` (25/50/75/90%) / `graduated`.
 Without it, it emits `new_token` / `near_grad` (crosses `--min-pct`) / `graduated`. `--max-events 1` blocks until the next event and
-`--webhook` POSTs each event. Details: [../references/discover.md](../references/discover.md).
+`--webhook` POSTs each event. Details: [skill/references/discover.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/discover.md).
 
 ```bash
 gang watch --events new_token,near_grad --max-events 1 --timeout 30m
@@ -116,4 +111,4 @@ gang watch --events new_token,near_grad --max-events 1 --timeout 30m
 
 ## Version
 
-`0.3.0` (unreleased; the install commands above stay on the published `0.2.1` until it ships) · repo [gangfun/cli](https://github.com/gangfun/cli) · distribute via [GitHub Packages](https://github.com/gangfun/cli/pkgs/npm/cli) (not npmjs)
+`0.3.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

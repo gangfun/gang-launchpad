@@ -8,7 +8,7 @@ description: |
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
-  version: '0.2.1'
+  version: '0.3.0'
   requires:
     bins: [baw, gang]
   install:
@@ -17,9 +17,9 @@ metadata:
       bins: [baw]
       label: Binance Agentic Wallet CLI
     - kind: node
-      package: 'github:gangfun/cli'
+      package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli@0.2.1)
+      label: Gang CLI (@gangfun/cli ≥0.3.0, npm)
 ---
 
 # Gang Skill
@@ -34,7 +34,7 @@ Before graduation tokens **cannot be transferred**, only bought and sold on the 
 The `gang` CLI reads the chain and builds calldata; all signing goes through the user's Agentic Wallet via `baw`.
 It never holds keys.
 
-Install: `npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com` or `npm i -g github:gangfun/cli`.
+Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g github:gangfun/cli`). Check with `npm ls -g @gangfun/cli`.
 
 ## Command Routing
 
@@ -55,7 +55,7 @@ Install: `npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com` or 
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
-Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, upgrade the CLI.
+Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i -g @gangfun/cli@latest`.
 
 ## Hard rules
 

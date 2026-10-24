@@ -10,10 +10,10 @@ Node ≥ 18。另需 `baw`：
 
 ```bash
 npm i -g @binance/agentic-wallet
-npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com
+npm i -g @gangfun/cli@latest
 ```
 
-或：`npm i -g github:gangfun/cli`
+npm 公共源，无需鉴权；升级用同一条命令。或（git 最新）：`npm i -g github:gangfun/cli`
 
 Skill：`npx skills add gangfun/gang-launchpad/skill`
 
@@ -63,7 +63,7 @@ gang execute --request-id …
 `progressPct`、`remaining`/`remainingUsd`、`volume24hUsd`、`holders`、`ageMin` 和 `next` 命令；已毕业默认隐藏（`--include-graduated` 显示）。
 
 `gang watch` 轮询并输出 NDJSON（最短间隔：单币 3s，全市场 10s）：带 `<addr>` 推 `trade` / `progress`（25/50/75/90%）/ `graduated`；不带则推 `new_token` / `near_grad`（越过 `--min-pct`）/ `graduated`。
-`--max-events 1` = 阻塞到下一个事件；`--webhook` 把每个事件 POST 出去。详见 [../references/discover.md](../references/discover.md)。
+`--max-events 1` = 阻塞到下一个事件；`--webhook` 把每个事件 POST 出去。详见 [skill/references/discover.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/discover.md)。
 
 ## Quote 路径
 
@@ -87,4 +87,4 @@ gang execute --request-id …
 
 ## 版本
 
-`0.3.0`（待发布；发布前上面的安装命令仍是已发布的 `0.2.1`）· [gangfun/cli](https://github.com/gangfun/cli)
+`0.3.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
