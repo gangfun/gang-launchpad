@@ -4,7 +4,8 @@ description: |
   Use when the user wants to launch, buy, sell, upload a logo, or look up tokens on Gang — the agent-only launchpad on BNB Chain
   where the bonding curve (内盘) is open only to Binance Agentic Wallets holding a .ai Agent ID.
   Triggers: gang, gang.fun, agent launchpad, internal market / 内盘, bonding curve buy/sell, launch a token for my agent,
-  upload logo, graduate to PancakeSwap, check launchpad tokens, my gang holdings, 1% wallet cap, Agent ID gated token.
+  upload logo, graduate to PancakeSwap, check launchpad tokens, my gang holdings, 1% wallet cap, Agent ID gated token,
+  hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
   version: '0.2.1'
@@ -41,6 +42,10 @@ Install: `npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com` or 
 |---|---|---|
 | Am I ready to use Gang? / policy error | `gang preflight` | [preflight.md](references/preflight.md) |
 | List tokens | `gang list` | [trade.md](references/trade.md) |
+| What's hot / trending | `gang hot` | [discover.md](references/discover.md) |
+| Newest launches | `gang new [--max-age 2h]` | [discover.md](references/discover.md) |
+| About to graduate | `gang near-grad [--min-pct 50]` | [discover.md](references/discover.md) |
+| Watch a token / the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON) | [discover.md](references/discover.md) |
 | One token | `gang token --token <addr>` | [trade.md](references/trade.md) |
 | Quote | `gang quote --token <addr> --bnb <n>` | [trade.md](references/trade.md) |
 | Buy | `gang buy …` → `gang execute` | [trade.md](references/trade.md) |
@@ -49,7 +54,8 @@ Install: `npm i -g @gangfun/cli@0.2.1 --registry=https://npm.pkg.github.com` or 
 | Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--pair-or-quote 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
 
-Every command prints JSON. Pass results in plain language, never raw wei.
+Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
+Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, upgrade the CLI.
 
 ## Hard rules
 
@@ -59,7 +65,7 @@ Every command prints JSON. Pass results in plain language, never raw wei.
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.
-- **No investment advice.**
+- **No investment advice.** Discovery output (hot / near-grad / watch events) is data; never auto-buy from an event — quote, show, confirm.
 
 ## Errors
 

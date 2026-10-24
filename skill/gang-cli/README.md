@@ -44,6 +44,10 @@ npx skills add gangfun/gang-launchpad/skill
 ```bash
 gang preflight
 gang list
+gang hot [--limit 10] [--track all|v2|soft] [--include-graduated]   # 24h USD volume
+gang new [--limit 10] [--max-age 2h]
+gang near-grad [--min-pct 50] [--limit 10]
+gang watch [<addr>] [--interval 10] [--events a,b] [--max-events N] [--timeout 30m] [--webhook URL]
 gang token --token <addr>
 gang quote --token <addr> --bnb <n>          # Soft archive: BNB; V2: quote ERC-20 (LaunchpadV2.sol math)
 gang buy --token <addr> --bnb <n> [--slippage 1]
@@ -74,6 +78,20 @@ gang execute --request-id …
 
 Buy / sell / create: **preview → you confirm → execute**. `requestId` expires in ~5 minutes.
 
+### Discovery (0.3.0+)
+
+`hot` / `new` / `near-grad` / `watch` read the gang.fun indexer (`GANG_API`) and cover the V2 and Soft tracks. Each row has
+`quote` (the unit to pass to `--bnb`), `progressPct`, `remaining`/`remainingUsd`, `volume24hUsd`, `holders`, `ageMin` and a `next` command.
+Graduated tokens are hidden unless `--include-graduated` is passed.
+
+`gang watch` polls and prints NDJSON. The minimum interval is 3s with `<addr>` and 10s for the whole market. With `<addr>` it emits `trade` / `progress` (25/50/75/90%) / `graduated`.
+Without it, it emits `new_token` / `near_grad` (crosses `--min-pct`) / `graduated`. `--max-events 1` blocks until the next event and
+`--webhook` POSTs each event. Details: [../references/discover.md](../references/discover.md).
+
+```bash
+gang watch --events new_token,near_grad --max-events 1 --timeout 30m
+```
+
 ## Quote path
 
 - **Soft archive tokens:** on-chain `quoteBuy` / `quoteSell`.
@@ -94,7 +112,8 @@ Buy / sell / create: **preview → you confirm → execute**. `requestId` expire
 | `GANG_LAUNCHPAD` | Create target (default LaunchpadV2 `0x1B8F3f69…966E`) |
 | `GANG_RPC_URL` | BSC HTTP RPC |
 | `GANG_LOGO_API` | Logo upload endpoint (default `https://gang.fun/api/logos`) |
+| `GANG_API` | Indexer API for discovery (default `https://gang.fun/api`) |
 
 ## Version
 
-`0.2.1` · repo [gangfun/cli](https://github.com/gangfun/cli) · distribute via [GitHub Packages](https://github.com/gangfun/cli/pkgs/npm/cli) (not npmjs)
+`0.3.0` (unreleased; the install commands above stay on the published `0.2.1` until it ships) · repo [gangfun/cli](https://github.com/gangfun/cli) · distribute via [GitHub Packages](https://github.com/gangfun/cli/pkgs/npm/cli) (not npmjs)

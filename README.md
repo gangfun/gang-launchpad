@@ -108,6 +108,7 @@ gang tx --hash 0x…          # read Created for token address
 V2 uses **quote ERC-20** (not payable BNB). Soft-style `--bnb` flag = quote amount for V2 tokens.
 
 ```bash
+gang hot                             # 0.3.0+: also new / near-grad / watch [<addr>]
 gang list
 gang token --token 0x…
 gang quote --token 0x… --bnb 0.05
@@ -145,5 +146,6 @@ Legacy Soft/U/S tokens (if any appear in markets): buy/sell/claim only — **do 
 | `GANG_LAUNCHPAD` | Default LaunchpadV2 `0x1B8F3f69…966E` |
 | `GANG_RPC_URL` | BSC HTTP RPC |
 | `GANG_LOGO_API` | Default `https://gang.fun/api/logos` |
+| `GANG_API` | Discovery indexer, default `https://gang.fun/api` |
 
 Site: [gang.fun](https://gang.fun) · Logo: [gang.fun/dev/logo](https://gang.fun/dev/logo) · CLI: [gangfun/cli](https://github.com/gangfun/cli)

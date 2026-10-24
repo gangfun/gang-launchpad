@@ -106,6 +106,7 @@ gang tx --hash 0x…
 V2 走 **报价 ERC-20**（非 payable BNB）。`--bnb` 在 V2 上表示报价币数量。
 
 ```bash
+gang hot                            # 0.3.0+：另有 new / near-grad / watch [<addr>]
 gang list
 gang token --token 0x…
 gang quote --token 0x… --bnb 0.05
@@ -138,5 +139,6 @@ gang execute --request-id …
 | `GANG_LAUNCHPAD` | 默认 LaunchpadV2 |
 | `GANG_RPC_URL` | BSC RPC |
 | `GANG_LOGO_API` | 默认 `https://gang.fun/api/logos` |
+| `GANG_API` | 发现命令 indexer，默认 `https://gang.fun/api` |
 
 站点：[gang.fun](https://gang.fun) · Logo：[gang.fun/dev/logo](https://gang.fun/dev/logo) · CLI：[gangfun/cli](https://github.com/gangfun/cli)
