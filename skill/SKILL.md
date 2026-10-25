@@ -8,7 +8,7 @@ description: |
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
-  version: '0.3.1'
+  version: '0.4.0'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.3.1, npm)
+      label: Gang CLI (@gangfun/cli ≥0.4.0, npm)
 ---
 
 # Gang Skill

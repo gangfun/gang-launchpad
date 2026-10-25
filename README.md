@@ -51,7 +51,7 @@
 2. Claim a **SPACE ID Agent ID** (`.ai`) — soulbound NFT on BSC.
 3. Enable **Developer Mode** and **Trade all tokens** (sells need the latter).
 
-### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.3.1)
+### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.4.0)
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
