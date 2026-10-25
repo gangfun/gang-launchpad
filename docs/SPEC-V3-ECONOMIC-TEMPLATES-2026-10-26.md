@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 作者：Claude（本页为产品规格 + 接口草案；**非执行单**）
-- 性质：**禁止主网广播**。LaunchpadV3 本体尚未实现；本分支只有接口、注册表、分账合约和一个官方模版。
+- 性质：**禁止主网广播**。合约已在 `feat/v3-economic-templates` 分支实现并通过 mock 单测，**未审计、未上测试网**。
 - 来源：用户反馈「想要 Agent dev marketplace，像 flap 的自定义模版一样自定义经济模型」。
 - 已拍板：① 模版**平台限定**（白名单）；④ 内盘税**可开可关**。
 - 待批（Claude 建议）：② 平台 / 作者分成；③ 税率档位。
@@ -95,10 +95,17 @@ PlatformFeeBucket  owed[author]   DividendVault        IVault（模版金库）
 | `src/launchpad-v3/interfaces/IVault.sol` | `token` / `quote` / `factory` / `onTaxReceived` / `uiSchema` |
 | `src/launchpad-v3/interfaces/ITaxRouter.sol` | `register` / `distribute` / `release` / `previewSplit` |
 | `src/launchpad-v3/interfaces/ILaunchpadV3.sol` | `TaxConfig`、`create` 新签名、`checkTaxConfig`、事件 |
-| `src/launchpad-v3/TemplateRegistry.sol` | 白名单（实现） |
-| `src/launchpad-v3/TaxRouterV3.sol` | 分账（实现） |
+| `src/launchpad-v3/LaunchpadV3.sol` | 发射台：V2 曲线 / 准入 / 1% 持仓上限 / 毕业不变，`create` 改收 TaxConfig，内盘税（21.0 KB） |
+| `src/launchpad-v3/TaxLaunchTokenV3.sol` | 有税代币（税率 immutable）+ `TaxTokenDeployerV3`（让 pad 不超 EIP-170） |
+| `src/launchpad-v3/PostGradTaxHandlerV3.sol` | 外盘税：只记账，keeper 带 `minQuoteOut` 换币后交给 TaxRouterV3 |
+| `src/launchpad-v3/TemplateRegistry.sol` | 白名单 |
+| `src/launchpad-v3/TaxRouterV3.sol` | 分账 |
 | `src/launchpad-v3/templates/CreatorTreasury.sol` | 官方模版「Agent 自养」：创建者 Agent 提取，可设每日上限 |
-| `test/launchpad-v3/TaxRouterV3.t.sol` | 15 个用例 |
+| `src/launchpad-v3/templates/BuybackBurn.sol` | 官方模版「回购销毁」：keeper 带 `minTokensOut` 在本币池子回购，打到 0xdead |
+| `test/launchpad-v3/TaxRouterV3.t.sol` | 分账 / 白名单 / Agent 自养，15 个用例 |
+| `test/launchpad-v3/LaunchpadV3.t.sol` | 创建规则、内盘税分账、毕业、外盘税、回购销毁全流程，16 个用例 |
+
+Buy / Sell 事件字段改为 `(quoteIn|tokensIn, protocolFee, templateTax, tokensOut|quoteOut, realQuote)`，索引服务需要跟着改。
 
 ### 2.2 `create` 新签名
 
@@ -113,7 +120,7 @@ struct TaxConfig {
 function create(name, symbol, logoURI, quote, refPool, TaxConfig tax) returns (address token);
 ```
 
-`create` 内顺序（待实现）：校验档位 / 白名单 / `factory.validate` → 部署 TaxLaunchTokenV3（税率 immutable）→ `factory.createVault` 并核对 `vault.token()/quote()` → `dividendVault.registerToken` → `router.register(token, quote, vault, registry.authorOf(factory), dividendBps)` → 写曲线 → `Created` + `TaxConfigured`。
+`create` 内顺序：校验档位 / 白名单 / `factory.validate` → 部署 TaxLaunchTokenV3（税率 immutable）→ `factory.createVault` 并核对 `vault.token()/quote()` → `dividendVault.registerToken` → `router.register(token, quote, vault, registry.authorOf(factory), dividendBps)` → 写曲线 → `Created` + `TaxConfigured`。
 
 ### 2.3 安全约束（金库不能卡交易）
 
@@ -127,9 +134,11 @@ function create(name, symbol, logoURI, quote, refPool, TaxConfig tax) returns (a
 ### 2.4 部署注意
 
 - V2 的 DividendVault 的 `launchpad` 是单地址（LaunchpadV2），V3 需**新部署一个 DividendVault**。
-- PlatformFeeBucket 可复用：把 TaxRouterV3 设为 operator 即可（平台的钱本来就汇总）。
-- TaxRouterV3 必须是 DividendVault 和 PlatformFeeBucket 的 operator。
-- LaunchpadV2 已经贴着 EIP-170；V3 把分账挪进 TaxRouterV3，pad 只多一次 `createVault` 和 `register`。
+- PlatformFeeBucket 可复用：把 LaunchpadV3 和 TaxRouterV3 都设为 operator（V2 的 bucket `launchpad` 仍是 V2）。
+- DividendVault operator：TaxRouterV3、PostGradTaxHandlerV3。TaxRouterV3 source：PostGradTaxHandlerV3（pad 由 `setLaunchpad` 自动加入）。
+- keeper：PostGradTaxHandlerV3 和 BuybackBurnFactory 各设一次。
+- 部署顺序：QuoteRegistry → DividendVault → (Bucket) → TaxRouterV3 → TemplateRegistry → PostGradTaxHandlerV3 → TaxTokenDeployerV3 → LaunchpadV3 → MigratorV2(factory, pad) → 各模版工厂（构造参数含 pad）→ `templates.list`。
+- 尺寸：LaunchpadV3 21.0 KB（via-ir），有税代币的 creation code 放在 TaxTokenDeployerV3。
 
 ---
 
@@ -139,7 +148,7 @@ function create(name, symbol, logoURI, quote, refPool, TaxConfig tax) returns (a
 |---|---|---|
 | 持有人分红 | 无合约（`vaultFactory = 0`, `dividendBps = 10000`） | = V2 有税轨 |
 | Agent 自养 | `CreatorTreasury`（已写） | 创建者 Agent 提取，可设每日上限 |
-| 回购销毁 | 待写 | 金库积累报价币，keeper 带 `minOut` 回购本币打到 0xdead |
+| 回购销毁 | `BuybackBurn`（已写） | 金库积累报价币，keeper 带 `minTokensOut` 回购本币打到 0xdead；内盘阶段的税先存着，毕业后才能回购 |
 | 自定义比例 | 不需要合约 | 「持有人分红」+「Agent 自养」配 `dividendBps` 即可；更多去向等第二期 |
 
 ---
@@ -147,7 +156,7 @@ function create(name, symbol, logoURI, quote, refPool, TaxConfig tax) returns (a
 ## 4. 待做
 
 1. 拍板 §1.1 税率、§1.2 分成（含是否保留 1% 档 50%）。
-2. 合约：LaunchpadV3（从 V2 改 `create` + 内盘税）、TaxLaunchTokenV3（税率 immutable）、PostGradTaxHandlerV3（换币后调 `router.distribute`）、BuybackBurn 模版；E2E 测试；外部审计。
+2. 合约：补 fork 测试（真实 Pancake 池子、USDT 类报价币）、部署脚本、测试网全流程；外部审计。
 3. gangfun-server：索引 `TaxConfigured` / `TaxDistributed` / 金库事件；模版列表 API（读 registry + `metadata` + `dataSchema`）。
 4. gang.fun：模版市场页（使用量、累计流入、作者、审计状态）；代币页按 `uiSchema` 展示金库读方法。
 5. CLI / skill：`gang templates`、`gang create --tax 3 --bonding-tax --template <factory> --param k=v`，preflight 调 `checkTaxConfig`。
