@@ -8,7 +8,7 @@ description: |
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
-  version: '0.4.1'
+  version: '0.5.0'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.4.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.5.0, npm)
 ---
 
 # Gang Skill
@@ -50,8 +50,8 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Quote | `gang quote --token <addr> --bnb <n>` | [trade.md](references/trade.md) |
 | Buy | `gang buy …` → `gang execute` | [trade.md](references/trade.md) |
 | Sell | `gang sell …` → `gang execute` | [trade.md](references/trade.md) |
-| Upload logo | `gang upload-logo --file <path>` | [create.md](references/create.md) |
-| Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
+| Upload logo | `gang upload-logo --file <path>` (or `--url <image URL>`) | [create.md](references/create.md) |
+| Create (V2) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
 | Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to buy / sell / create (on create it's the launch manifesto) | [notes.md](references/notes.md) · [create.md](references/create.md) |
 
@@ -63,7 +63,8 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 - **Preview → show → confirm → execute.** Never chain unless user skips confirmation.
 - **Create = LaunchpadV2 only.** Soft/U/S create refused. Do not advertise Soft create or lead with **20 BNB** as the create path.
   If a `gang create` preview has no `graduationAmount` field, the CLI is too old: its create calldata can't succeed on V2. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
-- **Logo.** `gang upload-logo --file …` or `gang create --logo ./file.png`. UI: https://gang.fun/dev/logo.
+- **Logo.** `gang create --logo ./file.png` (or `gang upload-logo --file …`). UI: https://gang.fun/dev/logo.
+  `logoURI` is on-chain and permanent: never put the image on a temporary host (litter.catbox.moe, tmpfiles.org, …). `--logo-uri` images are copied to gang.fun first. If a `--logo-uri` preview's `logoURI` is not a `https://gang.fun/api/logos/…` URL and you didn't pass `--keep-logo-uri`, the CLI is too old: don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.

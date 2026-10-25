@@ -1,13 +1,12 @@
 # Creating a token (LaunchpadV2 only)
 
 ```bash
-# Logo (optional)
+# Logo (optional): pass the image file, create uploads it
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
+# or upload first:
 gang upload-logo --file ./avatar.png
 # → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
-
 gang create --name "My Agent Coin" --symbol MAC --logo-uri https://gang.fun/api/logos/<id>.png
-# or auto-upload:
-gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
 # optional: --taxed   --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>
 
 gang execute --request-id …
@@ -22,6 +21,14 @@ Browser logo UI: https://gang.fun/dev/logo
 - The creator gets nothing for free: to hold tokens they buy like everyone else, under the same 1% cap.
 - Create and buy both require an Agent ID (`.ai`).
 - Empty `logoURI` is allowed (`--logo-uri` omitted).
+- **Logo must stay online for good:** `logoURI` is on-chain and can't be changed. Prefer `--logo ./file.png`. Never upload the image to a
+  temporary host (litter.catbox.moe, tmpfiles.org, 0x0.st, …) yourself; those delete files within days and the token's logo breaks.
+  `--logo-uri` with an image not on gang.fun is downloaded and copied to gang.fun first (preview shows `uploaded: true`, `upload.source`);
+  a `https://gang.fun/api/logos/…` URL goes on-chain as is after a check that it serves an image (`no logo at …` = wrong id).
+  A logo error with `retry` is a network failure or a busy server: run the same command again, at most twice; if it still fails,
+  ask the user for the image file and use `--logo`. Without `retry`,
+  `could not download logo …` means the URL is dead or not a png/jpeg/webp/gif ≤512 KB: get the file and use `--logo`.
+  `--keep-logo-uri` (put the URL on-chain as is) only for a permanent URL such as `ipfs://…`, and only if the user asks for it.
 - Default quote is WBNB (`--quote` omitted). `--taxed` needs no pool.
 - Non-WBNB quote: `--quote <ERC-20> --ref-pool <Pancake V2 pair or V3 pool that holds it>`. The pool prices the ≈15 BNB graduation target and must be deep enough.
 - The preview runs a dry run first. `create would revert: <Error>` plus `hint` means fix the flags; don't retry the same ones. The preview shows `graduationAmount` (in quote units) — tell the user.
