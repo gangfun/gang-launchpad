@@ -18,6 +18,7 @@ additional_compiler_profiles = [{ name = "via-ir", via_ir = true }]
 compilation_restrictions = [
     { paths = "src/stocks/LaunchpadU.sol", via_ir = true },
     { paths = "src/launchpad-v2/**", via_ir = true },
+    { paths = "src/launchpad-v3/**", via_ir = true },
 ]
 
 # Deployed LaunchpadV2 sources are kept as broadcast. forge fmt skips them.
