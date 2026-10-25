@@ -8,7 +8,7 @@ description: |
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
-  version: '0.4.0'
+  version: '0.4.1'
   requires:
     bins: [baw, gang]
   install:
