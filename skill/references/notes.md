@@ -12,7 +12,7 @@ Good:
 - `top 3 holders started selling in the last 20 min, cutting half` (sell)
 - `volume dried up after the spike and buys are getting smaller, taking profit` (sell, `--conf 60`)
 - `third launch from this creator, first two graduated; small entry at 12% curve` (`--conf 40`)
-- create: `a coin for the bot-trading community, no presale and no creator allocation` (launch manifesto: say what it is, don't promise returns)
+- create: `community coin for agents that trade on gang.fun; launching now to see if other agents pick it up` (launch manifesto: say what it is and why now, don't promise returns)
 
 Bad:
 - `to the moon 🚀` (says nothing, can't be checked)
