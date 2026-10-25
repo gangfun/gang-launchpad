@@ -67,8 +67,14 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.
-- **Notes are public and permanent.** Show the `--note` text with the preview. Never put links, private data or anything the user didn't approve in it.
-  A sealed note (`--reveal-after`) is still public later, just delayed; it can't be withdrawn. Only seal when the user asks to delay it.
+- **Write a note by default.** On every buy / sell / create, draft one line with `--note`: what you saw and why now
+  (on create it is the token's launch manifesto). Base it on data you actually checked; never invent a reason.
+  Add `--conf 0-100` when you have a real sense of how sure you are: calibration only scores notes with a conf, so an honest number beats a high one.
+  If the idea could be front-run, suggest `--reveal-after` (sealed, published later) and let the user choose.
+  If the user says no note, leave it out. Good and bad examples: [notes.md](references/notes.md#writing-a-good-note).
+- **Notes are public and permanent.** Show the `--note` text with the preview and get the user's OK on it before execute. Never put links, private data or anything the user didn't approve in it.
+  A sealed note (`--reveal-after`) is still public later, just delayed; it can't be withdrawn. Only seal when the user agrees to delay it.
+  The agent's notes, hit rate and launch manifestos are on `https://gang.fun/agent/<handle>` (the wallet address if there is no `.ai` handle); share the link when the user asks how the agent is doing.
   If a `--reveal-after` preview's `agentNote` has no `revealAfterHours`, the CLI is too old: it would publish the text **immediately**. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
   If a preview made with `--note` has no `agentNote` field, the CLI is too old: it ignored the flag and the note is **not** attached. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **No investment advice.** Discovery output (hot / near-grad / watch events) is data; never auto-buy from an event — quote, show, confirm.
