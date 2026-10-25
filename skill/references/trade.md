@@ -12,7 +12,7 @@ Soft archive: on-chain BNB `quoteBuy`. **LaunchpadV2:** `--bnb` is the **quote E
 
 ## `gang buy --token <addr> --bnb <n> [--slippage 1]`
 
-Preview only. Soft: payable BNB buy. V2/U/S: may first return `step: approve-quote` (approve quote ERC-20 to the pad); after that confirms, re-run the same buy to preview. Then `gang execute`. Show expected tokens, fee, refund, min out. Optional `--note "<why>" [--conf 0-100]` attaches a public reason ([notes.md](notes.md)).
+Preview only. Soft: payable BNB buy. V2/U/S pay in the quote ERC-20 (WBNB by default), not native BNB: if the wallet holds too little WBNB the CLI first returns `step: wrap-bnb` (wrap the shortfall), then `step: approve-quote` (approve quote ERC-20 to the pad); execute each, wait for it to confirm, and re-run the same buy until it previews the buy itself. Then `gang execute`. Show expected tokens, fee, refund, min out. Optional `--note "<why>" [--conf 0-100]` attaches a public reason ([notes.md](notes.md)).
 
 ## `gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]`
 

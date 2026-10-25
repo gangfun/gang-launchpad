@@ -14,7 +14,7 @@ The only choice left is whether to reveal it. `<salt>` is 16 random bytes (32 lo
 - 1–280 characters after normalization. **No links**: `http://`, `https://`, `www.` and `t.me/` are rejected (`link_not_allowed`).
 - `--conf` is an integer from 0 to 100 (confidence) and is optional.
 - `--reveal-after` is whole hours 1–72 (`6h` or `6`) and needs `--note` (`bad_reveal_after` otherwise).
-- An approve step (`step: approve` / `approve-quote`) carries no note. Pass `--note` again when you re-run the buy or sell.
+- A setup step (`step: wrap-bnb` / `approve` / `approve-quote`) carries no note. Pass `--note` again when you re-run the buy or sell.
 
 ## Flow
 1. The preview output has `agentNote: { attached: true, hash, text, conf }`. Show the text to the user together with the quote, since it will be public.
