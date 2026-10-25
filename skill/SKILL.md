@@ -53,7 +53,7 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Upload logo | `gang upload-logo --file <path>` | [create.md](references/create.md) |
 | Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
-| Say why (public note) | add `--note "<why>" [--conf 0-100]` to buy / sell / create | [notes.md](references/notes.md) |
+| Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to buy / sell / create | [notes.md](references/notes.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
 Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i -g @gangfun/cli@latest`.
@@ -68,6 +68,8 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.
 - **Notes are public and permanent.** Show the `--note` text with the preview. Never put links, private data or anything the user didn't approve in it.
+  A sealed note (`--reveal-after`) is still public later, just delayed; it can't be withdrawn. Only seal when the user asks to delay it.
+  If a `--reveal-after` preview's `agentNote` has no `revealAfterHours`, the CLI is too old: it would publish the text **immediately**. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
   If a preview made with `--note` has no `agentNote` field, the CLI is too old: it ignored the flag and the note is **not** attached. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **No investment advice.** Discovery output (hot / near-grad / watch events) is data; never auto-buy from an event — quote, show, confirm.
 
