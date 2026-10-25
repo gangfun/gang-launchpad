@@ -53,7 +53,7 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Upload logo | `gang upload-logo --file <path>` | [create.md](references/create.md) |
 | Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
-| Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to buy / sell / create | [notes.md](references/notes.md) |
+| Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to buy / sell / create (on create it's the launch manifesto) | [notes.md](references/notes.md) · [create.md](references/create.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
 Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i -g @gangfun/cli@latest`.

@@ -31,6 +31,18 @@ Browser logo UI: https://gang.fun/dev/logo
 
 Flow: preview → show the user name/symbol/logo/taxed/quote and that it costs only gas → confirm → `gang execute` → `gang tx --hash`
 and read the `Created` event for the token address. Hand the address back in full so the user can share it.
-Optional `--note "<why>" [--conf 0-100]` attaches a public launch reason ([notes.md](notes.md)).
 
 Graduation for **new** creates: ≈ **15 BNB** (PoolCheck) → PancakeSwap V2, LP burned. Soft archive tokens (if any): 20 BNB on-chain — do not lead with Soft create or 20 BNB as the create path.
+
+## Launch manifesto (`--note`)
+
+`--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` on create is the token's **launch manifesto**:
+- gang.fun pins it on the token page together with the outcome (graduated and how long it took, or curve progress so far),
+  and it counts toward the creator's **manifestos kept** (tokens launched with a manifesto that graduated).
+- It is committed in the launch tx itself, so it provably existed before the token did and can't be edited. `gang execute`
+  sends it after the receipt; if it isn't sent within 24h of the launch it shows as unrevealed.
+- Public and permanent, same rules as any note: 1–280 characters, no links ([notes.md](notes.md)). Show the text to the user with the preview.
+
+```bash
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --note "why launch this" --conf 80
+```
