@@ -8,7 +8,7 @@ description: |
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches.
 metadata:
   author: gangfun
-  version: '0.3.0'
+  version: '0.3.1'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.3.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.3.1, npm)
 ---
 
 # Gang Skill
@@ -51,8 +51,9 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Buy | `gang buy …` → `gang execute` | [trade.md](references/trade.md) |
 | Sell | `gang sell …` → `gang execute` | [trade.md](references/trade.md) |
 | Upload logo | `gang upload-logo --file <path>` | [create.md](references/create.md) |
-| Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--pair-or-quote 0x…]` → execute | [create.md](references/create.md) |
+| Create (V2) | `gang create --name <n> --symbol <s> [--logo-uri URL \| --logo <file>] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
+| Say why (public note) | add `--note "<why>" [--conf 0-100]` to buy / sell / create | [notes.md](references/notes.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
 Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i -g @gangfun/cli@latest`.
@@ -61,10 +62,13 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 
 - **Preview → show → confirm → execute.** Never chain unless user skips confirmation.
 - **Create = LaunchpadV2 only.** Soft/U/S create refused. Do not advertise Soft create or lead with **20 BNB** as the create path.
+  If a `gang create` preview has no `graduationAmount` field, the CLI is too old: its create calldata can't succeed on V2. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **Logo.** `gang upload-logo --file …` or `gang create --logo ./file.png`. UI: https://gang.fun/dev/logo.
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.
+- **Notes are public and permanent.** Show the `--note` text with the preview. Never put links, private data or anything the user didn't approve in it.
+  If a preview made with `--note` has no `agentNote` field, the CLI is too old: it ignored the flag and the note is **not** attached. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **No investment advice.** Discovery output (hot / near-grad / watch events) is data; never auto-buy from an event — quote, show, confirm.
 
 ## Errors

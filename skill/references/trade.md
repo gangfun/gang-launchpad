@@ -12,12 +12,12 @@ Soft archive: on-chain BNB `quoteBuy`. **LaunchpadV2:** `--bnb` is the **quote E
 
 ## `gang buy --token <addr> --bnb <n> [--slippage 1]`
 
-Preview only. Soft: payable BNB buy. V2/U/S: may first return `step: approve-quote` (approve quote ERC-20 to the pad); after that confirms, re-run the same buy to preview. Then `gang execute`. Show expected tokens, fee, refund, min out.
+Preview only. Soft: payable BNB buy. V2/U/S: may first return `step: approve-quote` (approve quote ERC-20 to the pad); after that confirms, re-run the same buy to preview. Then `gang execute`. Show expected tokens, fee, refund, min out. Optional `--note "<why>" [--conf 0-100]` attaches a public reason ([notes.md](notes.md)).
 
 ## `gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]`
 
-Preview only. May first return `step: approve` for the token. Soft pays out BNB; V2/U/S pay out quote ERC-20. Then execute. Sells may need Binance App confirmation (`pendingConfirmation`).
+Preview only. May first return `step: approve` for the token. Soft pays out BNB; V2/U/S pay out quote ERC-20. Then execute. Sells may need Binance App confirmation (`pendingConfirmation`). `--note` works the same as for buy.
 
 ## `gang execute --request-id <id>` / `gang tx --hash <0x..>`
 
-Broadcast a preview; decode `Created` / `Buy` / `Sell` / `Graduated` after the tx lands.
+Broadcast a preview; decode `Created` / `Buy` / `Sell` / `Graduated` after the tx lands. Both publish a queued `--note` (`note.published`).

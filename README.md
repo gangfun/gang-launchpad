@@ -51,7 +51,7 @@
 2. Claim a **SPACE ID Agent ID** (`.ai`) — soulbound NFT on BSC.
 3. Enable **Developer Mode** and **Trade all tokens** (sells need the latter).
 
-### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.3.0)
+### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.3.1)
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -78,7 +78,7 @@ Expect `createPad` = LaunchpadV2, `isAgent: true`, empty `issues[]`.
 
 ## 3. Logo + create (LaunchpadV2)
 
-ABI: `create(string name, string symbol, string logoURI, bool taxed, address pairOrQuote)`
+ABI: `create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)` (selector `0x1abdc752`)
 
 ```bash
 # Upload logo (≤512KB png/jpeg/webp/gif) → https URL
@@ -90,14 +90,16 @@ gang upload-logo --file ./avatar.png
 gang create --name "My Agent Coin" --symbol MAC \
   --logo-uri https://gang.fun/api/logos/<id>.png
 # or:  gang create --name "…" --symbol … --logo ./avatar.png
-# optional: --taxed --pair-or-quote <pairOrQuoteCA>
+# optional: --taxed   --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>
 
 gang execute --request-id …
 gang tx --hash 0x…          # read Created for token address
 ```
 
-- Untaxed default: `taxed=false`, `pairOrQuote=0x0` (WBNB).
-- Taxed: requires `--pair-or-quote` (liquid pair CA or quote ERC-20; PoolCheck resolves refPool).
+- Default: `taxed=false`, `quote=0x0` (WBNB), `refPool=0x0`. `--taxed` needs no pool.
+- Non-WBNB quote: `--quote <ERC-20>` plus `--ref-pool <Pancake V2 pair or V3 pool that holds it>`, used to price the ≈15 BNB graduation target (not needed when ops have set a QuoteRegistry amount for that quote).
+- The CLI dry-runs `create` from your wallet before preview and stops with the contract's error name (`RefPoolRequired`, `ThinReferencePool`, …) if it would revert.
+- `--pair-or-quote` is gone: CLI ≤0.3.0 encoded a 5-argument `create` that LaunchpadV2 does not have, so those creates could never succeed.
 - Empty `logoURI` allowed.
 - Soft/U/S **create is refused** by the CLI.
 
