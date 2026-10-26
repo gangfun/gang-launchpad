@@ -127,7 +127,7 @@ contract FairMintTest is Test {
         view
         returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 lastMintAt, address pair)
     {
-        (, uint64 last, uint16 cap,,, uint16 sold_, bool launched_,,,, uint128 price, address pair_,) = pad.sales(token);
+        (, uint64 last, uint16 cap,,, uint16 sold_, bool launched_,,,, uint128 price, address pair_,,) = pad.sales(token);
         return (cap, sold_, launched_, price, last, pair_);
     }
 
@@ -406,7 +406,7 @@ contract FairMintTest is Test {
         pad.mint(t, 50, 1);
         uint256 cost = 50 * SHARE_PRICE;
         assertEq(start - wbnb.balanceOf(m), cost + cost / 100, "mint: +1%");
-        (,,,,,,, uint16 mintFee, uint16 exitFee,,,,) = pad.sales(t);
+        (,,,,,,, uint16 mintFee, uint16 exitFee,,,,,) = pad.sales(t);
         assertEq(mintFee, 100);
         assertEq(exitFee, 200);
 
@@ -464,9 +464,13 @@ contract FairMintTest is Test {
         assertEq(previewOut, out);
         assertEq(bucket.accruedQuote(address(wbnb)), bucketBefore, "no exit fee");
 
-        // a withdraw does not count as activity; a mint does, and the exit fee is back
+        // a withdraw is not progress, nor is a re-mint that only wins back withdrawn shares; reaching 10 above the
+        // last restart (51 sold) is, and the exit fee is back
         vm.prank(_minter(1));
-        pad.mint(t, 1, 1);
+        pad.mint(t, 29, 1); // sold 31 → 60
+        assertEq(pad.exitFeeBpsOf(t), 0, "below markSold + STALE_STEP: still stale");
+        vm.prank(_minter(2));
+        pad.mint(t, 1, 1); // 61
         assertEq(pad.exitFeeBpsOf(t), 200);
         vm.prank(m);
         assertEq(pad.withdraw(t, 10), 10 * SHARE_PRICE * 98 / 100);

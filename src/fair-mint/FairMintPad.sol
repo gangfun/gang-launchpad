@@ -23,7 +23,9 @@ import {FairToken, FairTokenDeployer} from "./FairToken.sol";
 ///         plus all principal goes into a Pancake V2 pair (LP to 0xdead), so the opening price equals the mint price.
 ///         There is no deadline and no refund: a sale stays open until it fills, and a minter leaves by withdrawing.
 ///         Mint fee (1%–3%) is paid to PlatformFeeBucket at mint; exit fee (1%–2%) is taken on withdraw, and waived once
-///         a sale has had no mint for STALE_AFTER (7 days), so a stalled sale can be left at the price paid.
+///         a sale has made no progress for STALE_AFTER (7 days), so a stalled sale can be left at the price paid.
+///         Progress = shares sold reaching STALE_STEP above where the clock last restarted, so a 1-share mint (or a
+///         withdraw-and-remint) can't keep the waiver off: holding the shares that restart it is what it costs.
 ///         Tokens stay locked until launch: they only move between the pad and minters (no P2P sale before launch).
 /// @dev Spec: docs/SPEC-FAIR-MINT-2026-10-26.md. NO mainnet broadcast.
 ///      Each sale snapshots its rules at create (cap, gate, fees, hold line): owner setters only affect new sales.
@@ -41,8 +43,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     uint16 public constant MIN_FEE_BPS = 100; // 1%: platform floor, mint and exit
     uint16 public constant MAX_MINT_FEE_BPS = 300; // 3%: never refunded (there is no refund), so kept low
     uint16 public constant MAX_EXIT_FEE_BPS = 200; // 2%: withdraw is the only way out of an unfilled sale
-    /// @notice No mint for this long → withdraw costs no exit fee (only the mint fee paid is lost).
+    /// @notice No progress for this long → withdraw costs no exit fee (only the mint fee paid is lost).
     uint256 public constant STALE_AFTER = 7 days;
+    /// @notice Shares sold must rise this far above the last restart to restart the stale clock (0.1% of the shares).
+    uint256 public constant STALE_STEP = 10;
 
     uint256 public constant MIN_RAISE_BNB = 5 ether;
     uint256 public constant MAX_RAISE_BNB = 50 ether;
@@ -66,7 +70,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
 
     struct Sale {
         address creator;
-        uint64 lastMintAt; // last mint (the creator's included); withdraws don't count
+        uint64 progressAt; // stale clock: the creator's mint, then each mint that lifts `sold` to markSold + STALE_STEP
         uint16 capShares;
         uint16 holdBps;
         address quote;
@@ -78,6 +82,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint128 sharePrice;
         address pair;
         address refPool;
+        uint16 markSold; // `sold` when the stale clock last restarted
     }
 
     struct Position {
@@ -111,6 +116,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     mapping(address token => Sale) public sales;
     mapping(address token => mapping(address user => Position)) public positions;
     mapping(address token => string) public logoURIOf;
+    /// @notice Exit fees the bucket refused (see `_exitFeeToPlatform`); anyone can `flushFees` them once it accepts.
+    mapping(address quote => uint256) public owedFee;
     address[] public allTokens;
 
     event Created(
@@ -149,6 +156,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     event Launched(
         address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount
     );
+    /// @notice The vault refused the exit's share write: `user` keeps its old share until someone `syncShares` it.
+    event ShareWriteFailed(address indexed token, address indexed user, uint256 share);
+    event FeeOwed(address indexed quote, uint256 amount);
+    event FeesFlushed(address indexed quote, uint256 amount);
     event MigratorSet(address indexed migrator);
     event AgentGateUpdated(bool enabled, address registry);
     event V3FactorySet(address indexed factory);
@@ -353,9 +364,18 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
         _setShareOnExit(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
         IERC20(s.quote).safeTransfer(msg.sender, payout);
-        _toPlatform(s.quote, exitFee); // 0 once stale: then the exit needs no fee sink either
+        _exitFeeToPlatform(s.quote, exitFee);
 
         emit Withdrawn(token, msg.sender, shares, payout, exitFee, p.shares, s.sold);
+    }
+
+    /// @notice Send exit fees the bucket refused on to it, now that it accepts again. Anyone can call.
+    function flushFees(address quote) external nonReentrant returns (uint256 amount) {
+        amount = owedFee[quote];
+        if (amount == 0) revert ZeroAmount();
+        owedFee[quote] = 0;
+        _toPlatform(quote, amount);
+        emit FeesFlushed(quote, amount);
     }
 
     // ---------------------------------------------------------------- views
@@ -414,7 +434,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         return _withdrawQuote(s, shares);
     }
 
-    /// @notice The exit fee a withdraw pays now: the sale's own, or 0 once it has had no mint for STALE_AFTER.
+    /// @notice The exit fee a withdraw pays now: the sale's own, or 0 once it has made no progress for STALE_AFTER.
     function exitFeeBpsOf(address token) external view returns (uint256) {
         return _exitFeeBps(sales[token]);
     }
@@ -464,7 +484,11 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
 
         p.shares += accepted.toUint16();
         s.sold += accepted.toUint16();
-        s.lastMintAt = uint64(block.timestamp);
+        // only progress restarts the stale clock: the creator's mint, or `sold` up STALE_STEP since the last restart
+        if (s.progressAt == 0 || s.sold >= uint256(s.markSold) + STALE_STEP) {
+            s.progressAt = uint64(block.timestamp);
+            s.markSold = s.sold;
+        }
 
         IERC20(token).safeTransfer(trader, accepted * TOKENS_PER_SHARE);
         dividendVault.setShare(token, trader, uint256(p.shares) * TOKENS_PER_SHARE);
@@ -511,11 +535,25 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         try dividendVault.setShare(token, user, share) {}
         catch {
             if (gasleft() <= gasBefore / 63) revert OutOfGas();
+            emit ShareWriteFailed(token, user, share);
+        }
+    }
+
+    /// @dev Withdraw must not depend on the fee sink either: a bucket that refuses the pad (its owner revoked it) leaves
+    ///      the fee here as `owedFee`. The payout is the same either way, so starving this call gains the caller nothing.
+    function _exitFeeToPlatform(address quote, uint256 fee) internal {
+        if (fee == 0) return;
+        IERC20(quote).forceApprove(address(platformBucket), fee);
+        try platformBucket.notifyAccrual(quote, fee) {}
+        catch {
+            IERC20(quote).forceApprove(address(platformBucket), 0);
+            owedFee[quote] += fee;
+            emit FeeOwed(quote, fee);
         }
     }
 
     function _exitFeeBps(Sale storage s) internal view returns (uint256) {
-        return block.timestamp >= uint256(s.lastMintAt) + STALE_AFTER ? 0 : s.exitFeeBps;
+        return block.timestamp >= uint256(s.progressAt) + STALE_AFTER ? 0 : s.exitFeeBps;
     }
 
     function _toPlatform(address quote, uint256 amount) internal {

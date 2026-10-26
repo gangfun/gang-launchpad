@@ -226,7 +226,7 @@ contract CoreHandler is CoreSystem {
     }
 
     function _saleState(address t) internal view returns (address quote, bool launched, address pair) {
-        (,,,, quote,, launched,,,,, pair,) = fair.sales(t);
+        (,,,, quote,, launched,,,,, pair,,) = fair.sales(t);
     }
 
     function _pairSwapOut(MockPair pair, address token, bool tokenOut, uint256 out, address to) internal {
@@ -582,8 +582,8 @@ contract CoreInvariantsTest is Test {
     }
 
     // ---------------------------------------------------------------- 打新 (§5 #1–#4, #6)
-    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of the principal of live positions (mint fees
-    ///      go to the platform at mint: nothing is escrowed).
+    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of the principal of live positions, plus exit
+    ///      fees the bucket refused (mint fees go to the platform at mint: nothing else is escrowed).
     function invariant_fairEscrowExact() public view {
         FairMintPad fair = h.fair();
         address[3] memory qs = _quotes();
@@ -591,14 +591,15 @@ contract CoreInvariantsTest is Test {
             uint256 owed;
             for (uint256 i = 0; i < h.saleCount(); i++) {
                 address t = h.sales(i);
-                (,,,, address q,, bool launched,,,, uint128 price,,) = fair.sales(t);
+                (,,,, address q,, bool launched,,,, uint128 price,,,) = fair.sales(t);
                 if (q != qs[k] || launched) continue;
                 for (uint256 j = 0; j < h.holderCount(); j++) {
                     uint16 shares = fair.positions(t, h.holders(j));
                     owed += uint256(shares) * price;
                 }
             }
-            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal");
+            owed += fair.owedFee(qs[k]);
+            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal + owed fees");
         }
     }
 
@@ -607,7 +608,7 @@ contract CoreInvariantsTest is Test {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,, uint16 cap,,, uint16 sold, bool launched,,,,,,) = fair.sales(t);
+            (,, uint16 cap,,, uint16 sold, bool launched,,,,,,,) = fair.sales(t);
             assertLe(sold, 10_000, "sold <= 10,000");
             uint256 sumShares;
             for (uint256 j = 0; j < h.holderCount(); j++) {
@@ -627,7 +628,7 @@ contract CoreInvariantsTest is Test {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,,,,,, bool launched,,,,,,) = fair.sales(t);
+            (,,,,,, bool launched,,,,,,,) = fair.sales(t);
             if (!launched) continue;
             for (uint256 j = 0; j < h.holderCount(); j++) {
                 address u = h.holders(j);

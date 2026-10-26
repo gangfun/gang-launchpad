@@ -36,8 +36,10 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   is never returned. A wallet can't exceed its cap. The last mint is cut down to the shares left (`--min-shares` refuses
   less); the mint that fills the sale also launches it, so it costs more gas.
 - **Withdraw** (sell back): any time before the sale fills, at the mint price **− the exit fee**; the mint fee is not
-  returned (e.g. mint 1% + exit 1% = 2% round trip). **Once no one has minted for 7 days the exit fee is 0** (`stale: true`,
-  `exitFeeFreeIn` counts down to it): a stalled sale can be left at the full mint price. A new mint restarts the 7 days.
+  returned (e.g. mint 1% + exit 1% = 2% round trip). **Once the sale has made no progress for 7 days the exit fee is 0** (`stale: true`,
+  `exitFeeFreeIn` counts down to it): a stalled sale can be left at the full mint price. Progress = shares sold reaching 10
+  above where the clock last restarted (`progressAt`); a 1-share mint, or minting back shares others withdrew, does not
+  restart it.
 - **Progress can go down**: withdraws return shares to the sale. `gang fair info` shows `sharesLeft` and `minWalletsLeft`
   (at least this many more wallets are needed to fill, given the cap).
 - **Locked until launch**: minted tokens sit in the wallet but can't be transferred or traded before launch.

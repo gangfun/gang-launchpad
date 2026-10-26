@@ -134,7 +134,7 @@ contract FairMintForkTest is Test {
 
     /// @return lastMintGas gas of the mint that fills the sale (includes createPair + addLiquidity)
     function _fill(address token, address quote) internal returns (uint256 lastMintGas) {
-        (,,,,,,,,,, uint128 price,,) = pad.sales(token);
+        (,,,,,,,,,, uint128 price,,,) = pad.sales(token);
         uint256 need = (uint256(price) * 100 * 101) / 100;
         for (uint256 i = 0; i < 100; i++) {
             address m = _minter(i);
@@ -241,7 +241,7 @@ contract FairMintForkTest is Test {
         reg.setQuote(USDT, true, raiseQuote);
         address t = _create(USDT, bridge);
         _fill(t, USDT);
-        (,,,,,,,,,, uint128 price,,) = pad.sales(t);
+        (,,,,,,,,,, uint128 price,,,) = pad.sales(t);
         (uint256 rT, uint256 rQ) = _reserves(t, FairToken(t).pair());
         assertEq(rT, 500_000_000 ether);
         assertEq(rQ, uint256(price) * 10_000);

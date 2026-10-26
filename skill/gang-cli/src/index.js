@@ -188,7 +188,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                  [--shares 1] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle] [--description <text>]
                                          打新 (fair mint): one price per share both ways, the last share launches on PancakeSwap at
                                          that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–0.5% of
-                                         supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days with no mint).
+                                         supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
                                          Wraps / approves first when needed (re-run after each)
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)

@@ -452,10 +452,10 @@ contract GangRouterTest is Test {
             _agent(m);
             vm.prank(m);
             router.fairMintBNB{value: 1 ether}(token, 100, 1, block.timestamp);
-            (,,,,,, bool launched,,,,,,) = fair.sales(token);
+            (,,,,,, bool launched,,,,,,,) = fair.sales(token);
             if (launched) break;
         }
-        (,,,,,, bool done,,,,, address pair,) = fair.sales(token);
+        (,,,,,, bool done,,,,, address pair,,) = fair.sales(token);
         assertTrue(done, "launched");
         assertTrue(pair != address(0));
         _assertRouterEmpty();

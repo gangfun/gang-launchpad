@@ -30,7 +30,7 @@ const PAD_ABI = parseAbi([
   'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
   'function withdraw(address token, uint256 shares) returns (uint256)',
-  'function sales(address token) view returns (address creator, uint64 lastMintAt, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, address pair, address refPool)',
+  'function sales(address token) view returns (address creator, uint64 progressAt, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, address pair, address refPool, uint16 markSold)',
   'function positions(address token, address user) view returns (uint16 shares)',
   'function previewWithdraw(address token, address user, uint256 shares) view returns (uint256 payout, uint256 fee)',
   'function exitFeeBpsOf(address token) view returns (uint256)',
@@ -123,7 +123,7 @@ async function dryRun(ctx, from, to, data, value = 0n) {
 export async function saleOf(ctx, token) {
   const s = await ctx.read(ctx.pad, PAD_ABI, 'sales', [token])
   if (s[0] === zeroAddress) return null
-  const [creator, lastMintAt, capShares, holdBps, quote, sold, launched, mintFeeBps, exitFeeBps, gate, sharePrice, pair] = s
+  const [creator, progressAt, capShares, holdBps, quote, sold, launched, mintFeeBps, exitFeeBps, gate, sharePrice, pair] = s
   const [st, exitNowBps, staleAfter] = await Promise.all([
     ctx.read(ctx.pad, PAD_ABI, 'status', [token]), ctx.read(ctx.pad, PAD_ABI, 'exitFeeBpsOf', [token]),
     ctx.read(ctx.pad, PAD_ABI, 'STALE_AFTER'),
@@ -135,9 +135,10 @@ export async function saleOf(ctx, token) {
     capShares: Number(capShares), holdPct: Number(holdBps) / 100, sold: Number(sold), totalShares: 10_000,
     // no deadline: what a fill still needs, and how long until withdraws stop paying the exit fee
     sharesLeft: left, minWalletsLeft: Math.ceil(left / Number(capShares)),
-    lastMintAt: Number(lastMintAt), lastMintIso: new Date(Number(lastMintAt) * 1000).toISOString(),
+    // the stale clock: restarts only on progress (sold up 10 shares since the last restart), not on every mint
+    progressAt: Number(progressAt), progressIso: new Date(Number(progressAt) * 1000).toISOString(),
     stale: !launched && Number(exitNowBps) === 0,
-    exitFeeFreeIn: launched ? 0 : Math.max(0, Number(lastMintAt) + Number(staleAfter) - Math.floor(Date.now() / 1000)),
+    exitFeeFreeIn: launched ? 0 : Math.max(0, Number(progressAt) + Number(staleAfter) - Math.floor(Date.now() / 1000)),
     mintFeePct: Number(mintFeeBps) / 100, exitFeePct: Number(exitFeeBps) / 100, exitFeeNowPct: Number(exitNowBps) / 100,
     exitFeeBps: Number(exitFeeBps),
     sharePriceRaw: sharePrice, sharePrice: await units(ctx, quote, sharePrice), launched,
@@ -209,7 +210,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     return out({ success: true, status, items: (r.items || []).map((x) => ({
       token: x.address, symbol: x.symbol, status: x.status, sold: x.sold, participants: x.participants,
       sharePrice: x.sharePrice && formatUnits(BigInt(x.sharePrice), 18), quote: x.quoteSymbol, chainId: x.chainId,
-      sharesLeft: x.sharesLeft ?? null, minWalletsLeft: x.minWalletsLeft ?? null, lastMintAt: x.lastMintAt ?? null, stale: x.stale ?? null,
+      sharesLeft: x.sharesLeft ?? null, minWalletsLeft: x.minWalletsLeft ?? null, lastMintAt: x.lastMintAt ?? null, progressAt: x.progressAt ?? null, stale: x.stale ?? null,
       link: `https://gang.fun/mint/${x.address}`,
     })) })
   }
@@ -275,7 +276,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
       capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), holdPct, mintFeePct, exitFeePct, devShares,
       devCost: await units(ctx, quote, need),
-      note: 'no deadline: the sale stays open until all 10,000 shares are minted, then launches. Minters can sell shares back at the mint price (minus the exit fee; none once no one has minted for 7 days). The mint fee is the platform\'s and is not returned.',
+      note: 'no deadline: the sale stays open until all 10,000 shares are minted, then launches. Minters can sell shares back at the mint price (minus the exit fee; none after 7 days without progress, i.e. fewer than 10 new shares). The mint fee is the platform\'s and is not returned.',
     }, rawOnly, summarize))
   }
 
@@ -340,8 +341,8 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       receive: await units(ctx, sale.quote, payout), exitFee: await units(ctx, sale.quote, fee), quote: sale.quoteSymbol,
       exitFeePct: sale.exitFeeNowPct,
       note: sale.stale
-        ? `no mint for 7 days: no exit fee, the full mint price back; the ${sale.mintFeePct}% paid at mint is not returned`
-        : `mint price − ${sale.exitFeeNowPct}% exit fee (none once no one has minted for 7 days); the ${sale.mintFeePct}% paid at mint is not returned`,
+        ? `no progress for 7 days: no exit fee, the full mint price back; the ${sale.mintFeePct}% paid at mint is not returned`
+        : `mint price − ${sale.exitFeeNowPct}% exit fee (none after 7 days without 10 new shares); the ${sale.mintFeePct}% paid at mint is not returned`,
     }, rawOnly, summarize))
   }
 

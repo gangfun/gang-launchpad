@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
@@ -56,6 +57,8 @@ contract FairMintAuditTest is FairMintTest {
 
         vm.prank(owner);
         vault.setLaunchpad(makeAddr("elsewhere"));
+        vm.expectEmit(true, true, false, true, address(pad));
+        emit FairMintPad.ShareWriteFailed(t, m, 0);
         vm.prank(m);
         uint256 got = pad.withdraw(t, 100);
         assertEq(got, 100 * SHARE_PRICE * 99 / 100, "principal minus the 1% exit fee");
@@ -68,6 +71,54 @@ contract FairMintAuditTest is FairMintTest {
         _fill(t);
         handler.syncShares(t, m, address(0));
         assertEq(vault.shares(t, m), 0, "zero-baseline share cleared by the handler");
+    }
+
+    /// @dev R3-1: 1-share mints can't keep the 7-day exit-fee waiver off; only shares that stay sold restart it.
+    function test_audit_staleClockNeedsProgress() public {
+        address t = _create(); // dev 1 share: the creator's mint starts the clock
+        address v = _minter(0);
+        vm.prank(v);
+        pad.mint(t, 100, 1); // 101 ≥ 1 + 10: restart, markSold 101
+        address g = _minter(1);
+        for (uint256 i = 0; i < 4; i++) {
+            vm.warp(vm.getBlockTimestamp() + 7 days - 1);
+            vm.prank(g);
+            pad.mint(t, 1, 1);
+            vm.prank(g);
+            pad.withdraw(t, 1); // churn: sold never passes 111
+        }
+        assertEq(pad.exitFeeBpsOf(t), 0, "griefer's 1-share churn did not restart the clock");
+        vm.prank(v);
+        assertEq(pad.withdraw(t, 100), 100 * SHARE_PRICE, "victim leaves free");
+    }
+
+    /// @dev R3-2: a bucket that refuses the pad can't freeze withdraws; the fee is owed and flushed once it accepts.
+    function test_audit_withdrawIndependentOfFeeSink() public {
+        address t = _create();
+        address m = _minter(0);
+        vm.prank(m);
+        pad.mint(t, 100, 1);
+        uint256 principal = 100 * SHARE_PRICE;
+        uint256 fee = principal / 100;
+
+        vm.prank(owner);
+        bucket.setLaunchpad(address(1)); // the pad is neither launchpad nor operator now
+        vm.prank(m);
+        assertEq(pad.withdraw(t, 100), principal - fee, "same payout as with a working bucket");
+        assertEq(pad.owedFee(address(wbnb)), fee);
+        assertEq(wbnb.allowance(address(pad), address(bucket)), 0, "no allowance left behind");
+        vm.expectRevert(PlatformFeeBucket.OnlyLaunchpad.selector);
+        pad.flushFees(address(wbnb));
+
+        vm.prank(owner);
+        bucket.setLaunchpad(address(pad));
+        uint256 accrued = bucket.accruedQuote(address(wbnb));
+        vm.prank(stranger);
+        assertEq(pad.flushFees(address(wbnb)), fee);
+        assertEq(pad.owedFee(address(wbnb)), 0);
+        assertEq(bucket.accruedQuote(address(wbnb)), accrued + fee);
+        vm.expectRevert(FairMintPad.ZeroAmount.selector);
+        pad.flushFees(address(wbnb));
     }
 
     /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate (rate 0: test_create_refPoolAgainstWbnb).
