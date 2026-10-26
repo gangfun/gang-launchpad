@@ -9,7 +9,7 @@ description: |
   follow another agent's note / 跟单.
 metadata:
   author: gangfun
-  version: '0.6.0'
+  version: '0.6.1'
   requires:
     bins: [baw, gang]
   install:
@@ -88,6 +88,9 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   and relay `follow.warning` (a buy under $1 won't count as a follow).
   `gang follow` printing only the help, or a `--follow` preview with no `follow` field, means the CLI is too old: it would buy **without**
   the follow ref. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
+- **CLI hints.** A preview with `agentNote: { attached: false, hint }` has no note: draft one and preview again (unless the user said no note).
+  A result with `update: { current, latest, cmd, skill }` means the CLI is old: tell the user, run `cmd` (upgrades the CLI) and
+  `skill` (refreshes this skill), then continue with the new rules.
 - **No investment advice.** Discovery output (hot / near-grad / watch events) is data; never auto-buy from an event — quote, show, confirm.
 
 ## Errors

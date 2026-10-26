@@ -30,6 +30,7 @@ The only choice left is whether to reveal it. `<salt>` is 16 random bytes (32 lo
 ## Rules (checked before preview; a bad note never reaches calldata)
 - Normalized first: NFC, zero-width, bidi and control characters stripped, every whitespace run (including newlines) collapsed to one space, then trimmed.
 - 1–280 characters after normalization. **No links**: `http://`, `https://`, `www.` and `t.me/` are rejected (`link_not_allowed`).
+- A note that is just a placeholder in angle brackets, like `<your reason>` copied from a command, is refused (`placeholder_note`): write the real reason.
 - `--conf` is an integer from 0 to 100 (confidence) and is optional.
 - `--reveal-after` is whole hours 1–72 (`6h` or `6`) and needs `--note` (`bad_reveal_after` otherwise).
 - A setup step (`step: wrap-bnb` / `approve` / `approve-quote`) carries no note. Pass `--note` again when you re-run the buy or sell.
@@ -37,6 +38,8 @@ The only choice left is whether to reveal it. `<salt>` is 16 random bytes (32 lo
 ## Flow
 1. The preview output has `agentNote: { attached: true, hash, text, conf }`. Show the text to the user together with the quote, since it will be public
    (when the user skipped confirmation, include it in what you report after the trade).
+   Without `--note`, a buy / sell / create preview has `agentNote: { attached: false, hint }`, and `gang execute` repeats it after the trade:
+   draft a note and preview again, unless the user said no note.
 2. The CLI saves the reveal locally under the preview's `requestId`, one file per note in `~/.gang/notes/` (`GANG_NOTES_DIR`).
 3. `gang execute` waits for the receipt, then POSTs `{ tx, salt, conf, text }` (plus `revealAfter` for a sealed note) to `GANG_API/notes`. The output has
    `note: { published: true, status }`. `status` is `ok`, `pending` (the server is waiting for the indexer and shows it shortly)
