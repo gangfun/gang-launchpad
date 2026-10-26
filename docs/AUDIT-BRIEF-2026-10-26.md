@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 读者：外部审计方
-- 代码：`gangfun/gang-launchpad` PR #19（分支 `feat/core-router`），合约冻结在提交 `47a063b`（含 §10、§11 两轮内部审计的修复；之前的冻结点依次是 `5854a35`、`36d8a7e`）。此后若有提交改动 `src/`，我们会单独列出 diff。
+- 代码：`gangfun/gang-launchpad` `main`（经 PR #19 合入，代币收紧另见 §12），合约冻结在提交 `cf96281`（含 §10、§11 两轮内部审计的修复和 §12 的代币收紧；之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`）。此后若有提交改动 `src/`，我们会单独列出 diff。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`）。
 
@@ -26,15 +26,17 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 
 ## 2. 范围
 
-### 2.1 在范围内（约 1,985 nSLOC）
+### 2.1 在范围内（约 2,040 nSLOC）
 
 | 文件 | nSLOC | 职责 |
 |---|---|---|
-| `src/fair-mint/FairMintPad.sol` | 503 | 创建、打新、撤出、失败退款、打满发射；每个 sale 创建时快照规则；持有全部托管资金 |
-| `src/fair-mint/FairToken.sol` | 85 | 打新代币 + `FairTokenDeployer`：发射前锁转账、发射台可收回；发射后池子买卖收 1% 税 |
+| `src/fair-mint/FairMintPad.sol` | 501 | 创建、打新、撤出、失败退款、打满发射；每个 sale 创建时快照规则；持有全部托管资金 |
+| `src/fair-mint/FairToken.sol` | 96 | 打新代币 + `FairTokenDeployer`：发射前锁转账、发射台可收回；发射后池子买卖收 1% 税；税处理合约构造时写死，发射时一次性 `unlock(migrator)` + `setPair` |
 | `src/fair-mint/HolderRewardHandler.sol` | 185 | 发射后的税：keeper 换成报价币，50% 给合格持有人 / 50% 平台；出局判断 |
-| `src/launchpad-v3/LaunchpadV3.sol` | 562 | V2 曲线 + 买 / 卖税 + 接收地址；`buyFor` 路由入口 |
-| `src/launchpad-v3/TaxLaunchTokenV3.sol` | 99 | 带买、卖两个税率（immutable）的代币 + `TaxTokenDeployerV3` |
+| `src/launchpad-v3/LaunchpadV3.sol` | 563 | V2 曲线 + 买 / 卖税 + 接收地址；`buyFor` 路由入口 |
+| `src/launchpad-v3/TaxLaunchTokenV3.sol` | 110 | 带买、卖两个税率（immutable）的代币 + `TaxTokenDeployerV3`；税处理合约构造时写死，毕业时一次性 `unlock(migrator)` + `setPair` |
+| `src/launchpad-v3/LaunchTokenV3.sol` | 26 | V3 无税币：V2 LaunchToken 加元数据 URI，`unlock` 只能一次，去掉 `burn` |
+| `src/launchpad-v3/TokenURI.sol` | 13 | 三种代币共用：构造时写入的 `_uri`，`contractURI()`（ERC-7572）/ `metaURI()` |
 | `src/launchpad-v3/PostGradTaxHandlerV3.sol` | 153 | 毕业后的税：按每笔方向记平台部分，keeper 换币后交给 TaxRouterV3 |
 | `src/launchpad-v3/TaxRouterV3.sol` | 140 | 分账：平台 → 分红 → 接收地址；推送失败记欠款，任何人可补发 |
 | `src/launchpad-v3/RecipientRegistry.sol` | 38 | 接收地址白名单 |
@@ -43,7 +45,7 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 
 ### 2.2 复用、不在范围内，但集成方式在范围内
 
-以下 V2 合约的代码原样复用（已随 V2 审计）：`DividendVault`、`PlatformFeeBucket`、`MigratorV2`、`PoolCheck`、`QuoteRegistry`，以及 V3 无税币沿用的 V2 `LaunchToken`。实例都是新部署的，不用主网 V2 那几份：DividendVault 和 MigratorV2 每个核心各一份；QuoteRegistry 和 PlatformFeeBucket 由 V3 和打新共用一份，owner 是多签（`script/SharedPlatform.sol`）。请把它们当作已知行为的依赖，但新合约怎么调用它们（尤其是 `DividendVault.setShare` / `depositReward`、`MigratorV2.migrate` 在池子已存在时的行为）属于本次范围。
+以下 V2 合约的代码原样复用（已随 V2 审计）：`DividendVault`、`PlatformFeeBucket`、`MigratorV2`、`PoolCheck`、`QuoteRegistry`。V3 无税币不再用 V2 的 `LaunchToken`，改用 `LaunchTokenV3`（在范围内）。实例都是新部署的，不用主网 V2 那几份：DividendVault 和 MigratorV2 每个核心各一份；QuoteRegistry 和 PlatformFeeBucket 由 V3 和打新共用一份，owner 是多签（`script/SharedPlatform.sol`）。请把它们当作已知行为的依赖，但新合约怎么调用它们（尤其是 `DividendVault.setShare` / `depositReward`、`MigratorV2.migrate` 在池子已存在时的行为）属于本次范围。
 
 ### 2.3 不在范围内
 
@@ -117,10 +119,11 @@ mint / mintFor ── 本金 + 打新费 ──▶ FairMintPad（托管）
 | 合约 | owner | keeper | 其他特权调用方 | 任何人 |
 |---|---|---|---|---|
 | FairMintPad | `setMigrator`（一次性，且 migrator 必须绑定本核心）、`setRouter`、`setAgentGate`、`setV3Factory`、`setTwapWindow`、`setBridgePool`。除 `setRouter` 外**都只影响之后创建的 sale**：上限、门槛、截止、出局线在创建时快照；列入的路由对所有打新中的 sale 都能 `mintFor` | — | 白名单路由：`mintFor`（只对有准入的 sale） | create、mint、withdraw、refund |
-| FairToken | — | — | 只有发射台：`unlock`、`reclaim`（只在发射前）、`setPair`、`setTaxHandler`、`exclude` | 转账（发射后） |
+| FairToken | — | — | 只有发射台：`reclaim`（只在发射前）、`unlock(migrator)`（一次）、`setPair`（解锁后一次）；之后没有任何管理函数 | 转账（发射后）、`contractURI` / `metaURI` |
 | HolderRewardHandler | `setPad`（一次性）、`setRouter`（DEX 路由）、`setKeeper`；可代替 keeper 调 `process` | `process(token, minQuoteOut)` | 代币：`notifyTax` | `syncShares` |
 | LaunchpadV3 | `setMigrator`（一次性，且 migrator 必须绑定本核心）、`setPairFactory`（只用于创建时的参考池定价）、`setRouter`、`setAgentGate`、`setWalletCapEnabled`、`setV3Factory`、`setTwapWindow`、`setBridgePool` | — | 白名单路由：`buyFor`（只在准入开启时） | create、buy、sell |
-| TaxLaunchTokenV3 | — | — | 只有发射台：`unlock`、`setPair`、`setTaxHandler`、`exclude` | 转账（毕业后）、`burn` |
+| TaxLaunchTokenV3 | — | — | 只有发射台：`unlock(migrator)`（一次）、`setPair`（解锁后一次）；之后没有任何管理函数 | 转账（毕业后）、`contractURI` / `metaURI` |
+| LaunchTokenV3（无税） | — | — | 只有发射台：`unlock`（一次） | 转账（毕业后）、`contractURI` / `metaURI` |
 | PostGradTaxHandlerV3 | `setDexRouter`、`setKeeper`；可代替 keeper 调 `process` | `process(token, minQuoteOut)` | 代币：`notifyTax` | `syncShares` |
 | TaxRouterV3 | `setLaunchpad`（一次性，同时设为 source）、`setSource` | — | 发射台：`register`（每个币一次）；source：`distribute`（只能付钱进来） | `release` |
 | RecipientRegistry | `list`、`delist` | — | — | 查询 |
@@ -206,7 +209,7 @@ GangRouter：
 
 ```sh
 forge build --sizes
-forge test                    # 234 个通过（含 V2 原有用例；审计回归套件继承基础套件，基础用例会再跑一遍）
+forge test                    # 278 个通过（含 V2 原有用例和 invariant；审计回归套件继承基础套件，基础用例会再跑一遍）
 BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.sol   # 主网分叉
 ```
 
@@ -225,8 +228,8 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 
 - 本地 anvil 测试网 fork 上按主网顺序跑过部署（V3 → 打新共用 registry / bucket → 路由）、路由冒烟、V3 整轮（毕业 + 外盘税 + 补发）和打新整轮（100 个地址打满 + 发射 + 分账 + 领取），全部通过（`script/LaunchpadV3TestnetE2E.s.sol`、`script/FairMintTestnetE2E.s.sol`）。
 - BSC 主网状态上做过部署的进程内模拟（不广播）：不设 `OWNER` 时拒绝；设了之后接线检查全部通过。
-- BSC 测试网实部署（含修复）：`docs/TESTNET-CORE-ROUTER-2026-10-26.md`（GangRouter `0x3B497A335432f4A3f761063e44eb58D15F7fa57a`、V3 核心 `0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83`、打新核心 `0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7`）。
-- 运行时字节码：LaunchpadV3 22,072 B，FairMintPad 16,686 B，HolderRewardHandler 7,122 B，GangRouter 4,142 B。
+- BSC 测试网实部署（第 3 套，`cf96281`）：`docs/TESTNET-CORE-ROUTER-2026-10-26.md`（GangRouter `0x1ABd2da0A7aB9eb4797FCC36a8aC19a42382daE1`、V3 核心 `0x2202F7898e7e0b77d2Bb46d661d88d1Ffa7D8330`、打新核心 `0x69bfa8459b01e3705Aa8C0397557E537F2024F53`）。
+- 运行时字节码：LaunchpadV3 22,281 B，FairMintPad 16,577 B，HolderRewardHandler 7,122 B，GangRouter 4,142 B。
 
 **测试的不足**：invariant 测试用的是仓库里简化的 MockPair（不检查 K、不收 0.25% 手续费），池子相关的经济攻击（夹子、闪电贷）由第二轮审计员用仿真的 Pancake V2 池子另外验证过（§11），那些 PoC 没有并入仓库。
 
@@ -301,3 +304,36 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 | R2-6 | 拿钱 | 提示 | 主网按地址链接已部署的 PoolCheck 库，核心经 delegatecall 执行它。 | 部署前核对字节码（§9） | — |
 
 审计员试过但失败的攻击（摘要）：打满前抢建池子并打入报价币 / `sync`（只让开盘价略高、捐赠者亏钱）；经路由把代币塞进池子（准入开启时不可能）；让 keeper `process`、`distribute`、`release`、毕业 / 发射、转账钩子永久 revert；用会 revert 或耗 gas 的接收地址卡交易（只是记欠款）；抢在 keeper 前买入吃分红（三组分别实测都亏钱，keeper 自己卖出的冲击大于分到的分红）；夹内盘买卖（两边各付 1% 手续费加税）；曲线取整、上限 / 毕业截断、手续费 / 税规避（fuzz 1000 轮无利可图）；刷单赚分红或接收地址那份；女巫地址绕过出局线；部分撤出的取整；GangRouter 误转余额、重入、残留授权；部署脚本的抢跑窗口。
+
+---
+
+## 12. 代币合约收紧发射台权限 + 元数据 URI（2026-10-27）
+
+来自内部评审的三个问题，改动在 `cf96281`。
+
+**1. 发射台对代币的权限是否过大。** 原先代币上 `setTaxHandler`、`setPair`、`exclude` 都能反复调用，地址不受限制；`burn` 发射台根本不用。实际只有发射台合约在毕业 / 发射那一笔里各调一次，没有 owner 路径能触发，但代币本身不设任何限制。现在改为：
+- 税处理合约在构造时写死（`immutable`），并且从一开始就免税；
+- 毕业 / 发射时 `unlock(migrator)` 一次性解锁并排除 migrator，再调一次就 revert；
+- `setPair` 只能在解锁之后、并且只能调一次；
+- 删掉 `setTaxHandler`、`exclude`、`burn`。
+- 毕业 / 发射之后，代币上没有任何管理函数。打新的 `reclaim` 只在发射前有效，这一点不变。
+- V3 无税币改用新的 `LaunchTokenV3`（V2 源码不动）：`unlock` 只能一次，没有 `burn`。
+
+**2. pair 和税处理合约是否应在部署时确定。** 税处理合约在发币时就已知，所以改为构造时写死。pair 不在发币时创建：那样每次发币要多花约 250 万 gas，大多数币永远不会毕业。也不在发币时用 CREATE2 推算：各条链的 init code hash 不同，复杂度高，而毕业前代币本来就锁着。现在是毕业时由 migrator 建好池子后设定一次，之后不能再改。池子税和分红同步从 `setPair` 开始生效，和原来「迁移完成后再接上 handler」的行为一致。
+
+**3. 转账钩子（`notifyTax` / `syncShares`）的 gas、重入、revert。** 不改，理由：
+- gas：实测（测试环境、首次写入）没有分红的币，钱包转钱包约 5.5 万、卖进池子约 14 万；有分红的币分别约 17 万、18 万。
+- 重入：钩子只调用固定的 handler 和 DividendVault，余额在调钩子之前已经更新，`notifyTax` 带 `nonReentrant` 且只记账，`setShare` 只记账、不转账。
+- revert：`notifyTax` 只在调用方不是代币或税额为 0 时 revert，这两种情况代码已经排除；`syncShares` 只在 handler 被撤掉分红合约 operator 时 revert（owner 操作，可恢复，K-7）。第二轮「卡钱」组专门试过，没能让它们 revert。
+- 不改成低级 `call` 加 gas 上限再吞掉失败：吞掉 `notifyTax` 会让已经转进 handler 的税没有入账，拆分全错；吞掉 `syncShares` 会留下过期份额（第一轮 A-5 就是这一类问题）；调用方能用 63/64 规则卡住子调用的 gas，固定上限防不住；而上限设低了，又会在分红合约 gas 变化时被静默误判为失败。
+
+**元数据 URI。** 三种代币共用 `TokenURI`：`string private _uri` 在构造时写入发币时传给 `create` 的 `logoURI`，和发射台的 `logoURIOf`、`Created` 事件是同一个字符串，没有 setter。`contractURI()`（ERC-7572）和 `metaURI()` 都返回它。
+
+回归测试：`test/launchpad-v3/TokenAdmin.t.sol`（V3 有税 / 无税）、`test/fair-mint/FairTokenAdmin.t.sol`，覆盖：
+- URI 等于发币时传入的值；
+- 税处理合约在构造时设定；
+- 解锁前不能 `setPair`，非发射台不能调用；
+- 毕业 / 发射后 `unlock`、`setPair`、`reclaim` 都 revert；
+- `setTaxHandler`、`exclude`、`burn` 不存在。
+
+全量 278 个测试和主网分叉测试通过，本地测试网 fork 上的 V3 和打新整轮也通过。
