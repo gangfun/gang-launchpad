@@ -327,7 +327,7 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 - revert：`notifyTax` 只在调用方不是代币或税额为 0 时 revert，这两种情况代码已经排除；`syncShares` 只在 handler 被撤掉分红合约 operator 时 revert（owner 操作，可恢复，K-7）。第二轮「卡钱」组专门试过，没能让它们 revert。
 - 不改成低级 `call` 加 gas 上限再吞掉失败：吞掉 `notifyTax` 会让已经转进 handler 的税没有入账，拆分全错；吞掉 `syncShares` 会留下过期份额（第一轮 A-5 就是这一类问题）；调用方能用 63/64 规则卡住子调用的 gas，固定上限防不住；而上限设低了，又会在分红合约 gas 变化时被静默误判为失败。
 
-**元数据 URI。** 三种代币共用 `TokenURI`：`string private _uri` 在构造时写入发币时传给 `create` 的 `logoURI`，和发射台的 `logoURIOf`、`Created` 事件是同一个字符串，没有 setter。`contractURI()`（ERC-7572）和 `metaURI()` 都返回它。
+**元数据 URI。** 三种代币共用 `TokenURI`：`string private _uri` 在构造时写入，没有 setter，`contractURI()`（ERC-7572）和 `metaURI()` 都返回它。两个核心的 `create` 为此新增参数 `metaURI`，放在 `logoURI` 之后：`metaURI` 是元数据 JSON 的地址（name、symbol、description、image、external_link、twitter，由 CLI 生成并上传），写进代币；`logoURI` 仍是图标地址，照旧存进发射台的 `logoURIOf`、发出 `Created` 事件，服务端和网站不受影响。合约不校验 `metaURI` 的内容。
 
 回归测试：`test/launchpad-v3/TokenAdmin.t.sol`（V3 有税 / 无税）、`test/fair-mint/FairTokenAdmin.t.sol`，覆盖：
 - URI 等于发币时传入的值；

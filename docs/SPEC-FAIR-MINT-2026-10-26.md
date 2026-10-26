@@ -271,7 +271,7 @@ QuoteRegistry + PlatformFeeBucket（与 V3 共用一份新部署，`script/Share
 - DividendVault：`setLaunchpad(FairMintPad)`；HolderRewardHandler 设为 operator；池子、handler、migrator、0xdead 排除。
 - HolderRewardHandler：`setPad(FairMintPad)`（一次性）、`setKeeper`、`setRouter`。
 - FairMintPad：`setMigrator`（一次性；pairFactory 已在构造时传入）、Agent ID 注册表、bridge 池（非 BNB 报价币用）。
-- 每个币：创建时代币构造即写死 HolderRewardHandler、写入元数据 URI，发射台 `dividendVault.registerToken(token, quote)`；发射时一次性 `unlock(migrator)`（解锁 + migrator 免税）和 `setPair`（2026-10-27 起，审计说明 §12）。
+- 每个币：创建时代币构造即写死 HolderRewardHandler、写入 `create` 新增的 `metaURI`（元数据 JSON 地址；`logoURI` 仍存在发射台），发射台 `dividendVault.registerToken(token, quote)`；发射时一次性 `unlock(migrator)`（解锁 + migrator 免税）和 `setPair`（2026-10-27 起，审计说明 §12）。
 
 ### 6.3 测试网步骤
 
