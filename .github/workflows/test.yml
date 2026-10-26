@@ -2,8 +2,10 @@ name: CI
 
 permissions: {}
 
+# Pushes run CI only on main; other branches are checked through their pull request
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
