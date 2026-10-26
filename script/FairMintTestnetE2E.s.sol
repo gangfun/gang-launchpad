@@ -107,7 +107,8 @@ contract FairMintTestnetE2E is Script {
         for (uint256 i = 0; i < MINTERS; i++) {
             uint256 pk = _minterKey(i);
             vm.startBroadcast(pk);
-            agentId.register();
+            // the Agent ID registry is shared by every testnet stack: minters from an earlier run are registered
+            if (agentId.balanceOf(vm.addr(pk)) == 0) agentId.register();
             quote.mint(vm.addr(pk), (price * 100 * 101) / 100);
             quote.approve(address(pad), type(uint256).max);
             pad.mint(token, 100, 1);

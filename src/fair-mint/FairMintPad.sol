@@ -6,12 +6,14 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
+import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {FairToken, FairTokenDeployer} from "./FairToken.sol";
 
@@ -104,6 +106,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     IMigratorV2 public migrator;
     IERC721 public agentIdRegistry;
     bool public agentGateEnabled = true;
+    /// @notice Stateless entry contracts (e.g. GangRouter) that may mint for a trader they pay for. A router only ever
+    ///         spends its own quote: it can't withdraw, refund or claim for anyone (those stay msg.sender-only).
+    mapping(address router => bool) public routers;
 
     mapping(address token => Sale) public sales;
     mapping(address token => mapping(address user => Position)) public positions;
@@ -159,6 +164,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     event V3FactorySet(address indexed factory);
     event TwapWindowUpdated(uint32 window);
     event BridgePoolSet(address indexed asset, address indexed pool);
+    event RouterSet(address indexed router, bool enabled);
 
     error BadConfig(string reason);
     error UnknownToken();
@@ -179,6 +185,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     error PriceTooSmall();
     error FeeOnTransferQuote();
     error VaultFloorTooHigh();
+    error OnlyRouter();
+    error QuoteNotAllowed();
+    error WrongMigrator();
+    error RouterNeedsGate();
 
     constructor(
         address owner_,
@@ -208,8 +218,16 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
+        // one-shot: a migrator bound to another pad would make every launch revert forever
+        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
+    }
+
+    function setRouter(address router_, bool enabled) external onlyOwner {
+        if (router_ == address(0)) revert ZeroAddress();
+        routers[router_] = enabled;
+        emit RouterSet(router_, enabled);
     }
 
     function setAgentGate(bool enabled, address registry) external onlyOwner {
@@ -240,7 +258,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- create
-    /// @param quote     Quote ERC20 (address(0) = WBNB). Fee-on-transfer quotes are rejected at mint.
+    /// @param quote     WBNB (address(0)) or a QuoteRegistry-enabled 18-decimal ERC20. Fee-on-transfer quotes are also
+    ///                  rejected at mint.
     /// @param refPool   Pancake V2 pair / V3 pool pricing `quote`; ignored for WBNB or a QuoteRegistry override.
     /// @param devShares Shares the creator mints in the same call (≥ 1); needs quote approval beforehand.
     function create(
@@ -260,6 +279,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (dividendVault.minimumShareBalance() > MIN_SHARE_BALANCE) revert VaultFloorTooHigh();
 
         if (quote == address(0)) quote = wbnb;
+        _requireQuote(quote);
         (uint256 raiseQuote, address refUsed) = _toQuote(quote, refPool, cfg.raiseBnb);
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
@@ -298,7 +318,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
             cfg.mintFeeBps,
             cfg.exitFeeBps
         );
-        _mint(token, s, devShares, devShares);
+        _mint(token, s, msg.sender, devShares, devShares);
     }
 
     // ---------------------------------------------------------------- mint / withdraw / refund
@@ -307,7 +327,23 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         Sale storage s = _minting(token);
         _requireAgent(s.gate, msg.sender);
         if (shares == 0) revert ZeroAmount();
-        accepted = _mint(token, s, shares, minShares);
+        accepted = _mint(token, s, msg.sender, shares, minShares);
+    }
+
+    /// @notice A listed router mints for `trader`: the router pays (cost + mint fee), the shares, tokens and the fee
+    ///         escrow are the trader's (a refund or withdraw pays the trader, never the router). Gate and cap: trader's.
+    function mintFor(address trader, address token, uint256 shares, uint256 minShares)
+        external
+        nonReentrant
+        returns (uint256 accepted)
+    {
+        if (!routers[msg.sender]) revert OnlyRouter();
+        Sale storage s = _minting(token);
+        // ungated, a router could name any trader — e.g. the future pair, seeding it before launch to take the LP
+        if (s.gate == address(0)) revert RouterNeedsGate();
+        _requireAgent(s.gate, trader);
+        if (shares == 0) revert ZeroAmount();
+        accepted = _mint(token, s, trader, shares, minShares);
     }
 
     /// @notice Before fill and deadline: get principal − exit fee back. The fee paid at mint is kept by the platform.
@@ -353,8 +389,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         p.shares = 0;
         p.feePaid = 0;
 
+        // no dividendVault.setShare: a failed sale never earns rewards, and refunds must not depend on the vault
         FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
-        dividendVault.setShare(token, msg.sender, 0);
         IERC20(s.quote).safeTransfer(msg.sender, amount);
         emit Refunded(token, msg.sender, amount);
     }
@@ -433,8 +469,12 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- internal
-    function _mint(address token, Sale storage s, uint256 want, uint256 minShares) internal returns (uint256 accepted) {
-        Position storage p = positions[token][msg.sender];
+    /// @dev msg.sender pays (the trader itself, or a router); `trader` gets the shares and tokens.
+    function _mint(address token, Sale storage s, address trader, uint256 want, uint256 minShares)
+        internal
+        returns (uint256 accepted)
+    {
+        Position storage p = positions[token][trader];
         if (p.shares >= s.capShares) revert WalletCapReached();
         accepted = _acceptable(s, p.shares, want);
         if (accepted == 0) revert ZeroAmount();
@@ -449,9 +489,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         s.sold += accepted.toUint16();
         s.escrowedFee += fee.toUint128();
 
-        IERC20(token).safeTransfer(msg.sender, accepted * TOKENS_PER_SHARE);
-        dividendVault.setShare(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
-        emit Minted(token, msg.sender, accepted, cost, fee, p.shares, s.sold);
+        IERC20(token).safeTransfer(trader, accepted * TOKENS_PER_SHARE);
+        dividendVault.setShare(token, trader, uint256(p.shares) * TOKENS_PER_SHARE);
+        emit Minted(token, trader, accepted, cost, fee, p.shares, s.sold);
 
         if (s.sold == TOTAL_SHARES) _launch(token, s);
     }
@@ -506,6 +546,17 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (!agentGateEnabled) return address(0);
         if (address(agentIdRegistry) == address(0)) revert NotAgent();
         return address(agentIdRegistry);
+    }
+
+    /// @dev WBNB, or a QuoteRegistry-enabled 18-decimal quote WITH a fixed rate (graduationAmount > 0): no
+    ///      fee-on-transfer / hook / low-decimal quotes (6 decimals would round holder rewards to 0 in DividendVault),
+    ///      and no pricing from a creator-picked reference pool, whose spot price one flash swap can move by 1000×
+    ///      within the create tx (2026-10-26 internal audit round 2). The multisig keeps the rate current.
+    function _requireQuote(address quote) internal view {
+        if (quote == wbnb) return;
+        if (quoteRegistry.graduationAmount(quote) == 0 || IERC20Metadata(quote).decimals() != 18) {
+            revert QuoteNotAllowed();
+        }
     }
 
     function _requireAgent(address gate, address account) internal view {

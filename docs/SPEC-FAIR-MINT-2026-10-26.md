@@ -1,5 +1,9 @@
 # 规格 · 打新发射（铭文式打进度）+ 发射前持有人奖励
 
+> 2026-10-26 内部审计后（`docs/AUDIT-BRIEF-2026-10-26.md` §10）：报价币链上只收 WBNB 和 QuoteRegistry 白名单里的 18 位币；路由入口 `mintFor` 只对有准入的 sale 开放；失败退款不再调用分红合约；QuoteRegistry 和 PlatformFeeBucket 不再复用 V2 那份，改为与 V3 共用一份新部署、owner 为多签的实例（下文 §6 的「复用」以此为准）。
+
+> 2026-10-26 补充：这个合约是「核心」，用户也可以经无状态的 GangRouter 进入（用 BNB 直接买 / 打新）。路由只能替交易者付钱，卖出 / 撤出 / 退款 / 领取仍只能本人直接调用。见 `docs/SPEC-CORE-ROUTER-2026-10-26.md`。
+
 - 日期：2026-10-26 Asia/Shanghai
 - 作者：Claude（本页为产品规格 + 合约设计；**非执行单**）
 - 性质：**禁止主网广播**。合约已在 `feat/fair-mint` 分支实现，mock 与主网分叉测试通过（§5.6），2026-10-26 已在 BSC 测试网部署并跑通整轮（`docs/TESTNET-FAIR-MINT-2026-10-26.md`），**未审计**。
@@ -225,7 +229,7 @@ else:                                         share = min(balance, base)
 3. `setMigrator` 只能设一次（V2 已是一次性），`pairFactory` 构造时固定；发射时钱和币只能去这个 migrator。
 4. FairToken 的「发射台收回」只在发射前有效，发射后永久失效，且只能收回该地址打到的数量。
 5. 撤出、退款全部由用户自己领，不遍历地址；`nonReentrant`。
-6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。
+6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。2026-10-26 起链上强制：`create` 只收 WBNB 或 QuoteRegistry 里设了固定换算额、且 18 位小数的币；不再按参考池换算（第二轮审计：dev 自选的池子现价可被闪电贷拉偏，审计说明 §11 R2-1）。§1.1 / §3 #12 里的「按参考池换算」以此为准。
 7. 奖励判断只看「发射时数量」，池子、handler、migrator、发射台的基准天然为 0，不依赖 `excluded` 名单。
 8. 外部审计 V2 的结论（2026-10-26，经另一窗口转达）对本方案的处理：
    - **G-01 被排除地址保留旧份额继续分红：受影响，已修。** DividendVault 的 `setExcluded` 不清份额；handler 原先拿算出的份额和旧份额比较，相等就不写，被排除地址会一直按旧份额分钱。现在被排除地址的目标份额一律为 0（`_sync` 和 `eligibleShare`）。剩余窗口：owner 排除某地址后、该地址下次转账前仍会累计，所以**排除操作必须和 `handler.syncShares(token, user, 0)` 放在同一批交易里**。排除前已赚的奖励仍可领。
@@ -259,7 +263,7 @@ else:                                         share = min(balance, base)
 
 ### 6.1 顺序
 
-QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000 枚）→ PlatformFeeBucket（复用）→ HolderRewardHandler → FairTokenDeployer → FairMintPad → MigratorV2（新实例，launchpad = FairMintPad）→ 接线。
+QuoteRegistry + PlatformFeeBucket（与 V3 共用一份新部署，`script/SharedPlatform.sol`）→ DividendVault（**新部署**，最低份额 10,000 枚）→ HolderRewardHandler → FairTokenDeployer → FairMintPad → MigratorV2（新实例，launchpad = FairMintPad）→ 接线。
 
 ### 6.2 接线
 

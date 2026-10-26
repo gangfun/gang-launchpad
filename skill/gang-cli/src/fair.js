@@ -1,6 +1,7 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, decodeErrorResult, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { bawAddress, bawPreview } from './baw.js'
+import { bawAddress } from './baw.js'
+import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -14,9 +15,11 @@ export const FAIR_NETS = {
     chainId: '56', chain: bsc, pad: process.env.GANG_FAIR_PAD || null, // no mainnet pad yet
     rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
     wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
+    router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x6B0ECAAe1Cf9A733ab98F2ad90A4d48c9a7790A3',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7',
+    router: process.env.GANG_ROUTER_TESTNET || '0x3B497A335432f4A3f761063e44eb58D15F7fa57a',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -42,7 +45,8 @@ const PAD_ABI = parseAbi([
   'error BadConfig(string reason)', 'error UnknownToken()', 'error NotMinting()', 'error NotFailed()', 'error ZeroAmount()',
   'error BadAmount()', 'error Slippage()', 'error WalletCapReached()', 'error NothingToRefund()', 'error NotAgent()',
   'error MigratorNotSet()', 'error ZeroAddress()', 'error RefPoolRequired()', 'error NoBridgePool()', 'error BridgeNotWbnb()',
-  'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()',
+  'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()', 'error QuoteNotAllowed()',
+  'error RouterNeedsGate()',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error GradAmtZero()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 deadline, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)',
   'event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)',
@@ -63,13 +67,9 @@ const VAULT_ABI = parseAbi([
 ])
 const ERC20_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
-  'function allowance(address, address) view returns (uint256)',
-  'function approve(address, uint256) returns (bool)',
   'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
 ])
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
-const WBNB_ABI = parseAbi(['function deposit() payable'])
 
 const STATUS = ['none', 'minting', 'launched', 'failed']
 // what to tell the agent for each pad error
@@ -85,6 +85,8 @@ const HINTS = {
   FeeOnTransferQuote: 'the quote token takes a fee on transfer; it cannot be used',
   RefPoolRequired: 'this quote needs --ref-pool (a Pancake pool pricing it)',
   PriceTooSmall: 'the raise in this quote is too small to split into 10,000 shares',
+  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token with a fixed rate, such as USDT); leave it out to use WBNB',
+  RouterNeedsGate: 'this sale has no Agent gate, so the router path is off; re-run with --use-wbnb to mint directly',
 }
 
 export function fairCtx(testnet) {
@@ -96,11 +98,6 @@ export function fairCtx(testnet) {
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
 
-const units = async (ctx, token, amount) => {
-  let d = 18
-  try { d = Number(await ctx.read(token, ERC20_ABI, 'decimals')) } catch { /* 18 */ }
-  return formatUnits(amount, d)
-}
 const symbolOf = async (ctx, token) => { try { return await ctx.read(token, ERC20_ABI, 'symbol') } catch { return null } }
 
 /** Wallet address on the fair chain; the Agentic Wallet's EVM address is the same on every chain, so 56 is the fallback. */
@@ -110,19 +107,7 @@ export function walletFor(ctx, from) {
 }
 
 /** Revert name (+ BadConfig reason) of a failed eth_call, or null when it was the RPC. */
-function revertOf(e) {
-  const raw = e?.walk?.((x) => typeof x?.data === 'string' && x.data.startsWith('0x'))?.data
-  if (raw && raw.length >= 10) {
-    try {
-      const d = decodeErrorResult({ abi: PAD_ABI, data: raw })
-      return { error: d.errorName, ...(d.args?.length && { reason: d.args[0] }), hint: HINTS[d.errorName] }
-    } catch { /* not ours */ }
-  }
-  const named = e?.walk?.((x) => x?.data?.errorName)?.data?.errorName
-  if (named) return { error: named, hint: HINTS[named] }
-  if (e?.walk?.((x) => x?.code === 3 || /revert/i.test(x?.details || x?.shortMessage || ''))) return { error: 'execution reverted' }
-  return null
-}
+const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI], HINTS)
 
 /** Dry-run `data` from `from`; null when it would pass. */
 async function dryRun(ctx, from, to, data, value = 0n) {
@@ -152,60 +137,10 @@ export async function saleOf(ctx, token) {
   }
 }
 
-/**
- * A write step: either the raw tx (--calldata: no baw call; e.g. to sign elsewhere) or a baw preview.
- * Returns the object the command prints.
- */
-function step(ctx, { from, to, data, value = 0n }, extra, rawOnly, summarize) {
-  if (rawOnly) {
-    return { success: true, ...extra, tx: { chainId: Number(ctx.chainId), from, to, data, value: value.toString() } }
-  }
-  const p = bawPreview({ from, to, value, data, chainId: ctx.chainId })
-  // only an error about the chain itself: a generic network failure is not a reason to fall back to --calldata
-  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|chain(?:\\s*id)?\\W{0,3}${ctx.chainId}\\b`, 'i')
-    .test(JSON.stringify(p.error || ''))) {
-    return {
-      success: false, ...extra, error: p.error,
-      hint: `the Agentic Wallet may not sign on chain ${ctx.chainId}: re-run with --calldata to get the raw tx`,
-    }
-  }
-  return summarize(p, extra)
-}
+/** Quote funding for `need` toward the pad (wrap BNB, then approve): a step object, or null when ready. */
+const fundingStep = (ctx, me, quote, need, sym, rawOnly, summarize) =>
+  fund(ctx, { me, token: quote, need, spender: ctx.pad, sym }, rawOnly, summarize)
 
-/** Quote funding for `need`: wrap BNB first (WBNB quote), then approve the pad. A step object, or null when ready. */
-async function fundingStep(ctx, me, quote, need, sym, rawOnly, summarize) {
-  const bal = await ctx.read(quote, ERC20_ABI, 'balanceOf', [me])
-  if (bal < need) {
-    if (quote.toLowerCase() !== ctx.wbnb.toLowerCase()) {
-      return { success: false, error: `not enough ${sym || 'quote'}`, have: await units(ctx, quote, bal), need: await units(ctx, quote, need) }
-    }
-    const missing = need - bal
-    const native = await ctx.client.getBalance({ address: me })
-    if (native < missing) {
-      return { success: false, error: 'not enough BNB', haveBnb: formatUnits(native, 18), needBnb: formatUnits(missing, 18) }
-    }
-    return step(ctx, { from: me, to: quote, data: encodeFunctionData({ abi: WBNB_ABI, functionName: 'deposit' }), value: missing },
-      { step: 'wrap-bnb', wrap: formatUnits(missing, 18), note: 'after executing, re-run the same command' }, rawOnly, summarize)
-  }
-  const allowed = await ctx.read(quote, ERC20_ABI, 'allowance', [me, ctx.pad])
-  if (allowed < need) {
-    return step(ctx, { from: me, to: quote, data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [ctx.pad, need] }) },
-      { step: 'approve-quote', approve: await units(ctx, quote, need), spender: ctx.pad, note: 'after executing, re-run the same command' },
-      rawOnly, summarize)
-  }
-  return null
-}
-
-const parseNum = (fail, name, raw, min, max) => {
-  const n = Number(raw)
-  if (raw == null || !Number.isFinite(n) || n < min || n > max) fail(`--${name} must be a number between ${min} and ${max}`, { got: raw })
-  return n
-}
-const parseIntIn = (fail, name, raw, min, max) => {
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < min || n > max) fail(`--${name} must be an integer between ${min} and ${max}`, { got: raw })
-  return n
-}
 const tokenArg = (opt, fail) => {
   const t = opt('token')
   if (!isAddress(t ?? '')) fail('--token must be the sale\'s token address (0x…)', { got: t ?? null })
@@ -342,17 +277,31 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (accepted === 0n) return fail('no shares available to this wallet (cap reached or sold out)', { capShares: sale.capShares })
     const minShares = flag('min-shares') ? parseIntIn(fail, 'min-shares', opt('min-shares'), 1, Number(accepted)) : Number(accepted)
     const need = cost + fee
+    const fills = sale.sold + Number(accepted) === 10_000
+    const extra = {
+      step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
+      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
+      soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
+    }
+    // WBNB sale: pay native BNB through the router in one tx (it wraps; the position is still this wallet's)
+    if (viaRouter(ctx, sale.quote, flag)) {
+      const native = await ctx.client.getBalance({ address: me })
+      if (native < need + GAS_RESERVE) {
+        return fail('not enough BNB for this mint (native BNB must also cover gas)', {
+          haveBnb: formatUnits(native, 18), needBnb: formatUnits(need, 18), reserveForGas: formatUnits(GAS_RESERVE, 18), hint: 'add --use-wbnb to pay from WBNB instead',
+        })
+      }
+      const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: 'fairMintBNB', args: [token, accepted, BigInt(minShares), routerDeadline()] })
+      const dry = await dryRun(ctx, me, ctx.router, data, need)
+      if (dry) return out({ success: false, step: 'mint', via: 'router', ...dry })
+      return out(step(ctx, { from: me, to: ctx.router, data, value: need }, { ...extra, via: 'router', payBnb: formatUnits(need, 18) }, rawOnly, summarize))
+    }
     const pre = await fundingStep(ctx, me, sale.quote, need, sale.quoteSymbol, rawOnly, summarize)
     if (pre) return out(pre)
     const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'mint', args: [token, accepted, BigInt(minShares)] })
     const dry = await dryRun(ctx, me, ctx.pad, data)
     if (dry) return out({ success: false, step: 'mint', ...dry })
-    const fills = sale.sold + Number(accepted) === 10_000
-    return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
-      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
-      soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
-    }, rawOnly, summarize))
+    return out(step(ctx, { from: me, to: ctx.pad, data }, extra, rawOnly, summarize))
   }
 
   if (sub === 'withdraw') {
