@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IPostGradTaxHandler} from "../launchpad-v2/interfaces/IPostGradTaxHandler.sol";
+import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 
 /// @title TaxLaunchTokenV3 (LaunchpadV3 taxed track)
 /// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
@@ -86,12 +86,13 @@ contract TaxLaunchTokenV3 is ERC20 {
 
         if (_shouldTax(from, to) && value > 0) {
             // from the pair = a buy; into it = a sell (pair → pair cannot happen)
-            uint256 tax = (value * (from == pair ? buyTaxBps : sellTaxBps)) / BPS;
+            uint16 rate = from == pair ? buyTaxBps : sellTaxBps;
+            uint256 tax = (value * rate) / BPS;
             uint256 net = value - tax;
             super._update(from, to, net);
             if (tax > 0) {
                 super._update(from, taxHandler, tax);
-                IPostGradTaxHandler(taxHandler).notifyTax(address(this), from, to, tax);
+                IPostGradTaxHandlerV3(taxHandler).notifyTax(address(this), from, to, tax, rate);
             }
             emit OuterTax(from, to, tax, net);
             _syncDividendShares(from, to);
@@ -105,7 +106,7 @@ contract TaxLaunchTokenV3 is ERC20 {
     function _syncDividendShares(address from, address to) internal {
         if (taxHandler == address(0)) return;
         if (from == address(0) && to == address(0)) return;
-        IPostGradTaxHandler(taxHandler).syncShares(address(this), from, to);
+        IPostGradTaxHandlerV3(taxHandler).syncShares(address(this), from, to);
     }
 
     function _shouldTax(address from, address to) internal view returns (bool) {
