@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 读者：外部审计方
-- 代码：`gangfun/gang-launchpad` `main`（经 PR #19 合入，代币收紧另见 §12），合约冻结在提交 `a15b704`（含 §10、§11 两轮内部审计的修复和 §12 的代币收紧与元数据 URI；之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`）。此后若有提交改动 `src/`，我们会单独列出 diff。
+- 代码：`gangfun/gang-launchpad` `main`（经 PR #19 合入，代币收紧另见 §12），合约冻结在提交 `13da13b`（含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固；之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`）。此后若有提交改动 `src/`，我们会单独列出 diff。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`）。
 
@@ -209,7 +209,7 @@ GangRouter：
 
 ```sh
 forge build --sizes
-forge test                    # 278 个通过（含 V2 原有用例和 invariant；审计回归套件继承基础套件，基础用例会再跑一遍）
+forge test                    # 281 个通过（含 V2 原有用例和 invariant；审计回归套件继承基础套件，基础用例会再跑一遍）
 BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.sol   # 主网分叉
 ```
 
@@ -337,3 +337,21 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 - `setTaxHandler`、`exclude`、`burn` 不存在。
 
 全量 278 个测试和主网分叉测试通过，本地测试网 fork 上的 V3 和打新整轮也通过。
+
+---
+
+## 13. PostGradTaxHandlerV3 加固（2026-10-27）
+
+来自内部评审的四个问题，改动在 `13da13b`。
+
+**1. 平台部分会不会大于税额。** 正规币不会：买卖税率在发币时限定 100–500 bps，平台部分 `tax × 50 / rate` 最多占税的一半。但 `notifyTax` 原先只校验 `msg.sender == token`，而 `TaxTokenDeployerV3` 谁都能调用：有人可以部署一个发射台指向自己、handler 指向我们、税率为 1 bps 的代币，记下 50 倍于税额的平台部分。这个币没有在 TaxRouterV3 登记，`process` 会 revert，动不到任何资金；但它会刷 `TaxAccrued` 事件，让 keeper 白跑。现在 `notifyTax` 先查 `routeOf(token)`，没登记就 `UnknownToken`（登记只能由发射台在发币时做一次），平台部分另外加上限 `min(…, tax)`。代价：每笔收税的池子交易多约 5.6k gas（卖出转账 140,080 → 145,676）。
+
+**2. `notifyTax` 是否应改用余额差。** 不改。代币在同一个 `_update` 里先把恰好 `taxAmount` 转给 handler（handler 免税，代币也不扣转账费），再调 `notifyTax`，到账数严格等于 `taxAmount`。改用「余额 − accruedTax」反而会把别人直接打给 handler 的币算进下一笔交易的税。记账大于余额的情况，`process` 已经按实际余额等比缩小。
+
+**3. 为什么从 route 取报价币而不是从 pair 取。** 分账按 `routeOf[token].quote` 拉币付款，route 是唯一的依据：只有发射台能登记、每个币只能登记一次，router 在 handler 里是 immutable；毕业时 migrator 用同一个报价币建池子，两者天然一致。缺口在于原先只有直连池子那条路径校验池子的另一边，走 `dexRouter` 时没校验。现在 `process` 在两条路径分支之前都校验池子恰好是 token / route 报价币，不符就 `PairQuoteMismatch`。
+
+**4. 分账是否应直接在 handler 里做。** 不改。内盘（发射台）和外盘（handler）的税都由 TaxRouterV3 按同一套规则拆分；推送失败的欠款、`release`、`TaxPaid` 事件也只在这一处，合作方统计收入、keeper 补发都只看它。多一次外部调用加一次 approve / transferFrom，约 3–4 万 gas，只发生在 keeper 每批 `process` 时。
+
+TaxRouterV3 不可升级：没有代理，LaunchpadV3 和 handler 里都是 immutable 引用。owner 只能 `setSource`（只能往里付钱的来源）和一次性的 `setLaunchpad`，规则和已登记的 route 都改不了。
+
+回归测试（`test/launchpad-v3/LaunchpadV3Audit.t.sol`）：伪造代币的收税转账 revert 且不记账；pair 被换成另一报价币的池子时，两条路径都 revert、累计的税不被消耗；正常池子照常处理。
