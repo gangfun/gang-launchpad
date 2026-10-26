@@ -162,7 +162,8 @@ function step(ctx, { from, to, data, value = 0n }, extra, rawOnly, summarize) {
   }
   const p = bawPreview({ from, to, value, data, chainId: ctx.chainId })
   // only an error about the chain itself: a generic network failure is not a reason to fall back to --calldata
-  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|\\b${ctx.chainId}\\b`, 'i').test(JSON.stringify(p.error || ''))) {
+  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|chain(?:\\s*id)?\\W{0,3}${ctx.chainId}\\b`, 'i')
+    .test(JSON.stringify(p.error || ''))) {
     return {
       success: false, ...extra, error: p.error,
       hint: `the Agentic Wallet may not sign on chain ${ctx.chainId}: re-run with --calldata to get the raw tx`,
@@ -307,10 +308,13 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (pre) return out(pre)
     // logoURI is permanent on-chain: same handling as `gang create` (--logo file upload, other hosts copied to gang.fun).
     // Done after the setup steps so a wrap / approve round does not upload the image twice.
-    const logo = await resolveLogo()
-    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logo.logoURI, quote, refPool, cfg, BigInt(devShares)] })
-    const dry = await dryRun(ctx, me, ctx.pad, data)
+    const createData = (logoURI) =>
+      encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, quote, refPool, cfg, BigInt(devShares)] })
+    // the logo string never decides a revert: dry-run without it, so a create that would fail uploads nothing
+    const dry = await dryRun(ctx, me, ctx.pad, createData(''))
     if (dry) return out({ success: false, step: 'create', ...dry })
+    const logo = await resolveLogo()
+    const data = createData(logo.logoURI)
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }), quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
