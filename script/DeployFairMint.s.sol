@@ -18,10 +18,12 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 /// @notice New on both: DividendVault (floor 10k), HolderRewardHandler, FairTokenDeployer, FairMintPad, MigratorV2.
 ///         Mainnet reuses the live V2 QuoteRegistry (read-only) and PlatformFeeBucket (needs its owner to add the pad
 ///         and handler as operators — done here when the deployer is that owner, else printed as pending).
-///         Testnet also deploys QuoteRegistry, PlatformFeeBucket, TestnetAgentId and a mock quote (registry override:
-///         15 mock units = 15 BNB, so a sale raises 15 mock units).
+///         Testnet also deploys QuoteRegistry and PlatformFeeBucket, and reuses the testnet Agent ID registry and mock
+///         quote (registry override: 15 mock units = 15 BNB, so a sale raises 15 mock units); NEW_MOCKS=true deploys
+///         fresh ones.
 /// @dev Mainnet broadcast is refused unless FAIR_MINT_MAINNET_OK=true (spec: no mainnet broadcast before audit).
-///      Env: DEPLOYER_PRIVATE_KEY; optional OWNER (gets ownership via Ownable2Step, must accept), KEEPER, FEE_VAULT.
+///      Env: DEPLOYER_PRIVATE_KEY; optional OWNER (gets ownership via Ownable2Step, must accept), KEEPER, FEE_VAULT,
+///      AGENT_ID / TEST_QUOTE (testnet overrides), NEW_MOCKS.
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 contract DeployFairMint is Script {
@@ -72,8 +74,10 @@ contract DeployFairMint is Script {
             QuoteRegistry reg = new QuoteRegistry(deployer);
             s.quoteRegistry = address(reg);
             s.bucket = address(new PlatformFeeBucket(deployer, vm.envOr("FEE_VAULT", deployer)));
-            s.agentId = address(new TestnetAgentId());
-            s.testQuote = address(new MockSPCXB());
+            // reuse the testnet Agent ID registry and test quote (NEW_MOCKS=true deploys fresh ones)
+            bool fresh = vm.envOr("NEW_MOCKS", false);
+            s.agentId = fresh ? address(new TestnetAgentId()) : vm.envOr("AGENT_ID", T.AGENT_ID_REGISTRY);
+            s.testQuote = fresh ? address(new MockSPCXB()) : vm.envOr("TEST_QUOTE", T.TEST_QUOTE);
             reg.setQuote(s.testQuote, true, TESTNET_QUOTE_PER_15_BNB);
         }
 

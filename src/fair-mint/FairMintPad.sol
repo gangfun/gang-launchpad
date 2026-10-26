@@ -104,6 +104,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     IMigratorV2 public migrator;
     IERC721 public agentIdRegistry;
     bool public agentGateEnabled = true;
+    /// @notice Stateless entry contracts (e.g. GangRouter) that may mint for a trader they pay for. A router only ever
+    ///         spends its own quote: it can't withdraw, refund or claim for anyone (those stay msg.sender-only).
+    mapping(address router => bool) public routers;
 
     mapping(address token => Sale) public sales;
     mapping(address token => mapping(address user => Position)) public positions;
@@ -159,6 +162,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     event V3FactorySet(address indexed factory);
     event TwapWindowUpdated(uint32 window);
     event BridgePoolSet(address indexed asset, address indexed pool);
+    event RouterSet(address indexed router, bool enabled);
 
     error BadConfig(string reason);
     error UnknownToken();
@@ -179,6 +183,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     error PriceTooSmall();
     error FeeOnTransferQuote();
     error VaultFloorTooHigh();
+    error OnlyRouter();
 
     constructor(
         address owner_,
@@ -210,6 +215,12 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (migrator_ == address(0)) revert ZeroAddress();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
+    }
+
+    function setRouter(address router_, bool enabled) external onlyOwner {
+        if (router_ == address(0)) revert ZeroAddress();
+        routers[router_] = enabled;
+        emit RouterSet(router_, enabled);
     }
 
     function setAgentGate(bool enabled, address registry) external onlyOwner {
@@ -298,7 +309,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
             cfg.mintFeeBps,
             cfg.exitFeeBps
         );
-        _mint(token, s, devShares, devShares);
+        _mint(token, s, msg.sender, devShares, devShares);
     }
 
     // ---------------------------------------------------------------- mint / withdraw / refund
@@ -307,7 +318,21 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         Sale storage s = _minting(token);
         _requireAgent(s.gate, msg.sender);
         if (shares == 0) revert ZeroAmount();
-        accepted = _mint(token, s, shares, minShares);
+        accepted = _mint(token, s, msg.sender, shares, minShares);
+    }
+
+    /// @notice A listed router mints for `trader`: the router pays (cost + mint fee), the shares, tokens and the fee
+    ///         escrow are the trader's (a refund or withdraw pays the trader, never the router). Gate and cap: trader's.
+    function mintFor(address trader, address token, uint256 shares, uint256 minShares)
+        external
+        nonReentrant
+        returns (uint256 accepted)
+    {
+        if (!routers[msg.sender]) revert OnlyRouter();
+        Sale storage s = _minting(token);
+        _requireAgent(s.gate, trader);
+        if (shares == 0) revert ZeroAmount();
+        accepted = _mint(token, s, trader, shares, minShares);
     }
 
     /// @notice Before fill and deadline: get principal − exit fee back. The fee paid at mint is kept by the platform.
@@ -433,8 +458,12 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- internal
-    function _mint(address token, Sale storage s, uint256 want, uint256 minShares) internal returns (uint256 accepted) {
-        Position storage p = positions[token][msg.sender];
+    /// @dev msg.sender pays (the trader itself, or a router); `trader` gets the shares and tokens.
+    function _mint(address token, Sale storage s, address trader, uint256 want, uint256 minShares)
+        internal
+        returns (uint256 accepted)
+    {
+        Position storage p = positions[token][trader];
         if (p.shares >= s.capShares) revert WalletCapReached();
         accepted = _acceptable(s, p.shares, want);
         if (accepted == 0) revert ZeroAmount();
@@ -449,9 +478,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         s.sold += accepted.toUint16();
         s.escrowedFee += fee.toUint128();
 
-        IERC20(token).safeTransfer(msg.sender, accepted * TOKENS_PER_SHARE);
-        dividendVault.setShare(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
-        emit Minted(token, msg.sender, accepted, cost, fee, p.shares, s.sold);
+        IERC20(token).safeTransfer(trader, accepted * TOKENS_PER_SHARE);
+        dividendVault.setShare(token, trader, uint256(p.shares) * TOKENS_PER_SHARE);
+        emit Minted(token, trader, accepted, cost, fee, p.shares, s.sold);
 
         if (s.sold == TOTAL_SHARES) _launch(token, s);
     }

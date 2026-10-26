@@ -28,4 +28,8 @@ library FairMintTestnetRefs {
     address internal constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     address internal constant PANCAKE_V2_FACTORY = 0x6725F303b657a9451d8BA641348b6761A6CC7a17;
     address internal constant PANCAKE_V2_ROUTER = 0xD99D1c33F9fC3444f8101754aBC46c52416550D1;
+    /// @notice From the first 打新 testnet deployment (docs/TESTNET-FAIR-MINT-2026-10-26.md); later stacks reuse them so
+    ///         wallets registered once work everywhere (LaunchpadV3 testnet uses the same two).
+    address internal constant AGENT_ID_REGISTRY = 0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a;
+    address internal constant TEST_QUOTE = 0x02B3dE73aF2c1F99c7EFbDb65bcB960AACF4CF1c;
 }

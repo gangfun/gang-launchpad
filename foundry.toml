@@ -20,6 +20,7 @@ compilation_restrictions = [
     { paths = "src/launchpad-v2/**", via_ir = true },
     { paths = "src/fair-mint/**", via_ir = true },
     { paths = "src/launchpad-v3/**", via_ir = true },
+    { paths = "src/router/**", via_ir = true },
 ]
 
 # Deployed LaunchpadV2 sources are kept as broadcast. forge fmt skips them.

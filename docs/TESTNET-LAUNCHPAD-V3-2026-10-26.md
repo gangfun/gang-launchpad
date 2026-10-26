@@ -1,5 +1,7 @@
 # 测试网 · LaunchpadV3（税收接收地址）部署与整轮记录
 
+> **已废弃（2026-10-26）**：这一套核心没有路由入口，现行测试网部署见 `docs/TESTNET-CORE-ROUTER-2026-10-26.md`。下面的整轮记录仍然有效（核心原有路径没有改）。
+
 - 日期：2026-10-26 Asia/Shanghai
 - 链：BSC 测试网（chainId 97），PancakeSwap V2 测试网工厂 / 路由
 - 代码：`feat/v3-tax-recipient`，合约为提交 53e536d；脚本 `script/DeployLaunchpadV3.s.sol`、`script/LaunchpadV3TestnetE2E.s.sol`

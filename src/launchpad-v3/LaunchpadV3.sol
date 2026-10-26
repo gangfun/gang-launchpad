@@ -81,6 +81,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     IERC721 public agentIdRegistry;
     bool public agentGateEnabled = true;
     bool public walletCapEnabled = true;
+    /// @notice Stateless entry contracts (e.g. GangRouter) that may buy for a trader they pay for. A router only ever
+    ///         spends its own quote; sells stay msg.sender-only (tokens are locked to the pad before graduation).
+    mapping(address router => bool) public routers;
 
     mapping(address token => Curve) public curves;
     mapping(address token => string) public logoURIOf;
@@ -115,6 +118,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     event V3FactorySet(address indexed factory);
     event TwapWindowUpdated(uint32 window);
     event BridgePoolSet(address indexed asset, address indexed pool);
+    event RouterSet(address indexed router, bool enabled);
 
     error UnknownToken();
     error AlreadyGraduated();
@@ -130,6 +134,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     error NoBridgePool();
     error BridgeNotWbnb();
     error BadTaxConfig(string reason);
+    error OnlyRouter();
 
     constructor(
         address owner_,
@@ -169,6 +174,12 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function setPairFactory(address factory_) external onlyOwner {
         pairFactory = factory_;
         emit PairFactorySet(factory_);
+    }
+
+    function setRouter(address router_, bool enabled) external onlyOwner {
+        if (router_ == address(0)) revert ZeroAddress();
+        routers[router_] = enabled;
+        emit RouterSet(router_, enabled);
     }
 
     function setAgentGate(bool enabled, address registry) external onlyOwner {
@@ -217,7 +228,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         TaxConfig calldata tax
     ) external returns (address token) {
         if (address(migrator) == address(0)) revert MigratorNotSet();
-        _requireAgent();
+        _requireAgent(msg.sender);
         string memory reason = _checkTax(tax);
         if (bytes(reason).length != 0) revert BadTaxConfig(reason);
 
@@ -306,19 +317,42 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         nonReentrant
         returns (uint256 tokensOut)
     {
+        tokensOut = _buy(msg.sender, token, quoteIn, minTokensOut);
+    }
+
+    /// @notice A listed router buys for `trader`: the router pays and gets any refund (cap / graduation truncation);
+    ///         the tokens, the dividend share, the gate and the wallet cap are the trader's.
+    function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
+        external
+        nonReentrant
+        returns (uint256 tokensOut)
+    {
+        if (!routers[msg.sender]) revert OnlyRouter();
+        tokensOut = _buy(trader, token, quoteIn, minTokensOut);
+    }
+
+    /// @dev msg.sender pays (the trader itself, or a router); `trader` receives.
+    function _buy(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
+        internal
+        returns (uint256 tokensOut)
+    {
         Curve storage c = _live(token);
         if (quoteIn == 0) revert ZeroAmount();
-        _requireAgent();
+        _requireAgent(trader);
 
-        BuyVars memory v = _prepBuy(c, token, quoteIn);
+        BuyVars memory v = _prepBuy(c, token, trader, quoteIn);
         tokensOut = v.tokensOut;
         if (tokensOut < minTokensOut) revert Slippage();
 
-        tokensOut = _execBuy(c, token, quoteIn, minTokensOut, v);
+        tokensOut = _execBuy(c, token, trader, quoteIn, minTokensOut, v);
     }
 
-    function _prepBuy(Curve storage c, address token, uint256 quoteIn) internal view returns (BuyVars memory v) {
-        uint256 room = walletRoom(token, msg.sender);
+    function _prepBuy(Curve storage c, address token, address trader, uint256 quoteIn)
+        internal
+        view
+        returns (BuyVars memory v)
+    {
+        uint256 room = walletRoom(token, trader);
         if (walletCapEnabled && room == 0) revert WalletCapReached();
 
         v.feeBps = _feeBps(c);
@@ -365,20 +399,24 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         v.refundGross = quoteIn - spentGross;
     }
 
-    function _execBuy(Curve storage c, address token, uint256 quoteIn, uint256 minTokensOut, BuyVars memory v)
-        internal
-        returns (uint256 tokensOut)
-    {
+    function _execBuy(
+        Curve storage c,
+        address token,
+        address trader,
+        uint256 quoteIn,
+        uint256 minTokensOut,
+        BuyVars memory v
+    ) internal returns (uint256 tokensOut) {
         address quoteAddr = c.quote;
-        v = _pullQuoteAndPrep(c, token, quoteAddr, quoteIn, minTokensOut, v);
+        v = _pullQuoteAndPrep(c, token, trader, quoteAddr, quoteIn, minTokensOut, v);
 
         c.realQuote += v.net.toUint128();
         c.sold += v.tokensOut.toUint128();
 
-        IERC20(token).safeTransfer(msg.sender, v.tokensOut);
-        _syncShareAndTax(c, token, quoteAddr, v.protocolFee, v.tax, v.platformTax);
+        IERC20(token).safeTransfer(trader, v.tokensOut);
+        _syncShareAndTax(c, token, trader, quoteAddr, v.protocolFee, v.tax, v.platformTax);
 
-        emit Buy(token, msg.sender, v.net, v.protocolFee, v.tax, v.tokensOut, c.realQuote);
+        emit Buy(token, trader, v.net, v.protocolFee, v.tax, v.tokensOut, c.realQuote);
 
         if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(msg.sender, v.refundGross);
         if (c.realQuote >= v.gradAmt) _graduate(token, c);
@@ -388,6 +426,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function _pullQuoteAndPrep(
         Curve storage c,
         address token,
+        address trader,
         address quoteAddr,
         uint256 quoteIn,
         uint256 minTokensOut,
@@ -399,7 +438,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         uint256 received = quote.balanceOf(address(this)) - beforeBal;
         if (received == 0) revert ZeroAmount();
         if (received != quoteIn) {
-            v = _prepBuy(c, token, received);
+            v = _prepBuy(c, token, trader, received);
             if (v.tokensOut < minTokensOut) revert Slippage();
         }
         return v;
@@ -410,6 +449,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function _syncShareAndTax(
         Curve storage c,
         address token,
+        address account,
         address quoteAddr,
         uint256 protocolFee,
         uint256 tax,
@@ -421,7 +461,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
             router.distribute(token, tax, platformTax, ITaxRouter.Phase.Bonding);
         }
         if (c.dividendBps > 0) {
-            dividendVault.setShare(token, msg.sender, IERC20(token).balanceOf(msg.sender));
+            dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         }
         if (protocolFee > 0) {
             quote.forceApprove(address(platformBucket), protocolFee);
@@ -437,7 +477,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     {
         Curve storage c = _live(token);
         if (tokensIn == 0) revert ZeroAmount();
-        _requireAgent();
+        _requireAgent(msg.sender);
 
         uint256 quoteOut = _quoteOut(c, tokensIn);
         uint256 protocolFee = (quoteOut * PROTOCOL_FEE_BPS) / BPS;
@@ -452,7 +492,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
 
         address quoteAddr = c.quote;
-        _syncShareAndTax(c, token, quoteAddr, protocolFee, tax, platformTax);
+        _syncShareAndTax(c, token, msg.sender, quoteAddr, protocolFee, tax, platformTax);
         IERC20(quoteAddr).safeTransfer(msg.sender, quoteToUser);
 
         emit Sell(token, msg.sender, tokensIn, protocolFee, tax, quoteToUser, c.realQuote);
@@ -465,8 +505,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         return agentIdRegistry.balanceOf(account) > 0;
     }
 
-    function _requireAgent() internal view {
-        if (agentGateEnabled && !isAgent(msg.sender)) revert NotAgent();
+    function _requireAgent(address account) internal view {
+        if (agentGateEnabled && !isAgent(account)) revert NotAgent();
     }
 
     function walletRoom(address token, address buyer) public view returns (uint256) {
