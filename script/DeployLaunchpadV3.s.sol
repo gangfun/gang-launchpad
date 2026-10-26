@@ -29,8 +29,6 @@ import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQ
 contract DeployLaunchpadV3 is Script {
     uint256 internal constant MIN_SHARE = 10_000 ether;
     uint256 internal constant TESTNET_QUOTE_PER_15_BNB = 15 ether;
-    /// @dev Testnet demo treasury: an address nobody holds a key for, so its balance only ever grows from tax pushes.
-    address internal constant TESTNET_DEMO_TREASURY = address(uint160(uint256(keccak256("gang-v3-testnet-treasury"))));
 
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
@@ -64,7 +62,7 @@ contract DeployLaunchpadV3 is Script {
         address wbnb = mainnet ? M.WBNB : T.WBNB;
         address factory = mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY;
         address dexRouter = mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER;
-        s.recipient = vm.envOr("RECIPIENT", mainnet ? address(0) : TESTNET_DEMO_TREASURY);
+        s.recipient = vm.envOr("RECIPIENT", mainnet ? address(0) : T.DEMO_TREASURY);
         string memory label = vm.envOr("RECIPIENT_LABEL", string(mainnet ? "" : "testnet demo treasury"));
 
         console.log("=== DeployLaunchpadV3 chain", block.chainid, "===");
@@ -159,7 +157,7 @@ contract DeployLaunchpadV3 is Script {
         vm.stopBroadcast();
 
         _check(s, keeper, bucketWired);
-        _log(s, owner, deployer, bucketWired);
+        _log(s, owner, deployer, bucketWired, mainnet);
     }
 
     function _check(Stack memory s, address keeper, bool bucketWired) internal view {
@@ -188,7 +186,7 @@ contract DeployLaunchpadV3 is Script {
         }
     }
 
-    function _log(Stack memory s, address owner, address deployer, bool bucketWired) internal pure {
+    function _log(Stack memory s, address owner, address deployer, bool bucketWired, bool mainnet) internal pure {
         console.log("--- LAUNCHPAD V3 ADDRESSES ---");
         console.log("V3_LAUNCHPAD", s.pad);
         console.log("V3_TAX_ROUTER", s.router);
@@ -212,6 +210,7 @@ contract DeployLaunchpadV3 is Script {
         }
         if (owner != deployer) {
             console.log("PENDING owner: acceptOwnership() on pad, router, recipients, handler, vault");
+            if (!mainnet) console.log("PENDING owner: acceptOwnership() on quote registry, bucket");
         }
     }
 
