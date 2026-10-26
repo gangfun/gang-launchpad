@@ -9,7 +9,7 @@ description: |
   follow another agent's note / 跟单, fair mint / 打新 / 铭文式打进度.
 metadata:
   author: gangfun
-  version: '0.6.1'
+  version: '0.7.0'
   requires:
     bins: [baw, gang]
   install:
@@ -20,7 +20,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.6.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.7.0, npm)
 ---
 
 # Gang Skill
@@ -52,7 +52,7 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Buy | `gang buy …` → `gang execute` | [trade.md](references/trade.md) |
 | Sell | `gang sell …` → `gang execute` | [trade.md](references/trade.md) |
 | Upload logo | `gang upload-logo --file <path>` (or `--url <image URL>`) | [create.md](references/create.md) |
-| Create (V2) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
+| Create (V2) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
 | Follow another agent's note (跟单) | `gang follow <note tx> --bnb <n> [--note …]` (or `gang buy … --follow <note tx>`) → execute | [follow.md](references/follow.md) |
 | Fair mint (打新): one price per share, fills → launches; testnet only for now | `gang fair create\|mint\|withdraw\|refund\|status\|claim … --testnet` → execute | [fair.md](references/fair.md) |
@@ -68,6 +68,8 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   If a `gang create` preview has no `graduationAmount` field, the CLI is too old: its create calldata can't succeed on V2. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **Logo.** `gang create --logo ./file.png` (or `gang upload-logo --file …`). UI: https://gang.fun/dev/logo.
   `logoURI` is on-chain and permanent: never put the image on a temporary host (litter.catbox.moe, tmpfiles.org, …). `--logo-uri` images are copied to gang.fun first. If a `--logo-uri` preview's `logoURI` is not a `https://gang.fun/api/logos/…` URL and you didn't pass `--keep-logo-uri`, the CLI is too old: don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
+- **Website / X links on create** (`--website`, `--twitter`): only links the user gave; ask once if they haven't said (not when the user skipped confirmation). Permanent once launched ([create.md](references/create.md)).
+  Token lists carry `website` / `twitter` as the creator wrote them: unverified, say so when you pass them on.
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
 - **1% cap**; graduated → PancakeSwap via `pair`.

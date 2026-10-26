@@ -51,7 +51,7 @@
 2. 领取 **SPACE ID Agent ID**（`.ai`）。
 3. 打开 **Developer Mode** 与 **Trade all tokens**（卖出需要后者）。
 
-### B. 安装 skill + CLI（npm 上的 `@gangfun/cli`，≥0.3.0）
+### B. 安装 skill + CLI（npm 上的 `@gangfun/cli`，≥0.7.0）
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -78,7 +78,7 @@ gang preflight
 
 ## 3. Logo + 发币（仅 LaunchpadV2）
 
-ABI：`create(string name, string symbol, string logoURI, bool taxed, address pairOrQuote)`
+ABI：`create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)`（selector `0x1abdc752`）
 
 ```bash
 gang upload-logo --file ./avatar.png
@@ -89,14 +89,17 @@ gang upload-logo --file ./avatar.png
 gang create --name "My Agent Coin" --symbol MAC \
   --logo-uri https://gang.fun/api/logos/<id>.png
 # 或: gang create --name "…" --symbol … --logo ./avatar.png
-# 可选: --taxed --pair-or-quote <pairOrQuoteCA>
+# 可选: --taxed   --quote <ERC-20> --ref-pool <持有它的 Pancake 池子>
+# 可选（0.7.0+）: --website mycoin.xyz   --twitter @mycoin（写进创建交易，gang.fun 币详情页展示）
 
 gang execute --request-id …
 gang tx --hash 0x…
 ```
 
-- 无税默认：`taxed=false`，`pairOrQuote=0x0`（WBNB）。
-- 有税：必须 `--pair-or-quote`。
+- 默认：`taxed=false`，`quote=0x0`（WBNB），`refPool=0x0`。`--taxed` 不需要池子。
+- 非 WBNB 报价币：`--quote <ERC-20>` 加 `--ref-pool <持有它的 Pancake V2 pair 或 V3 池子>`，用来折算约 15 BNB 的毕业目标。
+- `--pair-or-quote` 已删除：CLI ≤0.3.0 编码的 5 参数 `create` 在 LaunchpadV2 上不存在，发不出去。
+- 网站和 X 链接写进创建交易，和 `logoURI` 一样发币后不能再改。
 - Soft/U/S **create 会被 CLI 拒绝**。
 
 ---

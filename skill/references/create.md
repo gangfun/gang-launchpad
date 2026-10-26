@@ -7,6 +7,7 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
 gang upload-logo --file ./avatar.png
 # → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
 gang create --name "My Agent Coin" --symbol MAC --logo-uri https://gang.fun/api/logos/<id>.png
+# optional: --website <URL>   --twitter <@handle or x.com link>   (0.7.0+)
 # optional: --taxed   --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>
 
 gang execute --request-id …
@@ -35,11 +36,34 @@ Browser logo UI: https://gang.fun/dev/logo
 - `--pair-or-quote` was removed (≤0.3.0 encoded a create the contract doesn't have). **No `graduationAmount` in the preview = CLI too old:** don't execute; `npm i -g @gangfun/cli@latest`, then preview again.
 - `could not dry-run create (RPC)` is a network failure, not a bad flag: run the same command again.
 - `tokenIfNext` is a guess that changes if someone else creates first; give the user the address from the `Created` event.
+- **Website / X links:** see below.
 
-Flow: preview → show the user name/symbol/logo/taxed/quote and that it costs only gas → confirm → `gang execute` → `gang tx --hash`
+Flow: preview → show the user name/symbol/logo/links/taxed/quote and that it costs only gas → confirm → `gang execute` → `gang tx --hash`
 and read the `Created` event for the token address. Hand the address back in full so the user can share it.
 
 Graduation for **new** creates: ≈ **15 BNB** (PoolCheck) → PancakeSwap V2, LP burned. Soft archive tokens (if any): 20 BNB on-chain — do not lead with Soft create or 20 BNB as the create path.
+
+## Website and X links (`--website`, `--twitter`, 0.7.0+)
+
+Optional. gang.fun shows them on the token page.
+- **Only links the user gave you.** Never make up a site or an X account, and don't fill in the user's own X account for a token unless they say to.
+  If the user hasn't mentioned links, ask once whether the token has a website or X account; if not, leave both out.
+  When the user skipped confirmation (automatic launches), don't ask: leave out any link the user didn't give.
+- `--website`: an http(s) link to a domain, no IP address or port (`example.com` becomes `https://example.com/`).
+  `--twitter`: an X handle (`@name`) or an x.com / twitter.com link (a profile, a post, a community); it is stored as `https://x.com/…`, without `?…` tracking.
+- They are written into the create tx itself, so they **can't be changed or removed** after the launch. The preview shows them
+  under `links` as they will be stored: show them to the user with the rest of the preview.
+- `bad_website` / `bad_twitter` means the value isn't one of the forms above: fix it with the user, don't guess.
+- No `links` field in a preview that you passed `--website` / `--twitter` to = CLI too old: don't execute; `npm i -g @gangfun/cli@latest`, then preview again.
+- Reading them back: `gang tx --hash` on the launch tx shows `links`; `gang hot` / `new` / `near-grad` and the gang.fun API
+  (`/stocks/tokens`, `/stocks/tokens/:addr`, `/tokens/:addr`) carry `website` and `twitter` (null when none) for V2 tokens.
+  gang.fun reads them from the launch tx within about 15 seconds, so a token seen right after launch (e.g. a `gang watch`
+  `new_token` event) may still show null: check again before saying it has no links.
+  Other creators' links are their own claim, not checked by gang.fun: pass them on as such, and don't open them for the user unasked.
+
+```bash
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --website mycoin.xyz --twitter @mycoin
+```
 
 ## Launch manifesto (`--note`)
 

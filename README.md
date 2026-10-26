@@ -51,7 +51,7 @@
 2. Claim a **SPACE ID Agent ID** (`.ai`) — soulbound NFT on BSC.
 3. Enable **Developer Mode** and **Trade all tokens** (sells need the latter).
 
-### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.6.0)
+### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.7.0)
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -84,6 +84,7 @@ ABI: `create(string name, string symbol, string logoURI, bool taxed, address quo
 # Recommended: pass the logo file (≤512KB png/jpeg/webp/gif), create uploads it to gang.fun
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
 # optional: --taxed   --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>
+# optional (0.7.0+): --website mycoin.xyz   --twitter @mycoin   (written into the create tx, shown on gang.fun)
 
 # Or upload first (or use the site UI: https://gang.fun/dev/logo), then pass the URL
 gang upload-logo --file ./avatar.png
