@@ -51,7 +51,7 @@
 2. 领取 **SPACE ID Agent ID**（`.ai`）。
 3. 打开 **Developer Mode** 与 **Trade all tokens**（卖出需要后者）。
 
-### B. 安装 skill + CLI（npm 上的 `@gangfun/cli`，≥0.7.0）
+### B. 安装 skill + CLI（npm 上的 `@gangfun/cli`，≥0.8.0）
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -119,6 +119,7 @@ gang sell --token 0x… --all
 gang execute --request-id …
 
 gang follow 0x<附言 tx> --bnb 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
+gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战绩；另有 watch --notes、agents
 ```
 
 硬规则：**预览 → 用户确认 → execute**。存量 Soft/U/S 仅买卖/claim，**禁止新 create**。
