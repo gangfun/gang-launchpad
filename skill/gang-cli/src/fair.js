@@ -16,36 +16,35 @@ export const FAIR_NETS = {
     wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x2f45c4814A540B0F6E9A25497DEc7B8C6CAA8963',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x6B0ECAAe1Cf9A733ab98F2ad90A4d48c9a7790A3',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
 }
 
 const PAD_ABI = parseAbi([
-  'function create(string name, string symbol, string logoURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps) cfg, uint256 devShares) returns (address)',
+  'function create(string name, string symbol, string logoURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
   'function withdraw(address token, uint256 shares) returns (uint256)',
   'function refund(address token) returns (uint256)',
-  'function sales(address token) view returns (address creator, uint64 deadline, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, bool failed, address gate, uint128 sharePrice, uint128 escrowedFee, address pair, address refPool)',
+  'function sales(address token) view returns (address creator, uint64 deadline, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, bool failed, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, uint128 escrowedFee, address pair, address refPool)',
   'function positions(address token, address user) view returns (uint16 shares, uint128 feePaid)',
   'function status(address token) view returns (uint8)',
   'function previewMint(address token, address user, uint256 shares) view returns (uint256 accepted, uint256 cost, uint256 fee)',
   'function previewCreate(address quote, address refPool, uint256 raiseBnb) view returns (uint256 raiseQuote, uint256 sharePrice)',
-  'function checkConfig((uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps) cfg, uint256 devShares) pure returns (bool ok, string reason)',
+  'function checkConfig((uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) pure returns (bool ok, string reason)',
   'function taxHandler() view returns (address)',
   'function dividendVault() view returns (address)',
   'function agentIdRegistry() view returns (address)',
   'function agentGateEnabled() view returns (bool)',
   'function TOKENS_PER_SHARE() view returns (uint256)',
   'function TOTAL_SHARES() view returns (uint256)',
-  'function FEE_BPS() view returns (uint256)',
   'error BadConfig(string reason)', 'error UnknownToken()', 'error NotMinting()', 'error NotFailed()', 'error ZeroAmount()',
   'error BadAmount()', 'error Slippage()', 'error WalletCapReached()', 'error NothingToRefund()', 'error NotAgent()',
   'error MigratorNotSet()', 'error ZeroAddress()', 'error RefPoolRequired()', 'error NoBridgePool()', 'error BridgeNotWbnb()',
   'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error GradAmtZero()',
-  'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 deadline, uint256 holdBps)',
+  'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 deadline, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)',
   'event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)',
   'event Withdrawn(address indexed token, address indexed user, uint256 shares, uint256 refund, uint256 fee, uint256 userShares, uint256 sold)',
   'event Launched(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount, uint256 feeToPlatform)',
@@ -140,13 +139,14 @@ async function dryRun(ctx, from, to, data, value = 0n) {
 export async function saleOf(ctx, token) {
   const s = await ctx.read(ctx.pad, PAD_ABI, 'sales', [token])
   if (s[0] === zeroAddress) return null
-  const [creator, deadline, capShares, holdBps, quote, sold, launched, failed, gate, sharePrice, , pair] = s
+  const [creator, deadline, capShares, holdBps, quote, sold, launched, failed, mintFeeBps, exitFeeBps, gate, sharePrice, , pair] = s
   const status = STATUS[Number(await ctx.read(ctx.pad, PAD_ABI, 'status', [token]))]
   return {
     token, status, creator, quote, quoteSymbol: await symbolOf(ctx, quote), gate,
     deadline: Number(deadline), deadlineIso: new Date(Number(deadline) * 1000).toISOString(),
     secondsLeft: status === 'minting' ? Math.max(0, Number(deadline) - Math.floor(Date.now() / 1000)) : 0,
     capShares: Number(capShares), holdPct: Number(holdBps) / 100, sold: Number(sold), totalShares: 10_000,
+    mintFeePct: Number(mintFeeBps) / 100, exitFeePct: Number(exitFeeBps) / 100, exitFeeBps: Number(exitFeeBps),
     sharePriceRaw: sharePrice, sharePrice: await units(ctx, quote, sharePrice), launched, failed,
     pair: pair === zeroAddress ? null : pair,
   }
@@ -288,11 +288,16 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.1, 0.5)
     const hours = parseNum(fail, 'hours', opt('hours', '24'), 1, 72)
     const holdPct = parseNum(fail, 'hold', opt('hold', '50'), 30, 80)
+    const mintFeePct = parseNum(fail, 'mint-fee', opt('mint-fee', '1'), 1, 5)
+    const exitFeePct = parseNum(fail, 'exit-fee', opt('exit-fee', '1'), 1, 5)
     const devShares = parseIntIn(fail, 'shares', opt('shares', '1'), 1, Math.round(capPct * 200))
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
     const refPool = flag('ref-pool') ? opt('ref-pool') : zeroAddress
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
-    const cfg = { raiseBnb: parseEther(String(raise)), capBps: Math.round(capPct * 100), duration: Math.round(hours * 3600), holdBps: Math.round(holdPct * 100) }
+    const cfg = {
+      raiseBnb: parseEther(String(raise)), capBps: Math.round(capPct * 100), duration: Math.round(hours * 3600),
+      holdBps: Math.round(holdPct * 100), mintFeeBps: Math.round(mintFeePct * 100), exitFeeBps: Math.round(exitFeePct * 100),
+    }
     const [ok, reason] = await ctx.read(ctx.pad, PAD_ABI, 'checkConfig', [cfg, BigInt(devShares)])
     if (!ok) fail(`rule out of bounds: ${reason}`)
     let priced
@@ -301,7 +306,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     }
     const [raiseQuote, sharePrice] = priced
     const sym = await symbolOf(ctx, quote)
-    const fee = (sharePrice * BigInt(devShares) * 100n) / 10_000n
+    const fee = (sharePrice * BigInt(devShares) * BigInt(cfg.mintFeeBps)) / 10_000n
     const need = sharePrice * BigInt(devShares) + fee
     const me = walletFor(ctx, opt('from'))
     const pre = await fundingStep(ctx, me, quote, need, sym, rawOnly, summarize)
@@ -318,7 +323,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }), quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
-      capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, devShares,
+      capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, mintFeePct, exitFeePct, devShares,
       devCost: await units(ctx, quote, need),
     }, rawOnly, summarize))
   }
@@ -345,7 +350,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const fills = sale.sold + Number(accepted) === 10_000
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
-      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), quote: sale.quoteSymbol,
+      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
       soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
     }, rawOnly, summarize))
   }
@@ -365,8 +370,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (dry) return out({ success: false, step: 'withdraw', ...dry })
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'withdraw', chainId: Number(ctx.chainId), token, shares,
-      receive: await units(ctx, sale.quote, principal - principal / 100n), quote: sale.quoteSymbol,
-      note: 'principal − 1%; the 1% paid at mint is not returned',
+      receive: await units(ctx, sale.quote, principal - (principal * BigInt(sale.exitFeeBps)) / 10_000n), quote: sale.quoteSymbol,
+      exitFeePct: sale.exitFeePct,
+      note: `principal − ${sale.exitFeePct}% exit fee; the ${sale.mintFeePct}% paid at mint is not returned`,
     }, rawOnly, summarize))
   }
 
