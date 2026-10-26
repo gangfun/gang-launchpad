@@ -154,6 +154,7 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 
 - 把 `skill/gang-cli/src/fair.js`、`v3.js` 里 mainnet 的 `pad`、`router` 改成上面的地址（目前是 `null`，可用 `GANG_FAIR_PAD` / `GANG_V3_PAD` / `GANG_ROUTER` 环境变量临时指定）。
 - 更新文档里「只在测试网」的说法，升版本号，然后发布。
+- 发布前用主网地址做一次 `gang v3 create … --calldata --from <内部钱包>` 演练（不签名不广播，但会真实上传图标和元数据 JSON）：输出里要有 `metaURI` 和 `metadata`，打开 `metaURI` 能看到正确的 JSON（name、symbol、image、external_link、twitter），`image` 能打开图标。元数据上链后不能改。
 - **CLI 发布的那一刻就是对公众开放创建的那一刻**（网站上的打新和税收币页面只能查看，发币和打新要通过 CLI）。如果要分阶段放开，前一两周先不发布 CLI，只让合作方和内部用 `GANG_*_PAD` 环境变量发币。合约本身挡不住别人直接调用，所以这只能降低早期的资金规模，不是硬限制。
 
 ---
@@ -161,6 +162,8 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 ## 7. 上线后的检查
 
 - [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件、接收地址收到第一笔 `TaxPaid`
+- [ ] 第一个币的 `contractURI()` / `metaURI()` 返回元数据 JSON 的地址，能打开、内容正确；发射台 `logoURIOf` 是图标地址
+- [ ] 行情页（不带 `?testnet=1`）出现税收币卡片和「打新」标签（只在服务端配了主网 `GANG_V3_*` / `GANG_FAIR_*` 之后）
 - [ ] 一个打新 sale 跑通：打新、撤出、打满发射、池子开盘价等于打新价
 - [ ] 经 GangRouter 用 BNB 买和打新各一笔，结束后路由余额为 0
 - [ ] keeper 第一次 `process` 和 `collectPlatform` 成功，新分账合约的 80% 进入回购、20% 进入金库
