@@ -186,5 +186,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (tokenIs0) IPairSwap(pair).swap(0, out, address(this), "");
         else IPairSwap(pair).swap(out, 0, address(this), "");
         quoteOut = IERC20(quote).balanceOf(address(this)) - before;
+        // audit 4 B-Info: re-check what arrived (a fee-on-transfer quote pays less than `out`)
+        if (quoteOut < minQuoteOut) revert Slippage();
     }
 }

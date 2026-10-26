@@ -73,7 +73,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
 
     error LaunchpadAlreadySet();
     error OnlyLaunchpad();
-    error OnlySource();
     error AlreadyRegistered();
     error UnknownToken();
     error BadDividendBps();
@@ -139,7 +138,7 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
 
     /// @inheritdoc ITaxHandlerV3
     function distribute(address token, uint256 amount, uint256 platformAmount, Phase phase) external nonReentrant {
-        if (msg.sender != launchpad) revert OnlySource();
+        if (msg.sender != launchpad) revert OnlyLaunchpad();
         Route memory r = routeOf[token];
         if (r.quote == address(0)) revert UnknownToken();
         if (platformAmount > amount) revert BadPlatformAmount();

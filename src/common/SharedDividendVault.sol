@@ -47,6 +47,9 @@ contract SharedDividendVault is Ownable2Step {
     constructor(address owner_) Ownable(owner_) {
         excluded[address(0)] = true;
         excluded[address(0xdead)] = true;
+        // audit 4 (A-F2 / C-F4): the vault can hold a dividend token (as another token's reward quote); a share here
+        // would earn rewards that `claimFor(token, vault)` pays back to the vault, owned by no one
+        excluded[address(this)] = true;
     }
 
     // ---------------------------------------------------------------- owner
@@ -101,7 +104,12 @@ contract SharedDividendVault is Ownable2Step {
     function depositReward(address token, uint256 amount) external {
         _onlyFor(token);
         if (amount == 0) return;
-        IERC20(quoteOf[token]).safeTransferFrom(msg.sender, address(this), amount);
+        // audit 4 (A-F1 / C-F2): credit what arrived, not what was asked — one balance per quote is shared by every
+        // token on it, so an over-credit would be paid out of the other tokens' rewards
+        IERC20 quote = IERC20(quoteOf[token]);
+        uint256 before = quote.balanceOf(address(this));
+        quote.safeTransferFrom(msg.sender, address(this), amount);
+        amount = quote.balanceOf(address(this)) - before;
         uint256 ts = totalShares[token];
         if (ts > 0) {
             accRewardPerShare[token] += (amount * 1e18) / ts;

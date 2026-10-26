@@ -591,6 +591,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         // low-level: a high-level call to an address without code reverts outside any try/catch
         (bool ok, bytes memory ret) = quote.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
         if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 18) revert QuoteNotAllowed();
+        // audit 4 (C-F3 / C-F4 / B-F1 / A-F2): never a token of this platform — a locked sibling pulled as a quote moves
+        // past its wallet cap and lock; a dividend token held by the vault / bucket / a new pair earns rewards no one
+        // can claim. TokenDeployer records every token of both cores; the vault also knows registered ones.
+        if (tokenDeployer.isLaunchToken(quote) || dividendVault.launchpadOf(quote) != address(0)) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address gate, address account) internal view {

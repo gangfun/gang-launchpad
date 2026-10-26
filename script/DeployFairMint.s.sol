@@ -79,7 +79,7 @@ contract DeployFairMint is SharedPlatform {
         );
         (s.handler, s.pad) = (address(handler), address(pad));
 
-        _wireCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
+        _wireCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
 
         handler.setPad(address(pad));
         handler.setDexRouter(router);
@@ -118,7 +118,7 @@ contract DeployFairMint is SharedPlatform {
     function _check(Stack memory s, address keeper) internal view {
         HolderRewardHandler handler = HolderRewardHandler(s.handler);
         FairMintPad pad = FairMintPad(s.pad);
-        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
+        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (address(pad.dividendVault()) != s.vault || address(pad.tokenDeployer()) != s.tokenDeployer) {
             revert WiringCheck("pad vault / deployer");
         }

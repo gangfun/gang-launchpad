@@ -187,6 +187,8 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
     /// @dev Merge (TaxRouterV3 + PostGradTaxHandlerV3 → TaxHandlerV3): owed recipient quote now sits in the same
     ///      contract as the pool tax it sells. When that quote is itself a token the handler taxes (X), `process(X)`
     ///      must leave the owed X alone (owedTotalOf), so `release` still pays it in full.
+    ///      Audit 4: a launch token can no longer be a quote at all; the create checks are mocked away here so the
+    ///      owedTotalOf guard (defence in depth) stays covered.
     function test_merge_owedQuoteNeverSoldByProcess() public {
         address x = _create(_tax(100, 300, 0, treasury));
         _graduate(x);
@@ -197,7 +199,14 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.prank(owner);
         quoteRegistry.setQuote(x, true, 15 ether); // X becomes a listed 18-decimal quote
         vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
+
+        vm.mockCall(address(pad.tokenDeployer()), abi.encodeWithSignature("isLaunchToken(address)", x), abi.encode(false));
+        vm.mockCall(address(divVault), abi.encodeWithSignature("launchpadOf(address)", x), abi.encode(address(0)));
+        vm.prank(agent);
         address y = pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
+        vm.clearMockedCalls();
         vm.prank(agent);
         IERC20(x).approve(address(pad), type(uint256).max);
 

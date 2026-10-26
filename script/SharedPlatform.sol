@@ -75,11 +75,12 @@ abstract contract SharedPlatform is Script {
     }
 
     /// @notice List `core` on the shared vault (its own share floor; `operators` bound to it), migrator and deployer.
-    ///         The migrator is tax-exempt and can never claim: a bag sent there would earn dividends that stay stuck.
+    ///         The migrator and the bucket never claim: a bag held there would earn dividends that stay stuck.
     function _wireCore(
         address vault,
         address migrator,
         address tokenDeployer,
+        address bucket,
         address core,
         uint256 minShare,
         address[] memory operators
@@ -91,6 +92,8 @@ abstract contract SharedPlatform is Script {
             v.setOperator(operators[i], core);
         }
         if (!v.excluded(migrator)) v.setExcluded(migrator, true);
+        // audit 4 (A-F2 / C-F4): the bucket can hold a dividend token as some token's quote; it never claims
+        if (!v.excluded(bucket)) v.setExcluded(bucket, true);
         SharedMigrator(migrator).addLaunchpad(core);
         TokenDeployer(tokenDeployer).setLaunchpad(core, true);
     }
@@ -99,6 +102,7 @@ abstract contract SharedPlatform is Script {
         address vault,
         address migrator,
         address tokenDeployer,
+        address bucket,
         address core,
         uint256 minShare,
         address[] memory operators
@@ -110,6 +114,8 @@ abstract contract SharedPlatform is Script {
             if (v.operatorOf(operators[i]) != core) revert WiringCheck("vault operator");
         }
         if (!v.excluded(migrator)) revert WiringCheck("vault excludes migrator");
+        if (!v.excluded(bucket)) revert WiringCheck("vault excludes bucket");
+        if (!v.excluded(vault)) revert WiringCheck("vault excludes itself");
         if (!SharedMigrator(migrator).launchpads(core)) revert WiringCheck("migrator launchpad");
         if (!TokenDeployer(tokenDeployer).launchpads(core)) revert WiringCheck("deployer launchpad");
     }

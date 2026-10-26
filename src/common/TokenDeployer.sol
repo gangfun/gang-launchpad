@@ -11,6 +11,8 @@ import {FairToken} from "../fair-mint/FairToken.sol";
 ///         always the token's launchpad (the core that mints and unlocks it).
 contract TokenDeployer is Ownable2Step {
     mapping(address => bool) public launchpads;
+    /// @notice Every token deployed here (both cores). The cores refuse these as quotes (audit 4 C-F3 / B-F1).
+    mapping(address token => bool) public isLaunchToken;
 
     error OnlyLaunchpad();
     error ZeroAddress();
@@ -31,7 +33,7 @@ contract TokenDeployer is Ownable2Step {
         returns (address)
     {
         _onlyLaunchpad();
-        return address(new LaunchTokenV3(name, symbol, msg.sender, uri));
+        return _record(address(new LaunchTokenV3(name, symbol, msg.sender, uri)));
     }
 
     /// @notice LaunchpadV3 taxed token.
@@ -44,7 +46,7 @@ contract TokenDeployer is Ownable2Step {
         string calldata uri
     ) external returns (address) {
         _onlyLaunchpad();
-        return address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender, taxHandler, uri));
+        return _record(address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender, taxHandler, uri)));
     }
 
     /// @notice 打新 token.
@@ -53,7 +55,12 @@ contract TokenDeployer is Ownable2Step {
         returns (address)
     {
         _onlyLaunchpad();
-        return address(new FairToken(name, symbol, msg.sender, taxHandler, uri));
+        return _record(address(new FairToken(name, symbol, msg.sender, taxHandler, uri)));
+    }
+
+    function _record(address token) internal returns (address) {
+        isLaunchToken[token] = true;
+        return token;
     }
 
     function _onlyLaunchpad() internal view {

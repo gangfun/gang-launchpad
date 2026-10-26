@@ -137,6 +137,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     error BadTaxConfig(string reason);
     error OnlyRouter();
     error QuoteNotAllowed();
+    error FeeOnTransferQuote();
     error WrongMigrator();
     error RouterNeedsGate();
 
@@ -353,7 +354,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         tokensOut = v.tokensOut;
         if (tokensOut < minTokensOut) revert Slippage();
 
-        tokensOut = _execBuy(c, token, trader, quoteIn, minTokensOut, v);
+        tokensOut = _execBuy(c, token, trader, quoteIn, v);
     }
 
     function _prepBuy(Curve storage c, address token, address trader, uint256 quoteIn)
@@ -413,11 +414,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address token,
         address trader,
         uint256 quoteIn,
-        uint256 minTokensOut,
         BuyVars memory v
     ) internal returns (uint256 tokensOut) {
         address quoteAddr = c.quote;
-        v = _pullQuoteAndPrep(c, token, trader, quoteAddr, quoteIn, minTokensOut, v);
+        _pullExact(quoteAddr, quoteIn);
 
         c.realQuote += v.net.toUint128();
         c.sold += v.tokensOut.toUint128();
@@ -432,25 +432,14 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         tokensOut = v.tokensOut;
     }
 
-    function _pullQuoteAndPrep(
-        Curve storage c,
-        address token,
-        address trader,
-        address quoteAddr,
-        uint256 quoteIn,
-        uint256 minTokensOut,
-        BuyVars memory v
-    ) internal returns (BuyVars memory) {
+    /// @dev Audit 4 (A-F1 / B-F2 / C-F1/F2): a fee-on-transfer quote can't graduate (the migrator forwards the
+    ///      nominal amount) and under-funds the shared vault / bucket for every token on that quote: refused on the
+    ///      first pull (as FairMintPad._pullExact).
+    function _pullExact(address quoteAddr, uint256 amount) internal {
         IERC20 quote = IERC20(quoteAddr);
         uint256 beforeBal = quote.balanceOf(address(this));
-        quote.safeTransferFrom(msg.sender, address(this), quoteIn);
-        uint256 received = quote.balanceOf(address(this)) - beforeBal;
-        if (received == 0) revert ZeroAmount();
-        if (received != quoteIn) {
-            v = _prepBuy(c, token, trader, received);
-            if (v.tokensOut < minTokensOut) revert Slippage();
-        }
-        return v;
+        quote.safeTransferFrom(msg.sender, address(this), amount);
+        if (quote.balanceOf(address(this)) - beforeBal != amount) revert FeeOnTransferQuote();
     }
 
     /// @dev A buy's tax is distributed BEFORE the buyer's share grows: it rewards holders as of before this trade
@@ -526,6 +515,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         // low-level: a high-level call to an address without code reverts outside any try/catch
         (bool ok, bytes memory ret) = quote.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
         if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 18) revert QuoteNotAllowed();
+        // audit 4 (C-F3 / C-F4 / B-F1 / A-F2): never a token of this platform — a locked sibling pulled as a quote moves
+        // past its wallet cap and lock; a dividend token held by the vault / bucket / a new pair earns rewards no one
+        // can claim. TokenDeployer records every token of both cores; the vault also knows registered ones.
+        if (tokenDeployer.isLaunchToken(quote) || dividendVault.launchpadOf(quote) != address(0)) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address account) internal view {

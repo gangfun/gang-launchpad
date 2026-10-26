@@ -32,6 +32,7 @@ contract HolderRewardHandler is IPostGradTaxHandler, PostGradHandlerBase {
     mapping(address token => mapping(address user => bool)) public isOut;
 
     error PadAlreadySet();
+    error UnknownToken();
 
     event PadSet(address indexed pad);
     event OuterTaxProcessed(
@@ -62,6 +63,8 @@ contract HolderRewardHandler is IPostGradTaxHandler, PostGradHandlerBase {
     /// @inheritdoc IPostGradTaxHandler
     function notifyTax(address token, address from, address to, uint256 taxAmount) external nonReentrant {
         _checkHook(token, taxAmount);
+        // audit 4 A-F3: only this pad's tokens (any contract can name itself as `token`; the vault is shared)
+        if (dividendVault.launchpadOf(token) != address(pad)) revert UnknownToken();
         _accrue(token, from, to, taxAmount);
     }
 
@@ -69,8 +72,8 @@ contract HolderRewardHandler is IPostGradTaxHandler, PostGradHandlerBase {
     /// @dev Permissionless: it only applies the rule to true balances. Never reverts for unknown / locked tokens
     ///      (runs inside token transfers). Pre-launch shares are written by the pad.
     function syncShares(address token, address from, address to) external {
-        // Only the pad registers tokens in this vault, so a registered token is a FairToken.
-        if (dividendVault.quoteOf(token) == address(0)) return;
+        // The vault is shared with LaunchpadV3: only tokens this pad registered are FairTokens of this handler.
+        if (dividendVault.launchpadOf(token) != address(pad)) return;
         if (FairToken(token).locked()) return;
         _sync(token, from);
         _sync(token, to);

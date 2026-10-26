@@ -91,7 +91,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         );
         (s.handler, s.pad) = (address(handler), address(pad));
 
-        _wireCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
+        _wireCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
 
         handler.setLaunchpad(address(pad));
         handler.setDexRouter(dexRouter);
@@ -132,7 +132,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
     function _check(Stack memory s, address keeper) internal view {
         TaxHandlerV3 handler = TaxHandlerV3(s.handler);
         LaunchpadV3 pad = LaunchpadV3(s.pad);
-        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
+        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (handler.launchpad() != s.pad) revert WiringCheck("handler.launchpad");
         if (handler.keeper() != keeper) revert WiringCheck("handler.keeper");
         if (address(pad.migrator()) != s.migrator || address(pad.tokenDeployer()) != s.tokenDeployer) {

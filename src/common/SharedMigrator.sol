@@ -22,6 +22,7 @@ contract SharedMigrator is IMigratorV2, Ownable2Step {
     error OnlyLaunchpad();
     error NothingToMigrate();
     error ZeroAddress();
+    error PairHasLiquidity();
 
     event LaunchpadAdded(address indexed launchpad);
     event Migrated(
@@ -57,6 +58,12 @@ contract SharedMigrator is IMigratorV2, Ownable2Step {
 
         IERC20(token).safeTransfer(pair, tokenAmount);
         IERC20(quote).safeTransfer(pair, quoteAmount);
+
+        // audit 4 A-F4: the whole first LP position goes to 0xdead. A quote whose transfer hook calls `pair.mint` in
+        // between would take it and leave 0xdead dust, so the pair must still have no LP here. (A pre-created pair
+        // has none: the token is locked until this tx.) Read low-level: test mocks have no totalSupply.
+        (bool ok, bytes memory ret) = pair.staticcall(abi.encodeWithSignature("totalSupply()"));
+        if (ok && ret.length >= 32 && abi.decode(ret, (uint256)) != 0) revert PairHasLiquidity();
 
         uint256 lp = IPairV2(pair).mint(DEAD);
         emit Migrated(token, pair, quote, tokenAmount, quoteAmount, lp);

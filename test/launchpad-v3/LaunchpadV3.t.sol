@@ -407,7 +407,7 @@ contract LaunchpadV3Test is Test {
         handler.register(address(0xBEEF), address(quoteTok), address(0), 5_000);
 
         vm.prank(stranger);
-        vm.expectRevert(TaxHandlerV3.OnlySource.selector);
+        vm.expectRevert(TaxHandlerV3.OnlyLaunchpad.selector);
         handler.distribute(t, 1 ether, 0, ITaxHandlerV3.Phase.Bonding);
 
         vm.prank(address(pad));
