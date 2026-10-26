@@ -25,4 +25,7 @@ library LaunchpadV3TestnetRefs {
     address internal constant PANCAKE_V2_ROUTER = 0xD99D1c33F9fC3444f8101754aBC46c52416550D1;
     address internal constant AGENT_ID_REGISTRY = 0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a;
     address internal constant TEST_QUOTE = 0x02B3dE73aF2c1F99c7EFbDb65bcB960AACF4CF1c;
+    /// @dev Demo treasury (listed tax recipient): an address nobody holds a key for, so its balance only ever grows
+    ///      from tax pushes. = 0xe22eEE60677911Ef25a359285Fb09786AC728c77
+    address internal constant DEMO_TREASURY = address(uint160(uint256(keccak256("gang-v3-testnet-treasury"))));
 }
