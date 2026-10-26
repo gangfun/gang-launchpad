@@ -12,8 +12,8 @@ contract MockWBNB is ERC20("Wrapped BNB", "WBNB") {
 
     function withdraw(uint256 amount) external {
         _burn(msg.sender, amount);
-        (bool ok,) = msg.sender.call{value: amount}("");
-        require(ok, "withdraw");
+        // as real WBNB (WETH9): `transfer`, so the receiver gets a 2300-gas stipend — GangRouter.receive must fit in it
+        payable(msg.sender).transfer(amount);
     }
 
     function mintUnlimited(address to, uint256 amount) external {

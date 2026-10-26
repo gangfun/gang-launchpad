@@ -2,13 +2,12 @@
 pragma solidity 0.8.28;
 
 /// @title FairMintMainnetRefs — BSC 56 inputs for script/DeployFairMint.s.sol
-/// @notice Reuses the live LaunchpadV2 QuoteRegistry (read-only) and PlatformFeeBucket (adds operators).
-///         Addresses from docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md, read on-chain 2026-10-26
-///         (bucket / registry owner = 0x4EEd…, an EOA).
+/// @notice The new pads get their own multisig-owned QuoteRegistry and PlatformFeeBucket (script/SharedPlatform.sol),
+///         not the live V2 ones (owner 0x4EEd…, an EOA). Addresses from docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md,
+///         read on-chain 2026-10-26.
 library FairMintMainnetRefs {
-    address internal constant V2_OWNER = 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3;
-    address internal constant QUOTE_REGISTRY = 0x053C2868e54921afEd7742bbb4c4fDA99a12060D;
-    address internal constant PLATFORM_BUCKET = 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111;
+    /// @notice The live V2 bucket — NOT used by the new pads; only read for its feeVault / burner (SharedPlatform).
+    address internal constant V2_PLATFORM_BUCKET = 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111;
     /// @notice Already-deployed PoolCheck library; link with
     ///         --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
     address internal constant POOL_CHECK = 0xd2B159820749f178503E4faBCB18A7Ae4492bDb3;

@@ -18,8 +18,8 @@ export const FAIR_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x4D26D94D52b7439FCb5777a7E36990e10d8105F8',
-    router: process.env.GANG_ROUTER_TESTNET || '0x499F9a4417A0d547628bd75cd51C6663D69a2C81',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7',
+    router: process.env.GANG_ROUTER_TESTNET || '0x3B497A335432f4A3f761063e44eb58D15F7fa57a',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -45,7 +45,8 @@ const PAD_ABI = parseAbi([
   'error BadConfig(string reason)', 'error UnknownToken()', 'error NotMinting()', 'error NotFailed()', 'error ZeroAmount()',
   'error BadAmount()', 'error Slippage()', 'error WalletCapReached()', 'error NothingToRefund()', 'error NotAgent()',
   'error MigratorNotSet()', 'error ZeroAddress()', 'error RefPoolRequired()', 'error NoBridgePool()', 'error BridgeNotWbnb()',
-  'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()',
+  'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()', 'error QuoteNotAllowed()',
+  'error RouterNeedsGate()',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error GradAmtZero()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 deadline, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)',
   'event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)',
@@ -84,6 +85,8 @@ const HINTS = {
   FeeOnTransferQuote: 'the quote token takes a fee on transfer; it cannot be used',
   RefPoolRequired: 'this quote needs --ref-pool (a Pancake pool pricing it)',
   PriceTooSmall: 'the raise in this quote is too small to split into 10,000 shares',
+  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token such as USDT); leave it out to use WBNB',
+  RouterNeedsGate: 'this sale has no Agent gate, so the router path is off; re-run with --use-wbnb to mint directly',
 }
 
 export function fairCtx(testnet) {

@@ -19,8 +19,8 @@ export const V3_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x3184c8E2E5049693f09D8Eb8EB6b06A5D46ee541',
-    router: process.env.GANG_ROUTER_TESTNET || '0x499F9a4417A0d547628bd75cd51C6663D69a2C81',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83',
+    router: process.env.GANG_ROUTER_TESTNET || '0x3B497A335432f4A3f761063e44eb58D15F7fa57a',
     rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -45,7 +45,7 @@ const PAD_ABI = parseAbi([
   'error MigratorNotSet()', 'error ZeroAddress()', 'error NotAgent()', 'error WalletCapReached()', 'error RefPoolRequired()',
   'error NoBridgePool()', 'error BridgeNotWbnb()', 'error BadTaxConfig(string reason)',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error NotContract()',
-  'error UnknownPoolType()',
+  'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)',
   'event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)',
   'event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)',
@@ -82,6 +82,8 @@ const HINTS = {
   ThinReferencePool: '--ref-pool is too shallow; pick the deepest pool for this quote',
   GradAmtTooSmall: 'the quote token is priced so high that the graduation amount rounds below the minimum',
   NothingOwed: 'the router owes this token\'s recipient nothing',
+  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token such as USDT); leave it out to use WBNB',
+  RouterNeedsGate: 'the router path is off while the Agent gate is off; re-run with --use-wbnb to buy directly',
 }
 
 export function v3Ctx(testnet) {

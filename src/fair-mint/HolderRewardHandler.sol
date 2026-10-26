@@ -53,6 +53,7 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
     error Slippage();
     error OnlyKeeperOrOwner();
     error PadAlreadySet();
+    error OutOfGas();
 
     event PadSet(address indexed pad);
     event RouterSet(address indexed router);
@@ -183,7 +184,13 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
         // Out users keep target 0 here, so a zeroing that failed earlier is retried on every later sync.
         // Runs inside token transfers: a vault-side failure (e.g. operator revoked) must not freeze trading.
         if (dividendVault.shares(token, user) != share) {
-            try dividendVault.setShare(token, user, share) {} catch {}
+            uint256 gasBefore = gasleft();
+            try dividendVault.setShare(token, user, share) {}
+            catch {
+                // the caller starved the call (63/64 rule) rather than the vault refusing: swallowing that would let
+                // a transfer pick the gas that leaves a stale share behind
+                if (gasleft() <= gasBefore / 63) revert OutOfGas();
+            }
         }
     }
 

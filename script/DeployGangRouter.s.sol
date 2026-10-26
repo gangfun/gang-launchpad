@@ -10,6 +10,7 @@ import {GangRouter} from "../src/router/GangRouter.sol";
 interface IRouterListing {
     function setRouter(address router_, bool enabled) external;
     function routers(address router_) external view returns (bool);
+    function wbnb() external view returns (address);
 }
 
 /// @title DeployGangRouter — the stateless entry in front of the LaunchpadV3 and 打新 cores (BSC 97 or 56)
@@ -21,6 +22,7 @@ contract DeployGangRouter is Script {
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
     error NoCore();
+    error WrongCore(string what);
 
     function run() external returns (GangRouter router) {
         bool mainnet = block.chainid == 56;
@@ -31,9 +33,13 @@ contract DeployGangRouter is Script {
         address v3 = vm.envOr("V3_PAD", address(0));
         address fair = vm.envOr("FAIR_PAD", address(0));
         if (v3 == address(0) && fair == address(0)) revert NoCore();
+        address wbnb = mainnet ? M.WBNB : T.WBNB;
+        // a wrong env value would deploy a router that cannot unwrap / settle against that core
+        if (v3 != address(0) && IRouterListing(v3).wbnb() != wbnb) revert WrongCore("V3_PAD wbnb");
+        if (fair != address(0) && IRouterListing(fair).wbnb() != wbnb) revert WrongCore("FAIR_PAD wbnb");
 
         vm.startBroadcast(pk);
-        router = new GangRouter(v3, fair, mainnet ? M.WBNB : T.WBNB);
+        router = new GangRouter(v3, fair, wbnb);
         bool v3Listed = _list(v3, address(router), deployer);
         bool fairListed = _list(fair, address(router), deployer);
         vm.stopBroadcast();

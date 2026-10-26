@@ -6,6 +6,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LaunchToken} from "../launchpad-v2/LaunchToken.sol";
@@ -13,6 +14,7 @@ import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
+import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "./TaxLaunchTokenV3.sol";
 import {TaxRouterV3} from "./TaxRouterV3.sol";
@@ -135,6 +137,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     error BridgeNotWbnb();
     error BadTaxConfig(string reason);
     error OnlyRouter();
+    error QuoteNotAllowed();
+    error WrongMigrator();
+    error RouterNeedsGate();
 
     constructor(
         address owner_,
@@ -167,6 +172,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
+        // one-shot: a migrator bound to another pad would make every graduation revert forever
+        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
     }
@@ -233,6 +240,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (bytes(reason).length != 0) revert BadTaxConfig(reason);
 
         if (quote == address(0)) quote = wbnb;
+        _requireQuote(quote);
         (uint256 lockedGrad, address refUsed) = _lockGradAmt(quote, refPool);
         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
 
@@ -328,6 +336,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         returns (uint256 tokensOut)
     {
         if (!routers[msg.sender]) revert OnlyRouter();
+        // ungated, a router could name any trader — e.g. the future pair, seeding it before graduation
+        if (!agentGateEnabled) revert RouterNeedsGate();
         tokensOut = _buy(trader, token, quoteIn, minTokensOut);
     }
 
@@ -414,7 +424,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         c.sold += v.tokensOut.toUint128();
 
         IERC20(token).safeTransfer(trader, v.tokensOut);
-        _syncShareAndTax(c, token, trader, quoteAddr, v.protocolFee, v.tax, v.platformTax);
+        _syncShareAndTax(c, token, trader, quoteAddr, v.protocolFee, v.tax, v.platformTax, false);
 
         emit Buy(token, trader, v.net, v.protocolFee, v.tax, v.tokensOut, c.realQuote);
 
@@ -444,8 +454,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         return v;
     }
 
-    /// @dev The tax is distributed BEFORE the trader's share is synced: it rewards holders as of before this trade
-    ///      (a first buy with no eligible holders rolls the dividend leg to the recipient / platform).
+    /// @dev A buy's tax is distributed BEFORE the buyer's share grows: it rewards holders as of before this trade
+    ///      (a first buy with no eligible holders rolls the dividend leg to the recipient / platform). A sell syncs the
+    ///      seller's (now smaller) share FIRST, so the seller earns nothing of its own tax on what it just sold.
     function _syncShareAndTax(
         Curve storage c,
         address token,
@@ -453,16 +464,17 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address quoteAddr,
         uint256 protocolFee,
         uint256 tax,
-        uint256 platformTax
+        uint256 platformTax,
+        bool shareFirst
     ) internal {
         IERC20 quote = IERC20(quoteAddr);
+        bool dividends = c.dividendBps > 0;
+        if (dividends && shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (tax > 0) {
             quote.forceApprove(address(router), tax);
             router.distribute(token, tax, platformTax, ITaxRouter.Phase.Bonding);
         }
-        if (c.dividendBps > 0) {
-            dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
-        }
+        if (dividends && !shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (protocolFee > 0) {
             quote.forceApprove(address(platformBucket), protocolFee);
             platformBucket.notifyAccrual(quoteAddr, protocolFee);
@@ -492,7 +504,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
 
         address quoteAddr = c.quote;
-        _syncShareAndTax(c, token, msg.sender, quoteAddr, protocolFee, tax, platformTax);
+        _syncShareAndTax(c, token, msg.sender, quoteAddr, protocolFee, tax, platformTax, true);
         IERC20(quoteAddr).safeTransfer(msg.sender, quoteToUser);
 
         emit Sell(token, msg.sender, tokensIn, protocolFee, tax, quoteToUser, c.realQuote);
@@ -503,6 +515,13 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (!agentGateEnabled) return true;
         if (address(agentIdRegistry) == address(0)) return false;
         return agentIdRegistry.balanceOf(account) > 0;
+    }
+
+    /// @dev WBNB or a QuoteRegistry-enabled quote with 18 decimals: no fee-on-transfer / hook / low-decimal quotes
+    ///      (6 decimals would round holder dividends to 0 in DividendVault).
+    function _requireQuote(address quote) internal view {
+        if (quote == wbnb) return;
+        if (!quoteRegistry.isQuoted(quote) || IERC20Metadata(quote).decimals() != 18) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address account) internal view {

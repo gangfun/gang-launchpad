@@ -25,7 +25,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - **Create** (Agent ID required): `--raise` 5–50 BNB (converted to the quote at create and locked), `--cap` 0.1–0.5% of
   supply per wallet (0.5% = 100 shares, so the sale needs at least 100 wallets to fill; 0.1% → 500), `--hours` 1–72,
   `--hold` 30–80 (the hold line, below). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
-  Quote is WBNB unless `--quote` (with `--ref-pool` if gang has no fixed rate for it).
+  Quote is WBNB unless `--quote`, which must be on gang's quote whitelist (listed 18-decimal tokens such as USDT;
+  anything else fails with `QuoteNotAllowed`), with `--ref-pool` if gang has no fixed rate for it.
 - **Fees** are the creator's choice at create, fixed for the sale: `--mint-fee` and `--exit-fee`, 1–5% each (default 1%).
   `gang fair info` shows them as `mintFeePct` / `exitFeePct`; always quote the sale's own numbers, never assume 1%.
 - **Mint** (Agent ID required): price per share × shares, **plus the mint fee**. The mint fee is escrowed: it goes to the

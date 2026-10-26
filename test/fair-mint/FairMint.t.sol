@@ -248,6 +248,8 @@ contract FairMintTest is Test {
     /// @dev Non-registry quote priced by a V2 pair against WBNB: 300 Q : 150 WBNB → 1 BNB = 2 Q.
     function test_create_refPoolAgainstWbnb() public {
         MockSPCXB q = new MockSPCXB();
+        vm.prank(owner);
+        registry.setQuote(address(q), true, 0); // listed, priced by its reference pool (no override)
         address ref = _seedPair(address(q), address(wbnb), 300 ether, 150 ether);
         (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(q), ref, 15 ether);
         assertEq(raiseQuote, 30 ether);
@@ -473,7 +475,7 @@ contract FairMintTest is Test {
         pad.refund(t);
         assertEq(wbnb.balanceOf(m), start, "principal + mint fee back");
         assertEq(IERC20(t).balanceOf(m), 0);
-        assertEq(vault.shares(t, m), 0);
+        // the vault share is left as is: a failed sale never earns rewards, and refunds do not depend on the vault
 
         vm.prank(m);
         vm.expectRevert(FairMintPad.NothingToRefund.selector);

@@ -6,12 +6,14 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
+import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {FairToken, FairTokenDeployer} from "./FairToken.sol";
 
@@ -184,6 +186,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     error FeeOnTransferQuote();
     error VaultFloorTooHigh();
     error OnlyRouter();
+    error QuoteNotAllowed();
+    error WrongMigrator();
+    error RouterNeedsGate();
 
     constructor(
         address owner_,
@@ -213,6 +218,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
+        // one-shot: a migrator bound to another pad would make every launch revert forever
+        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
     }
@@ -251,7 +258,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- create
-    /// @param quote     Quote ERC20 (address(0) = WBNB). Fee-on-transfer quotes are rejected at mint.
+    /// @param quote     WBNB (address(0)) or a QuoteRegistry-enabled 18-decimal ERC20. Fee-on-transfer quotes are also
+    ///                  rejected at mint.
     /// @param refPool   Pancake V2 pair / V3 pool pricing `quote`; ignored for WBNB or a QuoteRegistry override.
     /// @param devShares Shares the creator mints in the same call (≥ 1); needs quote approval beforehand.
     function create(
@@ -271,6 +279,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (dividendVault.minimumShareBalance() > MIN_SHARE_BALANCE) revert VaultFloorTooHigh();
 
         if (quote == address(0)) quote = wbnb;
+        _requireQuote(quote);
         (uint256 raiseQuote, address refUsed) = _toQuote(quote, refPool, cfg.raiseBnb);
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
@@ -330,6 +339,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     {
         if (!routers[msg.sender]) revert OnlyRouter();
         Sale storage s = _minting(token);
+        // ungated, a router could name any trader — e.g. the future pair, seeding it before launch to take the LP
+        if (s.gate == address(0)) revert RouterNeedsGate();
         _requireAgent(s.gate, trader);
         if (shares == 0) revert ZeroAmount();
         accepted = _mint(token, s, trader, shares, minShares);
@@ -378,8 +389,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         p.shares = 0;
         p.feePaid = 0;
 
+        // no dividendVault.setShare: a failed sale never earns rewards, and refunds must not depend on the vault
         FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
-        dividendVault.setShare(token, msg.sender, 0);
         IERC20(s.quote).safeTransfer(msg.sender, amount);
         emit Refunded(token, msg.sender, amount);
     }
@@ -535,6 +546,13 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (!agentGateEnabled) return address(0);
         if (address(agentIdRegistry) == address(0)) revert NotAgent();
         return address(agentIdRegistry);
+    }
+
+    /// @dev WBNB or a QuoteRegistry-enabled quote with 18 decimals: no fee-on-transfer / hook / low-decimal quotes
+    ///      (6 decimals would round holder rewards to 0 in DividendVault).
+    function _requireQuote(address quote) internal view {
+        if (quote == wbnb) return;
+        if (!quoteRegistry.isQuoted(quote) || IERC20Metadata(quote).decimals() != 18) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address gate, address account) internal view {

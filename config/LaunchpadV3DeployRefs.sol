@@ -2,11 +2,12 @@
 pragma solidity 0.8.28;
 
 /// @title LaunchpadV3MainnetRefs — BSC 56 inputs for script/DeployLaunchpadV3.s.sol
-/// @notice Reuses the live V2 QuoteRegistry (read-only) and PlatformFeeBucket (adds the pad and router as operators).
-///         Addresses from docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md (bucket / registry owner = 0x4EEd…, an EOA).
+/// @notice The new pads get their own multisig-owned QuoteRegistry and PlatformFeeBucket (script/SharedPlatform.sol),
+///         not the live V2 ones (owner 0x4EEd…, an EOA). Addresses from docs/MAINNET-LAUNCHPAD-V2-ADDRESSES-2026-10-23.md,
+///         read on-chain 2026-10-26.
 library LaunchpadV3MainnetRefs {
-    address internal constant QUOTE_REGISTRY = 0x053C2868e54921afEd7742bbb4c4fDA99a12060D;
-    address internal constant PLATFORM_BUCKET = 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111;
+    /// @notice The live V2 bucket — NOT used by the new pads; only read for its feeVault / burner (SharedPlatform).
+    address internal constant V2_PLATFORM_BUCKET = 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111;
     address internal constant AGENT_ID_REGISTRY = 0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F;
     address internal constant KEEPER = 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7;
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
