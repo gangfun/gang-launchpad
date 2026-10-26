@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.sol";
 import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
@@ -33,7 +33,7 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
     uint256 public constant DEX_FEE_DEN = 10000;
     uint256 public constant PLATFORM_TAX_BPS = V3_PLATFORM_TAX_BPS;
 
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
     TaxRouterV3 public immutable router;
 
     IPancakeRouter02 public dexRouter;
@@ -63,7 +63,7 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
 
     constructor(address owner_, address dividendVault_, address router_) Ownable(owner_) {
         if (dividendVault_ == address(0) || router_ == address(0)) revert ZeroAddress();
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
         router = TaxRouterV3(router_);
     }
 

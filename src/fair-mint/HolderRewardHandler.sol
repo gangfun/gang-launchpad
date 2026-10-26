@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IPostGradTaxHandler} from "../launchpad-v2/interfaces/IPostGradTaxHandler.sol";
 import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.sol";
@@ -36,7 +36,7 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
     uint256 public constant DEX_FEE_NUM = 9975;
     uint256 public constant DEX_FEE_DEN = 10000;
 
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
     IFairMintPadView public pad;
 
@@ -73,7 +73,7 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
 
     constructor(address owner_, address dividendVault_, address platformBucket_) Ownable(owner_) {
         if (dividendVault_ == address(0) || platformBucket_ == address(0)) revert ZeroAddress();
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
     }
 

@@ -5,19 +5,18 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
 import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
 import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
@@ -33,7 +32,9 @@ contract GangRouterTest is Test {
     MockPairFactory internal pairFactory;
 
     LaunchpadV3 internal v3;
-    DividendVault internal v3Vault;
+    SharedDividendVault internal v3Vault;
+    SharedMigrator internal sharedMig;
+    TokenDeployer internal tokenDeployer;
     FairMintPad internal fair;
     GangRouter internal router;
 
@@ -60,6 +61,10 @@ contract GangRouterTest is Test {
         quoteTok = new MockSPCXB();
         agents = new MockAgentId();
         pairFactory = new MockPairFactory();
+        // one vault / migrator / deployer for both cores, as deployed
+        v3Vault = new SharedDividendVault(owner);
+        sharedMig = new SharedMigrator(owner, address(pairFactory));
+        tokenDeployer = new TokenDeployer(owner);
         _deployV3();
         _deployFair();
         router = new GangRouter(address(v3), address(fair), address(wbnb));
@@ -75,7 +80,6 @@ contract GangRouterTest is Test {
 
     function _deployV3() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
-        v3Vault = new DividendVault(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
         TaxRouterV3 taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
         RecipientRegistry recipients = new RecipientRegistry(owner);
@@ -88,16 +92,18 @@ contract GangRouterTest is Test {
             address(handler),
             address(taxRouter),
             address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 mig = new MigratorV2(address(pairFactory), address(v3));
+        SharedMigrator mig = sharedMig;
         vm.startPrank(owner);
         reg.setQuote(address(quoteTok), true, 15 ether);
-        v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
-        v3Vault.setOperator(address(handler), true);
+        v3Vault.setLaunchpad(address(v3), true);
+        v3Vault.setOperator(address(taxRouter), address(v3));
+        v3Vault.setOperator(address(handler), address(v3));
+        mig.addLaunchpad(address(v3));
+        tokenDeployer.setLaunchpad(address(v3), true);
         bucket.setLaunchpad(address(v3));
         bucket.setOperator(address(taxRouter), true);
         taxRouter.setLaunchpad(address(v3));
@@ -110,7 +116,7 @@ contract GangRouterTest is Test {
 
     function _deployFair() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
-        DividendVault vault = new DividendVault(owner);
+        SharedDividendVault vault = v3Vault;
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault2"));
         HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket));
         fair = new FairMintPad(
@@ -119,14 +125,16 @@ contract GangRouterTest is Test {
             address(vault),
             address(bucket),
             address(handler),
-            address(new FairTokenDeployer()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 mig = new MigratorV2(address(pairFactory), address(fair));
+        SharedMigrator mig = sharedMig;
         vm.startPrank(owner);
-        vault.setLaunchpad(address(fair));
-        vault.setOperator(address(handler), true);
+        vault.setLaunchpad(address(fair), true);
+        vault.setOperator(address(handler), address(fair));
+        mig.addLaunchpad(address(fair));
+        tokenDeployer.setLaunchpad(address(fair), true);
         bucket.setLaunchpad(address(fair));
         bucket.setOperator(address(handler), true);
         fair.setMigrator(address(mig));

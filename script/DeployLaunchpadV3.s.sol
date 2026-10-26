@@ -5,26 +5,25 @@ import {console} from "forge-std/Script.sol";
 import {SharedPlatform} from "./SharedPlatform.sol";
 import {LaunchpadV3MainnetRefs as M, LaunchpadV3TestnetRefs as T} from "../config/LaunchpadV3DeployRefs.sol";
 import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../src/launchpad-v2/MigratorV2.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxTokenDeployerV3} from "../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxRouterV3} from "../src/launchpad-v3/TaxRouterV3.sol";
 import {RecipientRegistry} from "../src/launchpad-v3/RecipientRegistry.sol";
 import {PostGradTaxHandlerV3} from "../src/launchpad-v3/PostGradTaxHandlerV3.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 
 /// @title DeployLaunchpadV3 — LaunchpadV3 (tax recipient) on BSC testnet (97) or mainnet (56)
-/// @notice New: DividendVault (floor 10k), TaxRouterV3, RecipientRegistry, PostGradTaxHandlerV3, TaxTokenDeployerV3,
-///         LaunchpadV3, MigratorV2, and — unless QUOTE_REGISTRY / PLATFORM_BUCKET name the ones DeployFairMint made —
-///         the QuoteRegistry and PlatformFeeBucket shared with 打新 (see SharedPlatform; never the V2 ones). Listed
+/// @notice New: TaxRouterV3, RecipientRegistry, PostGradTaxHandlerV3, LaunchpadV3, and — unless QUOTE_REGISTRY /
+///         PLATFORM_BUCKET / DIVIDEND_VAULT / MIGRATOR / TOKEN_DEPLOYER name the ones DeployFairMint made — the five
+///         contracts shared with 打新 (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Listed
 ///         quotes: mainnet USDT at a fixed rate (USDT_PER_15_BNB); testnet the test quote and a blacklist quote (15 units = 15 BNB).
 ///         Testnet reuses the 打新 testnet Agent ID registry and test quote. Everything is wired before setMigrator,
 ///         the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless LAUNCHPAD_V3_MAINNET_OK=true (spec: no mainnet broadcast before audit).
 ///      Env: DEPLOYER_PRIVATE_KEY; USDT_PER_15_BNB (mainnet: USDT units, 18 decimals, per 15 BNB); OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
-///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET (reuse), RECIPIENT + RECIPIENT_LABEL
+///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
+///      TOKEN_DEPLOYER (reuse), RECIPIENT + RECIPIENT_LABEL
 ///      (listed in RecipientRegistry; testnet default: a fixed demo treasury address).
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
@@ -81,11 +80,11 @@ contract DeployLaunchpadV3 is SharedPlatform {
             _listQuote(s.quoteRegistry, s.blacklistQuote, TESTNET_QUOTE_PER_15_BNB);
         }
 
-        DividendVault vault = new DividendVault(deployer);
+        (s.vault, s.migrator, s.tokenDeployer) = _shared(deployer, factory);
+        SharedDividendVault vault = SharedDividendVault(s.vault);
         TaxRouterV3 router = new TaxRouterV3(deployer, address(vault), s.bucket);
         RecipientRegistry recipients = new RecipientRegistry(deployer);
         PostGradTaxHandlerV3 handler = new PostGradTaxHandlerV3(deployer, address(vault), address(router));
-        TaxTokenDeployerV3 tokenDeployer = new TaxTokenDeployerV3();
         LaunchpadV3 pad = new LaunchpadV3(
             deployer,
             s.quoteRegistry,
@@ -94,28 +93,13 @@ contract DeployLaunchpadV3 is SharedPlatform {
             address(handler),
             address(router),
             address(recipients),
-            address(tokenDeployer),
+            s.tokenDeployer,
             wbnb,
             factory
         );
-        MigratorV2 mig = new MigratorV2(factory, address(pad));
-        (s.vault, s.router, s.recipients, s.handler, s.tokenDeployer, s.pad, s.migrator) =
-        (
-            address(vault),
-            address(router),
-            address(recipients),
-            address(handler),
-            address(tokenDeployer),
-            address(pad),
-            address(mig)
-        );
+        (s.router, s.recipients, s.handler, s.pad) = (address(router), address(recipients), address(handler), address(pad));
 
-        vault.setMinimumShareBalance(MIN_SHARE);
-        vault.setLaunchpad(address(pad));
-        vault.setOperator(address(router), true);
-        vault.setOperator(address(handler), true);
-        // the migrator is tax-exempt and can never claim: a bag sent there would earn dividends that stay stuck
-        vault.setExcluded(address(mig), true);
+        _wireCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
 
         router.setLaunchpad(address(pad));
         router.setSource(address(handler), true);
@@ -134,9 +118,11 @@ contract DeployLaunchpadV3 is SharedPlatform {
             pad.setBridgePool(M.USDT, M.USDT_WBNB_V3);
         }
         // last: create needs a migrator, so the pad only opens once the fee sinks above accept it
-        pad.setMigrator(address(mig));
+        pad.setMigrator(s.migrator);
 
-        _handOver(owner, deployer, address(vault));
+        _handOver(owner, deployer, s.vault);
+        _handOver(owner, deployer, s.migrator);
+        _handOver(owner, deployer, s.tokenDeployer);
         _handOver(owner, deployer, address(router));
         _handOver(owner, deployer, address(recipients));
         _handOver(owner, deployer, address(handler));
@@ -150,21 +136,24 @@ contract DeployLaunchpadV3 is SharedPlatform {
         _log(s, owner, deployer);
     }
 
+    /// @dev Vault operators bound to this core: the tax router (dividend leg) and the post-grad handler (shares).
+    function _ops(Stack memory s) internal pure returns (address[] memory ops) {
+        ops = new address[](2);
+        (ops[0], ops[1]) = (s.router, s.handler);
+    }
+
     function _check(Stack memory s, address keeper) internal view {
-        DividendVault vault = DividendVault(s.vault);
         TaxRouterV3 router = TaxRouterV3(s.router);
         LaunchpadV3 pad = LaunchpadV3(s.pad);
-        if (vault.launchpad() != s.pad) revert WiringCheck("vault.launchpad");
-        if (!vault.operators(s.router) || !vault.operators(s.handler)) revert WiringCheck("vault operators");
-        if (vault.minimumShareBalance() != MIN_SHARE) revert WiringCheck("vault floor");
-        if (!vault.excluded(s.migrator)) revert WiringCheck("vault excludes migrator");
+        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.pad, MIN_SHARE, _ops(s));
         if (router.launchpad() != s.pad || !router.sources(s.pad) || !router.sources(s.handler)) {
             revert WiringCheck("router launchpad / sources");
         }
         if (PostGradTaxHandlerV3(s.handler).keeper() != keeper) revert WiringCheck("handler.keeper");
-        if (address(pad.migrator()) != s.migrator || MigratorV2(s.migrator).launchpad() != s.pad) {
-            revert WiringCheck("migrator");
+        if (address(pad.migrator()) != s.migrator || address(pad.tokenDeployer()) != s.tokenDeployer) {
+            revert WiringCheck("migrator / deployer");
         }
+        if (address(pad.dividendVault()) != s.vault) revert WiringCheck("pad.dividendVault");
         if (address(pad.agentIdRegistry()) != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
         if (!pad.walletCapEnabled()) revert WiringCheck("wallet cap");
         if (pad.taxHandler() != s.handler || address(pad.router()) != s.router) revert WiringCheck("pad wiring");
@@ -183,10 +172,8 @@ contract DeployLaunchpadV3 is SharedPlatform {
         console.log("V3_TAX_ROUTER", s.router);
         console.log("V3_RECIPIENT_REGISTRY", s.recipients);
         console.log("V3_POSTGRAD_HANDLER", s.handler);
-        console.log("V3_DIVIDEND_VAULT", s.vault);
-        console.log("V3_MIGRATOR", s.migrator);
-        console.log("V3_TOKEN_DEPLOYER", s.tokenDeployer);
         _logPlatform(s.quoteRegistry, s.bucket);
+        _logShared(s.vault, s.migrator, s.tokenDeployer);
         console.log("AGENT_ID", s.agentId);
         if (s.testQuote != address(0)) console.log("TEST_QUOTE", s.testQuote);
         if (s.blacklistQuote != address(0)) console.log("BLACKLIST_QUOTE", s.blacklistQuote);
@@ -197,9 +184,9 @@ contract DeployLaunchpadV3 is SharedPlatform {
         }
         if (owner != deployer) {
             console.log(
-                "PENDING owner: acceptOwnership() on pad, router, recipients, handler, vault, quote registry, bucket"
+                "PENDING owner: acceptOwnership() on pad, router, recipients, handler, and the five shared contracts"
             );
-            console.log("  (run DeployFairMint with QUOTE_REGISTRY / PLATFORM_BUCKET above BEFORE the owner accepts)");
+            console.log("  (run DeployFairMint with the five shared addresses above BEFORE the owner accepts)");
         }
     }
 }

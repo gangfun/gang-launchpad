@@ -41,7 +41,7 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
     event Excluded(address indexed account, bool excluded);
     event OuterTax(address indexed from, address indexed to, uint256 taxed, uint256 net);
 
-    /// @dev Deployed by TaxTokenDeployerV3 on behalf of `launchpad_` (keeps LaunchpadV3 under EIP-170). The handler is
+    /// @dev Deployed by TokenDeployer on behalf of `launchpad_` (keeps LaunchpadV3 under EIP-170). The handler is
     ///      excluded from the start (no tax recursion when it sells).
     constructor(
         string memory name_,
@@ -126,21 +126,5 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
         if (!(from == pair || to == pair)) return false;
         if (isExcluded[from] || isExcluded[to]) return false;
         return true;
-    }
-}
-
-/// @title TaxTokenDeployerV3
-/// @notice Holds TaxLaunchTokenV3 creation code so LaunchpadV3 stays under EIP-170. Stateless: the caller becomes
-///         the token's launchpad, so anyone may call it but only gets tokens bound to themselves.
-contract TaxTokenDeployerV3 {
-    function deploy(
-        string calldata name,
-        string calldata symbol,
-        uint16 buyTaxBps,
-        uint16 sellTaxBps,
-        address taxHandler,
-        string calldata uri
-    ) external returns (address) {
-        return address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender, taxHandler, uri));
     }
 }

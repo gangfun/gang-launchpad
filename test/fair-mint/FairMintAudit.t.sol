@@ -3,11 +3,12 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
 contract SixDecimalQuote is ERC20("Six", "SIX") {
@@ -55,8 +56,8 @@ contract FairMintAuditTest is FairMintTest {
         pad.mint(t, 100, 1);
         uint256 before = wbnb.balanceOf(m);
 
-        vm.prank(owner);
-        vault.setLaunchpad(makeAddr("elsewhere"));
+        // the vault refuses the pad's share write (a shared vault never drops a core's existing tokens, so mock it)
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
         vm.expectEmit(true, true, false, true, address(pad));
         emit FairMintPad.ShareWriteFailed(t, m, 0);
         vm.prank(m);
@@ -66,8 +67,7 @@ contract FairMintAuditTest is FairMintTest {
         assertEq(vault.shares(t, m), 100 * TPS, "the vault refused: share left as is");
 
         // vault fixed; the sale fills and launches; m's first touch after launch zeroes the share (baseline 0)
-        vm.prank(owner);
-        vault.setLaunchpad(address(pad));
+        vm.clearMockedCalls();
         _fill(t);
         handler.syncShares(t, m, address(0));
         assertEq(vault.shares(t, m), 0, "zero-baseline share cleared by the handler");
@@ -145,16 +145,18 @@ contract FairMintAuditTest is FairMintTest {
             address(vault),
             address(bucket),
             address(handler),
-            address(new FairTokenDeployer()),
+            address(tokenDeployer),
             address(wbnb),
             address(factory)
         );
         vm.prank(owner);
         vm.expectRevert(FairMintPad.WrongMigrator.selector);
-        fresh.setMigrator(address(migrator)); // bound to `pad`
-        MigratorV2 own = new MigratorV2(address(factory), address(fresh));
-        vm.prank(owner);
-        fresh.setMigrator(address(own));
+        fresh.setMigrator(address(migrator)); // the shared migrator does not list `fresh` yet
+        vm.startPrank(owner);
+        migrator.addLaunchpad(address(fresh));
+        fresh.setMigrator(address(migrator));
+        vm.stopPrank();
+        assertEq(address(fresh.migrator()), address(migrator), "listed: one migrator serves both pads");
     }
 
     /// @dev A-5: a sender picking the gas so the receiver's setShare runs out of gas inside the handler's try must not
@@ -202,7 +204,7 @@ contract FairMintAuditTest is FairMintTest {
         _fill(t);
         address v = _minter(8);
         vm.prank(owner);
-        vault.setOperator(address(handler), false);
+        vault.setOperator(address(handler), address(0));
         _sell(t, v, 10 * TPS); // the handler's setShare reverts (not out of gas) → swallowed, the sell goes through
         assertEq(IERC20(t).balanceOf(v), 90 * TPS);
         assertEq(vault.shares(t, v), 100 * TPS, "stale until the vault accepts writes again");

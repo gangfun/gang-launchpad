@@ -10,12 +10,13 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
-import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../common/SharedMigrator.sol";
+import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
-import {FairToken, FairTokenDeployer} from "./FairToken.sol";
+import {FairToken} from "./FairToken.sol";
 
 /// @title FairMintPad (打新发射 · 铭文式打进度)
 /// @notice No bonding curve: half the supply is sold in 10,000 equal shares at one fixed price, both ways — mint buys
@@ -96,10 +97,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     QuoteRegistry public immutable quoteRegistry;
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
     address public immutable taxHandler;
-    FairTokenDeployer public immutable tokenDeployer;
+    TokenDeployer public immutable tokenDeployer;
     address public immutable wbnb;
     address public immutable pairFactory;
 
@@ -206,10 +207,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
                 || pairFactory_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
         taxHandler = taxHandler_;
-        tokenDeployer = FairTokenDeployer(tokenDeployer_);
+        tokenDeployer = TokenDeployer(tokenDeployer_);
         wbnb = wbnb_;
         pairFactory = pairFactory_;
     }
@@ -218,8 +219,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
-        // one-shot: a migrator bound to another pad would make every launch revert forever
-        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
+        // one-shot: a migrator that does not list this core would make every launch revert forever
+        if (!SharedMigrator(migrator_).launchpads(address(this))) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
     }
@@ -280,7 +281,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         _requireAgent(gate, msg.sender);
         (bool ok, string memory reason) = checkConfig(cfg, devShares);
         if (!ok) revert BadConfig(reason);
-        if (dividendVault.minimumShareBalance() > MIN_SHARE_BALANCE) revert VaultFloorTooHigh();
+        if (dividendVault.minimumShareBalanceOf(address(this)) > MIN_SHARE_BALANCE) revert VaultFloorTooHigh();
 
         if (quote == address(0)) quote = wbnb;
         _requireQuote(quote);
@@ -288,7 +289,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
 
-        token = tokenDeployer.deploy(name, symbol, taxHandler, metaURI);
+        token = tokenDeployer.deployFair(name, symbol, taxHandler, metaURI);
         dividendVault.ensureMinimumShareBalance(MIN_SHARE_BALANCE);
         dividendVault.registerToken(token, quote);
 

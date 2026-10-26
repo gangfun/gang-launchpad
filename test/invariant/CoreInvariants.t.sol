@@ -5,19 +5,20 @@ import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
 import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
 import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
+import {FairToken} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
@@ -37,12 +38,12 @@ contract CoreSystem is Test {
     PlatformFeeBucket public bucket;
 
     LaunchpadV3 public v3;
-    DividendVault public v3Vault;
+    SharedDividendVault public v3Vault;
     TaxRouterV3 public taxRouter;
     PostGradTaxHandlerV3 public v3Handler;
 
     FairMintPad public fair;
-    DividendVault public fairVault;
+    SharedDividendVault public fairVault;
     HolderRewardHandler public fairHandler;
 
     GangRouter public router;
@@ -60,7 +61,11 @@ contract CoreSystem is Test {
         registry = new QuoteRegistry(owner);
         bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
 
-        v3Vault = new DividendVault(owner);
+        // one vault / migrator / deployer for both cores, as deployed (v3Vault and fairVault are the same contract)
+        v3Vault = new SharedDividendVault(owner);
+        fairVault = v3Vault;
+        SharedMigrator mig = new SharedMigrator(owner, address(pairFactory));
+        TokenDeployer deployer = new TokenDeployer(owner);
         taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
         RecipientRegistry recipients = new RecipientRegistry(owner);
         v3Handler = new PostGradTaxHandlerV3(owner, address(v3Vault), address(taxRouter));
@@ -72,13 +77,11 @@ contract CoreSystem is Test {
             address(v3Handler),
             address(taxRouter),
             address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(deployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 v3Mig = new MigratorV2(address(pairFactory), address(v3));
 
-        fairVault = new DividendVault(owner);
         fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket));
         fair = new FairMintPad(
             owner,
@@ -86,11 +89,10 @@ contract CoreSystem is Test {
             address(fairVault),
             address(bucket),
             address(fairHandler),
-            address(new FairTokenDeployer()),
+            address(deployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 fairMig = new MigratorV2(address(pairFactory), address(fair));
         router = new GangRouter(address(v3), address(fair), address(wbnb));
 
         vm.startPrank(owner);
@@ -100,25 +102,29 @@ contract CoreSystem is Test {
         bucket.setOperator(address(taxRouter), true);
         bucket.setOperator(address(fair), true);
         bucket.setOperator(address(fairHandler), true);
-        v3Vault.setMinimumShareBalance(10_000 ether);
-        v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
-        v3Vault.setOperator(address(v3Handler), true);
+        v3Vault.setLaunchpad(address(v3), true);
+        v3Vault.setMinimumShareBalance(address(v3), 10_000 ether);
+        v3Vault.setOperator(address(taxRouter), address(v3));
+        v3Vault.setOperator(address(v3Handler), address(v3));
+        mig.addLaunchpad(address(v3));
+        deployer.setLaunchpad(address(v3), true);
         taxRouter.setLaunchpad(address(v3));
         taxRouter.setSource(address(v3Handler), true);
         v3Handler.setKeeper(keeper);
         recipients.list(treasury, "partner treasury");
         v3.setAgentGate(true, address(agents));
         v3.setRouter(address(router), true);
-        v3.setMigrator(address(v3Mig));
-        fairVault.setMinimumShareBalance(10_000 ether);
-        fairVault.setLaunchpad(address(fair));
-        fairVault.setOperator(address(fairHandler), true);
+        v3.setMigrator(address(mig));
+        fairVault.setLaunchpad(address(fair), true);
+        fairVault.setMinimumShareBalance(address(fair), 10_000 ether);
+        fairVault.setOperator(address(fairHandler), address(fair));
+        mig.addLaunchpad(address(fair));
+        deployer.setLaunchpad(address(fair), true);
         fairHandler.setPad(address(fair));
         fairHandler.setKeeper(keeper);
         fair.setAgentGate(true, address(agents));
         fair.setRouter(address(router), true);
-        fair.setMigrator(address(fairMig));
+        fair.setMigrator(address(mig));
         vm.stopPrank();
     }
 }
@@ -698,7 +704,7 @@ contract CoreInvariantsTest is Test {
         }
     }
 
-    function _pendingSum(DividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
+    function _pendingSum(SharedDividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
         uint256 n = isV3 ? h.v3TokenCount() : h.saleCount();
         for (uint256 i = 0; i < n; i++) {
             address t = isV3 ? h.v3Tokens(i) : h.sales(i);

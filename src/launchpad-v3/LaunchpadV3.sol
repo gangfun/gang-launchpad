@@ -11,12 +11,13 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LaunchTokenV3} from "./LaunchTokenV3.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
-import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../common/SharedMigrator.sol";
+import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "./TaxLaunchTokenV3.sol";
+import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
 import {TaxRouterV3} from "./TaxRouterV3.sol";
 import {RecipientRegistry} from "./RecipientRegistry.sol";
 import {ILaunchpadV3} from "./interfaces/ILaunchpadV3.sol";
@@ -67,12 +68,12 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     }
 
     QuoteRegistry public immutable quoteRegistry;
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
     address public immutable taxHandler;
     TaxRouterV3 public immutable router;
     RecipientRegistry public immutable recipientRegistry;
-    TaxTokenDeployerV3 public immutable taxTokenDeployer;
+    TokenDeployer public immutable tokenDeployer;
     address public immutable wbnb;
     address public pairFactory;
     address public v3Factory;
@@ -149,22 +150,22 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address taxHandler_,
         address router_,
         address recipientRegistry_,
-        address taxTokenDeployer_,
+        address tokenDeployer_,
         address wbnb_,
         address pairFactory_
     ) Ownable(owner_) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
                 || taxHandler_ == address(0) || router_ == address(0) || recipientRegistry_ == address(0)
-                || taxTokenDeployer_ == address(0) || wbnb_ == address(0)
+                || tokenDeployer_ == address(0) || wbnb_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
         taxHandler = taxHandler_;
         router = TaxRouterV3(router_);
         recipientRegistry = RecipientRegistry(recipientRegistry_);
-        taxTokenDeployer = TaxTokenDeployerV3(taxTokenDeployer_);
+        tokenDeployer = TokenDeployer(tokenDeployer_);
         wbnb = wbnb_;
         pairFactory = pairFactory_;
     }
@@ -172,8 +173,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
-        // one-shot: a migrator bound to another pad would make every graduation revert forever
-        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
+        // one-shot: a migrator that does not list this core would make every graduation revert forever
+        if (!SharedMigrator(migrator_).launchpads(address(this))) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
     }
@@ -246,7 +247,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
-            token = address(new LaunchTokenV3(name, symbol, metaURI));
+            token = tokenDeployer.deployPlain(name, symbol, metaURI);
         } else {
             token = _createTaxed(name, symbol, metaURI, quote, tax);
         }
@@ -266,7 +267,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address quote,
         TaxConfig calldata tax
     ) internal returns (address token) {
-        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps, taxHandler, uri);
+        token = tokenDeployer.deployTax(name, symbol, tax.buyTaxBps, tax.sellTaxBps, taxHandler, uri);
         if (tax.dividendBps > 0) {
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);

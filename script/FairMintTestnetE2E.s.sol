@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FairMintTestnetRefs as T} from "../config/FairMintDeployRefs.sol";
-import {DividendVault} from "../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
@@ -70,7 +70,7 @@ contract FairMintTestnetE2E is Script {
         uint256 out = handler.process(token, (quoted * 99) / 100);
         vm.stopBroadcast();
 
-        DividendVault vault = DividendVault(address(pad.dividendVault()));
+        SharedDividendVault vault = pad.dividendVault();
         address m5 = _minterAddr(5);
         uint256 pend = vault.pending(token, m5);
         if (pend == 0) revert Check("no reward for minter 5");

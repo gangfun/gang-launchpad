@@ -21,9 +21,16 @@ contract LaunchTokenV3 is ERC20, TokenURI {
 
     event Unlocked();
 
-    constructor(string memory name_, string memory symbol_, string memory uri_) ERC20(name_, symbol_) TokenURI(uri_) {
-        launchpad = msg.sender;
-        _mint(msg.sender, TOTAL_SUPPLY);
+    error ZeroAddress();
+
+    /// @dev Deployed by TokenDeployer on the launchpad's behalf, so the launchpad is passed in (not msg.sender).
+    constructor(string memory name_, string memory symbol_, address launchpad_, string memory uri_)
+        ERC20(name_, symbol_)
+        TokenURI(uri_)
+    {
+        if (launchpad_ == address(0)) revert ZeroAddress();
+        launchpad = launchpad_;
+        _mint(launchpad_, TOTAL_SUPPLY);
     }
 
     /// @notice Permanently unlocks transfers (once). Called by the launchpad at graduation.
