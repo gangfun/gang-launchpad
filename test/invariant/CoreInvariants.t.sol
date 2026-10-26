@@ -12,9 +12,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
@@ -38,8 +36,7 @@ contract CoreSystem is Test {
 
     LaunchpadV3 public v3;
     DividendVault public v3Vault;
-    TaxRouterV3 public taxRouter;
-    PostGradTaxHandlerV3 public v3Handler;
+    TaxHandlerV3 public v3Handler;
 
     FairMintPad public fair;
     DividendVault public fairVault;
@@ -61,17 +58,13 @@ contract CoreSystem is Test {
         bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
 
         v3Vault = new DividendVault(owner);
-        taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
-        RecipientRegistry recipients = new RecipientRegistry(owner);
-        v3Handler = new PostGradTaxHandlerV3(owner, address(v3Vault), address(taxRouter));
+        v3Handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket));
         v3 = new LaunchpadV3(
             owner,
             address(registry),
             address(v3Vault),
             address(bucket),
             address(v3Handler),
-            address(taxRouter),
-            address(recipients),
             address(new TaxTokenDeployerV3()),
             address(wbnb),
             address(pairFactory)
@@ -97,17 +90,15 @@ contract CoreSystem is Test {
         registry.setQuote(address(quoteTok), true, 15 ether);
         registry.setQuote(address(blq), true, 15 ether);
         bucket.setOperator(address(v3), true);
-        bucket.setOperator(address(taxRouter), true);
+        bucket.setOperator(address(v3Handler), true);
         bucket.setOperator(address(fair), true);
         bucket.setOperator(address(fairHandler), true);
         v3Vault.setMinimumShareBalance(10_000 ether);
         v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
         v3Vault.setOperator(address(v3Handler), true);
-        taxRouter.setLaunchpad(address(v3));
-        taxRouter.setSource(address(v3Handler), true);
+        v3Handler.setLaunchpad(address(v3));
         v3Handler.setKeeper(keeper);
-        recipients.list(treasury, "partner treasury");
+        v3Handler.list(treasury, "partner treasury");
         v3.setAgentGate(true, address(agents));
         v3.setRouter(address(router), true);
         v3.setMigrator(address(v3Mig));
@@ -394,7 +385,7 @@ contract CoreHandler is CoreSystem {
     function v3Release(uint256 seed) external {
         calls++;
         if (v3Tokens.length == 0) return;
-        try taxRouter.release(_v3(seed)) {} catch {}
+        try v3Handler.release(_v3(seed)) {} catch {}
     }
 
     function _afterV3(address t) internal {
@@ -403,7 +394,7 @@ contract CoreHandler is CoreSystem {
             v3Graduations++;
             _track(pair);
         }
-        if (taxRouter.owedOf(t) > 0) owedEvents++;
+        if (v3Handler.owedOf(t) > 0) owedEvents++;
     }
 
     // ================================================================ 打新 actions
@@ -660,9 +651,10 @@ contract CoreInvariantsTest is Test {
         }
     }
 
-    /// @dev #9: per quote, TaxRouterV3 holds at least everything it owes.
+    /// @dev #9: per quote, TaxHandlerV3 holds at least everything it owes, and its running total (what `process`
+    ///      keeps back from a sale) is exactly Σ owedOf.
     function invariant_v3OwedBacked() public view {
-        TaxRouterV3 r = h.taxRouter();
+        TaxHandlerV3 r = h.v3Handler();
         address[3] memory qs = _quotes();
         for (uint256 k = 0; k < 3; k++) {
             uint256 owed;
@@ -671,7 +663,8 @@ contract CoreInvariantsTest is Test {
                 (address q,,) = r.routeOf(t);
                 if (q == qs[k]) owed += r.owedOf(t);
             }
-            assertGe(IERC20(qs[k]).balanceOf(address(r)), owed, "router quote >= owed");
+            assertGe(IERC20(qs[k]).balanceOf(address(r)), owed, "handler quote >= owed");
+            assertEq(r.owedTotalOf(qs[k]), owed, "owedTotalOf == sum of owedOf");
         }
     }
 

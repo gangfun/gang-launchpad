@@ -9,7 +9,7 @@ interface ILaunchpadV3 {
     /// @param sellTaxBps  Tax on sells, curve and pool, same bounds.
     /// @param dividendBps Share of each tax after the platform's 0.5% of volume that goes to holder dividends
     ///                    (0–10_000). The rest goes to `recipient`.
-    /// @param recipient   RecipientRegistry-listed address paid in quote (e.g. a project vault). Fixed for the token's
+    /// @param recipient   TaxHandlerV3-listed address paid in quote (e.g. a project vault). Fixed for the token's
     ///                    life. May be 0 only when dividendBps is 10_000.
     struct TaxConfig {
         uint16 buyTaxBps;

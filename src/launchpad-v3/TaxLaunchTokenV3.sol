@@ -9,7 +9,7 @@ import {TokenURI} from "./TokenURI.sol";
 /// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
 ///         are chosen at create, one for buys and one for sells (immutable for the token's life).
 /// @dev Bonding-phase tax is taken by LaunchpadV3 on quote, never here.
-///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → PostGradTaxHandlerV3 (accrue
+///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → TaxHandlerV3 (accrue
 ///      only; keeper sells later — V2 Finding 2).
 ///      Every transfer syncs dividend shares (V2 Finding 3); the handler ignores tokens without dividends.
 ///      The launchpad's power is fixed and one-shot (2026-10-26): the handler is set at construction, graduation
