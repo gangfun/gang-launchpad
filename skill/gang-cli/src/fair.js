@@ -6,8 +6,9 @@ import { API } from './discover.js'
 import { UA } from './version.js'
 
 /**
- * `gang fair …` — 打新 (fair mint): fixed price per share, the last share launches the token on PancakeSwap at the
- * mint price; unfilled at the deadline → full refund. Contracts: gang-launchpad src/fair-mint.
+ * `gang fair …` — 打新 (fair mint): one fixed price per share both ways (mint buys at it, withdraw sells back at it);
+ * the last share launches the token on PancakeSwap at that price. No deadline, no refund: a sale stays open until it
+ * fills. Contracts: gang-launchpad src/fair-mint.
  * Only on BSC testnet for now (--testnet); mainnet answers "not deployed" until there is a pad.
  */
 export const FAIR_NETS = {
@@ -26,34 +27,34 @@ export const FAIR_NETS = {
 }
 
 const PAD_ABI = parseAbi([
-  'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
+  'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
   'function withdraw(address token, uint256 shares) returns (uint256)',
-  'function refund(address token) returns (uint256)',
-  'function sales(address token) view returns (address creator, uint64 deadline, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, bool failed, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, uint128 escrowedFee, address pair, address refPool)',
-  'function positions(address token, address user) view returns (uint16 shares, uint128 feePaid)',
+  'function sales(address token) view returns (address creator, uint64 lastMintAt, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, address pair, address refPool)',
+  'function positions(address token, address user) view returns (uint16 shares)',
+  'function previewWithdraw(address token, address user, uint256 shares) view returns (uint256 payout, uint256 fee)',
+  'function exitFeeBpsOf(address token) view returns (uint256)',
+  'function STALE_AFTER() view returns (uint256)',
   'function status(address token) view returns (uint8)',
   'function previewMint(address token, address user, uint256 shares) view returns (uint256 accepted, uint256 cost, uint256 fee)',
   'function previewCreate(address quote, address refPool, uint256 raiseBnb) view returns (uint256 raiseQuote, uint256 sharePrice)',
-  'function checkConfig((uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) pure returns (bool ok, string reason)',
+  'function checkConfig((uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) pure returns (bool ok, string reason)',
   'function taxHandler() view returns (address)',
   'function dividendVault() view returns (address)',
   'function agentIdRegistry() view returns (address)',
   'function agentGateEnabled() view returns (bool)',
   'function TOKENS_PER_SHARE() view returns (uint256)',
   'function TOTAL_SHARES() view returns (uint256)',
-  'error BadConfig(string reason)', 'error UnknownToken()', 'error NotMinting()', 'error NotFailed()', 'error ZeroAmount()',
-  'error BadAmount()', 'error Slippage()', 'error WalletCapReached()', 'error NothingToRefund()', 'error NotAgent()',
+  'error BadConfig(string reason)', 'error UnknownToken()', 'error NotMinting()', 'error ZeroAmount()',
+  'error BadAmount()', 'error Slippage()', 'error WalletCapReached()', 'error NotAgent()', 'error OutOfGas()',
   'error MigratorNotSet()', 'error ZeroAddress()', 'error RefPoolRequired()', 'error NoBridgePool()', 'error BridgeNotWbnb()',
   'error PriceTooSmall()', 'error FeeOnTransferQuote()', 'error VaultFloorTooHigh()', 'error QuoteNotAllowed()',
   'error RouterNeedsGate()',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error GradAmtZero()',
-  'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 deadline, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)',
+  'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)',
   'event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)',
-  'event Withdrawn(address indexed token, address indexed user, uint256 shares, uint256 refund, uint256 fee, uint256 userShares, uint256 sold)',
-  'event Launched(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount, uint256 feeToPlatform)',
-  'event Failed(address indexed token, uint256 sold)',
-  'event Refunded(address indexed token, address indexed user, uint256 amount)',
+  'event Withdrawn(address indexed token, address indexed user, uint256 shares, uint256 payout, uint256 fee, uint256 userShares, uint256 sold)',
+  'event Launched(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)',
 ])
 const HANDLER_ABI = parseAbi([
   'function isOut(address token, address user) view returns (bool)',
@@ -71,16 +72,14 @@ const ERC20_ABI = parseAbi([
 ])
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
 
-const STATUS = ['none', 'minting', 'launched', 'failed']
+const STATUS = ['none', 'minting', 'launched']
 // what to tell the agent for each pad error
 const HINTS = {
   BadConfig: 'a rule is out of bounds: see reason',
   NotAgent: 'this wallet holds no Agent ID; fair mint is Agent-only',
-  NotMinting: 'the sale is not open: it already launched, or its deadline passed (then `gang fair refund`)',
-  NotFailed: 'refund only opens after the deadline of a sale that did not fill',
+  NotMinting: 'the sale already launched: trade the token on PancakeSwap',
   WalletCapReached: 'this wallet already holds the per-wallet cap of shares',
   Slippage: 'fewer shares are left than --min-shares (someone filled first)',
-  NothingToRefund: 'this wallet has no shares in this sale',
   BadAmount: '--shares is more than this wallet holds in the sale',
   FeeOnTransferQuote: 'the quote token takes a fee on transfer; it cannot be used',
   RefPoolRequired: 'this quote needs --ref-pool (a Pancake pool pricing it)',
@@ -124,15 +123,24 @@ async function dryRun(ctx, from, to, data, value = 0n) {
 export async function saleOf(ctx, token) {
   const s = await ctx.read(ctx.pad, PAD_ABI, 'sales', [token])
   if (s[0] === zeroAddress) return null
-  const [creator, deadline, capShares, holdBps, quote, sold, launched, failed, mintFeeBps, exitFeeBps, gate, sharePrice, , pair] = s
-  const status = STATUS[Number(await ctx.read(ctx.pad, PAD_ABI, 'status', [token]))]
+  const [creator, lastMintAt, capShares, holdBps, quote, sold, launched, mintFeeBps, exitFeeBps, gate, sharePrice, pair] = s
+  const [st, exitNowBps, staleAfter] = await Promise.all([
+    ctx.read(ctx.pad, PAD_ABI, 'status', [token]), ctx.read(ctx.pad, PAD_ABI, 'exitFeeBpsOf', [token]),
+    ctx.read(ctx.pad, PAD_ABI, 'STALE_AFTER'),
+  ])
+  const status = STATUS[Number(st)]
+  const left = 10_000 - Number(sold)
   return {
     token, status, creator, quote, quoteSymbol: await symbolOf(ctx, quote), gate,
-    deadline: Number(deadline), deadlineIso: new Date(Number(deadline) * 1000).toISOString(),
-    secondsLeft: status === 'minting' ? Math.max(0, Number(deadline) - Math.floor(Date.now() / 1000)) : 0,
     capShares: Number(capShares), holdPct: Number(holdBps) / 100, sold: Number(sold), totalShares: 10_000,
-    mintFeePct: Number(mintFeeBps) / 100, exitFeePct: Number(exitFeeBps) / 100, exitFeeBps: Number(exitFeeBps),
-    sharePriceRaw: sharePrice, sharePrice: await units(ctx, quote, sharePrice), launched, failed,
+    // no deadline: what a fill still needs, and how long until withdraws stop paying the exit fee
+    sharesLeft: left, minWalletsLeft: Math.ceil(left / Number(capShares)),
+    lastMintAt: Number(lastMintAt), lastMintIso: new Date(Number(lastMintAt) * 1000).toISOString(),
+    stale: !launched && Number(exitNowBps) === 0,
+    exitFeeFreeIn: launched ? 0 : Math.max(0, Number(lastMintAt) + Number(staleAfter) - Math.floor(Date.now() / 1000)),
+    mintFeePct: Number(mintFeeBps) / 100, exitFeePct: Number(exitFeeBps) / 100, exitFeeNowPct: Number(exitNowBps) / 100,
+    exitFeeBps: Number(exitFeeBps),
+    sharePriceRaw: sharePrice, sharePrice: await units(ctx, quote, sharePrice), launched,
     pair: pair === zeroAddress ? null : pair,
   }
 }
@@ -149,11 +157,13 @@ const tokenArg = (opt, fail) => {
 
 /** Live position of `me` in a sale (reward fields once launched). */
 async function positionOf(ctx, token, me, sale) {
-  const [shares, feePaid] = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
+  const shares = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
   const tps = await ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE')
   const baseline = BigInt(shares) * tps
-  const pos = {
-    shares: Number(shares), mintFeePaid: await units(ctx, sale.quote, feePaid), baselineTokens: formatUnits(baseline, 18),
+  const pos = { shares: Number(shares), baselineTokens: formatUnits(baseline, 18) }
+  if (!sale.launched && shares) {
+    const [payout] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
+    pos.sellBackAll = await units(ctx, sale.quote, payout) // what `gang fair withdraw --all` pays now
   }
   if (!sale.launched || !shares) return pos
   const [handler, vault] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), ctx.read(ctx.pad, PAD_ABI, 'dividendVault')])
@@ -181,8 +191,8 @@ async function positionOf(ctx, token, me, sale) {
  * Entry for `gang fair <sub>`. io: { args, opt, flag, out, fail, summarize } from index.js
  * (summarize = summarizePreview, so previews look like every other command's).
  */
-const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'refund', 'claim', 'tx']
-const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|refund|claim|tx> [--testnet] — see gang help'
+const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'claim', 'tx']
+const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|claim|tx> [--testnet] — see gang help'
 
 export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
@@ -192,13 +202,14 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   const rawOnly = flag('calldata')
   if (sub === 'list') {
     const status = opt('status', 'minting')
-    if (!['minting', 'launched', 'failed', 'all'].includes(status)) fail('--status must be minting, launched, failed or all')
+    if (!['minting', 'launched', 'all'].includes(status)) fail('--status must be minting, launched or all')
     const r = await fetch(`${API}/fair/sales?status=${status}&limit=30`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(10_000) })
       .then((x) => (x.ok ? x.json() : { error: x.status })).catch((e) => ({ error: e.message }))
     if (r.error) return out({ success: false, error: `gang.fun fair list unavailable (${r.error})`, hint: `use gang fair info --token <addr>${testnet ? ' --testnet' : ''} for one sale` })
     return out({ success: true, status, items: (r.items || []).map((x) => ({
       token: x.address, symbol: x.symbol, status: x.status, sold: x.sold, participants: x.participants,
-      sharePrice: x.sharePrice && formatUnits(BigInt(x.sharePrice), 18), quote: x.quoteSymbol, deadline: x.deadline, chainId: x.chainId,
+      sharePrice: x.sharePrice && formatUnits(BigInt(x.sharePrice), 18), quote: x.quoteSymbol, chainId: x.chainId,
+      sharesLeft: x.sharesLeft ?? null, minWalletsLeft: x.minWalletsLeft ?? null, lastMintAt: x.lastMintAt ?? null, stale: x.stale ?? null,
       link: `https://gang.fun/mint/${x.address}`,
     })) })
   }
@@ -221,17 +232,17 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!name || !symbol) fail('--name and --symbol are required')
     checkMeta() // a bad --website / --twitter / --description fails here, before any wrap / approve round or upload
     const raise = parseNum(fail, 'raise', opt('raise', '15'), 5, 50)
-    const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.1, 0.5)
-    const hours = parseNum(fail, 'hours', opt('hours', '24'), 1, 72)
+    if (flag('hours')) fail('--hours was removed: a fair-mint sale has no deadline and stays open until it fills')
+    const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.25, 0.5)
     const holdPct = parseNum(fail, 'hold', opt('hold', '50'), 30, 80)
-    const mintFeePct = parseNum(fail, 'mint-fee', opt('mint-fee', '1'), 1, 5)
-    const exitFeePct = parseNum(fail, 'exit-fee', opt('exit-fee', '1'), 1, 5)
+    const mintFeePct = parseNum(fail, 'mint-fee', opt('mint-fee', '1'), 1, 3)
+    const exitFeePct = parseNum(fail, 'exit-fee', opt('exit-fee', '1'), 1, 2)
     const devShares = parseIntIn(fail, 'shares', opt('shares', '1'), 1, Math.round(capPct * 200))
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
     const refPool = flag('ref-pool') ? opt('ref-pool') : zeroAddress
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
     const cfg = {
-      raiseBnb: parseEther(String(raise)), capBps: Math.round(capPct * 100), duration: Math.round(hours * 3600),
+      raiseBnb: parseEther(String(raise)), capBps: Math.round(capPct * 100),
       holdBps: Math.round(holdPct * 100), mintFeeBps: Math.round(mintFeePct * 100), exitFeeBps: Math.round(exitFeePct * 100),
     }
     const [ok, reason] = await ctx.read(ctx.pad, PAD_ABI, 'checkConfig', [cfg, BigInt(devShares)])
@@ -262,8 +273,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata, quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
-      capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, mintFeePct, exitFeePct, devShares,
+      capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), holdPct, mintFeePct, exitFeePct, devShares,
       devCost: await units(ctx, quote, need),
+      note: 'no deadline: the sale stays open until all 10,000 shares are minted, then launches. Minters can sell shares back at the mint price (minus the exit fee; none once no one has minted for 7 days). The mint fee is the platform\'s and is not returned.',
     }, rawOnly, summarize))
   }
 
@@ -272,7 +284,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const want = parseIntIn(fail, 'shares', opt('shares'), 1, 10_000)
     const sale = await saleOf(ctx, token)
     if (!sale) return fail('not a fair-mint sale on this pad', { token })
-    if (sale.status !== 'minting') return fail(`sale is ${sale.status}, not minting`, { hint: sale.status === 'failed' ? `gang fair refund --token ${token}${testnet ? ' --testnet' : ''}` : undefined })
+    if (sale.status !== 'minting') return fail(`sale is ${sale.status}, not minting`, { hint: 'it launched: trade the token on PancakeSwap' })
     const me = walletFor(ctx, opt('from'))
     if (sale.gate !== zeroAddress && (await ctx.read(sale.gate, ERC721_ABI, 'balanceOf', [me])) === 0n) {
       return fail('this wallet holds no Agent ID; fair mint is Agent-only', { wallet: me })
@@ -286,6 +298,8 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
       cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
       soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
+      ...(!fills && { minWalletsLeftAfter: Math.ceil((10_000 - sale.sold - Number(accepted)) / sale.capShares) }),
+      note: `the ${sale.mintFeePct}% mint fee goes to the platform and is not returned; selling back later pays the mint price minus the exit fee`,
     }
     // WBNB sale: pay native BNB through the router in one tx (it wraps; the position is still this wallet's)
     if (viaRouter(ctx, sale.quote, flag)) {
@@ -314,35 +328,20 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!sale) return fail('not a fair-mint sale on this pad', { token })
     if (sale.status !== 'minting') return fail(`sale is ${sale.status}: withdraw only while minting`)
     const me = walletFor(ctx, opt('from'))
-    const [held] = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
+    const held = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
     if (!held) return fail('this wallet has no shares in this sale')
     const shares = flag('all') ? Number(held) : parseIntIn(fail, 'shares', opt('shares'), 1, Number(held))
-    const principal = sale.sharePriceRaw * BigInt(shares)
+    const [payout, fee] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
     const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'withdraw', args: [token, BigInt(shares)] })
     const dry = await dryRun(ctx, me, ctx.pad, data)
     if (dry) return out({ success: false, step: 'withdraw', ...dry })
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'withdraw', chainId: Number(ctx.chainId), token, shares,
-      receive: await units(ctx, sale.quote, principal - (principal * BigInt(sale.exitFeeBps)) / 10_000n), quote: sale.quoteSymbol,
-      exitFeePct: sale.exitFeePct,
-      note: `principal − ${sale.exitFeePct}% exit fee; the ${sale.mintFeePct}% paid at mint is not returned`,
-    }, rawOnly, summarize))
-  }
-
-  if (sub === 'refund') {
-    const token = tokenArg(opt, fail)
-    const sale = await saleOf(ctx, token)
-    if (!sale) return fail('not a fair-mint sale on this pad', { token })
-    if (sale.status !== 'failed') return fail(`sale is ${sale.status}: refund opens after a deadline passes without a fill`)
-    const me = walletFor(ctx, opt('from'))
-    const [held, feePaid] = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
-    if (!held) return fail('this wallet has nothing to refund in this sale')
-    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'refund', args: [token] })
-    const dry = await dryRun(ctx, me, ctx.pad, data)
-    if (dry) return out({ success: false, step: 'refund', ...dry })
-    return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'refund', chainId: Number(ctx.chainId), token, shares: Number(held),
-      receive: await units(ctx, sale.quote, sale.sharePriceRaw * BigInt(held) + feePaid), quote: sale.quoteSymbol,
+      receive: await units(ctx, sale.quote, payout), exitFee: await units(ctx, sale.quote, fee), quote: sale.quoteSymbol,
+      exitFeePct: sale.exitFeeNowPct,
+      note: sale.stale
+        ? `no mint for 7 days: no exit fee, the full mint price back; the ${sale.mintFeePct}% paid at mint is not returned`
+        : `mint price − ${sale.exitFeeNowPct}% exit fee (none once no one has minted for 7 days); the ${sale.mintFeePct}% paid at mint is not returned`,
     }, rawOnly, summarize))
   }
 

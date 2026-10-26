@@ -184,22 +184,21 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --website / --twitter (optional) go into the create tx, shown on gang.fun; permanent
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
-  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1]
+  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1]
                  [--shares 1] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle] [--description <text>]
-                                         打新 (fair mint): one price per share, the last share launches on PancakeSwap at that
-                                         price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
-                                         wallet, 1–72h, hold line 30–80%, mint / withdraw fee 1–5% each (e.g. --mint-fee 1 --exit-fee 2).
+                                         打新 (fair mint): one price per share both ways, the last share launches on PancakeSwap at
+                                         that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–0.5% of
+                                         supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days with no mint).
                                          Wraps / approves first when needed (re-run after each)
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
   gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
-                                         + the sale's mint fee, refunded if the sale fails; WBNB sales pay native BNB
+                                         + the sale's mint fee (the platform's, not returned); WBNB sales pay native BNB
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
-  gang fair withdraw --token <addr> (--shares <n> | --all)           before fill / deadline: principal − the sale's exit fee
-  gang fair refund --token <addr>        after a deadline without a fill: principal + mint fee
+  gang fair withdraw --token <addr> (--shares <n> | --all)           sell back before it fills: mint price − exit fee (none once stale)
   gang fair status --token <addr>        my shares; after launch: reward on / out, how much I can sell and stay in, to claim
   gang fair claim --token <addr>         claim the holder reward
-  gang fair info --token <addr> | gang fair list [--status minting|launched|failed|all] | gang fair tx --hash <0x..>
+  gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
                                          fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
