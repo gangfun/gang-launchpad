@@ -3,7 +3,7 @@
 > **2026-10-27 更新（合约合并 + 外盘税新逻辑，以本条为准，下文已按此改写）**：
 > - **共用合约**：分红合约、迁移合约、代币部署合约和 V3 共用一份（`SharedDividendVault`、`SharedMigrator`、`TokenDeployer`），不再每个核心各一份 V2 的 DividendVault / MigratorV2 / FairTokenDeployer。HolderRewardHandler 和 V3 的 TaxHandlerV3 共用基类 `PostGradHandlerBase`。
 > - **报价币**：WBNB 或任意 18 位 ERC-20，不设白名单；转账扣费的币和本平台发射的币拒收；募集额按 QuoteRegistry 的固定换算额（可选）或发币人自选的参考池换算。主网 USDT 用 Pancake V3 USDT/WBNB 0.01% 池。参考池现价可被闪电贷拉偏的风险按产品决定接受（审计说明 K-1）。
-> - **发射后的 1% 税**：不再由 keeper 一次卖光。每笔卖出顺带把攒下的税卖一小块（≤ 池子代币储备 0.5%、≤ 这笔卖单的 25%、每区块一次）并当场分配；没有卖单时 keeper `process(token, amount, minQuoteOut)` 分块补位。持有人那一半在交税那一刻就按当时的份额记到名下，这一批税卖完后兑现成报价币。
+> - **发射后的 1% 税**：不再由 keeper 一次卖光。每笔卖出顺带把攒下的税卖一小块（≤ 这笔卖单的 25%；和 keeper 共用每个币每区块一个额度——池子代币储备的 0.5%；比区块参考价低 2% 以上不卖）并当场分配；没有卖单时 keeper `process(token, amount, minQuoteOut)` 分块补位。持有人那一半在交税那一刻就按当时的份额记到名下，这一批税卖完后兑现成报价币。
 > - **卖回**：`withdraw(token, shares, minPayout)`，到手低于 `minPayout` 回滚（防止被抢先一笔打新重启 7 天计时、把撤出费带回来）。
 > - **owner 权限**：换币路由在构造时传入，之后改要提议后等 48 小时；分红合约的 operator 每个核心只能绑定一次；分红门槛在币登记时快照。
 > - 见 `docs/AUDIT-BRIEF-2026-10-26.md` §15、§16。
@@ -97,7 +97,7 @@ dev 设好募集额和单地址上限，所有人按**同一个价格**一份一
 | 平台（PlatformFeeBucket → 80% 回购 GANG / 20% feeVault） | 50%（= 成交额 0.5%） | 与 V2 有税轨外盘相同 |
 
 - 税先以代币累计在 HolderRewardHandler。持有人那一半在交税那一刻按当时的合格份额记成税币单位（交易前的份额：卖家按卖出前的份额分到自己这笔卖出的税，买家分不到自己这笔买入的税）。
-- 每笔卖出进池子之前，代币让 handler 先卖一块攒下的税（≤ 池子代币储备 0.5%、≤ 这笔卖单的 25%、每区块一次）；没有卖单时 keeper `process(token, amount, minQuoteOut)` 分块卖。换回的报价币 50% 兑现给记了单位的持有人、50% 进平台。卖出那一块失败不影响用户这笔卖出。
+- 每笔卖出进池子之前，代币让 handler 先卖一块攒下的税（≤ 这笔卖单的 25%；和 keeper 共用每个币每区块一个额度——池子代币储备的 0.5%；比区块参考价低 2% 以上不卖）；没有卖单时 keeper `process(token, amount, minQuoteOut)` 分块卖。换回的报价币 50% 兑现给记了单位的持有人、50% 进平台。卖出那一块失败不影响用户这笔卖出。
 - 分红合约或 bucket 拒收时，这一块照常卖出：持有人那份先留在 handler（`flushHolders` 补兑现），平台那份记 `owedPlatformOf`（`flushPlatform` 补交），任何人都能调。
 - **合格地址一个都不剩时**，奖励那一半也归平台，不卡在分红合约里。
 
@@ -279,7 +279,7 @@ else:                                         share = min(balance, base)
 | `src/fair-mint/FairToken.sol` | 代币（发射前锁转账、发射台可收回；发射后池子买卖 1% 税，卖出时调 `swapBack`）；由共用的 `TokenDeployer` 部署 |
 | `src/fair-mint/HolderRewardHandler.sol` | 发射后 1% 税：交税时按份额记账、卖出时分块卖（keeper 补位），50% 给合格持有人 / 50% 平台；出局判断；分红合约出错不卡转账 |
 | `src/common/*` | 与 V3 共用：`PostGradHandlerBase`、`SharedDividendVault`、`SharedMigrator`、`TokenDeployer` |
-| `test/fair-mint/FairSwapBack.t.sol` | 卖出时自动换、每区块一次、零头不触发、失败不影响卖出、`previewSell`、按交税时记账、bucket / 分红合约拒收、按估算 gas 执行 |
+| `test/fair-mint/FairSwapBack.t.sol` | 卖出时自动换、每区块额度、零头不触发、失败不影响卖出、`previewSell`、按交税时记账、bucket / 分红合约拒收、按估算 gas 执行 |
 | `test/fair-mint/FlowReviewFixes.t.sol` | `minPayout`、operator 只能绑一次、门槛按币快照、换币路由时间锁 |
 | `test/fair-mint/FairMint.t.sol` | 33 个用例：上下限、报价币换算、打新上限与截断、卖回、打新费当笔进平台、7 天免撤出费、没有截止时间、发射价格、池子被提前建好、奖励权重 / 出局 / 上限、分账、权限、分红合约出错后的补救 |
 | `test/fair-mint/FairMintAudit.t.sol` | 8 个内部审计回归：含计时要净增份数才重启（R3-1）、bucket 拒收不卡卖回（R3-2）、金库拒写发 `ShareWriteFailed`（R3-3） |
@@ -351,7 +351,7 @@ forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast -
 7. 权限：owner 在打新中改任何设置都不影响该币的上限 / 准入 / 手续费；没有任何路径能把托管资金转给 owner，也不能冻结卖回。
 8. 最后一笔：截断后只拉成交部分；低于 `minShares` revert；建池失败时整笔回滚，币保持打新中。
 9. fork 测试：真实 Pancake 池子、USDT 类报价币、卖出时自动换与 keeper 分块 `process`（已完成，`FairMintFork.t.sol`）。
-10. 卖出时自动换：每块上限、每区块一次、零头不触发、失败不影响卖出、`previewSell` 准确、按估算 gas 执行；按交税时记账：交税之后买入的分不到、之后卖掉的照样能领；分红合约 / bucket 拒收时照常卖出并可补（已完成，`FairSwapBack.t.sol`、`test/common/TaxTimeDividends.t.sol`）。
+10. 卖出时自动换：每区块额度、区块参考价、零头不触发、失败不影响卖出、`previewSell` 准确、按估算 gas 执行；按交税时记账：交税之后买入的分不到、之后卖掉的照样能领；分红合约 / bucket 拒收时照常卖出并可补（已完成，`FairSwapBack.t.sol`、`test/common/TaxTimeDividends.t.sol`）。
 
 ---
 

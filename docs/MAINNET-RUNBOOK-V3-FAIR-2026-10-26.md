@@ -50,14 +50,15 @@ L="--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4f
 G="--with-gas-price <当时主网 gas price，wei> --priority-gas-price <同上>"   # 必须显式给：公共节点偶尔估出 1 wei，交易会卡住
 R=https://bsc-dataseed1.defibit.io
 
-# 1) V3：新建五个共用合约（QuoteRegistry、PlatformFeeBucket、SharedDividendVault、SharedMigrator、TokenDeployer），
+# 1) V3：新建五个共用合约（QuoteRegistry、SharedPlatformFeeBucket、SharedDividendVault、SharedMigrator、TokenDeployer），
 #    再建 TaxHandlerV3 + LaunchpadV3，接线，最后 setMigrator
 LAUNCHPAD_V3_MAINNET_OK=true forge script script/DeployLaunchpadV3.s.sol --rpc-url $R --broadcast --slow $L $G
 #    日志里记下：V3_LAUNCHPAD、V3_TAX_HANDLER、QUOTE_REGISTRY、PLATFORM_BUCKET、DIVIDEND_VAULT、MIGRATOR、
 #    TOKEN_DEPLOYER、AGENT_ID、USDT_REF_POOL，以及 V3_LAUNCHPAD 的部署区块
 
-# 2) 打新：五个共用合约全部复用上一步的（少传一个就会另外新建一份，两个核心就不共用了）
-QUOTE_REGISTRY=0x… PLATFORM_BUCKET=0x… DIVIDEND_VAULT=0x… MIGRATOR=0x… TOKEN_DEPLOYER=0x… \
+# 2) 打新：五个共用合约全部复用上一步的，外加 PEER_CORE=第一步的 V3_LAUNCHPAD（脚本要求五个要么全传要么全不传，
+#    只传一部分直接回滚 PartialShared；PEER_CORE 用来核对 V3 核心挂在同一套分红 / 迁移 / 部署合约上）
+QUOTE_REGISTRY=0x… PLATFORM_BUCKET=0x… DIVIDEND_VAULT=0x… MIGRATOR=0x… TOKEN_DEPLOYER=0x… PEER_CORE=0x… \
 FAIR_MINT_MAINNET_OK=true forge script script/DeployFairMint.s.sol --rpc-url $R --broadcast --slow $L $G
 #    记下：FAIR_MINT_PAD、HOLDER_REWARD_HANDLER，以及 FAIR_MINT_PAD 的部署区块
 
@@ -115,7 +116,7 @@ c $V3_LAUNCHPAD "agentIdRegistry()(address)"   # 0x60B9…022F（真实 Agent ID
 | 3 | FairMintPad | `FAIR_MINT_PAD` | 路由名单、准入（只影响之后的 sale）、参考池相关设置 |
 | 4 | HolderRewardHandler | `HOLDER_REWARD_HANDLER` | keeper、换币路由（48 小时时间锁） |
 | 5 | QuoteRegistry（共用） | `QUOTE_REGISTRY` | 给某个报价币设固定换算额（可选；设了就优先于参考池） |
-| 6 | PlatformFeeBucket（共用） | `PLATFORM_BUCKET` | operator、金库、回购合约、keeper、7 天应急出口 |
+| 6 | SharedPlatformFeeBucket（共用） | `PLATFORM_BUCKET` | operator、金库、回购合约、keeper（换人要 `proposeKeeper` → 48 小时 → `acceptKeeper`）、7 天应急出口；只有固定路径的 `collectPlatform`，没有 `collectPlatformSmart` |
 | 7 | SharedDividendVault（共用） | `DIVIDEND_VAULT` | 核心白名单（移除只停新登记）、排除地址、新币的门槛；operator 已绑定，不能再改 |
 | 8 | SharedMigrator（共用） | `MIGRATOR` | 只能再加核心，不能移除 |
 | 9 | TokenDeployer（共用） | `TOKEN_DEPLOYER` | 能部署代币的核心名单 |
@@ -145,7 +146,7 @@ GANG_V3_RPC_URLS=<§0 #5 的 RPC>
 
 重启索引服务后检查：
 - `/fair/config`、`/v3/config` 返回 `enabled: true`，地址和区块与上面一致，`contracts` 里有 `taxHandler`、`vault`。
-- `/burn` 列出了新的 PlatformFeeBucket（索引器从两个核心的 `platformBucket()` 自动发现）。
+- `/burn` 列出了新的 SharedPlatformFeeBucket（索引器从两个核心的 `platformBucket()` 自动发现）。
 - `/health?strict=1` 返回 200（健康检查会轮询它）。
 
 网站上「打新」「税收币」入口由这两个接口决定，不用另外改前端。
@@ -168,7 +169,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 
 - `TAX_HANDLERS` / `TAX_ROUTERS` 留空：两个核心的处理合约会自动接上（TaxHandlerV3 同时负责外盘税和接收地址欠款补发）。
 - 三个列表全空时 `keeper-tax-process.sh` 以 7 退出并报警；只有确实不该跑的机器才设 `TAX_PROCESS_DISABLED=1`。
-- 平台费：`keeper-v2-platform.sh` 会从两个核心读出新的 PlatformFeeBucket、从索引器取报价币清单，不用往 `PLATFORM_BUCKETS` 里手填。V2 那三个分账合约照旧在默认清单里（V2 的分红 / 存量税按用户决定不处理，脚本不会对 V2 币调 `process`）。
+- 平台费：`keeper-v2-platform.sh` 会从两个核心读出新的 SharedPlatformFeeBucket、从索引器取报价币清单，不用往 `PLATFORM_BUCKETS` 里手填；它只调固定路径的 `collectPlatform`（新手续费池没有 `collectPlatformSmart`）。V2 那三个分账合约照旧在默认清单里（V2 的分红 / 存量税按用户决定不处理，脚本不会对 V2 币调 `process`）。
 - crontab 用仓库里的 `keeper/crontab.txt`：所有任务都经 `cron-run.sh` 包一层（非零退出就报警）；外盘税 `*/10 * * * *`；健康检查 `keeper-health.sh` 每 30 分钟。
 - keeper 地址必须等于两个 handler 和新手续费池的 `keeper()`（部署脚本已按 `KEEPER` 设好）。
 - 后续建议：发交易单独用私有 RPC（`BSC_RPC_URL`），读和查日志用 `LOGS_RPC`，降低分块卖出被夹的风险。
@@ -209,7 +210,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 
 | 事项 | 什么时候 | 怎么做 |
 |---|---|---|
-| 外盘税 | 自动 | 每笔卖出顺带卖一小块（≤ 池子代币储备 0.5%、≤ 这笔卖单的 25%、每区块一次）；没有卖单时 keeper 每 10 分钟分块补位。健康检查在未卖税 > 池子代币储备 1% 时报警 |
+| 外盘税 | 自动 | 每笔卖出顺带卖一小块（≤ 这笔卖单的 25%）；没有卖单时 keeper 每 10 分钟分块补位。每个币每区块一个额度（池子代币储备的 0.5%），卖出和 keeper 共用，所以同一区块里第二次 `process` 会回滚 `ZeroAmount`，价格比区块参考价低 2% 以上会回滚 `PriceBelowReference`——都是等下一个区块再卖，不是故障。健康检查在未卖税 > 池子代币储备 1% 时报警 |
 | 分红兑现被拒（`HolderConversionDeferred`） | 健康检查报「pendingHolderQuote 卡住」 | 说明分红合约当时拒绝兑现。查清原因后任何人调 `handler.flushHolders(token)`；keeper 每次运行也会自动重试 |
 | 平台那份被拒（`PlatformOwed`） | 健康检查报「owedPlatformOf 卡住」 | 说明手续费池拒收（operator 被撤等）。恢复后任何人调 `handler.flushPlatform(quote)`；keeper 自动重试 |
 | `SwapBackFailed` | 健康检查报警 | 某个币卖单顺带的那一块失败了（卖单本身照常成交）。查池子状态（储备 / 余额不同步、报价币异常）；keeper 分块补位照常进行 |
@@ -218,7 +219,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 | 非官方池子分红 | 发现某个 V3 币在别的 DEX 或 V3 池子里有大额持仓 | 多签 `SharedDividendVault.setExcluded(pool, true)`，**同一批交易里** `TaxHandlerV3.syncShares(token, pool, 0)` |
 | 排除某个地址（G-01） | 需要时 | 同上：排除和 `syncShares(token, user, 0)` 放在同一批 |
 | 打新撤出费欠款 | `FairMintPad.owedFee(报价币) > 0`（健康检查报警） | 说明手续费池拒收过核心。恢复后任何人 `flushFees(quote)` |
-| 打新卖回时分红合约拒写 | 出现 `ShareWriteFailed`（核心或 handler 发出） | 份额会在下次同步时纠正；发射后 keeper 对这些地址调 `syncShares` |
+| 打新卖回时分红合约拒写 | 出现 `ShareWriteFailed`（核心或 handler 发出；按发出事件的合约过滤——任何人都能让 TaxHandlerV3 对打新币发出这个事件） | 份额会在下次同步时纠正；发射后 keeper 对这些地址调 `syncShares` |
 | 改换币路由 | 需要时 | 多签 `proposeDexRouter(新路由)`，48 小时后 `acceptDexRouter()`；期间可 `cancelDexRouter()`；`address(0)` = 直接对池子卖 |
 | 停滞的 sale | 网站「停滞」标记（7 天新增不到 10 份） | 无需处理：卖回免撤出费，任何人仍可把它打满 |
 
@@ -237,8 +238,8 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 | 合约本身有漏洞 | 重新部署修复版，网站和 CLI 切到新地址；旧合约里的钱只能等用户按原规则自己取回 | 已经在旧合约里的资金无法迁移 |
 
 不要做的事：
-- 撤掉核心在 PlatformFeeBucket 的 operator：V3 内盘买卖、打新的打新和发射会全部 revert（审计说明 A-1）；打新卖回不受影响（撤出费记为 `owedFee`），外盘税照常卖出（平台那份记为 `owedPlatformOf`）。
+- 撤掉核心在 SharedPlatformFeeBucket 的 operator：V3 内盘买卖、打新的打新和发射会全部 revert（审计说明 A-1）；打新卖回不受影响（撤出费记为 `owedFee`），外盘税照常卖出（平台那份记为 `owedPlatformOf`）。
 - 调高分红门槛 `setMinimumShareBalance`：只影响之后登记的新币（门槛在登记时按币快照），已有币不变，没必要改。
 - 指望「解绑 operator」来止损：分红合约的 operator 每个核心只能绑定一次，不能解绑、不能换。
-</content>
-</invoke>
+- 用 `setKeeper` 换 keeper：处理合约和手续费池的 `setKeeper` 只能在部署时设一次，之后换人走 `proposeKeeper` → 48 小时 → `acceptKeeper`，期间可以 `cancelKeeper`（审计说明 §17 C-F6）。
+- 把普通钱包设为分红排除：`setExcluded` 只接受有代码的地址（池子、锁仓合约等），排除钱包会回滚 `NotAContract`（§17 C-F5）。
