@@ -89,7 +89,7 @@ contract DeployFairMint is SharedPlatform {
         vault.setOperator(address(handler), true);
 
         handler.setPad(address(pad));
-        handler.setRouter(router);
+        handler.setDexRouter(router);
         handler.setKeeper(keeper);
 
         PlatformFeeBucket(s.bucket).setOperator(address(pad), true);

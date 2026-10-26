@@ -96,7 +96,7 @@ contract FairMintForkTest is Test {
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
         handler.setPad(address(pad));
-        handler.setRouter(V2_ROUTER);
+        handler.setDexRouter(V2_ROUTER);
         handler.setKeeper(keeper);
         pad.setMigrator(address(mig));
         pad.setAgentGate(true, address(agent));

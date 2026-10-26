@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
 contract SixDecimalQuoteV3 is ERC20("Six", "SIX") {
@@ -61,8 +62,6 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
             address(divVault),
             address(bucket),
             address(handler),
-            address(router),
-            address(recipients),
             address(new TaxTokenDeployerV3()),
             address(wbnb),
             address(pairFactory)
@@ -118,7 +117,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         address user = makeAddr("fakeUser");
         fake.transfer(user, 1_000_000 ether); // from the "launchpad" (this test): untaxed
         vm.prank(user);
-        vm.expectRevert(PostGradTaxHandlerV3.UnknownToken.selector);
+        vm.expectRevert(TaxHandlerV3.UnknownToken.selector);
         fake.transfer(fakePair, 100_000 ether); // a taxed sell into the fake pair → notifyTax refuses
         assertEq(handler.accruedTax(address(fake)), 0);
         assertEq(handler.accruedPlatformTax(address(fake)), 0);
@@ -137,13 +136,13 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.mockCall(t, abi.encodeWithSignature("pair()"), abi.encode(other));
 
         vm.prank(keeper);
-        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
+        vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
         handler.process(t, 1); // pair path
 
         vm.prank(owner);
         handler.setDexRouter(makeAddr("dexRouter"));
         vm.prank(keeper);
-        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
+        vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
         handler.process(t, 1); // router path: refused before any approve / swap
 
         vm.clearMockedCalls();
@@ -161,5 +160,43 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         assertGt(out, 0);
         assertGt(quoteTok.balanceOf(treasury), before, "recipient paid in the quote");
         assertEq(handler.accruedTax(t), 0);
+    }
+
+    /// @dev Merge (TaxRouterV3 + PostGradTaxHandlerV3 → TaxHandlerV3): owed recipient quote now sits in the same
+    ///      contract as the pool tax it sells. When that quote is itself a token the handler taxes (X), `process(X)`
+    ///      must leave the owed X alone (owedTotalOf), so `release` still pays it in full.
+    function test_merge_owedQuoteNeverSoldByProcess() public {
+        address x = _create(_tax(100, 300, 0, treasury));
+        _graduate(x);
+        _poolBuy(x, agent, 5 ether); // agent holds X; the handler accrues X pool tax
+        uint256 accruedX = handler.accruedTax(x);
+        assertGt(accruedX, 0);
+
+        vm.prank(owner);
+        quoteRegistry.setQuote(x, true, 15 ether); // X becomes a listed 18-decimal quote
+        vm.prank(agent);
+        address y = pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
+        vm.prank(agent);
+        IERC20(x).approve(address(pad), type(uint256).max);
+
+        // the recipient cannot take X right now: Y's curve tax is booked as owed, held here in X
+        vm.mockCallRevert(x, abi.encodeWithSelector(IERC20.transfer.selector, treasury), "");
+        vm.prank(agent);
+        pad.buy(y, 0.5 ether, 0);
+        vm.clearMockedCalls();
+        uint256 owed = handler.owedOf(y);
+        assertGt(owed, 0, "owed in X");
+        assertEq(handler.owedTotalOf(x), owed);
+        assertEq(IERC20(x).balanceOf(address(handler)), accruedX + owed, "pool tax and owed side by side");
+
+        vm.prank(keeper);
+        handler.process(x, 1);
+        assertEq(handler.accruedTax(x), 0);
+        assertEq(IERC20(x).balanceOf(address(handler)), owed, "only the pool tax was sold");
+
+        uint256 before = IERC20(x).balanceOf(treasury);
+        assertEq(handler.release(y), owed);
+        assertEq(IERC20(x).balanceOf(treasury) - before, owed);
+        assertEq(handler.owedTotalOf(x), 0);
     }
 }

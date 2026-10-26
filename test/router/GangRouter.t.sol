@@ -12,9 +12,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
@@ -77,17 +75,13 @@ contract GangRouterTest is Test {
         QuoteRegistry reg = new QuoteRegistry(owner);
         v3Vault = new DividendVault(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
-        TaxRouterV3 taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
-        RecipientRegistry recipients = new RecipientRegistry(owner);
-        PostGradTaxHandlerV3 handler = new PostGradTaxHandlerV3(owner, address(v3Vault), address(taxRouter));
+        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket));
         v3 = new LaunchpadV3(
             owner,
             address(reg),
             address(v3Vault),
             address(bucket),
             address(handler),
-            address(taxRouter),
-            address(recipients),
             address(new TaxTokenDeployerV3()),
             address(wbnb),
             address(pairFactory)
@@ -96,13 +90,11 @@ contract GangRouterTest is Test {
         vm.startPrank(owner);
         reg.setQuote(address(quoteTok), true, 15 ether);
         v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
         v3Vault.setOperator(address(handler), true);
         bucket.setLaunchpad(address(v3));
-        bucket.setOperator(address(taxRouter), true);
-        taxRouter.setLaunchpad(address(v3));
-        taxRouter.setSource(address(handler), true);
-        recipients.list(treasury, "partner treasury");
+        bucket.setOperator(address(handler), true);
+        handler.setLaunchpad(address(v3));
+        handler.list(treasury, "partner treasury");
         v3.setMigrator(address(mig));
         v3.setAgentGate(true, address(agents));
         vm.stopPrank();

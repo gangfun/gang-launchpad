@@ -17,15 +17,14 @@ import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
 import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "./TaxLaunchTokenV3.sol";
-import {TaxRouterV3} from "./TaxRouterV3.sol";
-import {RecipientRegistry} from "./RecipientRegistry.sol";
+import {TaxHandlerV3} from "./TaxHandlerV3.sol";
 import {ILaunchpadV3} from "./interfaces/ILaunchpadV3.sol";
-import {ITaxRouter, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxRouter.sol";
+import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol";
 
 /// @title LaunchpadV3 (tax recipient)
 /// @notice V2 curve / BAW gate / walletCap 1% / ≈15 BNB graduation, unchanged. The `bool taxed` switch becomes a
 ///         TaxConfig: a buy tax and a sell tax (1%–5% each, immutable, charged on the curve and on the pool), a holder
-///         dividend share, and a platform-listed tax recipient. Every tax payment is split by TaxRouterV3: 0.5% of
+///         dividend share, and a platform-listed tax recipient. Every tax payment is split by TaxHandlerV3: 0.5% of
 ///         the trade's volume to the platform, then the dividend share, the rest to the recipient in quote.
 ///         Bonding protocol fee (1% → PlatformFeeBucket) is unchanged and charged on top of the tax.
 /// @dev Spec: docs/SPEC-V3-TAX-RECIPIENT-2026-10-26.md. NO mainnet broadcast from this branch.
@@ -69,9 +68,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     QuoteRegistry public immutable quoteRegistry;
     DividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
-    address public immutable taxHandler;
-    TaxRouterV3 public immutable router;
-    RecipientRegistry public immutable recipientRegistry;
+    /// @notice Recipient whitelist, each token's route and split, the bonding tax and the pool tax after graduation.
+    TaxHandlerV3 public immutable taxHandler;
     TaxTokenDeployerV3 public immutable taxTokenDeployer;
     address public immutable wbnb;
     address public pairFactory;
@@ -147,23 +145,19 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address dividendVault_,
         address platformBucket_,
         address taxHandler_,
-        address router_,
-        address recipientRegistry_,
         address taxTokenDeployer_,
         address wbnb_,
         address pairFactory_
     ) Ownable(owner_) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
-                || taxHandler_ == address(0) || router_ == address(0) || recipientRegistry_ == address(0)
+                || taxHandler_ == address(0)
                 || taxTokenDeployer_ == address(0) || wbnb_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
         dividendVault = DividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
-        taxHandler = taxHandler_;
-        router = TaxRouterV3(router_);
-        recipientRegistry = RecipientRegistry(recipientRegistry_);
+        taxHandler = TaxHandlerV3(taxHandler_);
         taxTokenDeployer = TaxTokenDeployerV3(taxTokenDeployer_);
         wbnb = wbnb_;
         pairFactory = pairFactory_;
@@ -266,12 +260,12 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address quote,
         TaxConfig calldata tax
     ) internal returns (address token) {
-        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps, taxHandler, uri);
+        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps, address(taxHandler), uri);
         if (tax.dividendBps > 0) {
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);
         }
-        router.register(token, quote, tax.recipient, tax.dividendBps);
+        taxHandler.register(token, quote, tax.recipient, tax.dividendBps);
     }
 
     /// @inheritdoc ILaunchpadV3
@@ -287,7 +281,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)
     {
         Curve storage c = curves[token];
-        (, recipient,) = router.routeOf(token);
+        (, recipient,) = taxHandler.routeOf(token);
         return (c.buyTaxBps, c.sellTaxBps, c.dividendBps, recipient);
     }
 
@@ -308,7 +302,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
             if (tax.dividendBps != BPS) return "no recipient: dividendBps must be 10000";
             return "";
         }
-        if (!recipientRegistry.isListed(tax.recipient)) return "recipient not listed";
+        if (!taxHandler.isListed(tax.recipient)) return "recipient not listed";
         return "";
     }
 
@@ -475,8 +469,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         bool dividends = c.dividendBps > 0;
         if (dividends && shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (tax > 0) {
-            quote.forceApprove(address(router), tax);
-            router.distribute(token, tax, platformTax, ITaxRouter.Phase.Bonding);
+            quote.forceApprove(address(taxHandler), tax);
+            taxHandler.distribute(token, tax, platformTax, ITaxHandlerV3.Phase.Bonding);
         }
         if (dividends && !shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (protocolFee > 0) {

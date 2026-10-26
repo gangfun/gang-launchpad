@@ -7,9 +7,8 @@ import {LaunchpadV3TestnetRefs as T} from "../config/LaunchpadV3DeployRefs.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxRouterV3} from "../src/launchpad-v3/TaxRouterV3.sol";
 import {TaxLaunchTokenV3} from "../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../src/launchpad-v3/PostGradTaxHandlerV3.sol";
+import {TaxHandlerV3} from "../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 
@@ -56,7 +55,7 @@ contract LaunchpadV3TestnetE2E is Script {
         quote = MockSPCXB(vm.envOr("TEST_QUOTE", T.TEST_QUOTE));
         blq = TestnetBlacklistQuote(vm.envAddress("BLACKLIST_QUOTE"));
         treasury = vm.envOr("RECIPIENT", T.DEMO_TREASURY);
-        TaxRouterV3 router = TaxRouterV3(address(pad.router()));
+        TaxHandlerV3 router = pad.taxHandler();
 
         // create / curve trades are Agent-only: a fresh deployer registers a testnet Agent ID first
         ITestnetAgentId agentId = ITestnetAgentId(address(pad.agentIdRegistry()));
@@ -82,7 +81,7 @@ contract LaunchpadV3TestnetE2E is Script {
         console.log("pair", pair);
 
         // ---- A: pool buy + sell, leaving tax on the handler for the keeper
-        PostGradTaxHandlerV3 handler = PostGradTaxHandlerV3(pad.taxHandler());
+        TaxHandlerV3 handler = pad.taxHandler();
         vm.startBroadcast(deployerPk);
         quote.mint(deployer, 1 ether);
         _swap(address(quote), a, 0.5 ether);
@@ -131,7 +130,7 @@ contract LaunchpadV3TestnetE2E is Script {
         pad.buy(b, 0.05 ether, 0); // the push to the treasury fails: booked as owed, the buy goes through
         blq.setBlocked(treasury, false); // the keeper (or anyone) can now release it
         vm.stopBroadcast();
-        if (TaxRouterV3(address(pad.router())).owedOf(b) == 0) revert Check("nothing owed on B");
+        if (pad.taxHandler().owedOf(b) == 0) revert Check("nothing owed on B");
     }
 
     function _graduate(address a, uint256 gasPerMinter) internal {
