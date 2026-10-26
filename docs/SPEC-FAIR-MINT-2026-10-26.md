@@ -232,8 +232,17 @@ else:                                         share = min(balance, base)
 | `src/fair-mint/HolderRewardHandler.sol` | 发射后 1% 税：keeper 换币后 50% 给合格持有人 / 50% 平台；出局判断；分红合约出错不卡转账 |
 | `test/fair-mint/FairMint.t.sol` | 28 个用例：上下限、参考池 / 桥接池换算、打新上限与截断、撤出、失败退款、发射价格、池子被提前建好、奖励权重 / 出局 / 上限、分账、权限、分红合约出错后的补救 |
 
+| `test/fair-mint/FairMintFork.t.sol` | BSC 主网分叉（需 `BSC_RPC_URL`）：真实 Pancake 全流程（WBNB）、USDT 报价经 V3 桥接、池子被提前建好并 `sync` |
+| `src/fair-mint/mocks/TestnetAgentId.sol` | 测试网用：灵魂绑定、每钱包一个、自己注册（主网用真实 SPACE ID） |
+| `config/FairMintDeployRefs.sol` | 主网 / 测试网地址（2026-10-26 链上核对） |
+| `script/DeployFairMint.s.sol` | 部署 + 接线 + 接线自检；主网广播须 `FAIR_MINT_MAINNET_OK=true` |
+| `script/FairMintTestnetE2E.s.sol` | 测试网整轮：建币 → 100 个一次性地址打满 → 买、卖到出局、keeper 分账、领奖励 |
+
 - 复用 V2 原样：DividendVault、PlatformFeeBucket、MigratorV2、PoolCheck、QuoteRegistry。
-- 打满那一笔（含建池）在 mock 池子上约 100 万 gas；真实 Pancake 建池更高，待 fork 测试实测。
+- 实测 gas（2026-10-26）：
+  - 主网分叉：打满那一笔（含真实 Pancake 建池）≈ 387 万；打新地址经路由卖出（含收税 + 奖励同步）≈ 27 万。
+  - 测试网分叉彩排（anvil，真实测试网 Pancake）：部署 21 笔 ≈ 1,221 万 gas；整轮 510 笔 ≈ 4,328 万 gas，全部成功；打满那一笔 ≈ 250 万。0.1 gwei 下合计 ≈ 0.0055 tBNB，连同预付给打新地址的 gas，部署钱包备 ≈ 0.03 tBNB。
+  - USDT 报价：15 BNB 换算 11,051 USDT，现价 11,070（差 0.2%）。
 
 ---
 
@@ -251,7 +260,20 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 - FairMintPad：`setMigrator`（一次性；pairFactory 已在构造时传入）、Agent ID 注册表、bridge 池（非 BNB 报价币用）。
 - 每个币：创建时发射台 `dividendVault.registerToken(token, quote)`；发射时 `setPair`、`setTaxHandler(HolderRewardHandler)`、migrator 免税。
 
-### 6.3 从现有代码复用
+### 6.3 测试网步骤
+
+```sh
+# 部署钱包备 ≈ 0.03 tBNB
+export DEPLOYER_PRIVATE_KEY=0x…
+forge script script/DeployFairMint.s.sol --rpc-url bsc_testnet --broadcast --slow
+# 从输出取 FAIR_MINT_PAD / TEST_QUOTE
+export PAD=0x… TEST_QUOTE=0x…
+forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast --slow
+```
+
+主网：部署钱包若是 V2 bucket 的 owner（`0x4EEd…`）则自动加 operator，否则输出待办；`OWNER` 设为多签时，多签需对 pad / handler / vault 调 `acceptOwnership()`。主网广播在审计前被脚本拒绝。
+
+### 6.4 从现有代码复用
 
 | 来源 | 用途 |
 |---|---|
@@ -273,7 +295,7 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 6. 奖励：只有打新地址有份额；卖出后份额按持仓下降；跌破出局线永久出局、买回不恢复；收别人筹码份额不超基准；出局前奖励可领；没人合格时 100% 进平台。
 7. 权限：owner 在打新中改任何设置都不影响该币的上限 / 准入 / 截止；没有任何路径能把托管资金转给 owner。
 8. 最后一笔：截断后只拉成交部分；低于 `minShares` revert；建池失败时整笔回滚，币保持打新中直到截止。
-9. fork 测试：真实 Pancake 池子、USDT 类报价币、keeper `process`。
+9. fork 测试：真实 Pancake 池子、USDT 类报价币、keeper `process`（已完成，`FairMintFork.t.sol`）。
 
 ---
 
