@@ -284,7 +284,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
 
-        token = tokenDeployer.deploy(name, symbol);
+        token = tokenDeployer.deploy(name, symbol, taxHandler, logoURI);
         dividendVault.ensureMinimumShareBalance(MIN_SHARE_BALANCE);
         dividendVault.registerToken(token, quote);
 
@@ -509,14 +509,13 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         address quote = s.quote;
         uint256 quoteAmount = TOTAL_SHARES * s.sharePrice;
 
-        t.unlock();
-        t.exclude(address(migrator), true);
+        // one-shot on the token: unlock + exclude the migrator, then the pair (tax and reward syncing start)
+        t.unlock(address(migrator));
         IERC20(token).safeTransfer(address(migrator), LP_SUPPLY);
         IERC20(quote).safeTransfer(address(migrator), quoteAmount);
         address pair = migrator.migrate(token, quote, LP_SUPPLY, quoteAmount);
         s.pair = pair;
         t.setPair(pair);
-        t.setTaxHandler(taxHandler);
 
         uint256 fee = s.escrowedFee;
         s.escrowedFee = 0;

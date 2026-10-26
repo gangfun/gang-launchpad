@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {LaunchToken} from "../launchpad-v2/LaunchToken.sol";
+import {LaunchTokenV3} from "./LaunchTokenV3.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
@@ -245,9 +245,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
-            token = address(new LaunchToken(name, symbol));
+            token = address(new LaunchTokenV3(name, symbol, logoURI));
         } else {
-            token = _createTaxed(name, symbol, quote, tax);
+            token = _createTaxed(name, symbol, logoURI, quote, tax);
         }
 
         _writeCurve(token, quote, lockedGrad, tax, refUsed);
@@ -258,11 +258,14 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         emit TaxConfigured(token, tax.buyTaxBps, tax.sellTaxBps, tax.dividendBps, tax.recipient);
     }
 
-    function _createTaxed(string calldata name, string calldata symbol, address quote, TaxConfig calldata tax)
-        internal
-        returns (address token)
-    {
-        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps);
+    function _createTaxed(
+        string calldata name,
+        string calldata symbol,
+        string calldata uri,
+        address quote,
+        TaxConfig calldata tax
+    ) internal returns (address token) {
+        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps, taxHandler, uri);
         if (tax.dividendBps > 0) {
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);
@@ -602,16 +605,15 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         c.realQuote = 0;
 
         if (c.buyTaxBps > 0) {
-            TaxLaunchTokenV3(token).unlock();
-            TaxLaunchTokenV3(token).exclude(address(migrator), true);
+            // one-shot on the token: unlock + exclude the migrator, then the pair (tax and share syncing start)
+            TaxLaunchTokenV3(token).unlock(address(migrator));
             IERC20(token).safeTransfer(address(migrator), tokenAmount);
             IERC20(quote).safeTransfer(address(migrator), quoteAmount);
             address pair = migrator.migrate(token, quote, tokenAmount, quoteAmount);
             c.pair = pair;
             TaxLaunchTokenV3(token).setPair(pair);
-            TaxLaunchTokenV3(token).setTaxHandler(taxHandler);
         } else {
-            LaunchToken(token).unlock();
+            LaunchTokenV3(token).unlock();
             IERC20(token).safeTransfer(address(migrator), tokenAmount);
             IERC20(quote).safeTransfer(address(migrator), quoteAmount);
             c.pair = migrator.migrate(token, quote, tokenAmount, quoteAmount);

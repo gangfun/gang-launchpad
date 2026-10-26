@@ -284,7 +284,7 @@ contract CoreHandler is CoreSystem {
             dividendBps: dividendBps,
             recipient: noRecipient ? address(0) : treasury
         });
-        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (V2 LaunchToken)
+        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (LaunchTokenV3)
         vm.prank(creator);
         address t = v3.create("T", "T", "", q, address(0), tax);
         v3Tokens.push(t);

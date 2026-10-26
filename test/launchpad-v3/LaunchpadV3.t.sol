@@ -9,7 +9,7 @@ import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
-import {LaunchToken} from "../../src/launchpad-v2/LaunchToken.sol";
+import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
@@ -203,7 +203,7 @@ contract LaunchpadV3Test is Test {
         assertEq(TaxLaunchTokenV3(t).sellTaxBps(), 200);
 
         address u = _create(_tax(0, 0, 0, address(0)));
-        assertEq(LaunchToken(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = V2 LaunchToken");
+        assertEq(LaunchTokenV3(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = LaunchTokenV3");
         _create(_tax(100, 500, 10_000, address(0))); // holder-dividend only, no recipient
     }
 
