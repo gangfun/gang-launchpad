@@ -167,10 +167,10 @@ const SUBS = ['list', 'info', 'create', 'buy', 'sell', 'income', 'release', 'tx'
 const USAGE = 'usage: gang v3 <list|info|create|buy|sell|income|release|tx> [--testnet] — see gang help'
 
 /**
- * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo } from index.js
+ * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta } from index.js
  * (summarize = summarizePreview, so previews look like every other command's).
  */
-export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, resolveMeta }) {
+export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to the server's V2 / Soft trades; V3 txs are not matched there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang v3 yet: the server cannot match them to a V3 tx; leave them out')
@@ -217,6 +217,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'create') {
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
+    checkMeta() // a bad --website / --twitter / --description fails here, before any chain read or upload
     if (!flag('buy-tax') || !flag('sell-tax')) fail('--buy-tax and --sell-tax are required (each 1–5, in %; e.g. --buy-tax 2 --sell-tax 2)')
     const buyTax = parseNum(fail, 'buy-tax', opt('buy-tax'), 1, 5)
     const sellTax = parseNum(fail, 'sell-tax', opt('sell-tax'), 1, 5)

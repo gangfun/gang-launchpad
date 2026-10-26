@@ -379,17 +379,26 @@ async function resolveLogoUri() {
 }
 
 /**
- * `gang v3 create` / `gang fair create`: --website / --twitter / --description and the logo go into the token's metadata
- * JSON, uploaded to gang.fun; its URL is the token's contractURI() / metaURI(), fixed on-chain at create.
+ * --website / --twitter / --description of `gang v3 create` / `gang fair create`. The create commands call this first,
+ * so a bad value fails before any wrap / approve step or upload; resolveMetaUri reads the same flags again.
  */
-async function resolveMetaUri({ name, symbol, logoURI }) {
+function parseMeta() {
   const links = parseLinks()
   const description = opt('description')
   if (flag('description') && (description == null || description.startsWith('--'))) {
     fail('--description needs text right after it (leave the flag out for none)')
   }
   if (description && description.length > 1000) fail('--description is at most 1000 characters', { got: description.length })
-  const meta = { name, symbol, description: description?.trim(), image: logoURI, external_link: links?.website, twitter: links?.twitter }
+  return { description: description?.trim() || null, links }
+}
+
+/**
+ * `gang v3 create` / `gang fair create`: --website / --twitter / --description and the logo go into the token's metadata
+ * JSON, uploaded to gang.fun; its URL is the token's contractURI() / metaURI(), fixed on-chain at create.
+ */
+async function resolveMetaUri({ name, symbol, logoURI }) {
+  const { description, links } = parseMeta()
+  const meta = { name, symbol, description, image: logoURI, external_link: links?.website, twitter: links?.twitter }
   try {
     const up = await uploadMetadata(meta)
     return { metaURI: up.url, metadata: up.metadata }
@@ -485,9 +494,13 @@ async function main() {
   }
   switch (cmd) {
     case 'fair':
-      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, resolveMeta: resolveMetaUri })
+      return runFair(args[1], {
+        opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, checkMeta: parseMeta, resolveMeta: resolveMetaUri,
+      })
     case 'v3':
-      return runV3(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, resolveMeta: resolveMetaUri })
+      return runV3(args[1], {
+        opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, checkMeta: parseMeta, resolveMeta: resolveMetaUri,
+      })
     case 'preflight': {
       const issues = []
       const status = bawStatus()

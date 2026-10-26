@@ -4,6 +4,8 @@ import { UA } from './version.js'
 
 const MAX_BYTES = 512 * 1024
 const FETCH_TIMEOUT_MS = 20_000
+// a POST to /api/logos carries up to 512 KB of image (or 256 KB of JSON): give it longer than a fetch of headers
+const UPLOAD_TIMEOUT_MS = 60_000
 
 export const LOGO_API = (process.env.GANG_LOGO_API || 'https://gang.fun/api/logos').replace(/\/+$/, '')
 export const LOGO_UI = 'https://gang.fun/dev/logo'
@@ -43,6 +45,7 @@ async function postLogo(buf, what) {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': UA },
       body: JSON.stringify({ image }),
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     })
     text = await res.text()
   } catch (e) {
@@ -70,6 +73,7 @@ export async function uploadMetadata(meta) {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': UA },
       body: JSON.stringify({ file: `data:application/json;base64,${buf.toString('base64')}` }),
+      signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
     })
     text = await res.text()
   } catch (e) {

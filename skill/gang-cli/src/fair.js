@@ -184,7 +184,7 @@ async function positionOf(ctx, token, me, sale) {
 const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'refund', 'claim', 'tx']
 const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|refund|claim|tx> [--testnet] — see gang help'
 
-export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, resolveMeta }) {
+export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to curve trades / creates on the server; fair-mint txs are not indexed there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang fair yet: the server cannot match them to a fair-mint tx; leave them out')
@@ -219,6 +219,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   if (sub === 'create') {
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
+    checkMeta() // a bad --website / --twitter / --description fails here, before any wrap / approve round or upload
     const raise = parseNum(fail, 'raise', opt('raise', '15'), 5, 50)
     const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.1, 0.5)
     const hours = parseNum(fail, 'hours', opt('hours', '24'), 1, 72)
