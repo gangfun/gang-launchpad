@@ -1,6 +1,7 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, decodeErrorResult, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { bawAddress, bawPreview } from './baw.js'
+import { bawAddress } from './baw.js'
+import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, step, units } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -63,13 +64,9 @@ const VAULT_ABI = parseAbi([
 ])
 const ERC20_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
-  'function allowance(address, address) view returns (uint256)',
-  'function approve(address, uint256) returns (bool)',
   'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
 ])
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
-const WBNB_ABI = parseAbi(['function deposit() payable'])
 
 const STATUS = ['none', 'minting', 'launched', 'failed']
 // what to tell the agent for each pad error
@@ -96,11 +93,6 @@ export function fairCtx(testnet) {
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
 
-const units = async (ctx, token, amount) => {
-  let d = 18
-  try { d = Number(await ctx.read(token, ERC20_ABI, 'decimals')) } catch { /* 18 */ }
-  return formatUnits(amount, d)
-}
 const symbolOf = async (ctx, token) => { try { return await ctx.read(token, ERC20_ABI, 'symbol') } catch { return null } }
 
 /** Wallet address on the fair chain; the Agentic Wallet's EVM address is the same on every chain, so 56 is the fallback. */
@@ -110,19 +102,7 @@ export function walletFor(ctx, from) {
 }
 
 /** Revert name (+ BadConfig reason) of a failed eth_call, or null when it was the RPC. */
-function revertOf(e) {
-  const raw = e?.walk?.((x) => typeof x?.data === 'string' && x.data.startsWith('0x'))?.data
-  if (raw && raw.length >= 10) {
-    try {
-      const d = decodeErrorResult({ abi: PAD_ABI, data: raw })
-      return { error: d.errorName, ...(d.args?.length && { reason: d.args[0] }), hint: HINTS[d.errorName] }
-    } catch { /* not ours */ }
-  }
-  const named = e?.walk?.((x) => x?.data?.errorName)?.data?.errorName
-  if (named) return { error: named, hint: HINTS[named] }
-  if (e?.walk?.((x) => x?.code === 3 || /revert/i.test(x?.details || x?.shortMessage || ''))) return { error: 'execution reverted' }
-  return null
-}
+const revertOf = (e) => revertIn(e, [PAD_ABI], HINTS)
 
 /** Dry-run `data` from `from`; null when it would pass. */
 async function dryRun(ctx, from, to, data, value = 0n) {
@@ -152,60 +132,10 @@ export async function saleOf(ctx, token) {
   }
 }
 
-/**
- * A write step: either the raw tx (--calldata: no baw call; e.g. to sign elsewhere) or a baw preview.
- * Returns the object the command prints.
- */
-function step(ctx, { from, to, data, value = 0n }, extra, rawOnly, summarize) {
-  if (rawOnly) {
-    return { success: true, ...extra, tx: { chainId: Number(ctx.chainId), from, to, data, value: value.toString() } }
-  }
-  const p = bawPreview({ from, to, value, data, chainId: ctx.chainId })
-  // only an error about the chain itself: a generic network failure is not a reason to fall back to --calldata
-  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|chain(?:\\s*id)?\\W{0,3}${ctx.chainId}\\b`, 'i')
-    .test(JSON.stringify(p.error || ''))) {
-    return {
-      success: false, ...extra, error: p.error,
-      hint: `the Agentic Wallet may not sign on chain ${ctx.chainId}: re-run with --calldata to get the raw tx`,
-    }
-  }
-  return summarize(p, extra)
-}
+/** Quote funding for `need` toward the pad (wrap BNB, then approve): a step object, or null when ready. */
+const fundingStep = (ctx, me, quote, need, sym, rawOnly, summarize) =>
+  fund(ctx, { me, token: quote, need, spender: ctx.pad, sym }, rawOnly, summarize)
 
-/** Quote funding for `need`: wrap BNB first (WBNB quote), then approve the pad. A step object, or null when ready. */
-async function fundingStep(ctx, me, quote, need, sym, rawOnly, summarize) {
-  const bal = await ctx.read(quote, ERC20_ABI, 'balanceOf', [me])
-  if (bal < need) {
-    if (quote.toLowerCase() !== ctx.wbnb.toLowerCase()) {
-      return { success: false, error: `not enough ${sym || 'quote'}`, have: await units(ctx, quote, bal), need: await units(ctx, quote, need) }
-    }
-    const missing = need - bal
-    const native = await ctx.client.getBalance({ address: me })
-    if (native < missing) {
-      return { success: false, error: 'not enough BNB', haveBnb: formatUnits(native, 18), needBnb: formatUnits(missing, 18) }
-    }
-    return step(ctx, { from: me, to: quote, data: encodeFunctionData({ abi: WBNB_ABI, functionName: 'deposit' }), value: missing },
-      { step: 'wrap-bnb', wrap: formatUnits(missing, 18), note: 'after executing, re-run the same command' }, rawOnly, summarize)
-  }
-  const allowed = await ctx.read(quote, ERC20_ABI, 'allowance', [me, ctx.pad])
-  if (allowed < need) {
-    return step(ctx, { from: me, to: quote, data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [ctx.pad, need] }) },
-      { step: 'approve-quote', approve: await units(ctx, quote, need), spender: ctx.pad, note: 'after executing, re-run the same command' },
-      rawOnly, summarize)
-  }
-  return null
-}
-
-const parseNum = (fail, name, raw, min, max) => {
-  const n = Number(raw)
-  if (raw == null || !Number.isFinite(n) || n < min || n > max) fail(`--${name} must be a number between ${min} and ${max}`, { got: raw })
-  return n
-}
-const parseIntIn = (fail, name, raw, min, max) => {
-  const n = Number(raw)
-  if (!Number.isInteger(n) || n < min || n > max) fail(`--${name} must be an integer between ${min} and ${max}`, { got: raw })
-  return n
-}
 const tokenArg = (opt, fail) => {
   const t = opt('token')
   if (!isAddress(t ?? '')) fail('--token must be the sale\'s token address (0x…)', { got: t ?? null })

@@ -1,6 +1,6 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, decodeErrorResult, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { bawPreview } from './baw.js'
+import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, step, units } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -64,12 +64,8 @@ const REGISTRY_ABI = parseAbi([
 ])
 const ERC20_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
-  'function allowance(address, address) view returns (uint256)',
-  'function approve(address, uint256) returns (bool)',
   'function symbol() view returns (string)',
-  'function decimals() view returns (uint8)',
 ])
-const WBNB_ABI = parseAbi(['function deposit() payable'])
 const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)'])
 
 // what to tell the agent for each pad error
@@ -93,28 +89,12 @@ export function v3Ctx(testnet) {
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
 
-const decimalsOf = async (ctx, token) => { try { return Number(await ctx.read(token, ERC20_ABI, 'decimals')) } catch { return 18 } }
-const units = async (ctx, token, amount) => formatUnits(amount, await decimalsOf(ctx, token))
 const symbolOf = async (ctx, token) => { try { return await ctx.read(token, ERC20_ABI, 'symbol') } catch { return null } }
 const pct = (bps) => Number(bps) / 100
 const VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667n
 
 /** Revert name (+ BadTaxConfig reason) of a failed call, or null when it was the RPC. */
-function revertOf(e) {
-  const raw = e?.walk?.((x) => typeof x?.data === 'string' && x.data.startsWith('0x'))?.data
-  if (raw && raw.length >= 10) {
-    for (const abi of [PAD_ABI, ROUTER_ABI]) {
-      try {
-        const d = decodeErrorResult({ abi, data: raw })
-        return { error: d.errorName, ...(d.args?.length && { reason: d.args[0] }), hint: HINTS[d.errorName] }
-      } catch { /* not this contract */ }
-    }
-  }
-  const named = e?.walk?.((x) => x?.data?.errorName)?.data?.errorName
-  if (named) return { error: named, hint: HINTS[named] }
-  if (e?.walk?.((x) => x?.code === 3 || /revert/i.test(x?.details || x?.shortMessage || ''))) return { error: 'execution reverted' }
-  return null
-}
+const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI], HINTS)
 
 /** eth_call `data` from `from`: { result } when it passes, { failed } with the revert (or RPC error) otherwise. */
 async function simulate(ctx, from, to, abi, functionName, args) {
@@ -160,43 +140,17 @@ export async function curveOf(ctx, token) {
   }
 }
 
-/** A write step: the raw tx (--calldata) or a baw preview, as in `gang fair`. */
-function step(ctx, { from, to, data, value = 0n }, extra, rawOnly, summarize) {
-  if (rawOnly) return { success: true, ...extra, tx: { chainId: Number(ctx.chainId), from, to, data, value: value.toString() } }
-  const p = bawPreview({ from, to, value, data, chainId: ctx.chainId })
-  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|chain(?:\\s*id)?\\W{0,3}${ctx.chainId}\\b`, 'i')
-    .test(JSON.stringify(p.error || ''))) {
-    return { success: false, ...extra, error: p.error, hint: `the Agentic Wallet may not sign on chain ${ctx.chainId}: re-run with --calldata to get the raw tx` }
-  }
-  return summarize(p, extra)
+/** `token` funding for `need` toward the pad (wrap BNB, then approve): a step object, or null when ready. */
+const fundingStep = (ctx, me, token, need, sym, approveStep, rawOnly, summarize) =>
+  fund(ctx, { me, token, need, spender: ctx.pad, sym, approveStep }, rawOnly, summarize)
+
+/** The pad's fee constants: the curve fee on every curve trade, the platform's part of every tax (bps of volume). */
+async function feesOf(ctx) {
+  ctx.fees ??= Promise.all([ctx.read(ctx.pad, PAD_ABI, 'PROTOCOL_FEE_BPS'), ctx.read(ctx.pad, PAD_ABI, 'PLATFORM_TAX_BPS')])
+    .then(([curve, platform]) => ({ curveFeePct: pct(curve), platformTaxPct: pct(platform) }))
+  return ctx.fees
 }
 
-/** `token` funding for `need` toward `spender`: wrap BNB first (WBNB), then approve. A step object, or null when ready. */
-async function fundingStep(ctx, me, token, need, spender, sym, rawOnly, summarize) {
-  const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
-  if (bal < need) {
-    if (token.toLowerCase() !== ctx.wbnb.toLowerCase()) {
-      return { success: false, error: `not enough ${sym || 'quote'}`, have: await units(ctx, token, bal), need: await units(ctx, token, need) }
-    }
-    const missing = need - bal
-    const native = await ctx.client.getBalance({ address: me })
-    if (native < missing) return { success: false, error: 'not enough BNB', haveBnb: formatUnits(native, 18), needBnb: formatUnits(missing, 18) }
-    return step(ctx, { from: me, to: token, data: encodeFunctionData({ abi: WBNB_ABI, functionName: 'deposit' }), value: missing },
-      { step: 'wrap-bnb', wrap: formatUnits(missing, 18), note: 'after executing, re-run the same command' }, rawOnly, summarize)
-  }
-  if ((await ctx.read(token, ERC20_ABI, 'allowance', [me, spender])) < need) {
-    return step(ctx, { from: me, to: token, data: encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender, need] }) },
-      { step: 'approve', approve: await units(ctx, token, need), token, spender, note: 'after executing, re-run the same command' },
-      rawOnly, summarize)
-  }
-  return null
-}
-
-const parseNum = (fail, name, raw, min, max) => {
-  const n = Number(raw)
-  if (raw == null || !Number.isFinite(n) || n < min || n > max) fail(`--${name} must be a number between ${min} and ${max}`, { got: raw })
-  return n
-}
 const addrArg = (opt, fail, name, what) => {
   const v = opt(name)
   if (!isAddress(v ?? '')) fail(`--${name} must be ${what} (0x…)`, { got: v ?? null })
@@ -228,13 +182,14 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const r = await fetch(`${API}${path}`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(10_000) })
       .then((x) => (x.ok ? x.json() : { error: x.status })).catch((e) => ({ error: e.message }))
     if (r.error) return out({ success: false, error: `gang.fun V3 data unavailable (${r.error})`, hint: `use gang v3 info --token <addr>${net} for one token (reads the chain)` })
-    const f = (x) => (x == null ? null : formatUnits(BigInt(x), 18))
+    // the quote's own decimals from gang.fun (18 when an older server does not send them)
+    const f = (x, d) => (x == null ? null : formatUnits(BigInt(x), d ?? 18))
     if (recipient) {
       return out({
-        success: true, recipient, label: r.label, listed: r.listed, chainId: r.chainId,
-        totals: (r.totals || []).map((x) => ({ quote: x.symbol || x.quote, paid: f(x.paid) })),
-        tokens: (r.tokens || []).map((x) => ({ token: x.token, symbol: x.symbol, quote: x.quoteSymbol, paid: f(x.paid), payments: x.payments, lastPaidAt: x.lastPaidAt })),
-        recentPayments: (r.payments?.items || []).map((x) => ({ token: x.token, amount: f(x.amount), ts: x.ts, tx: x.tx })),
+        success: true, recipient, label: r.label, whitelist: r.whitelist ?? (r.listed ? 'listed' : null), chainId: r.chainId,
+        totals: (r.totals || []).map((x) => ({ quote: x.symbol || x.quote, paid: f(x.paid, x.decimals) })),
+        tokens: (r.tokens || []).map((x) => ({ token: x.token, symbol: x.symbol, quote: x.quoteSymbol, paid: f(x.paid, x.quoteDecimals), payments: x.payments, lastPaidAt: x.lastPaidAt })),
+        recentPayments: (r.payments?.items || []).map((x) => ({ token: x.token, amount: f(x.amount, x.decimals), ts: x.ts, tx: x.tx })),
       })
     }
     return out({ success: true, status, items: (r.items || []).map((x) => ({
@@ -252,7 +207,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
     const { owedRaw: _raw, ...pub } = c
-    return out({ success: true, chainId: Number(ctx.chainId), platformTaxPct: 0.5, curveFeePct: 1, ...pub })
+    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub })
   }
 
   if (sub === 'create') {
@@ -283,12 +238,14 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
       try { label = (await ctx.read(reg, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* checked above */ }
     }
     const rest = 100 - dividend
+    const fees = await feesOf(ctx)
     return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       quote: (await symbolOf(ctx, quote)) || quote, buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
-      split: `of each ${buyTax}% buy / ${sellTax}% sell tax: 0.5% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`,
-      note: 'tax rates and recipient are fixed at create. The curve also takes its 1% fee on every trade. tokenIfNext changes if another create lands first: the real address is the Created event from `gang v3 tx --hash …`.',
+      split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
+        + (dividend > 0 ? '; while no holder has 10,000+ tokens (e.g. the first buys), the holders\' part goes to the recipient too' : ''),
+      note: `tax rates and recipient are fixed at create. The curve also takes its ${fees.curveFeePct}% fee on every trade. tokenIfNext changes if another create lands first: the real address is the Created event from \`gang v3 tx --hash …\`.`,
     }, rawOnly, summarize))
   }
 
@@ -300,19 +257,19 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; curve trades are Agent-only', { wallet: me })
     if ((await ctx.read(ctx.pad, PAD_ABI, 'walletRoom', [token, me])) === 0n) fail(HINTS.WalletCapReached)
-    const raw = opt('amount') ?? opt('bnb')
-    if (!raw) fail('--amount <quote to spend> required (fee and tax included)')
-    const quoteIn = parseUnits(String(raw), await decimalsOf(ctx, c.quote))
+    if (!flag('amount') && !flag('bnb')) fail('--amount <quote to spend> required (fee and tax included)')
+    const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
+    const quoteIn = parseUnits(raw, await decimalsOf(ctx, c.quote))
     const slippage = parseSlippage(fail, opt('slippage', '1'))
-    const pre = await fundingStep(ctx, me, c.quote, quoteIn, ctx.pad, c.quoteSymbol, rawOnly, summarize)
+    const pre = await fundingStep(ctx, me, c.quote, quoteIn, c.quoteSymbol, 'approve-quote', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'buy', [token, quoteIn, 0n])
     if (sim.failed) return out({ success: false, step: 'buy', ...sim.failed })
     const minOut = minOf(sim.result, slippage)
     return out(step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'buy', args: [token, quoteIn, minOut] }) }, {
       step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(sim.result, 18),
-      minTokensOut: formatUnits(minOut, 18), buyTaxPct: c.buyTaxPct, curveFeePct: 1,
-      note: 'spend includes the 1% curve fee and the buy tax; at the 1% wallet cap the excess is refunded',
+      minTokensOut: formatUnits(minOut, 18), buyTaxPct: c.buyTaxPct, curveFeePct: (await feesOf(ctx)).curveFeePct,
+      note: 'spend includes the curve fee and the buy tax; at the 1% wallet cap the excess is refunded',
     }, rawOnly, summarize))
   }
 
@@ -325,18 +282,18 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
     if (bal === 0n) fail('no balance to sell')
     if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
-    const amount = flag('all') ? bal : parseUnits(String(opt('amount')), 18)
+    const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
     if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
     const slippage = parseSlippage(fail, opt('slippage', '1'))
-    const pre = await fundingStep(ctx, me, token, amount, ctx.pad, c.quoteSymbol, rawOnly, summarize)
+    const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])
     if (sim.failed) return out({ success: false, step: 'sell', ...sim.failed })
     const minOut = minOf(sim.result, slippage)
     return out(step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'sell', args: [token, amount, minOut] }) }, {
       step: 'sell', chainId: Number(ctx.chainId), token, amount: formatUnits(amount, 18), quote: c.quoteSymbol,
-      expectOut: await units(ctx, c.quote, sim.result), minOut: await units(ctx, c.quote, minOut), sellTaxPct: c.sellTaxPct, curveFeePct: 1,
-      note: 'expectOut is after the 1% curve fee and the sell tax',
+      expectOut: await units(ctx, c.quote, sim.result), minOut: await units(ctx, c.quote, minOut), sellTaxPct: c.sellTaxPct,
+      curveFeePct: (await feesOf(ctx)).curveFeePct, note: 'expectOut is after the curve fee and the sell tax',
     }, rawOnly, summarize))
   }
 
