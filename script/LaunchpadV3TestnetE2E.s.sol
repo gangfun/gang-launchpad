@@ -100,6 +100,7 @@ contract LaunchpadV3TestnetE2E is Script {
             "V3 Tax Test",
             "V3T",
             "",
+            "",
             address(quote),
             address(0),
             ILaunchpadV3.TaxConfig({buyTaxBps: 200, sellTaxBps: 200, dividendBps: 0, recipient: treasury})
@@ -120,6 +121,7 @@ contract LaunchpadV3TestnetE2E is Script {
         b = pad.create(
             "V3 Owed Test",
             "V3O",
+            "",
             "",
             address(blq),
             address(0),

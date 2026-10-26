@@ -69,14 +69,14 @@ contract FairMintAuditTest is FairMintTest {
         address ref = _seedPair(address(unlisted), address(wbnb), 300 ether, 150 ether);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", address(unlisted), ref, _cfg(), 1);
+        pad.create("Q", "Q", "", "", address(unlisted), ref, _cfg(), 1);
 
         SixDecimalQuote six = new SixDecimalQuote();
         vm.prank(owner);
         registry.setQuote(address(six), true, 9_000e6);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        pad.create("S", "S", "", address(six), address(0), _cfg(), 1);
+        pad.create("S", "S", "", "", address(six), address(0), _cfg(), 1);
     }
 
     /// @dev Low: a migrator bound to another pad would make every launch revert, and setMigrator is one-shot.

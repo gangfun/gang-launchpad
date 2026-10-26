@@ -19,8 +19,8 @@ export const V3_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83',
-    router: process.env.GANG_ROUTER_TESTNET || '0x3B497A335432f4A3f761063e44eb58D15F7fa57a',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x4B6a0E82E7357719D6204E5d6197Ef2C71E08dc4',
+    router: process.env.GANG_ROUTER_TESTNET || '0x5627EeA369eEa6e4Cf50E67DabF1DF0ae75B13a5',
     rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -28,7 +28,7 @@ export const V3_NETS = {
 
 const TAX = '(uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)'
 const PAD_ABI = parseAbi([
-  `function create(string name, string symbol, string logoURI, address quote, address refPool, ${TAX} tax) returns (address)`,
+  `function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, ${TAX} tax) returns (address)`,
   'function buy(address token, uint256 quoteIn, uint256 minTokensOut) returns (uint256)',
   'function sell(address token, uint256 tokensIn, uint256 minQuoteOut) returns (uint256)',
   `function checkTaxConfig(${TAX} tax) view returns (bool ok, string reason)`,
@@ -167,10 +167,10 @@ const SUBS = ['list', 'info', 'create', 'buy', 'sell', 'income', 'release', 'tx'
 const USAGE = 'usage: gang v3 <list|info|create|buy|sell|income|release|tx> [--testnet] — see gang help'
 
 /**
- * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo } from index.js
+ * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta } from index.js
  * (summarize = summarizePreview, so previews look like every other command's).
  */
-export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo }) {
+export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to the server's V2 / Soft trades; V3 txs are not matched there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang v3 yet: the server cannot match them to a V3 tx; leave them out')
@@ -217,6 +217,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
   if (sub === 'create') {
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
+    checkMeta() // a bad --website / --twitter / --description fails here, before any chain read or upload
     if (!flag('buy-tax') || !flag('sell-tax')) fail('--buy-tax and --sell-tax are required (each 1–5, in %; e.g. --buy-tax 2 --sell-tax 2)')
     const buyTax = parseNum(fail, 'buy-tax', opt('buy-tax'), 1, 5)
     const sellTax = parseNum(fail, 'sell-tax', opt('sell-tax'), 1, 5)
@@ -231,11 +232,13 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     if (!ok) fail(`tax setting refused: ${reason}`, { hint: HINTS.BadTaxConfig, tax: { buyTax, sellTax, dividend, recipient } })
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
-    const createData = (logoURI) => encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, quote, refPool, tax] })
-    // the logo string never decides a revert: dry-run without it, so a create that would fail uploads nothing
-    const dry = await simulate(ctx, me, ctx.pad, PAD_ABI, 'create', [name, symbol, '', quote, refPool, tax])
+    const createData = (logoURI, metaURI) =>
+      encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, tax] })
+    // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
+    const dry = await simulate(ctx, me, ctx.pad, PAD_ABI, 'create', [name, symbol, '', '', quote, refPool, tax])
     if (dry.failed) return out({ success: false, step: 'create', ...dry.failed })
     const logo = await resolveLogo()
+    const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
     let label = null
     if (recipient !== zeroAddress) {
       const reg = await ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry')
@@ -243,8 +246,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     }
     const rest = 100 - dividend
     const fees = await feesOf(ctx)
-    return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI) }, {
+    return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI, meta.metaURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
+      metaURI: meta.metaURI, metadata: meta.metadata,
       quote: (await symbolOf(ctx, quote)) || quote, buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
       split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`

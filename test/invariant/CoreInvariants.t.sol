@@ -284,9 +284,9 @@ contract CoreHandler is CoreSystem {
             dividendBps: dividendBps,
             recipient: noRecipient ? address(0) : treasury
         });
-        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (V2 LaunchToken)
+        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (LaunchTokenV3)
         vm.prank(creator);
-        address t = v3.create("T", "T", "", q, address(0), tax);
+        address t = v3.create("T", "T", "", "", q, address(0), tax);
         v3Tokens.push(t);
         if (q == address(blq)) blqTokens++;
         (uint16 b, uint16 s, uint16 d, address r) = v3.taxConfigOf(t);
@@ -423,7 +423,7 @@ contract CoreHandler is CoreSystem {
             exitFeeBps: uint16(bound(fees >> 4, 100, 500))
         });
         vm.prank(creator);
-        address t = fair.create("F", "F", "", q, address(0), cfg, 1);
+        address t = fair.create("F", "F", "", "", q, address(0), cfg, 1);
         sales.push(t);
     }
 

@@ -50,6 +50,7 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
     error SwapFailed();
     error Slippage();
     error OnlyKeeperOrOwner();
+    error PairQuoteMismatch();
 
     event DexRouterSet(address indexed router);
     event KeeperSet(address indexed keeper);
@@ -84,9 +85,17 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
     {
         if (msg.sender != token) revert OnlyToken();
         if (taxAmount == 0) revert ZeroAmount();
+        // only tokens the launchpad registered (write-once route; their rates were checked to 1%–5% at create): anyone
+        // can deploy a TaxLaunchTokenV3 pointing at this handler, and it must not accrue here
+        (address quote,,) = router.routeOf(token);
+        if (quote == address(0)) revert UnknownToken();
         accruedTax[token] += taxAmount;
-        // the token taxed this trade at `rateBps` (its buy or sell tax): the platform's 0.5% of volume is that share
-        if (rateBps > 0) accruedPlatformTax[token] += (taxAmount * PLATFORM_TAX_BPS) / rateBps;
+        // the token taxed this trade at `rateBps` (its buy or sell tax): the platform's 0.5% of volume is that share,
+        // never more than the tax itself
+        if (rateBps > 0) {
+            uint256 platform = (taxAmount * PLATFORM_TAX_BPS) / rateBps;
+            accruedPlatformTax[token] += platform > taxAmount ? taxAmount : platform;
+        }
         emit TaxAccrued(token, from, to, taxAmount, accruedTax[token]);
     }
 
@@ -107,8 +116,11 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
 
         address pair = TaxLaunchTokenV3(token).pair();
         if (pair == address(0)) revert NoPair();
+        // the route's quote is what the split pays in; the pair the tax is sold into must be token / that quote on
+        // both swap paths (the router path picks its pool from the path, so check it here too)
         (address quote,,) = router.routeOf(token);
         if (quote == address(0)) revert UnknownToken();
+        bool tokenIs0 = _tokenIs0(pair, token, quote);
 
         uint256 platformTokens = accruedPlatformTax[token];
         uint256 bal = IERC20(token).balanceOf(address(this));
@@ -123,7 +135,7 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
         if (address(dexRouter) != address(0)) {
             quoteOut = _swapViaRouter(token, quote, amount, minQuoteOut);
         } else {
-            quoteOut = _swapViaPair(token, pair, quote, amount, minQuoteOut);
+            quoteOut = _swapViaPair(token, pair, quote, tokenIs0, amount, minQuoteOut);
         }
 
         uint256 platformQuote = (quoteOut * platformTokens) / amount;
@@ -168,16 +180,23 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, Reentrancy
         if (quoteOut < minQuoteOut) revert Slippage();
     }
 
-    function _swapViaPair(address token, address pair, address quote, uint256 taxAmount, uint256 minQuoteOut)
-        internal
-        returns (uint256 quoteOut)
-    {
+    /// @dev `pair` holds exactly `token` and `quote`; whether `token` is token0.
+    function _tokenIs0(address pair, address token, address quote) internal view returns (bool tokenIs0) {
         address t0 = IUniswapV2PairLite(pair).token0();
         address t1 = IUniswapV2PairLite(pair).token1();
+        tokenIs0 = t0 == token;
+        if (tokenIs0 ? t1 != quote : (t1 != token || t0 != quote)) revert PairQuoteMismatch();
+    }
+
+    function _swapViaPair(
+        address token,
+        address pair,
+        address quote,
+        bool tokenIs0,
+        uint256 taxAmount,
+        uint256 minQuoteOut
+    ) internal returns (uint256 quoteOut) {
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
-        bool tokenIs0 = token == t0;
-        if (!tokenIs0 && token != t1) revert SwapFailed();
-        if (quote != (tokenIs0 ? t1 : t0)) revert SwapFailed();
 
         uint256 reserveIn = tokenIs0 ? uint256(r0) : uint256(r1);
         uint256 reserveOut = tokenIs0 ? uint256(r1) : uint256(r0);

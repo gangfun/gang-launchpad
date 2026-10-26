@@ -112,7 +112,7 @@ contract FairMintTest is Test {
 
     function _create() internal returns (address token) {
         vm.prank(dev);
-        token = pad.create("Fair", "FAIR", "ipfs://logo", address(0), address(0), _cfg(), 1);
+        token = pad.create("Fair", "FAIR", "ipfs://logo", "ipfs://meta.json", address(0), address(0), _cfg(), 1);
     }
 
     /// @dev dev holds 1 share; minters 0..98 take 100 each (9,900); minter 99 takes the last 99.
@@ -219,13 +219,13 @@ contract FairMintTest is Test {
     function _expectBadConfig(FairMintPad.MintConfig memory c, uint256 devShares, string memory reason) internal {
         vm.prank(dev);
         vm.expectRevert(abi.encodeWithSelector(FairMintPad.BadConfig.selector, reason));
-        pad.create("X", "X", "", address(0), address(0), c, devShares);
+        pad.create("X", "X", "", "", address(0), address(0), c, devShares);
     }
 
     function test_create_rejectsNonAgent() public {
         vm.prank(stranger);
         vm.expectRevert(FairMintPad.NotAgent.selector);
-        pad.create("X", "X", "", address(0), address(0), _cfg(), 1);
+        pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
     function test_create_rejectsHighVaultFloor() public {
@@ -233,7 +233,7 @@ contract FairMintTest is Test {
         vault.setMinimumShareBalance(1_000_000 ether);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.VaultFloorTooHigh.selector);
-        pad.create("X", "X", "", address(0), address(0), _cfg(), 1);
+        pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
     function test_create_registryQuoteScalesWithRaise() public {
@@ -261,14 +261,14 @@ contract FairMintTest is Test {
         vm.startPrank(dev);
         q.approve(address(pad), type(uint256).max);
         vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
+        pad.create("Q", "Q", "", "", address(q), ref, _cfg(), 1);
         vm.stopPrank();
 
         // with a fixed rate (30 Q per 15 BNB) it creates at that rate, whatever the pool says
         vm.prank(owner);
         registry.setQuote(address(q), true, 30 ether);
         vm.prank(dev);
-        address t = pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
+        address t = pad.create("Q", "Q", "", "", address(q), ref, _cfg(), 1);
         (,,, uint256 sharePrice,,) = _sale(t);
         assertEq(sharePrice, price);
     }
@@ -359,7 +359,7 @@ contract FairMintTest is Test {
         vm.startPrank(dev);
         fot.approve(address(pad), type(uint256).max);
         vm.expectRevert(FairMintPad.FeeOnTransferQuote.selector);
-        pad.create("X", "X", "", address(fot), address(0), _cfg(), 1);
+        pad.create("X", "X", "", "", address(fot), address(0), _cfg(), 1);
         vm.stopPrank();
     }
 
@@ -401,7 +401,7 @@ contract FairMintTest is Test {
         FairMintPad.MintConfig memory c = _cfg();
         c.exitFeeBps = 200;
         vm.prank(dev);
-        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
         address m = _minter(0);
         uint256 start = wbnb.balanceOf(m);
         vm.prank(m);
@@ -428,7 +428,7 @@ contract FairMintTest is Test {
         FairMintPad.MintConfig memory c = _cfg();
         c.mintFeeBps = 500;
         vm.prank(dev);
-        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
         address m = _minter(0);
         uint256 start = wbnb.balanceOf(m);
         vm.prank(m);
@@ -649,7 +649,7 @@ contract FairMintTest is Test {
         wbnb.approve(address(pad), type(uint256).max);
         vm.expectRevert(FairMintPad.NotAgent.selector);
         pad.mint(t, 1, 1);
-        address t2 = pad.create("Open", "OPEN", "", address(0), address(0), _cfg(), 1);
+        address t2 = pad.create("Open", "OPEN", "", "", address(0), address(0), _cfg(), 1);
         vm.stopPrank();
         assertEq(IERC20(t2).balanceOf(stranger), TPS);
     }

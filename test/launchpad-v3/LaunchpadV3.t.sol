@@ -9,7 +9,7 @@ import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
-import {LaunchToken} from "../../src/launchpad-v2/LaunchToken.sol";
+import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
@@ -134,13 +134,13 @@ contract LaunchpadV3Test is Test {
 
     function _create(ILaunchpadV3.TaxConfig memory t) internal returns (address token) {
         vm.prank(agent);
-        token = pad.create("Tax", "TAX", "", address(quoteTok), address(0), t);
+        token = pad.create("Tax", "TAX", "", "", address(quoteTok), address(0), t);
     }
 
     function _expectBad(ILaunchpadV3.TaxConfig memory t, string memory reason) internal {
         vm.prank(agent);
         vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, reason));
-        pad.create("X", "X", "", address(quoteTok), address(0), t);
+        pad.create("X", "X", "", "", address(quoteTok), address(0), t);
     }
 
     function _graduated(address token) internal view returns (bool g) {
@@ -203,7 +203,7 @@ contract LaunchpadV3Test is Test {
         assertEq(TaxLaunchTokenV3(t).sellTaxBps(), 200);
 
         address u = _create(_tax(0, 0, 0, address(0)));
-        assertEq(LaunchToken(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = V2 LaunchToken");
+        assertEq(LaunchTokenV3(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = LaunchTokenV3");
         _create(_tax(100, 500, 10_000, address(0))); // holder-dividend only, no recipient
     }
 
@@ -277,7 +277,7 @@ contract LaunchpadV3Test is Test {
         bq.setBlocked(treasury, true);
 
         vm.prank(agent);
-        address t = pad.create("B", "B", "", address(bq), address(0), _tax(200, 200, 0, treasury));
+        address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(200, 200, 0, treasury));
         uint256 owedAmt = (0.01 ether * 150) / BPS;
         vm.expectEmit(true, true, true, true, address(router));
         emit TaxOwed(t, treasury, address(bq), owedAmt);

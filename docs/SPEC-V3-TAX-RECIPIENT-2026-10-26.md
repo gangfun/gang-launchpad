@@ -1,6 +1,6 @@
 # 规格 · LaunchpadV3 税收接收地址（合作方金库）
 
-> 2026-10-26 内部审计后（`docs/AUDIT-BRIEF-2026-10-26.md` §10、§11）：报价币链上只收 WBNB 和 QuoteRegistry 里设了固定换算额的 18 位币（毕业额按换算额锁定，不读参考池）；V3 的 DividendVault 排除 migrator；`buyFor` 只在准入开启时可用；内盘卖出先更新卖家份额再分账；QuoteRegistry 和 PlatformFeeBucket 改为与打新共用一份新部署、owner 为多签的实例，不复用 V2 那份（下文 §2 的「复用」以此为准）。
+> 2026-10-26 内部审计后（`docs/AUDIT-BRIEF-2026-10-26.md` §10、§11）：报价币链上只收 WBNB 和 QuoteRegistry 里设了固定换算额的 18 位币（毕业额按换算额锁定，不读参考池）；V3 的 DividendVault 排除 migrator；代币的税处理合约构造时写死、毕业时一次性 `unlock(migrator)` + `setPair`，带 `contractURI` / `metaURI`，`create` 新增 `metaURI` 参数（元数据 JSON 地址，§12）；`buyFor` 只在准入开启时可用；内盘卖出先更新卖家份额再分账；QuoteRegistry 和 PlatformFeeBucket 改为与打新共用一份新部署、owner 为多签的实例，不复用 V2 那份（下文 §2 的「复用」以此为准）。
 
 > 2026-10-26 补充：这个合约是「核心」，用户也可以经无状态的 GangRouter 进入（用 BNB 直接买 / 打新）。路由只能替交易者付钱，卖出 / 撤出 / 退款 / 领取仍只能本人直接调用。见 `docs/SPEC-CORE-ROUTER-2026-10-26.md`。
 
@@ -112,7 +112,7 @@ DividendVault（新）→ TaxRouterV3 → RecipientRegistry → PostGradTaxHandl
 
 | 用例 | 覆盖 |
 |---|---|
-| `test_create_rules` | 税率越界、单边为 0、分红比例越界、无接收地址时分红须 10000、未上白名单、无税币带参数；配置读回、无税币 = V2 LaunchToken |
+| `test_create_rules` | 税率越界、单边为 0、分红比例越界、无接收地址时分红须 10000、未上白名单、无税币带参数；配置读回、无税币 = LaunchTokenV3（2026-10-27 起，原为 V2 LaunchToken） |
 | `test_delistedRecipient_onlyBlocksNewTokens` | 下架后新币不能用，老币照常打款 |
 | `test_bondingBuy_split_platformHalfPercent_restToRecipient` | 买 2%：平台 1% + 0.5%，接收地址 1.5%，`TaxPaid` 事件 |
 | `test_bondingSell_split_withDividends` | 卖 3%、分红 40%：平台 0.5%，持币人 1%，接收地址 1.5% |

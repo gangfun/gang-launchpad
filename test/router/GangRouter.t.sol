@@ -158,7 +158,7 @@ contract GangRouterTest is Test {
     /// @dev WBNB-quoted V3 token (quote = address(0) → WBNB)
     function _v3Token(uint16 dividendBps) internal returns (address token) {
         vm.prank(agent);
-        token = v3.create("Tax", "TAX", "", address(0), address(0), _tax(dividendBps));
+        token = v3.create("Tax", "TAX", "", "", address(0), address(0), _tax(dividendBps));
     }
 
     function _fairSale() internal returns (address token) {
@@ -166,7 +166,7 @@ contract GangRouterTest is Test {
             raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
-        token = fair.create("Fair", "FAIR", "", address(0), address(0), cfg, 1);
+        token = fair.create("Fair", "FAIR", "", "", address(0), address(0), cfg, 1);
     }
 
     function _assertRouterEmpty() internal view {
@@ -206,7 +206,7 @@ contract GangRouterTest is Test {
 
     function test_v3Buy_erc20Quote() public {
         vm.prank(agent);
-        address token = v3.create("Q", "Q", "", address(quoteTok), address(0), _tax(0));
+        address token = v3.create("Q", "Q", "", "", address(quoteTok), address(0), _tax(0));
         uint256 before = quoteTok.balanceOf(agent2);
         vm.prank(agent2);
         uint256 out = router.v3Buy(token, 0.02 ether, 1, block.timestamp); // under the 1% cap: no refund

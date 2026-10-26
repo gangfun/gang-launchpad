@@ -18,15 +18,15 @@ export const FAIR_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7',
-    router: process.env.GANG_ROUTER_TESTNET || '0x3B497A335432f4A3f761063e44eb58D15F7fa57a',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0xf1438254098aA1E0A6Ac58b204CfBa68A2383017',
+    router: process.env.GANG_ROUTER_TESTNET || '0x5627EeA369eEa6e4Cf50E67DabF1DF0ae75B13a5',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
 }
 
 const PAD_ABI = parseAbi([
-  'function create(string name, string symbol, string logoURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
+  'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
   'function withdraw(address token, uint256 shares) returns (uint256)',
   'function refund(address token) returns (uint256)',
@@ -184,7 +184,7 @@ async function positionOf(ctx, token, me, sale) {
 const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'refund', 'claim', 'tx']
 const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|refund|claim|tx> [--testnet] — see gang help'
 
-export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo }) {
+export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to curve trades / creates on the server; fair-mint txs are not indexed there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang fair yet: the server cannot match them to a fair-mint tx; leave them out')
@@ -219,6 +219,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   if (sub === 'create') {
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
+    checkMeta() // a bad --website / --twitter / --description fails here, before any wrap / approve round or upload
     const raise = parseNum(fail, 'raise', opt('raise', '15'), 5, 50)
     const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.1, 0.5)
     const hours = parseNum(fail, 'hours', opt('hours', '24'), 1, 72)
@@ -248,15 +249,18 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (pre) return out(pre)
     // logoURI is permanent on-chain: same handling as `gang create` (--logo file upload, other hosts copied to gang.fun).
     // Done after the setup steps so a wrap / approve round does not upload the image twice.
-    const createData = (logoURI) =>
-      encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, quote, refPool, cfg, BigInt(devShares)] })
-    // the logo string never decides a revert: dry-run without it, so a create that would fail uploads nothing
-    const dry = await dryRun(ctx, me, ctx.pad, createData(''))
+    const createData = (logoURI, metaURI) => encodeFunctionData({
+      abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, cfg, BigInt(devShares)],
+    })
+    // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
+    const dry = await dryRun(ctx, me, ctx.pad, createData('', ''))
     if (dry) return out({ success: false, step: 'create', ...dry })
     const logo = await resolveLogo()
-    const data = createData(logo.logoURI)
+    const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
+    const data = createData(logo.logoURI, meta.metaURI)
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }), quote: sym || quote,
+      step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
+      metaURI: meta.metaURI, metadata: meta.metadata, quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
       capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, mintFeePct, exitFeePct, devShares,
       devCost: await units(ctx, quote, need),

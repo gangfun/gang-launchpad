@@ -1,51 +1,53 @@
 # 测试网 · 核心 + 路由（LaunchpadV3 / 打新 / GangRouter）
 
-- 日期：2026-10-26 Asia/Shanghai
+- 日期：2026-10-27 Asia/Shanghai（第 3 套）
 - 链：BSC 测试网（chainId 97）
-- 代码：`feat/core-router`，含内部审计的修复（规格 `docs/SPEC-CORE-ROUTER-2026-10-26.md`，审计 `docs/AUDIT-BRIEF-2026-10-26.md` §10）
+- 代码：`main` 上的 `cf96281`：两轮内部审计的修复，加上代币权限收紧和元数据 URI（审计说明 §12）
 - 部署 / owner / keeper：`0xCa8e63434072B40d3dFE6f5e7Fd885F93A3200b6`
-- 这一套（第 2 套核心 + 路由）取代：
-  - 同日第 1 套核心 + 路由（V3 `0x3184…e541`、打新 `0x4D26…05F8`、路由 `0x499F…2C81`）：审计前的代码，已废弃。
-  - `docs/TESTNET-LAUNCHPAD-V3-2026-10-26.md`、`docs/TESTNET-FAIR-MINT-2026-10-26.md` 里的部署（没有路由入口，已废弃；整轮记录仍可参考）。
+- 这一套取代：
+  - 第 2 套（2026-10-26，`36d8a7e`）：V3 `0x5D50…ce83`、打新 `0x5ef1…A1d7`、路由 `0x3B49…a57a`。代币还带 `setTaxHandler` / `setPair` / `exclude`，已废弃。
+  - 第 1 套（V3 `0x3184…e541`、打新 `0x4D26…05F8`、路由 `0x499F…2C81`）：审计前的代码，已废弃。
+  - `docs/TESTNET-LAUNCHPAD-V3-2026-10-26.md`、`docs/TESTNET-FAIR-MINT-2026-10-26.md` 里的部署：没有路由入口，已废弃，整轮记录仍可参考。
 - Agent ID 注册表和测试报价币沿用原来的，注册过的钱包继续可用。
-- 代码：这一套部署自 `36d8a7e`。之后的 `47a063b`（第二轮审计）只多了两点：非 WBNB 报价币必须有固定换算额（测试网 registry 里的两个报价币本来就是固定 15 枚 = 15 BNB，行为不变），V3 的 DividendVault 排除 migrator（已在测试网补发：[`0x4b30…2f55`](https://testnet.bscscan.com/tx/0x4b301333ff5e1beadac00dcc70c025575eacc105432a1c13454b66818fbb2f55)）。所以没有重新部署。
-- 与上一套的不同：V3 和打新**共用一份新的 QuoteRegistry 和 PlatformFeeBucket**（`script/SharedPlatform.sol`）；报价币只收 WBNB 和这份白名单里的 18 位币；所有接线做完之后才 `setMigrator`（核心从这一刻起可用）。
+- V3 和打新共用一份 QuoteRegistry 和 PlatformFeeBucket（`script/SharedPlatform.sol`）。报价币只收 WBNB 和这份白名单里设了固定换算额的 18 位币。所有接线完成后才 `setMigrator`。
+- 代币：税处理合约在构造时写死；毕业或发射时 `unlock(migrator)`、`setPair` 各调一次，之后代币上没有任何管理函数；`contractURI()` / `metaURI()` 返回发币时传入的 URI。
 
 ## 合约
 
 | 合约 | 地址 |
 |---|---|
-| GangRouter | [`0x3B497A335432f4A3f761063e44eb58D15F7fa57a`](https://testnet.bscscan.com/address/0x3B497A335432f4A3f761063e44eb58D15F7fa57a)（两个核心都已 `setRouter`） |
-| QuoteRegistry（共用） | `0x9d4f74a6cf79fC60715ca4E549BB8CC3E4C7F556`（已列入：测试报价币、黑名单报价币，各 15 枚 = 15 BNB） |
-| PlatformFeeBucket（共用） | `0xe492F9B8237b8b4A37760324811af4F44548C8A4`（operator：V3 核心、TaxRouterV3、打新核心、HolderRewardHandler） |
-| LaunchpadV3（核心） | [`0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83`](https://testnet.bscscan.com/address/0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83)（部署区块 139051852） |
-| ├ TaxRouterV3 | `0x2C6074D6911c162727e61940854137586A7B0199` |
-| ├ RecipientRegistry | `0xD9A89f0FA0721a02C8db0c8Cf97D95FF4C4c53a6`（演示金库 `0xe22eEE60677911Ef25a359285Fb09786AC728c77` 已列入） |
-| ├ PostGradTaxHandlerV3 | `0x8F1cE9c247BD9d4294e89BA6F894444576c02811` |
-| ├ DividendVault | `0x9a73c7cFBe0dfAF649c106CAf77315945Be77780` |
-| ├ MigratorV2 / TaxTokenDeployerV3 | `0x311Bd7180FeD284F1821ecC2168e37ae5460e5E1` / `0x0f1D7633c4D504e0696489E5164b188976293a90` |
-| └ 黑名单报价币 tBUSD | `0x1D95440D1513f79BC366594BA7Afc6191e2Bd840` |
-| FairMintPad（核心） | [`0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7`](https://testnet.bscscan.com/address/0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7)（部署区块 139051953） |
-| ├ HolderRewardHandler | `0x2088bb02b81dd19cBe06Eee0A6A88111F6883cc4` |
-| ├ DividendVault | `0x8F137205c8D6E160bFb245F335C21bEADa295017` |
-| └ MigratorV2 / FairTokenDeployer | `0x2B250C6371B064fc5A8F830d478A55d4a61FBB30` / `0x27fEF3807b420b8D955c0f6036182bEd794B4377` |
+| GangRouter | [`0x1ABd2da0A7aB9eb4797FCC36a8aC19a42382daE1`](https://testnet.bscscan.com/address/0x1ABd2da0A7aB9eb4797FCC36a8aC19a42382daE1)（两个核心都已 `setRouter`） |
+| QuoteRegistry（共用） | `0xD699BB0870de60b59DD25D55315A4c61559c864E`（已列入：测试报价币、黑名单报价币，各 15 枚 = 15 BNB） |
+| PlatformFeeBucket（共用） | `0x58cbD53955F2CE9B094b10A0c2c50e1f33AddEe3`（operator：V3 核心、TaxRouterV3、打新核心、HolderRewardHandler） |
+| LaunchpadV3（核心） | [`0x2202F7898e7e0b77d2Bb46d661d88d1Ffa7D8330`](https://testnet.bscscan.com/address/0x2202F7898e7e0b77d2Bb46d661d88d1Ffa7D8330)（部署区块 139064695） |
+| ├ TaxRouterV3 | `0x3F3E788F5D8F6D1D47e10042e081C550711e9244` |
+| ├ RecipientRegistry | `0xFb5ace56B524f05Bdf9C85101eaeC89b72fC24B2`（演示金库 `0xe22eEE60677911Ef25a359285Fb09786AC728c77` 已列入） |
+| ├ PostGradTaxHandlerV3 | `0x21e169139bEF8158c66072cF72a9CbBBE44E0A16` |
+| ├ DividendVault | `0xd844d5564d81c021Eff9B1B6E498bd61Efe62bf1`（已排除 migrator） |
+| ├ MigratorV2 / TaxTokenDeployerV3 | `0x9f241cbA558e02f25c00F87B0B1e69dE14C8E58e` / `0xeD501c7De6F0E476dD632D37ea74E78fc0754BBe` |
+| └ 黑名单报价币 tBUSD | `0x1CaC6F82f39975C1245c5D08d80FE63feeA1A456` |
+| FairMintPad（核心） | [`0x69bfa8459b01e3705Aa8C0397557E537F2024F53`](https://testnet.bscscan.com/address/0x69bfa8459b01e3705Aa8C0397557E537F2024F53)（部署区块 139064796） |
+| ├ HolderRewardHandler | `0x4e5EA2B32a41b1cCbec2E865BDc34841384E3Eeb` |
+| ├ DividendVault | `0xd3C2cb58707e0FA97A86B3f4E0a39D140B1F80cf` |
+| └ MigratorV2 / FairTokenDeployer | `0x7208720D7f9aC4f0F013119D88e48B7e6eE5c481` / `0x812405b06a528cEd099D557aC508f1E04dd52d29` |
 | TestnetAgentId（沿用） | `0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a` |
 | 测试报价币 MockSPCXB（沿用） | `0x02B3dE73aF2c1F99c7EFbDb65bcB960AACF4CF1c` |
+
+部署 45 笔全部成功（V3 27 笔、打新 15 笔、路由 3 笔），部署记录里没有私钥。
 
 ## 路由冒烟（`script/RouterTestnetSmoke.s.sol`）
 
 | 步骤 | 交易 | 结果 |
 |---|---|---|
-| V3 发币（WBNB 报价，买 2% / 卖 2%，接收地址 = 演示金库） `0xA5E0896051EaeD4639f005dC12EEF59DC9f966C0` | [`0xb440…a5dc`](https://testnet.bscscan.com/tx/0xb440700864f50a414a779ee7b9be6fcc5b5f4d0e322b1fcbf0dd62c229f6a5dc) | — |
-| `router.v3BuyBNB` 0.002 BNB | [`0xb267…e915`](https://testnet.bscscan.com/tx/0xb267e696d9b52e6aa3bcbd77915b81350346e9fd0d8f76ac01a45d6b0898e915) | 413,706 枚到交易者本人 |
-| 打新发起（WBNB，募集 5 BNB，dev 1 份直接付给核心） `0xb21848d4048D5983D26b038B5BC8542773A92502` | [`0x8322…c315`](https://testnet.bscscan.com/tx/0x8322a5893c7d763548c6c0d40031df8b8aadf8d3d3c557347fceb438c602c315) | — |
-| `router.fairMintBNB` 2 份 | [`0x7842…093b`](https://testnet.bscscan.com/tx/0x7842ac884c5cf9206dc9739f1f9ebd1272fae4b6bb72ce000ef268357ac6093b) | 份额记在交易者名下（共 3 份），多发的 BNB 退回 |
+| V3 发币（WBNB 报价，买 2% / 卖 2%，接收地址 = 演示金库） `0x37FdD2ce57e35Ece0c172736C347ECec10aAcb6B` | [`0x38e8…3c84`](https://testnet.bscscan.com/tx/0x38e854f9322279dbbdd219773640285d1661bc6e3d3d3416373e553aab693c84) | `taxHandler()` = 上面的 PostGradTaxHandlerV3 |
+| `router.v3BuyBNB` 0.002 BNB | [`0xbaee…40f7`](https://testnet.bscscan.com/tx/0xbaee0225cf682640781e4978f89f4a6450fe67e3a843a3a930d11430f3c940f7) | 413,706 枚到交易者本人，路由余额 0 |
+| 打新发起（WBNB，募集 5 BNB，dev 1 份直接付给核心） `0xff44Ef8226e71ee22952aaaB1F19E74813FC9F8E` | [`0xb6d0…9542`](https://testnet.bscscan.com/tx/0xb6d02bc88c803db1b6046c522c952baa97fc76187c2dfb062aef01ab9e809542) | — |
+| `router.fairMintBNB` 2 份 | **没发出去** | 部署钱包余额差约 0.0002 tBNB；补充测试币后补跑这一步 |
 
-部署 44 笔 + 冒烟 6 笔全部成功，结束后路由的 BNB 和 WBNB 余额都是 0。部署钱包 0.013208 → 0.007018 tBNB（含冒烟里转进合约的约 0.0045）。
-
-毕业 / 发射 / 外盘税 / 补转的整轮这次在本地 anvil 测试网 fork 上跑（同一套脚本、同样先 V3 再打新共用 registry 和 bucket）：`LaunchpadV3TestnetE2E`、`FairMintTestnetE2E` 都通过，打新的税换回 0.036488、minter 5 领取 0.000184，与前两次整轮一致；共用 bucket 的累计数比以前大，因为里面还有 V3 那一轮的平台收入。测试网钱包余额不够在公网再跑两轮。
-
-主网部署也在 BSC 主网状态上做过一次进程内模拟（不广播）：不设 `OWNER` 时脚本拒绝；设了多签地址后新 registry 列入 USDT、bucket 的金库和回购合约取自 V2 bucket、operator 和 keeper 接线检查都通过，所有合约进入「待多签 accept」状态。
+毕业、发射、外盘税、补发欠款的整轮在本地 anvil 测试网 fork 上跑过（同一套脚本，先 V3 再打新，共用 registry 和 bucket），`LaunchpadV3TestnetE2E`、`FairMintTestnetE2E` 都通过：
+- 打新：税换回 0.036488，minter 5 领取 0.000184，与前几次整轮一致。
+- V3：欠款、外盘累计税和平台部分与前几次一致。
+- V3 整轮要加 `--skip-simulation`，由节点逐笔估 gas。forge 默认在同一次模拟里估所有交易，存储已经被前面的交易「预热」过，池子卖出那笔会估低，导致 gas 不够。这是部署工具的问题，不是合约的。
 
 ## 复跑
 
@@ -58,4 +60,4 @@ V3_PAD=<V3_LAUNCHPAD> FAIR_PAD=<FAIR_MINT_PAD> forge script script/DeployGangRou
 V3_PAD=… FAIR_PAD=… GANG_ROUTER=… forge script script/RouterTestnetSmoke.s.sol --rpc-url $R --broadcast --slow $G
 ```
 
-主网：每个脚本都要 `OWNER=<多签>`，第二个脚本要在多签 `acceptOwnership()` 之前跑（之后 registry / bucket 不再归部署钱包）。`DeployFairMint` 在测试网默认沿用上面的 Agent ID 注册表和测试报价币（`NEW_MOCKS=true` 才新部署）；`FairMintTestnetE2E` 对已注册的打新钱包不再重复 `register()`。
+主网：每个脚本都要 `OWNER=<多签>`，第二个脚本必须在多签 `acceptOwnership()` 之前跑，之后 registry 和 bucket 就不再归部署钱包。`DeployFairMint` 在测试网默认沿用上面的 Agent ID 注册表和测试报价币（`NEW_MOCKS=true` 才新部署）。`FairMintTestnetE2E` 对已注册的打新钱包不再重复 `register()`。

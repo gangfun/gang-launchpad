@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
+import {TokenURI} from "./TokenURI.sol";
 
 /// @title TaxLaunchTokenV3 (LaunchpadV3 taxed track)
 /// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
@@ -11,14 +12,17 @@ import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 ///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → PostGradTaxHandlerV3 (accrue
 ///      only; keeper sells later — V2 Finding 2).
 ///      Every transfer syncs dividend shares (V2 Finding 3); the handler ignores tokens without dividends.
-contract TaxLaunchTokenV3 is ERC20 {
+///      The launchpad's power is fixed and one-shot (2026-10-26): the handler is set at construction, graduation
+///      calls `unlock(migrator)` and `setPair(pair)` once each, and after that the token has no admin function left.
+///      Pool tax and share syncing start only once the pair is set (the migration itself runs untaxed and unsynced).
+contract TaxLaunchTokenV3 is ERC20, TokenURI {
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000 ether;
     uint256 public constant BPS = 10_000;
 
     address public immutable launchpad;
+    address public immutable taxHandler;
     uint16 public immutable buyTaxBps;
     uint16 public immutable sellTaxBps;
-    address public taxHandler;
     address public pair;
     bool public locked = true;
 
@@ -26,6 +30,10 @@ contract TaxLaunchTokenV3 is ERC20 {
 
     error TransfersLocked();
     error OnlyLaunchpad();
+    error AlreadyUnlocked();
+    error PairAlreadySet();
+    error StillLocked();
+    error ZeroAddress();
 
     event Unlocked();
     event TaxHandlerSet(address indexed handler);
@@ -33,50 +41,53 @@ contract TaxLaunchTokenV3 is ERC20 {
     event Excluded(address indexed account, bool excluded);
     event OuterTax(address indexed from, address indexed to, uint256 taxed, uint256 net);
 
-    /// @dev Deployed by TaxTokenDeployerV3 on behalf of `launchpad_` (keeps LaunchpadV3 under EIP-170).
-    constructor(string memory name_, string memory symbol_, uint16 buyTaxBps_, uint16 sellTaxBps_, address launchpad_)
-        ERC20(name_, symbol_)
-    {
+    /// @dev Deployed by TaxTokenDeployerV3 on behalf of `launchpad_` (keeps LaunchpadV3 under EIP-170). The handler is
+    ///      excluded from the start (no tax recursion when it sells).
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        uint16 buyTaxBps_,
+        uint16 sellTaxBps_,
+        address launchpad_,
+        address taxHandler_,
+        string memory uri_
+    ) ERC20(name_, symbol_) TokenURI(uri_) {
+        if (launchpad_ == address(0) || taxHandler_ == address(0)) revert ZeroAddress();
         launchpad = launchpad_;
+        taxHandler = taxHandler_;
         buyTaxBps = buyTaxBps_;
         sellTaxBps = sellTaxBps_;
         _mint(launchpad_, TOTAL_SUPPLY);
         isExcluded[launchpad_] = true;
+        isExcluded[taxHandler_] = true;
         isExcluded[address(0)] = true;
         isExcluded[address(0xdead)] = true;
+        emit TaxHandlerSet(taxHandler_);
     }
 
-    function unlock() external {
+    modifier onlyLaunchpad() {
         if (msg.sender != launchpad) revert OnlyLaunchpad();
-        if (!locked) return;
+        _;
+    }
+
+    /// @notice Graduation, step 1 (once): unlock transfers for good and exclude the migrator that seeds the pair.
+    function unlock(address migrator) external onlyLaunchpad {
+        if (!locked) revert AlreadyUnlocked();
+        if (migrator == address(0)) revert ZeroAddress();
         locked = false;
+        isExcluded[migrator] = true;
+        emit Excluded(migrator, true);
         emit Unlocked();
     }
 
-    /// @notice Wire the post-grad handler. Handler is auto-excluded (no tax recursion).
-    function setTaxHandler(address handler) external {
-        if (msg.sender != launchpad) revert OnlyLaunchpad();
-        taxHandler = handler;
-        if (handler != address(0)) isExcluded[handler] = true;
-        emit TaxHandlerSet(handler);
-    }
-
-    /// @notice Set graduated DEX pair. Pair is NOT excluded — outer tax applies to pair transfers.
-    function setPair(address pair_) external {
-        if (msg.sender != launchpad) revert OnlyLaunchpad();
+    /// @notice Graduation, step 2 (once, after the migrator made the pair): pool tax and share syncing start here.
+    ///         The pair is NOT excluded — the tax applies to pair transfers.
+    function setPair(address pair_) external onlyLaunchpad {
+        if (locked) revert StillLocked();
+        if (pair != address(0)) revert PairAlreadySet();
+        if (pair_ == address(0)) revert ZeroAddress();
         pair = pair_;
         emit PairSet(pair_);
-    }
-
-    function exclude(address account, bool excluded) external {
-        if (msg.sender != launchpad) revert OnlyLaunchpad();
-        isExcluded[account] = excluded;
-        emit Excluded(account, excluded);
-    }
-
-    function burn(uint256 amount) external {
-        if (msg.sender != launchpad) revert OnlyLaunchpad();
-        _burn(msg.sender, amount);
     }
 
     function _update(address from, address to, uint256 value) internal override {
@@ -104,14 +115,13 @@ contract TaxLaunchTokenV3 is ERC20 {
     }
 
     function _syncDividendShares(address from, address to) internal {
-        if (taxHandler == address(0)) return;
+        if (pair == address(0)) return; // before graduation the pad writes shares itself
         if (from == address(0) && to == address(0)) return;
         IPostGradTaxHandlerV3(taxHandler).syncShares(address(this), from, to);
     }
 
     function _shouldTax(address from, address to) internal view returns (bool) {
-        if (locked) return false;
-        if (taxHandler == address(0) || pair == address(0)) return false;
+        if (pair == address(0)) return false; // unset until graduation (implies locked or migrating)
         if (from == address(0) || to == address(0)) return false; // mint/burn
         if (!(from == pair || to == pair)) return false;
         if (isExcluded[from] || isExcluded[to]) return false;
@@ -123,10 +133,14 @@ contract TaxLaunchTokenV3 is ERC20 {
 /// @notice Holds TaxLaunchTokenV3 creation code so LaunchpadV3 stays under EIP-170. Stateless: the caller becomes
 ///         the token's launchpad, so anyone may call it but only gets tokens bound to themselves.
 contract TaxTokenDeployerV3 {
-    function deploy(string calldata name, string calldata symbol, uint16 buyTaxBps, uint16 sellTaxBps)
-        external
-        returns (address)
-    {
-        return address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender));
+    function deploy(
+        string calldata name,
+        string calldata symbol,
+        uint16 buyTaxBps,
+        uint16 sellTaxBps,
+        address taxHandler,
+        string calldata uri
+    ) external returns (address) {
+        return address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender, taxHandler, uri));
     }
 }

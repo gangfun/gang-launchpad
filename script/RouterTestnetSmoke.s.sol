@@ -37,6 +37,7 @@ contract RouterTestnetSmoke is Script {
             "Router V3 Test",
             "RV3",
             "",
+            "",
             address(0),
             address(0),
             ILaunchpadV3.TaxConfig({buyTaxBps: 200, sellTaxBps: 200, dividendBps: 0, recipient: treasury})
@@ -49,6 +50,7 @@ contract RouterTestnetSmoke is Script {
         address sale = fair.create(
             "Router Fair Test",
             "RFT",
+            "",
             "",
             address(0),
             address(0),
