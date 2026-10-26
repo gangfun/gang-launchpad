@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { decimalsOf, defaultRefPool, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -38,6 +38,7 @@ const PAD_ABI = parseAbi([
   'function walletRoom(address token, address buyer) view returns (uint256)',
   'function graduationRemaining(address token) view returns (uint256)',
   'function graduationAmountOf(address quote, address refPool) view returns (uint256)',
+  'function taxHandler() view returns (address)',
   'function router() view returns (address)',
   'function recipientRegistry() view returns (address)',
   'function PROTOCOL_FEE_BPS() view returns (uint256)',
@@ -120,19 +121,41 @@ async function simulate(ctx, from, to, abi, functionName, args, value = 0n) {
   }
 }
 
+/**
+ * Where the tax split / owed pushes (router) and the recipient whitelist (registry) live: one TaxHandlerV3 since the
+ * contract merge, so both are taxHandler(). 旧部署兼容，第 6 套上线后可删: older pads keep them on router() /
+ * recipientRegistry() (TaxRouterV3 / RecipientRegistry).
+ */
+async function taxContracts(ctx) {
+  if (!ctx._tax) {
+    ctx._tax = (async () => {
+      const handler = await ctx.read(ctx.pad, PAD_ABI, 'taxHandler')
+      const [router, registry] = await Promise.all(['router', 'recipientRegistry']
+        .map((fn) => ctx.read(ctx.pad, PAD_ABI, fn).catch(() => handler)))
+      return { handler, router, registry }
+    })()
+  }
+  return ctx._tax
+}
+
+/** The whitelist label of a recipient; null when unlisted or the whitelist keeps no entries() (labels only in events). */
+async function labelOf(ctx, registry, recipient) {
+  try { return (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { return null }
+}
+
 /** A token's curve and tax as the pad stores them, plus the recipient's whitelist label. null when not a V3 token. */
 export async function curveOf(ctx, token) {
   const c = await ctx.read(ctx.pad, PAD_ABI, 'curves', [token])
   const [creator, quote, realQuote, sold, gradAmt, virtualQuote, graduated, buyTaxBps, sellTaxBps, dividendBps, pair] = c
   if (creator === zeroAddress) return null
-  // the recipient is not in curves(): it lives on the router's route, read back through taxConfigOf
-  const [router, registry, remaining, tax] = await Promise.all([
-    ctx.read(ctx.pad, PAD_ABI, 'router'), ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry'),
+  // the recipient is not in curves(): it lives on the tax handler's route, read back through taxConfigOf
+  const [{ handler, router, registry }, remaining, tax] = await Promise.all([
+    taxContracts(ctx),
     ctx.read(ctx.pad, PAD_ABI, 'graduationRemaining', [token]), ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]),
   ])
   const recipient = tax[3] === zeroAddress ? null : tax[3]
   let label = null
-  if (recipient) { try { label = (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* unlisted */ } }
+  if (recipient) label = await labelOf(ctx, registry, recipient)
   const owed = await ctx.read(router, TAX_ROUTER_ABI, 'owedOf', [token])
   // graduation zeroes realQuote (it went into the pool): a graduated token is priced from the pair reserves
   let price = ((virtualQuote + realQuote) * 10n ** 18n) / (VIRTUAL_TOKEN - sold)
@@ -142,7 +165,7 @@ export async function curveOf(ctx, token) {
     price = rT > 0n ? (rQ * 10n ** 18n) / rT : 0n
   }
   return {
-    token, creator, quote, quoteSymbol: await symbolOf(ctx, quote), router, registry,
+    token, creator, quote, quoteSymbol: await symbolOf(ctx, quote), taxHandler: handler, router, registry,
     graduated, pair: pair === zeroAddress ? null : pair,
     buyTaxPct: pct(buyTaxBps), sellTaxPct: pct(sellTaxBps), dividendPct: pct(dividendBps), recipient, recipientLabel: label,
     raised: await units(ctx, quote, graduated ? gradAmt : realQuote), graduationAt: await units(ctx, quote, gradAmt),
@@ -234,7 +257,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     // everything to holders needs no recipient; otherwise the recipient gets the rest and must be whitelisted
     const recipient = dividend === 100 && !flag('recipient') ? zeroAddress : addrArg(opt, fail, 'recipient', 'a whitelisted tax recipient')
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
-    const refPool = flag('ref-pool') ? opt('ref-pool') : zeroAddress
+    const refPool = flag('ref-pool') ? opt('ref-pool') : (defaultRefPool(ctx.chainId, quote) ?? zeroAddress)
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
     const tax = { buyTaxBps: Math.round(buyTax * 100), sellTaxBps: Math.round(sellTax * 100), dividendBps: Math.round(dividend * 100), recipient }
     const [ok, reason] = await ctx.read(ctx.pad, PAD_ABI, 'checkTaxConfig', [tax])
@@ -255,8 +278,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
     let label = null
     if (recipient !== zeroAddress) {
-      const reg = await ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry')
-      try { label = (await ctx.read(reg, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* checked above */ }
+      label = await labelOf(ctx, (await taxContracts(ctx)).registry, recipient)
     }
     const rest = 100 - dividend
     const fees = await feesOf(ctx)

@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
-import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { defaultRefPool, fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -250,7 +250,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const exitFeePct = parseNum(fail, 'exit-fee', opt('exit-fee', '1'), 1, 2)
     const devShares = parseIntIn(fail, 'shares', opt('shares', '1'), 1, Math.round(capPct * 200))
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
-    const refPool = flag('ref-pool') ? opt('ref-pool') : zeroAddress
+    const refPool = flag('ref-pool') ? opt('ref-pool') : (defaultRefPool(ctx.chainId, quote) ?? zeroAddress)
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
     const cfg = {
       raiseBnb: parseEther(String(raise)), capBps: Math.round(capPct * 100),

@@ -27,7 +27,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   (the hold line, below). There is no deadline (`--hours` is gone). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
   Quote is WBNB unless `--quote`: any 18-decimal ERC-20 (e.g. a stock token; other decimals fail with `QuoteNotAllowed`).
   As with `gang create`, it needs `--ref-pool` (a PancakeSwap V2 pair or V3 pool holding it) to convert the raise at
-  create, unless gang has set a fixed rate for it (e.g. USDT). The create output shows the raise and share price in the quote.
+  create (mainnet USDT defaults to the Pancake V3 USDT/WBNB 0.01% pool), unless gang has set a fixed rate for it. The
+  create output shows the raise and share price in the quote.
   Create also uploads the token's metadata JSON (name, symbol, `--description`, the logo, `--website`, `--twitter`) and
   fixes its URL as the token's `contractURI()` / `metaURI()` — permanent, so get the links right first (see v3.md).
 - **Fees** are the creator's choice at create, fixed for the sale: `--mint-fee` 1–3% and `--exit-fee` 1–2% (default 1% / 1%).

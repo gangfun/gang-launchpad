@@ -123,3 +123,12 @@ export const parseAmount = (fail, name, raw) => {
   }
   return String(raw).trim()
 }
+
+/**
+ * Reference pool `create` uses when --ref-pool is left out: mainnet USDT → Pancake V3 USDT/WBNB 0.01% (the deepest;
+ * its 30-min TWAP prices the graduation target / raise). Other quotes need an explicit --ref-pool.
+ */
+const DEFAULT_REF_POOLS = {
+  56: { '0x55d398326f99059ff775485246999027b3197955': '0x172fcD41E0913e95784454622d1c3724f546f849' },
+}
+export const defaultRefPool = (chainId, quote) => DEFAULT_REF_POOLS[Number(chainId)]?.[String(quote || '').toLowerCase()] || null

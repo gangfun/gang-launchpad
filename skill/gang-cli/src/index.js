@@ -192,7 +192,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
                                          Wraps / approves first when needed (re-run after each)
                                          --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
-                                         pool holding it, which prices the raise (as gang create), unless gang set a fixed rate
+                                         pool holding it, which prices the raise (as gang create; mainnet USDT defaults to the USDT/WBNB pool)
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
   gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
