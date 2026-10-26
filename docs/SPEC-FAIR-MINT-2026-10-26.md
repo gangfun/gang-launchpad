@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 作者：Claude（本页为产品规格 + 合约设计；**非执行单**）
-- 性质：**禁止主网广播**。合约已在 `feat/fair-mint` 分支实现，mock 单测通过（§5.6），**未审计、未上测试网**。
+- 性质：**禁止主网广播**。合约已在 `feat/fair-mint` 分支实现，mock 与主网分叉测试通过（§5.6），2026-10-26 已在 BSC 测试网部署并跑通整轮（`docs/TESTNET-FAIR-MINT-2026-10-26.md`），**未审计**。
 - 来源：用户口述（2026-10-26）：「没有内盘的概念，跟以前铭文一样打进度。dev 自定义规则，但是我们要设置上下限，比如最低 100 人，最高 0.5%。内盘没有价格，只有打满了之后代币发射，内盘依旧保持 1% 的买卖税。发射后有默认 1% 的税费，发射前就在的地址如果持有代币保持 50% 就可以享有 1% 税费中的 50% 作为持有奖励，剩下的 50% 跟目前的税费外盘规则不变，回购 + 入金库。」
 - 用户已定：固定价格打进度、打满即发射；打新阶段买卖各 1%；发射后 1% 税，50% 给发射前持有人、50% 回购 + 金库；dev 在平台上下限内设规则。
 - 2026-10-26 用户：「按照你的建议开始执行」→ §9 各项按 Claude 建议执行（奖励算法、失败全额退、税率固定 1%、出局线 30%–80% 由 dev 选、报价币同 V2、50 / 50、10,000 份、上下限、dev 至少打 1 份）。仍待办：§9 #6 网站入口、#11 核实 Agentic Wallet。
@@ -269,11 +269,14 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 ```sh
 # 部署钱包备 ≈ 0.03 tBNB
 export DEPLOYER_PRIVATE_KEY=0x…
-forge script script/DeployFairMint.s.sol --rpc-url bsc_testnet --broadcast --slow
+GAS="--with-gas-price 100000000 --priority-gas-price 100000000"   # 0.1 gwei，必须显式给
+forge script script/DeployFairMint.s.sol --rpc-url bsc_testnet --broadcast --slow $GAS
 # 从输出取 FAIR_MINT_PAD / TEST_QUOTE
 export PAD=0x… TEST_QUOTE=0x…
-forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast --slow
+forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast --slow $GAS
 ```
+
+2026-10-26 实跑踩坑：不给 gas 价格时，forge 有一次从公共节点拿到 1 wei 的估价，交易卡在交易池里不打包（部署那次正常是 0.1 gwei）。所以测试网命令一律显式给 0.1 gwei。
 
 主网：部署钱包若是 V2 bucket 的 owner（`0x4EEd…`）则自动加 operator，否则输出待办；`OWNER` 设为多签时，多签需对 pad / handler / vault 调 `acceptOwnership()`。主网广播在审计前被脚本拒绝。
 
