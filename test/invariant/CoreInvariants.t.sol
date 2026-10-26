@@ -142,7 +142,7 @@ contract CoreHandler is CoreSystem {
     uint256 public calls;
     uint256 public v3Graduations;
     uint256 public fairLaunches;
-    uint256 public fairFailures;
+    uint256 public staleExits; // withdraws with the exit fee waived (no mint for 7 days)
     uint256 public owedEvents;
     uint256 public blqTokens;
     uint256 public blockedSet;
@@ -225,8 +225,8 @@ contract CoreHandler is CoreSystem {
         (, quote,,,,, graduated,,,, pair,) = v3.curves(t);
     }
 
-    function _saleState(address t) internal view returns (address quote, bool launched, bool failed, address pair) {
-        (,,,, quote,, launched, failed,,,,,, pair,) = fair.sales(t);
+    function _saleState(address t) internal view returns (address quote, bool launched, address pair) {
+        (,,,, quote,, launched,,,,, pair,) = fair.sales(t);
     }
 
     function _pairSwapOut(MockPair pair, address token, bool tokenOut, uint256 out, address to) internal {
@@ -407,20 +407,17 @@ contract CoreHandler is CoreSystem {
     }
 
     // ================================================================ 打新 actions
-    function fairCreate(uint256 seed, uint256 raise, uint16 capBps, uint32 duration, uint16 holdBps, uint16 fees)
-        external
-    {
+    function fairCreate(uint256 seed, uint256 raise, uint16 capBps, uint16 holdBps, uint16 fees) external {
         calls++;
         if (sales.length >= 4) return;
         address creator = _actor(seed);
         address q = _pick(seed, 6, 2) == 0 ? address(wbnb) : address(quoteTok);
         FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
             raiseBnb: bound(raise, 5 ether, 50 ether),
-            capBps: uint16(bound(capBps, 10, 50)),
-            duration: uint32(bound(duration, 1 hours, 72 hours)),
+            capBps: uint16(bound(capBps, 25, 50)),
             holdBps: uint16(bound(holdBps, 3_000, 8_000)),
-            mintFeeBps: uint16(bound(fees, 100, 500)),
-            exitFeeBps: uint16(bound(fees >> 4, 100, 500))
+            mintFeeBps: uint16(bound(fees, 100, 300)),
+            exitFeeBps: uint16(bound(fees >> 4, 100, 200))
         });
         vm.prank(creator);
         address t = fair.create("F", "F", "", "", q, address(0), cfg, 1);
@@ -433,7 +430,7 @@ contract CoreHandler is CoreSystem {
         address t = _sale(seed);
         address who = _actor(seed + 1);
         shares = bound(shares, 1, 120);
-        (address q,,,) = _saleState(t);
+        (address q,,) = _saleState(t);
         vm.prank(who);
         if (!viaRouter) {
             try fair.mint(t, shares, 1) {} catch {}
@@ -450,19 +447,13 @@ contract CoreHandler is CoreSystem {
         if (sales.length == 0) return;
         address t = _sale(seed);
         address who = _actor(seed + 1);
-        (uint16 held,) = fair.positions(t, who);
+        uint16 held = fair.positions(t, who);
         if (held == 0) return;
+        bool stale = fair.exitFeeBpsOf(t) == 0;
         vm.prank(who);
-        try fair.withdraw(t, bound(shares, 1, held)) {} catch {}
-    }
-
-    function fairRefund(uint256 seed) external {
-        calls++;
-        if (sales.length == 0) return;
-        address t = _sale(seed);
-        vm.prank(_actor(seed + 1));
-        try fair.refund(t) {} catch {}
-        _afterSale(t);
+        try fair.withdraw(t, bound(shares, 1, held)) {
+            if (stale) staleExits++;
+        } catch {}
     }
 
     /// @dev Fresh agents mint up to the cap until the sale fills (and launches in that same tx).
@@ -470,13 +461,13 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (, bool launched, bool failed,) = _saleState(t);
-        if (launched || failed || fair.status(t) != FairMintPad.Status.Minting) return;
+        (, bool launched,) = _saleState(t);
+        if (launched || fair.status(t) != FairMintPad.Status.Minting) return;
         for (uint256 i = 0; i < 600 && !launched; i++) {
             address w = _newAgent();
             vm.prank(w);
             try fair.mint(t, 500, 1) {} catch {}
-            (, launched,,) = _saleState(t);
+            (, launched,) = _saleState(t);
         }
         _afterSale(t);
     }
@@ -485,7 +476,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (address q, bool launched,, address pair) = _saleState(t);
+        (address q, bool launched, address pair) = _saleState(t);
         if (!launched) return;
         address who = _actor(seed + 1);
         if (isBuy) _poolBuy(t, q, pair, who, bound(amount, 1e15, 2 ether));
@@ -497,7 +488,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (, bool launched,,) = _saleState(t);
+        (, bool launched,) = _saleState(t);
         if (!launched) return;
         address from = _actor(seed + 1);
         address to = _actor(seed + 2);
@@ -522,16 +513,16 @@ contract CoreHandler is CoreSystem {
 
     function warp(uint256 dt) external {
         calls++;
-        vm.warp(block.timestamp + bound(dt, 1 minutes, 30 hours));
+        // up to 8 days: long enough for a sale to go stale (no mint for 7 days → no exit fee)
+        vm.warp(block.timestamp + bound(dt, 1 minutes, 8 days));
     }
 
     function _afterSale(address t) internal {
-        (, bool launched, bool failed, address pair) = _saleState(t);
+        (, bool launched, address pair) = _saleState(t);
         if (launched && !isHolder[pair]) {
             fairLaunches++;
             _track(pair);
         }
-        if (failed) fairFailures++;
     }
 
     function _recordOut(address t) internal {
@@ -567,19 +558,19 @@ contract CoreInvariantsTest is Test {
         sel[10] = CoreHandler.fairCreate.selector;
         sel[11] = CoreHandler.fairMint.selector;
         sel[12] = CoreHandler.fairWithdraw.selector;
-        sel[13] = CoreHandler.fairRefund.selector;
+        sel[13] = CoreHandler.fairWithdraw.selector;
         sel[14] = CoreHandler.fairFill.selector;
         sel[15] = CoreHandler.fairPoolTrade.selector;
         sel[16] = CoreHandler.fairTransfer.selector;
         sel[17] = CoreHandler.fairProcess.selector;
         sel[18] = CoreHandler.fairClaim.selector;
         sel[19] = CoreHandler.warp.selector;
-        // weights: trades, the blacklist toggle, time and refunds come up more often so owed tax and failed sales
+        // weights: trades, the blacklist toggle, time and withdraws come up more often so owed tax and stale exits
         // are reached in most runs
         sel[20] = CoreHandler.v3Buy.selector;
         sel[21] = CoreHandler.blockRecipient.selector;
         sel[22] = CoreHandler.warp.selector;
-        sel[23] = CoreHandler.fairRefund.selector;
+        sel[23] = CoreHandler.fairWithdraw.selector;
         sel[24] = CoreHandler.fairMint.selector;
         sel[25] = CoreHandler.v3Release.selector;
         sel[26] = CoreHandler.v3Create.selector;
@@ -591,7 +582,8 @@ contract CoreInvariantsTest is Test {
     }
 
     // ---------------------------------------------------------------- 打新 (§5 #1–#4, #6)
-    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of (principal of live positions + escrow).
+    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of the principal of live positions (mint fees
+    ///      go to the platform at mint: nothing is escrowed).
     function invariant_fairEscrowExact() public view {
         FairMintPad fair = h.fair();
         address[3] memory qs = _quotes();
@@ -599,38 +591,31 @@ contract CoreInvariantsTest is Test {
             uint256 owed;
             for (uint256 i = 0; i < h.saleCount(); i++) {
                 address t = h.sales(i);
-                (,,,, address q,, bool launched,,,,, uint128 price, uint128 escrow,,) = fair.sales(t);
+                (,,,, address q,, bool launched,,,, uint128 price,,) = fair.sales(t);
                 if (q != qs[k] || launched) continue;
-                owed += escrow;
                 for (uint256 j = 0; j < h.holderCount(); j++) {
-                    (uint16 shares,) = fair.positions(t, h.holders(j));
+                    uint16 shares = fair.positions(t, h.holders(j));
                     owed += uint256(shares) * price;
                 }
             }
-            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal + escrow");
+            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal");
         }
     }
 
-    /// @dev #2 / #3 / #4: positions add up, caps hold, tokens are where the shares say, launched XOR failed.
+    /// @dev #2 / #3: positions add up, caps hold, tokens are where the shares say.
     function invariant_fairPositionsAndTokens() public view {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,, uint16 cap,,, uint16 sold, bool launched, bool failed,,,,, uint128 escrow,,) = fair.sales(t);
-            assertFalse(launched && failed, "launched xor failed");
+            (,, uint16 cap,,, uint16 sold, bool launched,,,,,,) = fair.sales(t);
             assertLe(sold, 10_000, "sold <= 10,000");
             uint256 sumShares;
-            uint256 sumFee;
             for (uint256 j = 0; j < h.holderCount(); j++) {
-                (uint16 s, uint128 f) = fair.positions(t, h.holders(j));
+                uint16 s = fair.positions(t, h.holders(j));
                 assertLe(s, cap, "shares <= cap");
                 sumShares += s;
-                sumFee += f;
             }
-            // after launch the escrow is paid to the platform; positions keep their historical feePaid
-            if (!launched) assertEq(sumFee, escrow, "escrow == sum feePaid");
-            else assertEq(escrow, 0, "no escrow after launch");
-            if (!failed) assertEq(sumShares, sold, "sold == sum shares");
+            assertEq(sumShares, sold, "sold == sum shares");
             uint256 padTokens = IERC20(t).balanceOf(address(fair));
             if (launched) assertEq(padTokens, 0, "pad holds no token after launch");
             else assertEq(padTokens, 1_000_000_000 ether - sumShares * 50_000 ether, "pad holds the unminted supply");
@@ -642,7 +627,7 @@ contract CoreInvariantsTest is Test {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,,,,,, bool launched,,,,,,,,) = fair.sales(t);
+            (,,,,,, bool launched,,,,,,) = fair.sales(t);
             if (!launched) continue;
             for (uint256 j = 0; j < h.holderCount(); j++) {
                 address u = h.holders(j);
@@ -736,6 +721,6 @@ contract CoreInvariantsTest is Test {
     function afterInvariant() external view {
         console2.log("calls / v3 tokens / graduations / owed seen", h.calls(), h.v3TokenCount(), h.v3Graduations());
         console2.log("  owed events / sales / launches / failures", h.owedEvents(), h.saleCount(), h.fairLaunches());
-        console2.log("  fair failures / blq tokens / blocked set", h.fairFailures(), h.blqTokens(), h.blockedSet());
+        console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
     }
 }

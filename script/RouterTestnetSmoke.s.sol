@@ -54,16 +54,14 @@ contract RouterTestnetSmoke is Script {
             "",
             address(0),
             address(0),
-            FairMintPad.MintConfig({
-                raiseBnb: 5 ether, capBps: 50, duration: 72 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
-            }),
+            FairMintPad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
             1
         );
         uint256 accepted = router.fairMintBNB{value: 0.002 ether}(sale, 2, 2, block.timestamp + 1 days);
         vm.stopBroadcast();
 
         if (out == 0 || IERC20(v3Token).balanceOf(me) != out) revert Check("v3 tokens not with the trader");
-        (uint16 shares,) = fair.positions(sale, me);
+        uint16 shares = fair.positions(sale, me);
         if (accepted != 2 || shares != 3) revert Check("fair shares not with the trader");
         if (IERC20(T.WBNB).balanceOf(address(router)) != 0 || address(router).balance != 0) {
             revert Check("router not empty");

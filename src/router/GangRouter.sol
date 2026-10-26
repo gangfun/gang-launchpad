@@ -33,18 +33,16 @@ interface IFairCoreEntry {
         view
         returns (
             address creator,
-            uint64 deadline,
+            uint64 lastMintAt,
             uint16 capShares,
             uint16 holdBps,
             address quote,
             uint16 sold,
             bool launched,
-            bool failed,
             uint16 mintFeeBps,
             uint16 exitFeeBps,
             address gate,
             uint128 sharePrice,
-            uint128 escrowedFee,
             address pair,
             address refPool
         );
@@ -182,7 +180,7 @@ contract GangRouter {
     function _fairCost(address token, uint256 shares) internal view returns (IERC20 quote, uint256 need) {
         if (address(fair) == address(0)) revert NotDeployed();
         address q;
-        (,,,, q,,,,,,,,,,) = fair.sales(token);
+        (,,,, q,,,,,,,,) = fair.sales(token);
         if (q == address(0)) revert UnknownToken();
         (, uint256 cost, uint256 fee) = fair.previewMint(token, msg.sender, shares);
         return (IERC20(q), cost + fee);

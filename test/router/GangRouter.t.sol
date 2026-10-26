@@ -24,7 +24,7 @@ import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
 
 /// @notice GangRouter in front of both cores: BNB in / refunds out, the trader (not the router) gets tokens, shares,
-///         dividend weight, gate and cap; only listed routers may buy / mint for someone; sells / withdraw / refund /
+///         dividend weight, gate and cap; only listed routers may buy / mint for someone; sells / withdraw /
 ///         claim have no router entry at all.
 contract GangRouterTest is Test {
     MockWBNB internal wbnb;
@@ -162,9 +162,8 @@ contract GangRouterTest is Test {
     }
 
     function _fairSale() internal returns (address token) {
-        FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
-        });
+        FairMintPad.MintConfig memory cfg =
+            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200});
         vm.prank(agent);
         token = fair.create("Fair", "FAIR", "", "", address(0), address(0), cfg, 1);
     }
@@ -334,7 +333,7 @@ contract GangRouterTest is Test {
     }
 
     /// @dev Same for 打新: a listed router can mint for a trader with its own quote, and nothing else. The trader's
-    ///      position (withdraw / refund) and reward (claim) stay msg.sender-only.
+    ///      position (withdraw) and reward (claim) stay msg.sender-only.
     function test_fair_listedRouterOnlySpendsItsOwnQuote() public {
         address token = _fairSale();
         vm.prank(agent2);
@@ -350,7 +349,7 @@ contract GangRouterTest is Test {
         uint256 quoteBefore = wbnb.balanceOf(agent2);
         vm.prank(rogue);
         fair.mintFor(agent2, token, 10, 10);
-        (uint16 shares,) = fair.positions(token, agent2);
+        uint16 shares = fair.positions(token, agent2);
         assertEq(shares, 30, "gift of 10 shares");
         assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader paid nothing");
 
@@ -364,7 +363,7 @@ contract GangRouterTest is Test {
             (bool ok,) = address(fair).call(calls[i]);
             assertFalse(ok, "no spend-for-someone entry");
         }
-        (shares,) = fair.positions(token, agent2);
+        shares = fair.positions(token, agent2);
         assertEq(shares, 30, "trader's position untouched");
         assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader's quote untouched");
     }
@@ -395,10 +394,9 @@ contract GangRouterTest is Test {
         uint256 accepted = router.fairMintBNB{value: 1 ether}(token, 40, 40, block.timestamp);
         assertEq(accepted, 40);
         assertEq(bal - agent2.balance, cost + fee, "exactly cost + mint fee, rest refunded");
-        (uint16 shares, uint128 feePaid) = fair.positions(token, agent2);
+        uint16 shares = fair.positions(token, agent2);
         assertEq(shares, 40);
-        assertEq(feePaid, fee);
-        (uint16 routerShares,) = fair.positions(token, address(router));
+        uint16 routerShares = fair.positions(token, address(router));
         assertEq(routerShares, 0);
         assertEq(IERC20(token).balanceOf(agent2), 40 * fair.TOKENS_PER_SHARE());
         _assertRouterEmpty();
@@ -433,17 +431,18 @@ contract GangRouterTest is Test {
         fair.mintFor(agent2, token, 10, 1);
     }
 
-    /// @dev A mint made through the router refunds to the trader after a failed sale, principal + fee in full.
-    function test_fair_refundGoesToTheTrader() public {
+    /// @dev A mint made through the router sells back to the trader (never the router): once stale, at full principal.
+    function test_fair_withdrawGoesToTheTrader() public {
         address token = _fairSale();
-        (, uint256 cost, uint256 fee) = fair.previewMint(token, agent2, 30);
+        (, uint256 cost,) = fair.previewMint(token, agent2, 30);
         vm.prank(agent2);
         router.fairMintBNB{value: 1 ether}(token, 30, 30, block.timestamp);
-        vm.warp(block.timestamp + 25 hours);
+        vm.warp(block.timestamp + 7 days);
         uint256 before = wbnb.balanceOf(agent2);
         vm.prank(agent2);
-        fair.refund(token);
-        assertEq(wbnb.balanceOf(agent2) - before, cost + fee);
+        fair.withdraw(token, 30);
+        assertEq(wbnb.balanceOf(agent2) - before, cost, "stale: principal back, no exit fee");
+        assertEq(wbnb.balanceOf(address(router)), 0);
     }
 
     function test_fair_fillsAndLaunchesThroughRouter() public {
@@ -453,10 +452,10 @@ contract GangRouterTest is Test {
             _agent(m);
             vm.prank(m);
             router.fairMintBNB{value: 1 ether}(token, 100, 1, block.timestamp);
-            (,,,,,, bool launched,,,,,,,,) = fair.sales(token);
+            (,,,,,, bool launched,,,,,,) = fair.sales(token);
             if (launched) break;
         }
-        (,,,,,, bool done,,,,,,, address pair,) = fair.sales(token);
+        (,,,,,, bool done,,,,, address pair,) = fair.sales(token);
         assertTrue(done, "launched");
         assertTrue(pair != address(0));
         _assertRouterEmpty();

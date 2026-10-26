@@ -45,22 +45,29 @@ contract FairMintAuditTest is FairMintTest {
         assertEq(pad.mint(t, 1, 1), 1);
     }
 
-    /// @dev A-4: refunds must not depend on DividendVault (its owner could re-point the launchpad).
-    function test_audit_refundIndependentOfVault() public {
+    /// @dev A-4 (refund gone, withdraw is the only exit): a vault whose owner re-pointed its launchpad refuses the pad's
+    ///      writes; selling back must still work. The stale vault share is then cleared by the handler after launch.
+    function test_audit_withdrawIndependentOfVault() public {
         address t = _create();
-        address m = _minter(0);
+        address m = _minter(150); // not one of _fill's minters, so its baseline stays 0 after launch
         vm.prank(m);
         pad.mint(t, 100, 1);
         uint256 before = wbnb.balanceOf(m);
-        vm.warp(block.timestamp + 25 hours);
 
         vm.prank(owner);
         vault.setLaunchpad(makeAddr("elsewhere"));
-
         vm.prank(m);
-        uint256 got = pad.refund(t);
-        assertEq(got, 100 * SHARE_PRICE * 101 / 100, "principal + mint fee");
+        uint256 got = pad.withdraw(t, 100);
+        assertEq(got, 100 * SHARE_PRICE * 99 / 100, "principal minus the 1% exit fee");
         assertEq(wbnb.balanceOf(m), before + got);
+        assertEq(vault.shares(t, m), 100 * TPS, "the vault refused: share left as is");
+
+        // vault fixed; the sale fills and launches; m's first touch after launch zeroes the share (baseline 0)
+        vm.prank(owner);
+        vault.setLaunchpad(address(pad));
+        _fill(t);
+        handler.syncShares(t, m, address(0));
+        assertEq(vault.shares(t, m), 0, "zero-baseline share cleared by the handler");
     }
 
     /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate (rate 0: test_create_refPoolAgainstWbnb).

@@ -18,14 +18,16 @@ import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {FairToken, FairTokenDeployer} from "./FairToken.sol";
 
 /// @title FairMintPad (打新发射 · 铭文式打进度)
-/// @notice No bonding curve. Half the supply is sold in 10,000 equal shares at one fixed price; when the last share
-///         is minted, the other half plus all principal goes into a Pancake V2 pair (LP to 0xdead), so the opening
-///         price equals the mint price. Unfilled at the deadline → everyone refunds principal + fee in full.
-///         Mint and withdraw each cost a fee the creator sets at create (1%–5% each, e.g. mint 1% / withdraw 2%),
-///         all to PlatformFeeBucket; mint fees are escrowed until launch.
+/// @notice No bonding curve: half the supply is sold in 10,000 equal shares at one fixed price, both ways — mint buys
+///         shares at it, withdraw sells them back to the pad at it. When the last share is minted, the other half
+///         plus all principal goes into a Pancake V2 pair (LP to 0xdead), so the opening price equals the mint price.
+///         There is no deadline and no refund: a sale stays open until it fills, and a minter leaves by withdrawing.
+///         Mint fee (1%–3%) is paid to PlatformFeeBucket at mint; exit fee (1%–2%) is taken on withdraw, and waived once
+///         a sale has had no mint for STALE_AFTER (7 days), so a stalled sale can be left at the price paid.
+///         Tokens stay locked until launch: they only move between the pad and minters (no P2P sale before launch).
 /// @dev Spec: docs/SPEC-FAIR-MINT-2026-10-26.md. NO mainnet broadcast.
-///      Each sale snapshots its rules at create (cap, gate, deadline, hold line): owner setters only affect new sales.
-///      Escrowed principal / fees have no admin exit — only withdraw, refund, launch and the platform fee.
+///      Each sale snapshots its rules at create (cap, gate, fees, hold line): owner setters only affect new sales.
+///      Escrowed principal has no admin exit — only withdraw and launch move it.
 contract FairMintPad is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -36,17 +38,18 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     uint256 public constant TOTAL_SHARES = 10_000;
     uint256 public constant TOKENS_PER_SHARE = MINT_SUPPLY / TOTAL_SHARES; // 50_000 tokens
     uint256 public constant BPS = 10_000;
-    uint16 public constant MIN_FEE_BPS = 100; // 1%: platform floor
-    uint16 public constant MAX_FEE_BPS = 500; // 5%: a higher exit fee would trap minters
+    uint16 public constant MIN_FEE_BPS = 100; // 1%: platform floor, mint and exit
+    uint16 public constant MAX_MINT_FEE_BPS = 300; // 3%: never refunded (there is no refund), so kept low
+    uint16 public constant MAX_EXIT_FEE_BPS = 200; // 2%: withdraw is the only way out of an unfilled sale
+    /// @notice No mint for this long → withdraw costs no exit fee (only the mint fee paid is lost).
+    uint256 public constant STALE_AFTER = 7 days;
 
     uint256 public constant MIN_RAISE_BNB = 5 ether;
     uint256 public constant MAX_RAISE_BNB = 50 ether;
     /// @dev QuoteRegistry overrides are "15 BNB worth of quote" (V2 graduation target); scaled to the raise.
     uint256 public constant REGISTRY_REF_BNB = 15 ether;
-    uint16 public constant MIN_CAP_BPS = 10; // 0.1% of supply → ≥ 500 addresses
+    uint16 public constant MIN_CAP_BPS = 25; // 0.25% of supply → ≥ 200 addresses (no deadline: keep the bar reachable)
     uint16 public constant MAX_CAP_BPS = 50; // 0.5% of supply → ≥ 100 addresses
-    uint32 public constant MIN_DURATION = 1 hours;
-    uint32 public constant MAX_DURATION = 72 hours;
     uint16 public constant MIN_HOLD_BPS = 3_000;
     uint16 public constant MAX_HOLD_BPS = 8_000;
     /// @dev Vault floor uses `<=`; must stay below 1 share × MIN_HOLD_BPS (15k tokens) or small minters earn nothing.
@@ -56,40 +59,35 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     struct MintConfig {
         uint256 raiseBnb; // BNB-equivalent; converted to quote units at create
         uint16 capBps; // per-address cap, share of total supply
-        uint32 duration; // seconds until deadline
         uint16 holdBps; // reward line: out for good once balance < baseline × holdBps
-        uint16 mintFeeBps; // on top of the principal at mint; refunded in full if the sale fails
-        uint16 exitFeeBps; // taken from the principal on withdraw
+        uint16 mintFeeBps; // on top of the principal at mint, to the platform at once
+        uint16 exitFeeBps; // taken from the principal on withdraw (waived once the sale is stale)
     }
 
     struct Sale {
         address creator;
-        uint64 deadline;
+        uint64 lastMintAt; // last mint (the creator's included); withdraws don't count
         uint16 capShares;
         uint16 holdBps;
         address quote;
         uint16 sold;
         bool launched;
-        bool failed;
         uint16 mintFeeBps;
         uint16 exitFeeBps;
         address gate; // Agent ID registry snapshot; 0 = ungated
         uint128 sharePrice;
-        uint128 escrowedFee;
         address pair;
         address refPool;
     }
 
     struct Position {
         uint16 shares;
-        uint128 feePaid; // escrowed mint fee, refunded in full if the sale fails
     }
 
     enum Status {
         None,
         Minting,
-        Launched,
-        Failed
+        Launched
     }
 
     QuoteRegistry public immutable quoteRegistry;
@@ -107,7 +105,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     IERC721 public agentIdRegistry;
     bool public agentGateEnabled = true;
     /// @notice Stateless entry contracts (e.g. GangRouter) that may mint for a trader they pay for. A router only ever
-    ///         spends its own quote: it can't withdraw, refund or claim for anyone (those stay msg.sender-only).
+    ///         spends its own quote: it can't withdraw or claim for anyone (those stay msg.sender-only).
     mapping(address router => bool) public routers;
 
     mapping(address token => Sale) public sales;
@@ -126,7 +124,6 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 raiseBnb,
         uint256 sharePrice,
         uint256 capShares,
-        uint256 deadline,
         uint256 holdBps,
         uint256 mintFeeBps,
         uint256 exitFeeBps
@@ -144,21 +141,14 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         address indexed token,
         address indexed user,
         uint256 shares,
-        uint256 refund,
+        uint256 payout,
         uint256 fee,
         uint256 userShares,
         uint256 sold
     );
     event Launched(
-        address indexed token,
-        address indexed pair,
-        address quote,
-        uint256 tokenAmount,
-        uint256 quoteAmount,
-        uint256 feeToPlatform
+        address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount
     );
-    event Failed(address indexed token, uint256 sold);
-    event Refunded(address indexed token, address indexed user, uint256 amount);
     event MigratorSet(address indexed migrator);
     event AgentGateUpdated(bool enabled, address registry);
     event V3FactorySet(address indexed factory);
@@ -169,12 +159,10 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     error BadConfig(string reason);
     error UnknownToken();
     error NotMinting();
-    error NotFailed();
     error ZeroAmount();
     error BadAmount();
     error Slippage();
     error WalletCapReached();
-    error NothingToRefund();
     error NotAgent();
     error MigratorNotSet();
     error MigratorAlreadySet();
@@ -189,6 +177,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     error QuoteNotAllowed();
     error WrongMigrator();
     error RouterNeedsGate();
+    error OutOfGas();
 
     constructor(
         address owner_,
@@ -294,7 +283,6 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
 
         Sale storage s = sales[token];
         s.creator = msg.sender;
-        s.deadline = (block.timestamp + cfg.duration).toUint64();
         s.capShares = _capShares(cfg.capBps).toUint16();
         s.holdBps = cfg.holdBps;
         s.mintFeeBps = cfg.mintFeeBps;
@@ -317,7 +305,6 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
             cfg.raiseBnb,
             price,
             s.capShares,
-            s.deadline,
             cfg.holdBps,
             cfg.mintFeeBps,
             cfg.exitFeeBps
@@ -325,7 +312,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         _mint(token, s, msg.sender, devShares, devShares);
     }
 
-    // ---------------------------------------------------------------- mint / withdraw / refund
+    // ---------------------------------------------------------------- mint / withdraw
     /// @param minShares Revert if the last-fill truncation leaves fewer than this.
     function mint(address token, uint256 shares, uint256 minShares) external nonReentrant returns (uint256 accepted) {
         Sale storage s = _minting(token);
@@ -334,8 +321,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         accepted = _mint(token, s, msg.sender, shares, minShares);
     }
 
-    /// @notice A listed router mints for `trader`: the router pays (cost + mint fee), the shares, tokens and the fee
-    ///         escrow are the trader's (a refund or withdraw pays the trader, never the router). Gate and cap: trader's.
+    /// @notice A listed router mints for `trader`: the router pays (cost + mint fee), the shares and tokens are the
+    ///         trader's (a later withdraw pays the trader, never the router). Gate and cap: the trader's.
     function mintFor(address trader, address token, uint256 shares, uint256 minShares)
         external
         nonReentrant
@@ -350,53 +337,25 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         accepted = _mint(token, s, trader, shares, minShares);
     }
 
-    /// @notice Before fill and deadline: get principal − exit fee back. The fee paid at mint is kept by the platform.
+    /// @notice Before the sale fills: sell `shares` back to the pad at the mint price, minus the exit fee (none once
+    ///         the sale is stale). The mint fee paid is the platform's and is not returned.
     function withdraw(address token, uint256 shares) external nonReentrant returns (uint256 payout) {
         Sale storage s = _minting(token);
         Position storage p = positions[token][msg.sender];
         if (shares == 0 || shares > p.shares) revert BadAmount();
 
-        uint256 principal = shares * s.sharePrice;
-        uint256 exitFee = (principal * s.exitFeeBps) / BPS;
-        payout = principal - exitFee;
-        uint256 mintFee = shares == p.shares ? p.feePaid : (uint256(p.feePaid) * shares) / p.shares;
+        uint256 exitFee;
+        (payout, exitFee) = _withdrawQuote(s, shares);
 
         p.shares -= shares.toUint16();
-        p.feePaid -= mintFee.toUint128();
         s.sold -= shares.toUint16();
-        s.escrowedFee -= mintFee.toUint128();
 
         FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
-        dividendVault.setShare(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
+        _setShareOnExit(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
         IERC20(s.quote).safeTransfer(msg.sender, payout);
-        _toPlatform(s.quote, mintFee + exitFee);
+        _toPlatform(s.quote, exitFee); // 0 once stale: then the exit needs no fee sink either
 
-        emit Withdrawn(token, msg.sender, shares, payout, mintFee + exitFee, p.shares, s.sold);
-    }
-
-    /// @notice Deadline passed without a fill: principal + mint fee back in full.
-    function refund(address token) external nonReentrant returns (uint256 amount) {
-        Sale storage s = sales[token];
-        if (s.creator == address(0)) revert UnknownToken();
-        if (s.launched || block.timestamp <= s.deadline) revert NotFailed();
-        if (!s.failed) {
-            s.failed = true;
-            emit Failed(token, s.sold);
-        }
-        Position storage p = positions[token][msg.sender];
-        uint256 shares = p.shares;
-        if (shares == 0) revert NothingToRefund();
-
-        uint256 fee = p.feePaid;
-        amount = shares * s.sharePrice + fee;
-        s.escrowedFee -= fee.toUint128();
-        p.shares = 0;
-        p.feePaid = 0;
-
-        // no dividendVault.setShare: a failed sale never earns rewards, and refunds must not depend on the vault
-        FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
-        IERC20(s.quote).safeTransfer(msg.sender, amount);
-        emit Refunded(token, msg.sender, amount);
+        emit Withdrawn(token, msg.sender, shares, payout, exitFee, p.shares, s.sold);
     }
 
     // ---------------------------------------------------------------- views
@@ -408,14 +367,13 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) {
             return (false, "raiseBnb must be 5-50 BNB");
         }
-        if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 10-50 (0.1%-0.5%)");
-        if (cfg.duration < MIN_DURATION || cfg.duration > MAX_DURATION) return (false, "duration must be 1-72 hours");
+        if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 25-50 (0.25%-0.5%)");
         if (cfg.holdBps < MIN_HOLD_BPS || cfg.holdBps > MAX_HOLD_BPS) return (false, "holdBps must be 3000-8000");
-        if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_FEE_BPS) {
-            return (false, "mintFeeBps must be 100-500 (1%-5%)");
+        if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_MINT_FEE_BPS) {
+            return (false, "mintFeeBps must be 100-300 (1%-3%)");
         }
-        if (cfg.exitFeeBps < MIN_FEE_BPS || cfg.exitFeeBps > MAX_FEE_BPS) {
-            return (false, "exitFeeBps must be 100-500 (1%-5%)");
+        if (cfg.exitFeeBps < MIN_FEE_BPS || cfg.exitFeeBps > MAX_EXIT_FEE_BPS) {
+            return (false, "exitFeeBps must be 100-200 (1%-2%)");
         }
         if (devShares == 0 || devShares > _capShares(cfg.capBps)) return (false, "devShares must be 1..cap");
         return (true, "");
@@ -445,11 +403,26 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         fee = (cost * s.mintFeeBps) / BPS;
     }
 
+    /// @notice What `withdraw(token, shares)` by `user` would pay out and charge right now (0, 0 if it would revert).
+    function previewWithdraw(address token, address user, uint256 shares)
+        external
+        view
+        returns (uint256 payout, uint256 fee)
+    {
+        Sale storage s = sales[token];
+        if (status(token) != Status.Minting || shares == 0 || shares > positions[token][user].shares) return (0, 0);
+        return _withdrawQuote(s, shares);
+    }
+
+    /// @notice The exit fee a withdraw pays now: the sale's own, or 0 once it has had no mint for STALE_AFTER.
+    function exitFeeBpsOf(address token) external view returns (uint256) {
+        return _exitFeeBps(sales[token]);
+    }
+
     function status(address token) public view returns (Status) {
         Sale storage s = sales[token];
         if (s.creator == address(0)) return Status.None;
         if (s.launched) return Status.Launched;
-        if (s.failed || block.timestamp > s.deadline) return Status.Failed;
         return Status.Minting;
     }
 
@@ -487,11 +460,11 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 cost = accepted * s.sharePrice;
         uint256 fee = (cost * s.mintFeeBps) / BPS;
         _pullExact(s.quote, cost + fee);
+        _toPlatform(s.quote, fee); // no refund, so nothing to escrow
 
         p.shares += accepted.toUint16();
-        p.feePaid += fee.toUint128();
         s.sold += accepted.toUint16();
-        s.escrowedFee += fee.toUint128();
+        s.lastMintAt = uint64(block.timestamp);
 
         IERC20(token).safeTransfer(trader, accepted * TOKENS_PER_SHARE);
         dividendVault.setShare(token, trader, uint256(p.shares) * TOKENS_PER_SHARE);
@@ -520,11 +493,29 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         address pair = migrator.migrate(token, quote, LP_SUPPLY, quoteAmount);
         s.pair = pair;
         t.setPair(pair);
+        emit Launched(token, pair, quote, LP_SUPPLY, quoteAmount);
+    }
 
-        uint256 fee = s.escrowedFee;
-        s.escrowedFee = 0;
-        _toPlatform(quote, fee);
-        emit Launched(token, pair, quote, LP_SUPPLY, quoteAmount, fee);
+    /// @dev Principal of `shares` at the mint price, less the exit fee in force now.
+    function _withdrawQuote(Sale storage s, uint256 shares) internal view returns (uint256 payout, uint256 fee) {
+        uint256 principal = shares * s.sharePrice;
+        fee = (principal * _exitFeeBps(s)) / BPS;
+        payout = principal - fee;
+    }
+
+    /// @dev Withdraw is the only way out of an unfilled sale, so a vault that refuses writes (its owner re-pointed
+    ///      it) must not block it: the share is then left as is and corrected by the handler's first sync after launch.
+    ///      A caller that starves the call (63/64 rule) to leave a stale share behind is refused instead.
+    function _setShareOnExit(address token, address user, uint256 share) internal {
+        uint256 gasBefore = gasleft();
+        try dividendVault.setShare(token, user, share) {}
+        catch {
+            if (gasleft() <= gasBefore / 63) revert OutOfGas();
+        }
+    }
+
+    function _exitFeeBps(Sale storage s) internal view returns (uint256) {
+        return block.timestamp >= uint256(s.lastMintAt) + STALE_AFTER ? 0 : s.exitFeeBps;
     }
 
     function _toPlatform(address quote, uint256 amount) internal {
@@ -542,7 +533,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     function _minting(address token) internal view returns (Sale storage s) {
         s = sales[token];
         if (s.creator == address(0)) revert UnknownToken();
-        if (s.launched || block.timestamp > s.deadline) revert NotMinting();
+        if (s.launched) revert NotMinting();
     }
 
     function _currentGate() internal view returns (address) {

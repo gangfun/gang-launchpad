@@ -168,11 +168,12 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
     function _sync(address token, address user) internal {
         if (user == address(0)) return;
         uint256 base = pad.baselineOf(token, user);
-        if (base == 0) return; // pair / handler / post-launch buyers: never had a share
         uint256 share;
+        // base 0 (pair, handler, post-launch buyers, or a minter who sold everything back before launch) targets 0: a
+        // share the pad could not clear on that sell-back (its vault write is non-blocking) is zeroed here.
         // Audit G-01: the vault does not clear shares on setExcluded, so an excluded user must target 0 here too —
         // comparing against its stale share would otherwise skip the write and keep it earning.
-        if (!isOut[token][user] && !dividendVault.excluded(user)) {
+        if (base != 0 && !isOut[token][user] && !dividendVault.excluded(user)) {
             uint256 bal = IERC20(token).balanceOf(user);
             if (bal * BPS < base * pad.holdBpsOf(token)) {
                 isOut[token][user] = true;
