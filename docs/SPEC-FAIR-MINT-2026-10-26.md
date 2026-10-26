@@ -2,10 +2,10 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 作者：Claude（本页为产品规格 + 合约设计；**非执行单**）
-- 性质：**禁止主网广播**。尚无合约代码。
+- 性质：**禁止主网广播**。合约已在 `feat/fair-mint` 分支实现，mock 单测通过（§5.6），**未审计、未上测试网**。
 - 来源：用户口述（2026-10-26）：「没有内盘的概念，跟以前铭文一样打进度。dev 自定义规则，但是我们要设置上下限，比如最低 100 人，最高 0.5%。内盘没有价格，只有打满了之后代币发射，内盘依旧保持 1% 的买卖税。发射后有默认 1% 的税费，发射前就在的地址如果持有代币保持 50% 就可以享有 1% 税费中的 50% 作为持有奖励，剩下的 50% 跟目前的税费外盘规则不变，回购 + 入金库。」
 - 用户已定：固定价格打进度、打满即发射；打新阶段买卖各 1%；发射后 1% 税，50% 给发射前持有人、50% 回购 + 金库；dev 在平台上下限内设规则。
-- 待批（Claude 建议，§9 汇总）：奖励算法、失败退款、税率是否可选、出局线是否给 dev 选、报价币范围、V2 是否下线新建；以及 Claude 自己定的打新 / 池子 50 / 50、10,000 份、各参数上下限。
+- 2026-10-26 用户：「按照你的建议开始执行」→ §9 各项按 Claude 建议执行（奖励算法、失败全额退、税率固定 1%、出局线 30%–80% 由 dev 选、报价币同 V2、50 / 50、10,000 份、上下限、dev 至少打 1 份）。仍待办：§9 #6 网站入口、#11 核实 Agentic Wallet。
 - 2026-10-26 自审修订：改正 BNB 收款方式（V2 只收 WBNB）；补 §5.5 安全约束（管理员权限、托管资金）；补最后一笔截断、出局的误伤场景、开盘价措辞、接线遗漏；去掉「查 Agent ID 铸造时间」（ERC-721 不记录铸造时间）。
 - 与 `SPEC-V3-ECONOMIC-TEMPLATES-2026-10-26.md` 的关系：本方案不需要模版市场，V3 分支搁置不删；可复用部分见 §6.3。
 
@@ -157,10 +157,10 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 
 ```solidity
 struct MintConfig {
-    uint256 raise;      // 报价币计；BNB 等值须在 [5, 50] BNB
+    uint256 raiseBnb;   // BNB 等值，[5, 50] BNB；创建时按 WBNB / QuoteRegistry / 参考池换算成报价币并锁定
     uint16  capBps;     // [10, 50]，占总量
     uint32  duration;   // [1h, 72h]
-    uint16  holdBps;    // 出局线；不开放则必须为 5000
+    uint16  holdBps;    // 出局线 [3000, 8000]
 }
 
 function create(string name, string symbol, string logoURI, address quote, address refPool, MintConfig cfg,
@@ -180,12 +180,12 @@ function previewMint(address token, address user, uint256 shares)
 
 ### 5.2 FairToken
 
-- 基于 `TaxLaunchTokenV3`（10 亿全部铸给发射台），税率固定 1%。
+- 基于 V2 `TaxLaunchToken`（10 亿全部铸给发射台），税率固定 1%。
 - 发射前：除发射台外一律不能转；发射台可从地址收回（撤出 / 退款用，不依赖用户授权）。
 - 发射后：池子买卖收 1% → handler 累计；每笔转账调 handler 同步奖励份额（同 V2）。
-- 创建代码放在独立的部署合约里，避免发射台超 24KB（V3 已验证这个做法）。
+- 创建代码放在独立的 `FairTokenDeployer` 里（V3 分支验证过的做法），发射台不受代币代码体积影响。
 
-### 5.3 HolderRewardHandler（由 PostGradTaxHandlerV3 改）
+### 5.3 HolderRewardHandler（由 V2 PostGradTaxHandler 改）
 
 - `notifyTax` / `process(token, minQuoteOut)`：同 V2，换完后 50% `dividendVault.depositReward`、50% `bucket.notifyAccrual`；`totalShares == 0` 时 100% 进 bucket。
 - `syncShares(token, from, to)` 对每个地址：
@@ -198,6 +198,7 @@ else:                                         share = min(balance, base)
 ```
 
 - 打新阶段份额由发射台在 `mint` / `withdraw` 时直接写（发射前没有转账，也就不需要 handler 同步）；发射那一刻不需要遍历地址。
+- 写分红合约失败（如 operator 被撤）时吞掉错误：份额可能暂时不准，但不能卡住代币转账。
 
 ### 5.4 事件（索引服务据此改）
 
@@ -221,6 +222,18 @@ else:                                         share = min(balance, base)
 6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。
 7. 奖励判断只看「发射时数量」，池子、handler、migrator、发射台的基准天然为 0，不依赖 `excluded` 名单。
 
+### 5.6 实现（`feat/fair-mint`）
+
+| 文件 | 内容 |
+|---|---|
+| `src/fair-mint/FairMintPad.sol` | 打新发射台：create / mint / withdraw / refund / 打满发射；规则按币快照；15.4 KB（via-ir） |
+| `src/fair-mint/FairToken.sol` | 代币（发射前锁转账、发射台可收回；发射后池子买卖 1% 税）+ `FairTokenDeployer` |
+| `src/fair-mint/HolderRewardHandler.sol` | 发射后 1% 税：keeper 换币后 50% 给合格持有人 / 50% 平台；出局判断；分红合约出错不卡转账 |
+| `test/fair-mint/FairMint.t.sol` | 24 个用例：上下限、打新上限与截断、撤出、失败退款、发射价格、奖励权重 / 出局 / 上限、分账、权限 |
+
+- 复用 V2 原样：DividendVault、PlatformFeeBucket、MigratorV2、PoolCheck、QuoteRegistry。
+- 打满那一笔（含建池）在 mock 池子上约 100 万 gas；真实 Pancake 建池更高，待 fork 测试实测。
+
 ---
 
 ## 6. 部署
@@ -233,7 +246,7 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 
 - PlatformFeeBucket：FairMintPad、HolderRewardHandler 设为 operator。
 - DividendVault：`setLaunchpad(FairMintPad)`；HolderRewardHandler 设为 operator；池子、handler、migrator、0xdead 排除。
-- HolderRewardHandler：`setKeeper`、`setDexRouter`。
+- HolderRewardHandler：`setPad(FairMintPad)`（一次性）、`setKeeper`、`setRouter`。
 - FairMintPad：`setMigrator`、`setPairFactory`（均一次性）、Agent ID 注册表、bridge 池（非 BNB 报价币用）。
 - 每个币：创建时发射台 `dividendVault.registerToken(token, quote)`；发射时 `setPair`、`setTaxHandler(HolderRewardHandler)`、migrator 免税。
 
@@ -243,9 +256,9 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 |---|---|
 | V2 `MigratorV2` / `PoolCheck` / `QuoteRegistry` / Agent ID 判断 | 建池、报价币换算、准入，原样用 |
 | V2 `DividendVault` / `PlatformFeeBucket` | 原样用（vault 新部署一份） |
-| V3 分支 `TaxLaunchTokenV3` + 部署合约 | 改成 FairToken |
-| V3 分支 `PostGradTaxHandlerV3` 的换币代码、`TaxRouterV3` 的「没人有份额就转平台」 | 并入 HolderRewardHandler |
-| 不用 | TemplateRegistry、TaxRouterV3 分账、模版工厂 |
+| V2 `TaxLaunchToken` + V3 分支的部署合约做法 | 改成 FairToken |
+| V2 `PostGradTaxHandler` 的换币代码、V3 分支 `TaxRouterV3` 的「没人有份额就转平台」 | 并入 HolderRewardHandler |
+| 不用 | V3 分支的 TemplateRegistry、TaxRouterV3 分账、模版工厂（V3 分支不合入） |
 
 ---
 
@@ -274,7 +287,7 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 
 ---
 
-## 9. 待批（Claude 建议）
+## 9. 决策（2026-10-26 按 Claude 建议执行）
 
 | # | 问题 | 建议 |
 |---|---|---|
