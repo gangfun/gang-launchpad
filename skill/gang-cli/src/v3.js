@@ -19,8 +19,8 @@ export const V3_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x2202F7898e7e0b77d2Bb46d661d88d1Ffa7D8330',
-    router: process.env.GANG_ROUTER_TESTNET || '0x1ABd2da0A7aB9eb4797FCC36a8aC19a42382daE1',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x4B6a0E82E7357719D6204E5d6197Ef2C71E08dc4',
+    router: process.env.GANG_ROUTER_TESTNET || '0x5627EeA369eEa6e4Cf50E67DabF1DF0ae75B13a5',
     rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
