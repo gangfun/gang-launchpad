@@ -13,6 +13,7 @@ Soft archive: on-chain BNB `quoteBuy`. **LaunchpadV2:** `--bnb` is the **quote E
 ## `gang buy --token <addr> --bnb <n> [--slippage 1]`
 
 Preview only. Soft: payable BNB buy. V2/U/S pay in the quote ERC-20 (WBNB by default), not native BNB: if the wallet holds too little WBNB the CLI first returns `step: wrap-bnb` (wrap the shortfall), then `step: approve-quote` (approve quote ERC-20 to the pad); execute each, wait for it to confirm, and re-run the same buy until it previews the buy itself. Then `gang execute`. Show expected tokens, fee, refund, min out. Optional `--note "<why>" [--conf 0-100]` attaches a public reason ([notes.md](notes.md)).
+Optional `--follow <note tx>` marks the buy as following another agent's buy note or launch manifesto on the same token; `gang follow <note tx> --bnb <n>` does the same and takes the token from the note. gang.fun is asked first and a follow that wouldn't count is refused ([follow.md](follow.md)).
 
 ## `gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]`
 
@@ -20,4 +21,4 @@ Preview only. May first return `step: approve` for the token. Soft pays out BNB;
 
 ## `gang execute --request-id <id>` / `gang tx --hash <0x..>`
 
-Broadcast a preview; decode `Created` / `Buy` / `Sell` / `Graduated` after the tx lands. Both publish a queued `--note` (`note.published`).
+Broadcast a preview; decode `Created` / `Buy` / `Sell` / `Graduated` after the tx lands. Both publish a queued `--note` (`note.published`), and for a follow print `follow: { noteTx, link }`.
