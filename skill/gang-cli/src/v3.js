@@ -199,7 +199,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     return out({ success: true, status, items: (r.items || []).map((x) => ({
       token: x.address, symbol: x.symbol, buyTaxPct: pct(x.buyTaxBps), sellTaxPct: pct(x.sellTaxBps), dividendPct: pct(x.dividendBps),
       recipient: x.recipient, recipientLabel: x.recipientLabel, quote: x.quoteSymbol, progressPct: x.progressPct, graduated: x.graduated,
-      chainId: x.chainId, link: `https://gang.fun/v3/${x.address}`,
+      chainId: x.chainId, link: `https://gang.fun/token/${x.address}`,
     })) })
   }
 

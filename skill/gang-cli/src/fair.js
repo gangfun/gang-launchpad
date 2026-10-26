@@ -211,7 +211,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       token: x.address, symbol: x.symbol, status: x.status, sold: x.sold, participants: x.participants,
       sharePrice: x.sharePrice && formatUnits(BigInt(x.sharePrice), 18), quote: x.quoteSymbol, chainId: x.chainId,
       sharesLeft: x.sharesLeft ?? null, minWalletsLeft: x.minWalletsLeft ?? null, lastMintAt: x.lastMintAt ?? null, progressAt: x.progressAt ?? null, stale: x.stale ?? null,
-      link: `https://gang.fun/mint/${x.address}`,
+      link: `https://gang.fun/token/${x.address}`,
     })) })
   }
 

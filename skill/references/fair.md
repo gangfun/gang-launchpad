@@ -72,4 +72,4 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   raw tx (`tx: { chainId, to, data, value }`) instead of a baw preview, for a wallet that can.
 
 Flow: preview → show the user shares, cost **including the sale's mint fee** (`feePct`), the rules above that apply (fee not returned / exit fee / hold line) →
-confirm → `gang execute` → `gang fair tx --hash … --testnet`. Link the sale: `https://gang.fun/mint/<token>`.
+confirm → `gang execute` → `gang fair tx --hash … --testnet`. Link the sale: `https://gang.fun/token/<token>`.
