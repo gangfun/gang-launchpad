@@ -222,6 +222,10 @@ else:                                         share = min(balance, base)
 5. 撤出、退款全部由用户自己领，不遍历地址；`nonReentrant`。
 6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。
 7. 奖励判断只看「发射时数量」，池子、handler、migrator、发射台的基准天然为 0，不依赖 `excluded` 名单。
+8. 外部审计 V2 的结论（2026-10-26，经另一窗口转达）对本方案的处理：
+   - **G-01 被排除地址保留旧份额继续分红：受影响，已修。** DividendVault 的 `setExcluded` 不清份额；handler 原先拿算出的份额和旧份额比较，相等就不写，被排除地址会一直按旧份额分钱。现在被排除地址的目标份额一律为 0（`_sync` 和 `eligibleShare`）。剩余窗口：owner 排除某地址后、该地址下次转账前仍会累计，所以**排除操作必须和 `handler.syncShares(token, user, 0)` 放在同一批交易里**。排除前已赚的奖励仍可领。
+   - **G-02 totalShares == 0 时存入的钱永远卡住：不受影响。** handler 只在合格份额 > 0 时存入，否则 100% 给平台（测试覆盖全员出局、全员被排除两种情况）。
+   - **G-03 `flushStuckQuoteToTreasury` 绕过 80/20：** 复用的 V2 PlatformFeeBucket 原样带有这个应急出口（owner + 7 天延迟），本方案不改，知悉即可。
 
 ### 5.6 实现（`feat/fair-mint`）
 

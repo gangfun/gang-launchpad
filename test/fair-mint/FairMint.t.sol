@@ -597,6 +597,58 @@ contract FairMintTest is Test {
         assertEq(vault.shares(t, m), 0, "retried once the vault accepts again");
     }
 
+    /// @dev Audit G-01 (V2 PostGradTaxHandler skips excluded users, so their old share keeps earning): here the sync
+    ///      writes the share anyway and the vault zeroes excluded users, so one sync (a transfer or a permissionless
+    ///      `syncShares` call) stops further accrual. Rewards earned before the exclusion stay claimable.
+    function test_auditG01_excludedHolderStopsEarningAfterSync() public {
+        address t = _create();
+        _fill(t);
+        address m = _minter(3);
+        _buy(t, buyer, 2 ether);
+        vm.prank(owner);
+        handler.process(t, 1);
+        uint256 earned = vault.pending(t, m);
+        assertGt(earned, 0);
+
+        vm.prank(owner);
+        vault.setExcluded(m, true);
+        handler.syncShares(t, m, address(0));
+        assertEq(vault.shares(t, m), 0, "zeroed although never out");
+
+        _buy(t, buyer, 2 ether);
+        vm.prank(owner);
+        handler.process(t, 1);
+        assertEq(vault.pending(t, m), earned, "no accrual after exclusion");
+
+        _sell(t, m, 1 * TPS); // ordinary transfers keep it at 0
+        assertEq(vault.shares(t, m), 0);
+    }
+
+    /// @dev Audit G-02 (deposit with totalShares == 0 is stuck forever): the handler never deposits then — the
+    ///      holder half goes to the platform. Covered end to end in test_rewards_noEligibleHolderSendsAllToPlatform;
+    ///      this pins the early-launch case where a holder half exists before anyone sells.
+    function test_auditG02_neverDepositsIntoEmptyVault() public {
+        address t = _create();
+        _fill(t);
+        for (uint256 i = 0; i < 100; i++) {
+            address m = _minter(i);
+            vm.prank(owner);
+            vault.setExcluded(m, true);
+            handler.syncShares(t, m, address(0));
+        }
+        vm.prank(owner);
+        vault.setExcluded(dev, true);
+        handler.syncShares(t, dev, address(0));
+        assertEq(vault.totalShares(t), 0);
+
+        _buy(t, buyer, 2 ether);
+        uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
+        vm.prank(owner);
+        uint256 out = handler.process(t, 1);
+        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, out, "100% to platform");
+        assertEq(wbnb.balanceOf(address(vault)), 0, "nothing stranded in the vault");
+    }
+
     function test_handlerPadIsOneShot() public {
         vm.prank(owner);
         vm.expectRevert(HolderRewardHandler.PadAlreadySet.selector);

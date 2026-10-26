@@ -149,7 +149,7 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
 
     /// @notice Reward weight the rule gives `user` right now (0 when out or never minted).
     function eligibleShare(address token, address user) public view returns (uint256) {
-        if (isOut[token][user]) return 0;
+        if (isOut[token][user] || dividendVault.excluded(user)) return 0;
         uint256 base = pad.baselineOf(token, user);
         if (base == 0) return 0;
         uint256 bal = IERC20(token).balanceOf(user);
@@ -162,7 +162,9 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
         uint256 base = pad.baselineOf(token, user);
         if (base == 0) return; // pair / handler / post-launch buyers: never had a share
         uint256 share;
-        if (!isOut[token][user]) {
+        // Audit G-01: the vault does not clear shares on setExcluded, so an excluded user must target 0 here too —
+        // comparing against its stale share would otherwise skip the write and keep it earning.
+        if (!isOut[token][user] && !dividendVault.excluded(user)) {
             uint256 bal = IERC20(token).balanceOf(user);
             if (bal * BPS < base * pad.holdBpsOf(token)) {
                 isOut[token][user] = true;
