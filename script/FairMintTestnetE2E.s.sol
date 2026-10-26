@@ -80,7 +80,9 @@ contract FairMintTestnetE2E is Script {
 
         console.log("tax processed (quote wei)", out);
         console.log("minter 5 claimed (quote wei)", pend);
-        console.log("bucket accrued (quote wei)", PlatformFeeBucket(address(pad.platformBucket())).accruedQuote(address(quote)));
+        console.log(
+            "bucket accrued (quote wei)", PlatformFeeBucket(address(pad.platformBucket())).accruedQuote(address(quote))
+        );
     }
 
     function _createAndFill(address deployer, uint256 gasPerMinter) internal returns (address token) {
@@ -90,8 +92,9 @@ contract FairMintTestnetE2E is Script {
         if (agentId.balanceOf(deployer) == 0) agentId.register();
         quote.mint(deployer, 10 ether);
         quote.approve(address(pad), type(uint256).max);
-        FairMintPad.MintConfig memory cfg =
-            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+        FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
+            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
+        });
         token = pad.create("Fair Testnet", "FAIRT", "", address(quote), address(0), cfg, 1);
         for (uint256 i = 0; i < MINTERS; i++) {
             // the filling mint also builds the pair: give the last minter 10x gas
@@ -117,9 +120,8 @@ contract FairMintTestnetE2E is Script {
         path[0] = tokenIn;
         path[1] = tokenOut;
         IERC20(tokenIn).approve(T.PANCAKE_V2_ROUTER, amountIn);
-        IPancakeRouter02(T.PANCAKE_V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 0, path, to, block.timestamp + 1 days
-        );
+        IPancakeRouter02(T.PANCAKE_V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, to, block.timestamp + 1 days);
     }
 
     function _minterKey(uint256 i) internal view returns (uint256) {

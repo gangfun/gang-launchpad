@@ -79,7 +79,14 @@ contract FairMintForkTest is Test {
         handler = new HolderRewardHandler(owner, address(vault), address(bucket));
         agent = new ForkAgent();
         pad = new FairMintPad(
-            owner, address(reg), address(vault), address(bucket), address(handler), address(new FairTokenDeployer()), WBNB, V2_FACTORY
+            owner,
+            address(reg),
+            address(vault),
+            address(bucket),
+            address(handler),
+            address(new FairTokenDeployer()),
+            WBNB,
+            V2_FACTORY
         );
         mig = new MigratorV2(V2_FACTORY, address(pad));
 
@@ -104,7 +111,9 @@ contract FairMintForkTest is Test {
 
     // ---------------------------------------------------------------- helpers
     function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+        return FairMintPad.MintConfig({
+            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
+        });
     }
 
     function _minter(uint256 i) internal pure returns (address) {
@@ -146,9 +155,8 @@ contract FairMintForkTest is Test {
         vm.startPrank(who);
         IERC20(tokenIn).approve(V2_ROUTER, amountIn);
         uint256 before = IERC20(tokenOut).balanceOf(who);
-        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 0, path, who, block.timestamp
-        );
+        IPancakeRouter02(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, who, block.timestamp);
         got = IERC20(tokenOut).balanceOf(who) - before;
         vm.stopPrank();
     }

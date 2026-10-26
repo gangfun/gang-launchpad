@@ -85,7 +85,7 @@ contract DeployFairMint is Script {
         );
         MigratorV2 mig = new MigratorV2(factory, address(pad));
         (s.vault, s.handler, s.tokenDeployer, s.pad, s.migrator) =
-            (address(vault), address(handler), address(tokenDeployer), address(pad), address(mig));
+        (address(vault), address(handler), address(tokenDeployer), address(pad), address(mig));
 
         vault.setMinimumShareBalance(MIN_SHARE);
         vault.setLaunchpad(address(pad));
@@ -155,9 +155,13 @@ contract DeployFairMint is Script {
         console.log("AGENT_ID", s.agentId);
         if (s.testQuote != address(0)) console.log("TEST_QUOTE", s.testQuote);
         if (!bucketWired) {
-            console.log("PENDING bucket owner: setOperator(FAIR_MINT_PAD, true) and setOperator(HOLDER_REWARD_HANDLER, true)");
+            console.log(
+                "PENDING bucket owner: setOperator(FAIR_MINT_PAD, true) and setOperator(HOLDER_REWARD_HANDLER, true)"
+            );
         }
-        if (owner != deployer) console.log("PENDING owner: acceptOwnership() on pad, handler, vault (testnet: also registry, bucket)");
+        if (owner != deployer) {
+            console.log("PENDING owner: acceptOwnership() on pad, handler, vault (testnet: also registry, bucket)");
+        }
     }
 
     function _broadcasting() internal view returns (bool) {

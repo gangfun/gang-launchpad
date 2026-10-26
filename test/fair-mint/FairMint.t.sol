@@ -105,7 +105,9 @@ contract FairMintTest is Test {
     }
 
     function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+        return FairMintPad.MintConfig({
+            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
+        });
     }
 
     function _create() internal returns (address token) {
@@ -127,7 +129,8 @@ contract FairMintTest is Test {
         view
         returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 escrowedFee, address pair)
     {
-        (,, uint16 cap,,, uint16 sold_, bool launched_,,,,, uint128 price, uint128 fee, address pair_,) = pad.sales(token);
+        (,, uint16 cap,,, uint16 sold_, bool launched_,,,,, uint128 price, uint128 fee, address pair_,) =
+            pad.sales(token);
         return (cap, sold_, launched_, price, fee, pair_);
     }
 

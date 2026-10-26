@@ -127,13 +127,30 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 exitFeeBps
     );
     event Minted(
-        address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold
+        address indexed token,
+        address indexed user,
+        uint256 shares,
+        uint256 cost,
+        uint256 fee,
+        uint256 userShares,
+        uint256 sold
     );
     event Withdrawn(
-        address indexed token, address indexed user, uint256 shares, uint256 refund, uint256 fee, uint256 userShares, uint256 sold
+        address indexed token,
+        address indexed user,
+        uint256 shares,
+        uint256 refund,
+        uint256 fee,
+        uint256 userShares,
+        uint256 sold
     );
     event Launched(
-        address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount, uint256 feeToPlatform
+        address indexed token,
+        address indexed pair,
+        address quote,
+        uint256 tokenAmount,
+        uint256 quoteAmount,
+        uint256 feeToPlatform
     );
     event Failed(address indexed token, uint256 sold);
     event Refunded(address indexed token, address indexed user, uint256 amount);
@@ -266,8 +283,20 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         allTokens.push(token);
 
         emit Created(
-            token, msg.sender, name, symbol, logoURI, quote, refUsed, cfg.raiseBnb, price, s.capShares, s.deadline, cfg.holdBps,
-            cfg.mintFeeBps, cfg.exitFeeBps
+            token,
+            msg.sender,
+            name,
+            symbol,
+            logoURI,
+            quote,
+            refUsed,
+            cfg.raiseBnb,
+            price,
+            s.capShares,
+            s.deadline,
+            cfg.holdBps,
+            cfg.mintFeeBps,
+            cfg.exitFeeBps
         );
         _mint(token, s, devShares, devShares);
     }
@@ -331,13 +360,23 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- views
-    function checkConfig(MintConfig calldata cfg, uint256 devShares) public pure returns (bool ok, string memory reason) {
-        if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) return (false, "raiseBnb must be 5-50 BNB");
+    function checkConfig(MintConfig calldata cfg, uint256 devShares)
+        public
+        pure
+        returns (bool ok, string memory reason)
+    {
+        if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) {
+            return (false, "raiseBnb must be 5-50 BNB");
+        }
         if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 10-50 (0.1%-0.5%)");
         if (cfg.duration < MIN_DURATION || cfg.duration > MAX_DURATION) return (false, "duration must be 1-72 hours");
         if (cfg.holdBps < MIN_HOLD_BPS || cfg.holdBps > MAX_HOLD_BPS) return (false, "holdBps must be 3000-8000");
-        if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_FEE_BPS) return (false, "mintFeeBps must be 100-500 (1%-5%)");
-        if (cfg.exitFeeBps < MIN_FEE_BPS || cfg.exitFeeBps > MAX_FEE_BPS) return (false, "exitFeeBps must be 100-500 (1%-5%)");
+        if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_FEE_BPS) {
+            return (false, "mintFeeBps must be 100-500 (1%-5%)");
+        }
+        if (cfg.exitFeeBps < MIN_FEE_BPS || cfg.exitFeeBps > MAX_FEE_BPS) {
+            return (false, "exitFeeBps must be 100-500 (1%-5%)");
+        }
         if (devShares == 0 || devShares > _capShares(cfg.capBps)) return (false, "devShares must be 1..cap");
         return (true, "");
     }

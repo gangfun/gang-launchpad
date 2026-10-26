@@ -57,9 +57,16 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
     event PadSet(address indexed pad);
     event RouterSet(address indexed router);
     event KeeperSet(address indexed keeper);
-    event TaxAccrued(address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued);
+    event TaxAccrued(
+        address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued
+    );
     event OuterTaxProcessed(
-        address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 toHolders, uint256 toPlatform
+        address indexed token,
+        address indexed quote,
+        uint256 taxTokens,
+        uint256 quoteOut,
+        uint256 toHolders,
+        uint256 toPlatform
     );
     event Disqualified(address indexed token, address indexed user, uint256 balance, uint256 baseline);
 
