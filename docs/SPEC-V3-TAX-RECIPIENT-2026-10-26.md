@@ -78,9 +78,11 @@ Agent ID 专属内盘、单地址 1% 上限、≈15 BNB 毕业、毕业前代币
 |---|---|
 | `LaunchpadV3.sol` | `create(…, TaxConfig{buyTaxBps, sellTaxBps, dividendBps, recipient})`；内盘按买 / 卖税率收税，平台部分按成交额 0.5% 算；校验规则见 §1.1。19.9 KB |
 | `TaxLaunchTokenV3.sol` | 买、卖两个池子税率，immutable；从池子买入按买入税率、卖进池子按卖出税率 |
-| `PostGradTaxHandlerV3.sol` | 按每笔交易的方向记平台部分（`accruedPlatformTax`）；换币后按比例拆给分账合约；修复审计 G-01（被排除地址的分红份额清零） |
+| `PostGradTaxHandlerV3.sol` | 按每笔交易的方向记平台部分（`accruedPlatformTax`，税率由代币在通知时传入，不回查代币）；换币后按比例拆给分账合约；修复审计 G-01（被排除地址的分红份额清零） |
+| `interfaces/IPostGradTaxHandlerV3.sol` | 新增：V3 代币与税处理合约之间的接口，`notifyTax` 多带这笔用的税率；V2 的接口不动 |
 | `TaxRouterV3.sol` | 平台 → 分红 → 接收地址；直接转账、失败记 `owedOf`、任何人 `release`；`TaxPaid` / `TaxOwed` 事件 |
 | `RecipientRegistry.sol` | 新增：接收地址白名单 |
+| `interfaces/ITaxRouter.sol` | 平台抽成常量 `V3_PLATFORM_TAX_BPS = 50` 只在这里定义，发射台和税处理合约共用 |
 | 删除 | TemplateRegistry、模版工厂（Agent 自养 / 回购销毁）、金库回调接口、模版作者分成 |
 
 复用 V2 原样：DividendVault（需新部署一份，V2 那份的 launchpad 是 V2）、PlatformFeeBucket（把 LaunchpadV3 和 TaxRouterV3 加为 operator）、MigratorV2、PoolCheck、QuoteRegistry。
@@ -102,7 +104,7 @@ DividendVault（新）→ TaxRouterV3 → RecipientRegistry → PostGradTaxHandl
 
 ---
 
-## 3. 测试（`test/launchpad-v3/LaunchpadV3.t.sol`，10 个）
+## 3. 测试（`test/launchpad-v3/LaunchpadV3.t.sol`，14 个）
 
 | 用例 | 覆盖 |
 |---|---|
@@ -116,8 +118,12 @@ DividendVault（新）→ TaxRouterV3 → RecipientRegistry → PostGradTaxHandl
 | `test_untaxed_noTaxAnywhere` | 无税币只收 1% 内盘手续费 |
 | `test_agentGateAndWalletCapUnchanged` | 非 Agent 不能买、1% 上限、15 BNB 毕业 |
 | `test_auditG01_excludedHolderZeroedOnSync` | 审计 G-01：被排除的持有人同步后份额为 0 |
+| `test_bondingAsymmetricRates_platformFromVolume` | 内盘买 1% / 卖 3%：平台部分按成交额 0.5%，不是按税的固定比例 |
+| `test_router_accessControl` | 只有发射台能登记、同一个币只登记一次、只有来源能分账、平台部分不能超过总额、owner 权限、发射台一次性 |
+| `test_recipientRegistry_accessControl` | 只有 owner 能增删白名单；重复上架、零地址、下架未上架的地址都拒绝；下架后重新上架不重复记录 |
+| `test_handler_onlyTokenAndKeeper` | 只有代币能通知收税、只有 keeper / owner 能换币分账 |
 
-全量 94 个测试通过（含 V2 原有用例）。
+全量 98 个测试通过（含 V2 原有用例）。
 
 ---
 

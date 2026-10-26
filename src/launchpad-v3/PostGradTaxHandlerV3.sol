@@ -6,12 +6,12 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DividendVault} from "../launchpad-v2/DividendVault.sol";
-import {IPostGradTaxHandler} from "../launchpad-v2/interfaces/IPostGradTaxHandler.sol";
+import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.sol";
 import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
 import {TaxRouterV3} from "./TaxRouterV3.sol";
 import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
-import {ITaxRouter} from "./interfaces/ITaxRouter.sol";
+import {ITaxRouter, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxRouter.sol";
 
 interface IUniswapV2PairSwap4V3 {
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
@@ -25,14 +25,13 @@ interface IUniswapV2PairSwap4V3 {
 /// @dev Must be a TaxRouterV3 source and a DividendVault operator.
 ///      V2 Finding 2: accrue only in the transfer hook. H1: `process` keeper/owner-only with mandatory minQuoteOut.
 ///      H2: the DEX pair never holds dividend shares.
-contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGuard {
+contract PostGradTaxHandlerV3 is IPostGradTaxHandlerV3, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @dev Pancake V2 fee numerator (9975/10000 = 0.25%).
     uint256 public constant DEX_FEE_NUM = 9975;
     uint256 public constant DEX_FEE_DEN = 10000;
-    /// @dev Platform's part of every taxed trade, as a share of its volume (same as LaunchpadV3.PLATFORM_TAX_BPS).
-    uint256 public constant PLATFORM_TAX_BPS = 50;
+    uint256 public constant PLATFORM_TAX_BPS = V3_PLATFORM_TAX_BPS;
 
     DividendVault public immutable dividendVault;
     TaxRouterV3 public immutable router;
@@ -78,19 +77,20 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
         emit KeeperSet(keeper_);
     }
 
-    /// @inheritdoc IPostGradTaxHandler
-    function notifyTax(address token, address from, address to, uint256 taxAmount) external nonReentrant {
+    /// @inheritdoc IPostGradTaxHandlerV3
+    function notifyTax(address token, address from, address to, uint256 taxAmount, uint16 rateBps)
+        external
+        nonReentrant
+    {
         if (msg.sender != token) revert OnlyToken();
         if (taxAmount == 0) revert ZeroAmount();
         accruedTax[token] += taxAmount;
-        // the token taxed this trade at its buy or sell rate; the platform's 0.5% of volume is that share of the tax
-        TaxLaunchTokenV3 t = TaxLaunchTokenV3(token);
-        uint256 rate = from == t.pair() ? t.buyTaxBps() : t.sellTaxBps();
-        if (rate > 0) accruedPlatformTax[token] += (taxAmount * PLATFORM_TAX_BPS) / rate;
+        // the token taxed this trade at `rateBps` (its buy or sell tax): the platform's 0.5% of volume is that share
+        if (rateBps > 0) accruedPlatformTax[token] += (taxAmount * PLATFORM_TAX_BPS) / rateBps;
         emit TaxAccrued(token, from, to, taxAmount, accruedTax[token]);
     }
 
-    /// @inheritdoc IPostGradTaxHandler
+    /// @inheritdoc IPostGradTaxHandlerV3
     /// @dev Permissionless and never reverts for unknown tokens (runs inside token transfers).
     function syncShares(address token, address from, address to) external {
         if (dividendVault.quoteOf(token) == address(0)) return;
@@ -98,7 +98,7 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
         _syncShares(token, to);
     }
 
-    /// @inheritdoc IPostGradTaxHandler
+    /// @inheritdoc IPostGradTaxHandlerV3
     function process(address token, uint256 minQuoteOut) external nonReentrant returns (uint256 quoteOut) {
         if (msg.sender != keeper && msg.sender != owner()) revert OnlyKeeperOrOwner();
         if (minQuoteOut == 0) revert ZeroAmount();

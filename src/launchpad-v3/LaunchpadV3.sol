@@ -18,7 +18,7 @@ import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "./TaxLaunchTokenV3.sol";
 import {TaxRouterV3} from "./TaxRouterV3.sol";
 import {RecipientRegistry} from "./RecipientRegistry.sol";
 import {ILaunchpadV3} from "./interfaces/ILaunchpadV3.sol";
-import {ITaxRouter} from "./interfaces/ITaxRouter.sol";
+import {ITaxRouter, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxRouter.sol";
 
 /// @title LaunchpadV3 (tax recipient)
 /// @notice V2 curve / BAW gate / walletCap 1% / ≈15 BNB graduation, unchanged. The `bool taxed` switch becomes a
@@ -40,7 +40,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     /// @dev Bonding fee, all tokens: 1% → PlatformFeeBucket. The token's tax is charged on top.
     uint256 public constant PROTOCOL_FEE_BPS = 100;
     /// @dev Platform's part of every taxed trade (curve and pool), as a share of the trade's volume; out of the tax.
-    uint256 public constant PLATFORM_TAX_BPS = 50;
+    uint256 public constant PLATFORM_TAX_BPS = V3_PLATFORM_TAX_BPS;
     uint16 public constant MIN_TAX_BPS = 100;
     uint16 public constant MAX_TAX_BPS = 500;
     /// @dev Holders need balance strictly > 10_000 tokens for dividend shares (V2 parity).

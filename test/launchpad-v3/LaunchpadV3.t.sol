@@ -18,6 +18,7 @@ import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.
 import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
 import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
+import {ITaxRouter} from "../../src/launchpad-v3/interfaces/ITaxRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that refuses transfers to blacklisted addresses (USDT-style), to make a recipient push fail.
@@ -368,4 +369,106 @@ contract LaunchpadV3Test is Test {
         handler.syncShares(t, holder, address(0));
         assertEq(divVault.shares(t, holder), 0, "excluded holder no longer earns");
     }
+
+    // ---------------------------------------------------------------- curve sell with buy 1% / sell 3%
+    /// @dev Asymmetric rates on the curve: the platform part of a sell is 0.5% of the sell's volume, not of its tax.
+    function test_bondingAsymmetricRates_platformFromVolume() public {
+        address t = _create(_tax(100, 300, 0, treasury));
+        uint256 gross = 0.01 ether;
+        vm.prank(agent);
+        pad.buy(t, gross, 0);
+        assertEq(quoteTok.balanceOf(treasury), (gross * 50) / BPS, "buy 1%: half to platform, half to recipient");
+
+        uint256 bal = IERC20(t).balanceOf(agent);
+        uint256 recBefore = quoteTok.balanceOf(treasury);
+        uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        vm.startPrank(agent);
+        IERC20(t).approve(address(pad), bal);
+        uint256 toUser = pad.sell(t, bal, 0);
+        vm.stopPrank();
+        uint256 quoteOut = (toUser * BPS) / (BPS - 100 - 300);
+        assertApproxEqAbs(
+            quoteTok.balanceOf(treasury) - recBefore, (quoteOut * 250) / BPS, 2, "sell 3%: 2.5% to recipient"
+        );
+        assertApproxEqAbs(
+            bucket.accruedQuote(address(quoteTok)) - bucketBefore, (quoteOut * 150) / BPS, 2, "1% fee + 0.5%"
+        );
+    }
+
+    // ---------------------------------------------------------------- access control
+    function test_router_accessControl() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+
+        vm.expectRevert(TaxRouterV3.OnlyLaunchpad.selector);
+        router.register(address(0xBEEF), address(quoteTok), treasury, 0);
+
+        vm.prank(address(pad));
+        vm.expectRevert(TaxRouterV3.AlreadyRegistered.selector);
+        router.register(t, address(quoteTok), treasury, 0);
+
+        vm.prank(address(pad));
+        vm.expectRevert(TaxRouterV3.BadDividendBps.selector);
+        router.register(address(0xBEEF), address(quoteTok), address(0), 5_000);
+
+        vm.prank(stranger);
+        vm.expectRevert(TaxRouterV3.OnlySource.selector);
+        router.distribute(t, 1 ether, 0, ITaxRouter.Phase.Bonding);
+
+        vm.prank(address(pad));
+        vm.expectRevert(TaxRouterV3.BadPlatformAmount.selector);
+        router.distribute(t, 1, 2, ITaxRouter.Phase.Bonding);
+
+        vm.prank(address(pad));
+        vm.expectRevert(TaxRouterV3.UnknownToken.selector);
+        router.distribute(address(0xBEEF), 1, 0, ITaxRouter.Phase.Bonding);
+
+        vm.startPrank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        router.setSource(stranger, true);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        router.setLaunchpad(stranger);
+        vm.stopPrank();
+
+        vm.prank(owner);
+        vm.expectRevert(TaxRouterV3.LaunchpadAlreadySet.selector);
+        router.setLaunchpad(stranger);
+
+        (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = router.previewSplit(t, 200, 50);
+        assertEq(toPlatform, 50);
+        assertEq(toDividend, 0);
+        assertEq(toRecipient, 150);
+    }
+
+    function test_recipientRegistry_accessControl() public {
+        vm.startPrank(stranger);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        recipients.list(stranger, "me");
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
+        recipients.delist(treasury);
+        vm.stopPrank();
+
+        vm.startPrank(owner);
+        vm.expectRevert(RecipientRegistry.AlreadyListed.selector);
+        recipients.list(treasury, "again");
+        vm.expectRevert(RecipientRegistry.ZeroAddress.selector);
+        recipients.list(address(0), "zero");
+        vm.expectRevert(RecipientRegistry.NotListed.selector);
+        recipients.delist(stranger);
+        recipients.delist(treasury);
+        recipients.list(treasury, "relisted");
+        vm.stopPrank();
+        assertEq(recipients.recipients().length, 1, "relisting does not duplicate");
+        assertTrue(recipients.isListed(treasury));
+    }
+
+    function test_handler_onlyTokenAndKeeper() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+        vm.prank(stranger);
+        vm.expectRevert(PostGradTaxHandlerV3.OnlyToken.selector);
+        handler.notifyTax(t, stranger, stranger, 1, 200);
+        vm.prank(stranger);
+        vm.expectRevert(PostGradTaxHandlerV3.OnlyKeeperOrOwner.selector);
+        handler.process(t, 1);
+    }
 }
+
