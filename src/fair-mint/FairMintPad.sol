@@ -19,7 +19,8 @@ import {FairToken, FairTokenDeployer} from "./FairToken.sol";
 /// @notice No bonding curve. Half the supply is sold in 10,000 equal shares at one fixed price; when the last share
 ///         is minted, the other half plus all principal goes into a Pancake V2 pair (LP to 0xdead), so the opening
 ///         price equals the mint price. Unfilled at the deadline → everyone refunds principal + fee in full.
-///         Mint and withdraw each cost 1% (→ PlatformFeeBucket); mint fees are escrowed until launch.
+///         Mint and withdraw each cost a fee the creator sets at create (1%–5% each, e.g. mint 1% / withdraw 2%),
+///         all to PlatformFeeBucket; mint fees are escrowed until launch.
 /// @dev Spec: docs/SPEC-FAIR-MINT-2026-10-26.md. NO mainnet broadcast.
 ///      Each sale snapshots its rules at create (cap, gate, deadline, hold line): owner setters only affect new sales.
 ///      Escrowed principal / fees have no admin exit — only withdraw, refund, launch and the platform fee.
@@ -33,7 +34,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     uint256 public constant TOTAL_SHARES = 10_000;
     uint256 public constant TOKENS_PER_SHARE = MINT_SUPPLY / TOTAL_SHARES; // 50_000 tokens
     uint256 public constant BPS = 10_000;
-    uint256 public constant FEE_BPS = 100;
+    uint16 public constant MIN_FEE_BPS = 100; // 1%: platform floor
+    uint16 public constant MAX_FEE_BPS = 500; // 5%: a higher exit fee would trap minters
 
     uint256 public constant MIN_RAISE_BNB = 5 ether;
     uint256 public constant MAX_RAISE_BNB = 50 ether;
@@ -54,6 +56,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint16 capBps; // per-address cap, share of total supply
         uint32 duration; // seconds until deadline
         uint16 holdBps; // reward line: out for good once balance < baseline × holdBps
+        uint16 mintFeeBps; // on top of the principal at mint; refunded in full if the sale fails
+        uint16 exitFeeBps; // taken from the principal on withdraw
     }
 
     struct Sale {
@@ -65,6 +69,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint16 sold;
         bool launched;
         bool failed;
+        uint16 mintFeeBps;
+        uint16 exitFeeBps;
         address gate; // Agent ID registry snapshot; 0 = ungated
         uint128 sharePrice;
         uint128 escrowedFee;
@@ -116,7 +122,9 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 sharePrice,
         uint256 capShares,
         uint256 deadline,
-        uint256 holdBps
+        uint256 holdBps,
+        uint256 mintFeeBps,
+        uint256 exitFeeBps
     );
     event Minted(
         address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold
@@ -248,6 +256,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         s.deadline = (block.timestamp + cfg.duration).toUint64();
         s.capShares = _capShares(cfg.capBps).toUint16();
         s.holdBps = cfg.holdBps;
+        s.mintFeeBps = cfg.mintFeeBps;
+        s.exitFeeBps = cfg.exitFeeBps;
         s.quote = quote;
         s.gate = gate;
         s.sharePrice = price.toUint128();
@@ -256,7 +266,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         allTokens.push(token);
 
         emit Created(
-            token, msg.sender, name, symbol, logoURI, quote, refUsed, cfg.raiseBnb, price, s.capShares, s.deadline, cfg.holdBps
+            token, msg.sender, name, symbol, logoURI, quote, refUsed, cfg.raiseBnb, price, s.capShares, s.deadline, cfg.holdBps,
+            cfg.mintFeeBps, cfg.exitFeeBps
         );
         _mint(token, s, devShares, devShares);
     }
@@ -270,14 +281,14 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         accepted = _mint(token, s, shares, minShares);
     }
 
-    /// @notice Before fill and deadline: get principal − 1% back. The 1% paid at mint is kept by the platform.
+    /// @notice Before fill and deadline: get principal − exit fee back. The fee paid at mint is kept by the platform.
     function withdraw(address token, uint256 shares) external nonReentrant returns (uint256 payout) {
         Sale storage s = _minting(token);
         Position storage p = positions[token][msg.sender];
         if (shares == 0 || shares > p.shares) revert BadAmount();
 
         uint256 principal = shares * s.sharePrice;
-        uint256 exitFee = (principal * FEE_BPS) / BPS;
+        uint256 exitFee = (principal * s.exitFeeBps) / BPS;
         payout = principal - exitFee;
         uint256 mintFee = shares == p.shares ? p.feePaid : (uint256(p.feePaid) * shares) / p.shares;
 
@@ -325,6 +336,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 10-50 (0.1%-0.5%)");
         if (cfg.duration < MIN_DURATION || cfg.duration > MAX_DURATION) return (false, "duration must be 1-72 hours");
         if (cfg.holdBps < MIN_HOLD_BPS || cfg.holdBps > MAX_HOLD_BPS) return (false, "holdBps must be 3000-8000");
+        if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_FEE_BPS) return (false, "mintFeeBps must be 100-500 (1%-5%)");
+        if (cfg.exitFeeBps < MIN_FEE_BPS || cfg.exitFeeBps > MAX_FEE_BPS) return (false, "exitFeeBps must be 100-500 (1%-5%)");
         if (devShares == 0 || devShares > _capShares(cfg.capBps)) return (false, "devShares must be 1..cap");
         return (true, "");
     }
@@ -350,7 +363,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (status(token) != Status.Minting) return (0, 0, 0);
         accepted = _acceptable(s, positions[token][user].shares, shares);
         cost = accepted * s.sharePrice;
-        fee = (cost * FEE_BPS) / BPS;
+        fee = (cost * s.mintFeeBps) / BPS;
     }
 
     function status(address token) public view returns (Status) {
@@ -389,7 +402,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         if (accepted < minShares) revert Slippage();
 
         uint256 cost = accepted * s.sharePrice;
-        uint256 fee = (cost * FEE_BPS) / BPS;
+        uint256 fee = (cost * s.mintFeeBps) / BPS;
         _pullExact(s.quote, cost + fee);
 
         p.shares += accepted.toUint16();

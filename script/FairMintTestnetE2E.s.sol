@@ -91,7 +91,7 @@ contract FairMintTestnetE2E is Script {
         quote.mint(deployer, 10 ether);
         quote.approve(address(pad), type(uint256).max);
         FairMintPad.MintConfig memory cfg =
-            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000});
+            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
         token = pad.create("Fair Testnet", "FAIRT", "", address(quote), address(0), cfg, 1);
         for (uint256 i = 0; i < MINTERS; i++) {
             // the filling mint also builds the pair: give the last minter 10x gas

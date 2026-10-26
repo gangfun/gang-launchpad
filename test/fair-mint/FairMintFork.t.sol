@@ -104,7 +104,7 @@ contract FairMintForkTest is Test {
 
     // ---------------------------------------------------------------- helpers
     function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000});
+        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _minter(uint256 i) internal pure returns (address) {
@@ -127,7 +127,7 @@ contract FairMintForkTest is Test {
 
     /// @return lastMintGas gas of the mint that fills the sale (includes createPair + addLiquidity)
     function _fill(address token, address quote) internal returns (uint256 lastMintGas) {
-        (,,,,,,,,, uint128 price,,,) = pad.sales(token);
+        (,,,,,,,,,,, uint128 price,,,) = pad.sales(token);
         uint256 need = (uint256(price) * 100 * 101) / 100;
         for (uint256 i = 0; i < 100; i++) {
             address m = _minter(i);
@@ -232,7 +232,7 @@ contract FairMintForkTest is Test {
 
         address t = _create(USDT, bridge);
         _fill(t, USDT);
-        (,,,,,,,,, uint128 price,,,) = pad.sales(t);
+        (,,,,,,,,,,, uint128 price,,,) = pad.sales(t);
         (uint256 rT, uint256 rQ) = _reserves(t, FairToken(t).pair());
         assertEq(rT, 500_000_000 ether);
         assertEq(rQ, uint256(price) * 10_000);

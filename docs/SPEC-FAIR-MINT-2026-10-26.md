@@ -6,6 +6,7 @@
 - 来源：用户口述（2026-10-26）：「没有内盘的概念，跟以前铭文一样打进度。dev 自定义规则，但是我们要设置上下限，比如最低 100 人，最高 0.5%。内盘没有价格，只有打满了之后代币发射，内盘依旧保持 1% 的买卖税。发射后有默认 1% 的税费，发射前就在的地址如果持有代币保持 50% 就可以享有 1% 税费中的 50% 作为持有奖励，剩下的 50% 跟目前的税费外盘规则不变，回购 + 入金库。」
 - 用户已定：固定价格打进度、打满即发射；打新阶段买卖各 1%；发射后 1% 税，50% 给发射前持有人、50% 回购 + 金库；dev 在平台上下限内设规则。
 - 2026-10-26 用户：「按照你的建议开始执行」→ §9 各项按 Claude 建议执行（奖励算法、失败全额退、税率固定 1%、出局线 30%–80% 由 dev 选、报价币同 V2、50 / 50、10,000 份、上下限、dev 至少打 1 份）。仍待办：§9 #6 网站入口、#11 核实 Agentic Wallet。
+- 2026-10-26 用户：打新阶段的买（打新）、卖（撤出）手续费分开设 → dev 创建时各在 1%–5% 内选，默认都是 1%；撤出费全部给平台（§1.1、§1.3、§9 #12）。
 - 2026-10-26 自审修订：改正 BNB 收款方式（V2 只收 WBNB）；补 §5.5 安全约束（管理员权限、托管资金）；补最后一笔截断、出局的误伤场景、开盘价措辞、接线遗漏；去掉「查 Agent ID 铸造时间」（ERC-721 不记录铸造时间）。
 - 与 `SPEC-V3-ECONOMIC-TEMPLATES-2026-10-26.md` 的关系：本方案不需要模版市场，V3 分支搁置不删；可复用部分见 §6.3。
 
@@ -26,7 +27,9 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 募集额 `raise` | 5–50 BNB 等值 | 15 BNB | 打满即发射；非 BNB 报价币在创建时按参考池换算并锁定 |
 | 单地址上限 `capBps` | 0.1%–0.5% 总量 | 0.5% | **最少参与地址数由它推出**：50% ÷ 上限（0.5% → 100 个，0.1% → 500 个） |
 | 截止时间 `duration` | 1–72 小时 | 24 小时 | 到期没打满 → 失败退款 |
-| 出局线 `holdBps`（待批，可选） | 30%–80% | 50% | 不开放则固定 50% |
+| 出局线 `holdBps` | 30%–80% | 50% | |
+| 打新手续费 `mintFeeBps` | 1%–5% | 1% | 本金之外另收；发射前托管，失败全额退 |
+| 撤出手续费 `exitFeeBps` | 1%–5% | 1% | 从撤出的本金里扣；例：打新 1% / 撤出 2% |
 | 名称 / 代号 / 图标 / 报价币 | — | — | 同 V2 |
 
 「最低 100 人」不单独设规则：打新份额固定 50%、单地址最多 0.5% 时，打满必然至少 100 个地址。dev 把上限调低，人数门槛自动变高。
@@ -48,8 +51,8 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 
 | 动作 | 规则 | 费用 |
 |---|---|---|
-| 打 `mint(n)` | 按份打；累计不超过单地址上限；最后一笔自动截到剩余份数，只按成交份数收钱 | 本金 + **1%** 手续费（手续费先托管，见下） |
-| 撤 `withdraw(n)` | 打满前、截止前随时可撤；退回本金 − **1%** | 打入时的 1% 不退，撤出再收 1%，均即时进平台；之后即使项目失败也不再退 |
+| 打 `mint(n)` | 按份打；累计不超过单地址上限；最后一笔自动截到剩余份数，只按成交份数收钱 | 本金 + **打新手续费**（默认 1%，先托管，见下） |
+| 撤 `withdraw(n)` | 打满前、截止前随时可撤；退回本金 − **撤出手续费**（默认 1%） | 打入时的手续费不退，撤出费另收，均即时进平台；之后即使项目失败也不再退 |
 | 打满 | 最后一份打出的那笔交易里直接发射（§1.4） | 托管的打入手续费全部进平台 |
 | 失败 `refund()` | 截止时没打满 → 每人自己领回**本金 + 打入手续费**，全额 | 0（待批，见 §9） |
 
@@ -100,12 +103,12 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 
 | 项 | 数值 |
 |---|---|
-| 每份价格 | 0.0015 BNB（+ 1% = 0.001515 BNB） |
+| 每份价格 | 0.0015 BNB（打新费 1% 时 + 1% = 0.001515 BNB） |
 | 单地址最多 | 100 份 = 500 万枚 = 0.15 BNB 本金 |
 | 最少地址数 | 100 |
 | 开盘池子 | 5 亿枚 + 15 BNB → 开盘价 3e-8 BNB / 枚，开盘 FDV 30 BNB |
 | 平台打新收入 | 0.15 BNB（募集额的 1%）+ 撤出手续费 |
-| 撤出 100 份 | 拿回 0.1485 BNB，平台留 0.003 BNB |
+| 撤出 100 份 | 打新 1% / 撤出 1%：拿回 0.1485 BNB，平台留 0.003 BNB；撤出费 2% 时拿回 0.147 BNB |
 | 失败退款 100 份 | 拿回 0.1515 BNB（全额） |
 | 一个只打 1 份的人 | 基准 50,000 枚；持仓低于 25,000 枚出局 |
 | 开盘后日成交 100 BNB | 税 1 BNB → 合格持有人 0.5 BNB、平台 0.5 BNB |
@@ -162,6 +165,8 @@ struct MintConfig {
     uint16  capBps;     // [10, 50]，占总量
     uint32  duration;   // [1h, 72h]
     uint16  holdBps;    // 出局线 [3000, 8000]
+    uint16  mintFeeBps; // 打新手续费 [100, 500]
+    uint16  exitFeeBps; // 撤出手续费 [100, 500]
 }
 
 function create(string name, string symbol, string logoURI, address quote, address refPool, MintConfig cfg,
@@ -205,7 +210,7 @@ else:                                         share = min(balance, base)
 
 | 合约 | 事件 |
 |---|---|
-| FairMintPad | `Created(token, creator, name, symbol, logoURI, quote, raise, sharePrice, capShares, deadline, holdBps)` |
+| FairMintPad | `Created(token, creator, name, symbol, logoURI, quote, refPool, raiseBnb, sharePrice, capShares, deadline, holdBps, mintFeeBps, exitFeeBps)` |
 | | `Minted(token, user, shares, cost, fee, userShares, sold)` · `Withdrawn(token, user, shares, refund, fee, userShares, sold)` |
 | | `Launched(token, pair, quote, tokenAmount, quoteAmount, feeToPlatform)` · `Failed(token)` · `Refunded(token, user, amount)` |
 | HolderRewardHandler | `TaxAccrued` · `OuterTaxProcessed(token, quote, taxTokens, quoteOut, toHolders, toPlatform)` · `Disqualified(token, user, balance, baseline)` |
@@ -332,3 +337,4 @@ forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast -
 | 9 | 各参数上下限 | 募集 5–50 BNB、上限 0.1%–0.5%、截止 1–72 小时 |
 | 10 | 创建时 dev 至少打 1 份 | 建议要求，挡零成本刷币 |
 | 11 | 上线前核实 | 已完成：Agent ID 灵魂绑定（链上确认）；一人只能开 1 个 Agentic Wallet（用户实测）。防刷沿用单地址上限，不加平台签名 |
+| 12 | 打新 / 撤出手续费 | 用户定：dev 创建时分开设，各 1%–5%，默认 1% / 1%；撤出费全给平台（2026-10-26） |

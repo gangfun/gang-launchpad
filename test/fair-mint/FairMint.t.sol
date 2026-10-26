@@ -105,7 +105,7 @@ contract FairMintTest is Test {
     }
 
     function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000});
+        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _create() internal returns (address token) {
@@ -127,7 +127,7 @@ contract FairMintTest is Test {
         view
         returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 escrowedFee, address pair)
     {
-        (,, uint16 cap,,, uint16 sold_, bool launched_,,, uint128 price, uint128 fee, address pair_,) = pad.sales(token);
+        (,, uint16 cap,,, uint16 sold_, bool launched_,,,,, uint128 price, uint128 fee, address pair_,) = pad.sales(token);
         return (cap, sold_, launched_, price, fee, pair_);
     }
 
@@ -197,6 +197,18 @@ contract FairMintTest is Test {
         c = _cfg();
         c.holdBps = 2999;
         _expectBadConfig(c, 1, "holdBps must be 3000-8000");
+        c = _cfg();
+        c.mintFeeBps = 99;
+        _expectBadConfig(c, 1, "mintFeeBps must be 100-500 (1%-5%)");
+        c = _cfg();
+        c.mintFeeBps = 501;
+        _expectBadConfig(c, 1, "mintFeeBps must be 100-500 (1%-5%)");
+        c = _cfg();
+        c.exitFeeBps = 99;
+        _expectBadConfig(c, 1, "exitFeeBps must be 100-500 (1%-5%)");
+        c = _cfg();
+        c.exitFeeBps = 501;
+        _expectBadConfig(c, 1, "exitFeeBps must be 100-500 (1%-5%)");
         _expectBadConfig(_cfg(), 0, "devShares must be 1..cap");
         _expectBadConfig(_cfg(), 101, "devShares must be 1..cap");
     }
@@ -368,6 +380,54 @@ contract FairMintTest is Test {
 
         vm.prank(m);
         assertEq(pad.mint(t, 100, 1), 40, "cap room freed");
+    }
+
+    /// @dev mint 1% / withdraw 2%: each leg uses its own rate; both go to the platform.
+    function test_fees_separateMintAndExitRates() public {
+        FairMintPad.MintConfig memory c = _cfg();
+        c.exitFeeBps = 200;
+        vm.prank(dev);
+        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address m = _minter(0);
+        uint256 start = wbnb.balanceOf(m);
+        vm.prank(m);
+        pad.mint(t, 50, 1);
+        uint256 cost = 50 * SHARE_PRICE;
+        assertEq(start - wbnb.balanceOf(m), cost + cost / 100, "mint: +1%");
+        (,,,,,,,, uint16 mintFee, uint16 exitFee,,,,,) = pad.sales(t);
+        assertEq(mintFee, 100);
+        assertEq(exitFee, 200);
+
+        uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
+        uint256 before = wbnb.balanceOf(m);
+        vm.prank(m);
+        uint256 out = pad.withdraw(t, 20);
+        uint256 principal = 20 * SHARE_PRICE;
+        assertEq(out, principal - (principal * 200) / 10_000, "withdraw: -2%");
+        assertEq(wbnb.balanceOf(m) - before, out);
+        uint256 mintFeePart = (cost / 100) * 20 / 50;
+        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, mintFeePart + (principal * 200) / 10_000);
+    }
+
+    /// @dev A 5% mint fee is escrowed like 1%: the full amount comes back when the sale fails.
+    function test_fees_highMintFeeRefundedOnFailure() public {
+        FairMintPad.MintConfig memory c = _cfg();
+        c.mintFeeBps = 500;
+        vm.prank(dev);
+        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address m = _minter(0);
+        uint256 start = wbnb.balanceOf(m);
+        vm.prank(m);
+        pad.mint(t, 40, 1);
+        assertEq(start - wbnb.balanceOf(m), 40 * SHARE_PRICE * 105 / 100);
+        (uint256 accepted,, uint256 fee) = pad.previewMint(t, _minter(1), 10);
+        assertEq(accepted, 10);
+        assertEq(fee, 10 * SHARE_PRICE * 5 / 100, "preview uses the sale's rate");
+
+        vm.warp(block.timestamp + 24 hours + 1);
+        vm.prank(m);
+        pad.refund(t);
+        assertEq(wbnb.balanceOf(m), start, "principal + 5% back");
     }
 
     function test_withdraw_blockedAfterDeadline() public {
