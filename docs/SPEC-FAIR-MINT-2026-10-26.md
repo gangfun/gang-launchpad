@@ -1,16 +1,26 @@
 # 规格 · 打新发射（铭文式打进度）+ 发射前持有人奖励
 
-> 2026-10-26 内部审计后（`docs/AUDIT-BRIEF-2026-10-26.md` §10）：报价币链上只收 WBNB 和 QuoteRegistry 白名单里的 18 位币；路由入口 `mintFor` 只对有准入的 sale 开放；失败退款不再调用分红合约；QuoteRegistry 和 PlatformFeeBucket 不再复用 V2 那份，改为与 V3 共用一份新部署、owner 为多签的实例（下文 §6 的「复用」以此为准）。
+> **2026-10-27 重设计（以本条为准，下文已按此改写）**：用户：「打新的逻辑有点问题，不要设置到期时间，这样就不涉及到退款，打新的币可以卖掉，只是价格曲线是固定价格。」于是：
+> - **没有截止时间，也没有退款**：sale 一直开着，直到打满发射。`Failed` 状态、`refund`、`duration` 全部删除。
+> - **随时卖回**：打满前任何时候都能按打新价把份额卖回给发射台（`withdraw`），扣撤出费 1%–2%（默认 1%）。这是未打满时唯一的退出方式。
+> - **打新费 1%–3%（默认 1%）在打的那一笔直接进平台**，不再托管。
+> - **单地址上限 0.25%–0.5%（默认 0.5%）**：没有截止时间，门槛要能达到，最多需要 200 个地址。
+> - **7 天没有进展就免撤出费**：让停滞的 sale 可以按原价退出。「进展」= 已售份数比计时上次重启时多出 `STALE_STEP`（10 份，0.1%）；创建者那一笔起算（`progressAt` / `markSold`）。只打 1 份、或别人撤出后再打回来，都不算进展（第三轮内部审计 R3-1，审计说明 §14）。
+> - 撤出费进 PlatformFeeBucket 失败时不卡撤出：费用留在发射台记为 `owedFee`，任何人可 `flushFees` 补交（R3-2）。金库拒绝写份额时发 `ShareWriteFailed`，keeper 在发射后为该地址 `syncShares`（R3-3）。
+> - 发射前仍不能 P2P 转账：代币只在发射台和打新地址之间进出。
+> - 募集额（5–50 BNB）、出局线（30%–80%）、总量和份数不变。
 
-> 2026-10-26 补充：这个合约是「核心」，用户也可以经无状态的 GangRouter 进入（用 BNB 直接买 / 打新）。路由只能替交易者付钱，卖出 / 撤出 / 退款 / 领取仍只能本人直接调用。见 `docs/SPEC-CORE-ROUTER-2026-10-26.md`。
+> 2026-10-26 内部审计后（`docs/AUDIT-BRIEF-2026-10-26.md` §10）：报价币链上只收 WBNB 和 QuoteRegistry 白名单里的 18 位币；路由入口 `mintFor` 只对有准入的 sale 开放；失败退款不再调用分红合约（2026-10-27 起没有退款，撤出写分红合约改为不阻塞）；QuoteRegistry 和 PlatformFeeBucket 不再复用 V2 那份，改为与 V3 共用一份新部署、owner 为多签的实例（下文 §6 的「复用」以此为准）。
+
+> 2026-10-26 补充：这个合约是「核心」，用户也可以经无状态的 GangRouter 进入（用 BNB 直接买 / 打新）。路由只能替交易者付钱，撤出（卖回）/ 领取仍只能本人直接调用。见 `docs/SPEC-CORE-ROUTER-2026-10-26.md`。
 
 - 日期：2026-10-26 Asia/Shanghai
 - 作者：Claude（本页为产品规格 + 合约设计；**非执行单**）
-- 性质：**禁止主网广播**。合约已在 `feat/fair-mint` 分支实现，mock 与主网分叉测试通过（§5.6），2026-10-26 已在 BSC 测试网部署并跑通整轮（`docs/TESTNET-FAIR-MINT-2026-10-26.md`），**未审计**。
+- 性质：**禁止主网广播**。去掉截止时间的版本在 `feat/fair-no-deadline` 分支（冻结点 `1bcc84f`），mock 与主网分叉测试通过（§5.6），已过三轮内部审计（`docs/AUDIT-BRIEF-2026-10-26.md` §10–§14，按决定不做外部审计）；测试网第 5 套见 `docs/TESTNET-CORE-ROUTER-2026-10-26.md`。
 - 来源：用户口述（2026-10-26）：「没有内盘的概念，跟以前铭文一样打进度。dev 自定义规则，但是我们要设置上下限，比如最低 100 人，最高 0.5%。内盘没有价格，只有打满了之后代币发射，内盘依旧保持 1% 的买卖税。发射后有默认 1% 的税费，发射前就在的地址如果持有代币保持 50% 就可以享有 1% 税费中的 50% 作为持有奖励，剩下的 50% 跟目前的税费外盘规则不变，回购 + 入金库。」
 - 用户已定：固定价格打进度、打满即发射；打新阶段买卖各 1%；发射后 1% 税，50% 给发射前持有人、50% 回购 + 金库；dev 在平台上下限内设规则。
 - 2026-10-26 用户：「按照你的建议开始执行」→ §9 各项按 Claude 建议执行（奖励算法、失败全额退、税率固定 1%、出局线 30%–80% 由 dev 选、报价币同 V2、50 / 50、10,000 份、上下限、dev 至少打 1 份）。仍待办：§9 #6 网站入口、#11 核实 Agentic Wallet。
-- 2026-10-26 用户：打新阶段的买（打新）、卖（撤出）手续费分开设 → dev 创建时各在 1%–5% 内选，默认都是 1%；撤出费全部给平台（§1.1、§1.3、§9 #12）。
+- 2026-10-26 用户：打新阶段的买（打新）、卖（撤出）手续费分开设 → dev 创建时各在 1%–5% 内选，默认都是 1%；撤出费全部给平台（§1.1、§1.3、§9 #12）。2026-10-27 起范围改为打新费 1%–3%、撤出费 1%–2%（§9 #13）。
 - 2026-10-26 自审修订：改正 BNB 收款方式（V2 只收 WBNB）；补 §5.5 安全约束（管理员权限、托管资金）；补最后一笔截断、出局的误伤场景、开盘价措辞、接线遗漏；去掉「查 Agent ID 铸造时间」（ERC-721 不记录铸造时间）。
 - 与 `SPEC-V3-ECONOMIC-TEMPLATES-2026-10-26.md` 的关系：本方案不需要模版市场，V3 分支搁置不删；可复用部分见 §6.3。
 
@@ -18,7 +28,7 @@
 
 ## 0. 一句话产品
 
-dev 设好募集额、单地址上限和截止时间，所有人按**同一个价格**一份一份打；打满就自动加池子开盘，开盘价等于打新价。开盘后每笔交易 1% 税，一半分给**打新时就进来、而且一直没怎么卖**的人，一半照旧回购 GANG 和进金库。
+dev 设好募集额和单地址上限，所有人按**同一个价格**一份一份打，打满前随时可以按同一个价格卖回；没有截止时间，打满就自动加池子开盘，开盘价等于打新价。开盘后每笔交易 1% 税，一半分给**打新时就进来、而且一直没怎么卖**的人，一半照旧回购 GANG 和进金库。
 
 ---
 
@@ -29,11 +39,10 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 参数 | 范围 | 默认 | 说明 |
 |---|---|---|---|
 | 募集额 `raise` | 5–50 BNB 等值 | 15 BNB | 打满即发射；非 BNB 报价币在创建时按参考池换算并锁定 |
-| 单地址上限 `capBps` | 0.1%–0.5% 总量 | 0.5% | **最少参与地址数由它推出**：50% ÷ 上限（0.5% → 100 个，0.1% → 500 个） |
-| 截止时间 `duration` | 1–72 小时 | 24 小时 | 到期没打满 → 失败退款 |
+| 单地址上限 `capBps` | 0.25%–0.5% 总量 | 0.5% | **最少参与地址数由它推出**：50% ÷ 上限（0.5% → 100 个，0.25% → 200 个）。没有截止时间，下限不再放到 0.1%（500 个地址太难凑齐） |
 | 出局线 `holdBps` | 30%–80% | 50% | |
-| 打新手续费 `mintFeeBps` | 1%–5% | 1% | 本金之外另收；发射前托管，失败全额退 |
-| 撤出手续费 `exitFeeBps` | 1%–5% | 1% | 从撤出的本金里扣；例：打新 1% / 撤出 2% |
+| 打新手续费 `mintFeeBps` | 1%–3% | 1% | 本金之外另收；打的那一笔直接进平台，不退 |
+| 撤出手续费 `exitFeeBps` | 1%–2% | 1% | 从卖回的本金里扣；sale 7 天没有进展时为 0（§1.3）；例：打新 1% / 撤出 2% |
 | 名称 / 代号 / 图标 / 报价币 | — | — | 同 V2 |
 
 「最低 100 人」不单独设规则：打新份额固定 50%、单地址最多 0.5% 时，打满必然至少 100 个地址。dev 把上限调低，人数门槛自动变高。
@@ -47,7 +56,7 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 池子份额 | **50%**（5 亿）+ 全部募集本金，LP 打到 0xdead（同 V2） |
 | 每份价格 | `raise / 10,000`（报价币计，创建时锁定） |
 | 开盘价 | = 打新价（池子 5 亿枚 : 募集本金 = 打新 5 亿枚 : 募集本金）。打新的人含 1% 手续费，开盘立刻卖还要交 1% 税，所以开盘就卖约亏 2% |
-| 准入 | 打新必须持 Agent ID（同 V2）；撤出 / 退款不要求 |
+| 准入 | 打新必须持 Agent ID（同 V2）；撤出（卖回）不要求 |
 | 收款 | 同 V2：只收 ERC-20 报价币（BNB 用 WBNB），`transferFrom` 只拉实际成交的份数，不涉及原生 BNB |
 | dev 预留 | 无。dev 想要筹码就和别人一样打，受同样的上限 |
 
@@ -55,20 +64,22 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 
 | 动作 | 规则 | 费用 |
 |---|---|---|
-| 打 `mint(n)` | 按份打；累计不超过单地址上限；最后一笔自动截到剩余份数，只按成交份数收钱 | 本金 + **打新手续费**（默认 1%，先托管，见下） |
-| 撤 `withdraw(n)` | 打满前、截止前随时可撤；退回本金 − **撤出手续费**（默认 1%） | 打入时的手续费不退，撤出费另收，均即时进平台；之后即使项目失败也不再退 |
-| 打满 | 最后一份打出的那笔交易里直接发射（§1.4） | 托管的打入手续费全部进平台 |
-| 失败 `refund()` | 截止时没打满 → 每人自己领回**本金 + 打入手续费**，全额 | 0（待批，见 §9） |
+| 打 `mint(n)` | 按份打；累计不超过单地址上限；最后一笔自动截到剩余份数，只按成交份数收钱 | 本金 + **打新手续费**（默认 1%），手续费当笔进平台 |
+| 卖回 `withdraw(n)` | 打满前随时可以，没有时间限制；按打新价退回本金 − **撤出手续费**（默认 1%；7 天没有进展时为 0） | 打入时的手续费不退；撤出费当笔进平台 |
+| 打满 | 最后一份打出的那笔交易里直接发射（§1.4） | — |
 
-- 代币在打的时候就记到地址上（钱包里看得到），但**发射前锁转账**：只有发射台能动（撤出 / 退款时收回）。这样既杜绝场外私下交易和抢先建池，也让「发射前的地址」= 打新的地址。
-- 所有平台收入走现有 PlatformFeeBucket：80% 回购 GANG / 20% feeVault。
+- **没有截止时间、没有失败、没有退款**。没打满的 sale 一直开着，任何时候有人把剩下的份数打完就发射；不想等的人卖回退出。
+- **7 天免撤出费**：sale 有一个计时 `progressAt`，从创建者那一笔开始；之后只有当已售份数 `sold` 达到「上次重启时的份数 `markSold` + 10 份」时，打新才重启计时。距 `progressAt` 满 7 天（`>=`）后，卖回不收撤出费，按打新价全额退本金（打新费仍不退）。卖回本身不重启计时；只打 1 份、或别人撤出后再打回原来的份数，也不重启。想让计时一直不到期，就得不断净增份数并持有，每个地址最多能做几次（上限 50–100 份）。
+- 代币在打的时候就记到地址上（钱包里看得到），但**发射前锁转账**：只有发射台能动（卖回时收回）。这样既杜绝场外私下交易和抢先建池，也让「发射前的地址」= 打新的地址。
+- 所有平台收入走现有 PlatformFeeBucket：80% 回购 GANG / 20% feeVault。撤出费进 bucket 失败时（例如 operator 被撤）不影响卖回：费用留在发射台，记为 `owedFee[quote]`，bucket 恢复后任何人可 `flushFees(quote)` 补交。打新费进 bucket 失败时打新 revert（打新可以停，退出不能停）。
 
 ### 1.4 发射
 
 打满那一刻：
 1. 解锁代币，5 亿枚 + 全部募集本金进 Pancake V2 池子，LP 打到 0xdead（沿用 MigratorV2）。
-2. 托管的打入手续费转给 PlatformFeeBucket。
-3. 打开 1% 交易税（税只对池子买卖收，同 V2 有税代币）。
+2. 打开 1% 交易税（税只对池子买卖收，同 V2 有税代币）。
+
+打新费在每一笔打新时就已进平台，发射时没有托管款要结算。
 
 ### 1.5 发射后：1% 税
 
@@ -111,9 +122,10 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 单地址最多 | 100 份 = 500 万枚 = 0.15 BNB 本金 |
 | 最少地址数 | 100 |
 | 开盘池子 | 5 亿枚 + 15 BNB → 开盘价 3e-8 BNB / 枚，开盘 FDV 30 BNB |
-| 平台打新收入 | 募集额 × 该币打新费（默认 1% = 0.15 BNB）+ 撤出手续费 |
-| 撤出 100 份 | 打新 1% / 撤出 1%：拿回 0.1485 BNB，平台留 0.003 BNB；撤出费 2% 时拿回 0.147 BNB |
-| 失败退款 100 份 | 拿回 0.1515 BNB（全额） |
+| 平台打新收入 | 已打份数 × 每份价格 × 该币打新费（打满时默认 1% = 0.15 BNB）+ 撤出手续费 |
+| 卖回 100 份 | 打新 1% / 撤出 1%：拿回 0.1485 BNB，平台共收 0.003 BNB；撤出费 2% 时拿回 0.147 BNB |
+| 7 天没有进展后卖回 100 份 | 拿回 0.15 BNB（本金全额，打入时的 0.0015 BNB 打新费不退） |
+| 让计时不到期的成本 | 每 7 天至少净增 10 份并持有（≈ 0.015 BNB 本金 + 打新费），单地址最多 5–10 次 |
 | 一个只打 1 份的人 | 基准 50,000 枚；持仓低于 25,000 枚出局 |
 | 开盘后日成交 100 BNB | 税 1 BNB → 合格持有人 0.5 BNB、平台 0.5 BNB |
 
@@ -126,14 +138,16 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 1 | **女巫**：0.5% 上限下单钱包最多 0.15 BNB，大户只能多开钱包；单地址上限是公平性的全部依据 | 2026-10-26 链上核实（Agent ID `0x60B9…022F`）：转账 / 授权全部 revert `Soulbound`，ID 不能转手；铸造走 `register(name, deadline, signature)`，要官方后台签名；最近 269 次铸造都是全新钱包给自己铸、免费，抽查 60 个持有人每个都只有 1 个 ID。所以单地址上限 ≈ 单个 Agentic Wallet 上限。2026-10-26 用户在 Binance App 实测：**一个人只能开 1 个 Agentic Wallet**。因此「至少 100 个地址」≈ 至少 100 个 Binance 账户；剩余的刷号空间取决于 Binance 自己的一人一号管控 |
 | 2 | **平台打新收入比 V2 少**：V2 按内盘成交额收 1%（曲线上来回交易多次），打新只按募集额收 1% | 用外盘 0.5% 和撤出手续费补；需要你确认能接受 |
 | 3 | 开盘被机器人抢买 | 打新的人开盘正好保本，抢买是把价格往上推；第一版不加防狙击 |
-| 4 | 打到 99% 有人大额撤出拖进度 | 打进再撤出要付打新费 + 撤出费（至少 2%、最多 10%），且有截止时间兜底 |
+| 4 | 打到 99% 有人大额撤出拖进度 | 打进再撤出要付打新费 + 撤出费（至少 2%、最多 5%）。没有截止时间，拖进度只是让发射晚一点，不会让 sale 失败；最后一笔被人抢先撤出 1 份时，按「打剩下全部」下单的人不受影响（多打的部分自动截掉） |
 | 5 | 有人提前在 Pancake 建同名池子并打入报价币 | 代币锁转账，打不进代币；MigratorV2 遇到已有池子直接用，对方打进的报价币等于白送，只会让开盘价略高 |
 | 6 | 最后一笔打满的交易要建池子，gas 高 | 同 V2 毕业；预估页面提示 |
 | 7 | 新 DividendVault 的最低份额 | **不能照搬主网的 100 万枚**：1 份只有 5 万枚、出局线 2.5 万枚（出局线 30% 时 1.5 万）。新 vault 设 10,000 枚（合约默认值） |
-| 8 | 差一点没打满就全退 | 第一版接受。可选的后续改法：截止时达到 dev 设的最低比例也发射，池子只放已打出的同等数量，没打出的销毁，开盘价仍等于打新价 |
+| 8 | 一直打不满，钱卡在 sale 里 | 没有截止时间，不会「差一点没打满就全退」；不想等的人随时卖回。sale 7 天没有进展后卖回免撤出费，只损失打新费。网站和 CLI 把停滞的 sale 默认折叠，并显示「还差多少份、至少还要多少地址」 |
 | 9 | 开盘市值比 V2 低 | 同样 15 BNB：V2 池子 2 亿枚 → 开盘 FDV 75 BNB；打新池子 5 亿枚 → FDV 30 BNB。池子深度相对市值更厚、价格更稳，但排行榜上的市值会显得小 |
 | 10 | 有人另建交易对（如本币 / USDT）绕开税 | 沿用 V2 的已知限制：税只对官方池子收，奖励池规模取决于官方池子成交量 |
-| 11 | 刷失败币 | 失败全额退、创建不收费，刷币零成本。已要求创建时 dev 至少打 1 份 |
+| 11 | 刷空 sale | 创建不收费，但 dev 至少要打 1 份并付打新费（不退），没有退款可以白拿。停滞的 sale 在网站上默认折叠 |
+| 13 | 有人每周打 1 份，让所有人一直付撤出费 | 已防：只打 1 份、撤了再打回来都不重启计时，要净增 10 份并持有才算进展（审计说明 §14 R3-1） |
+| 14 | PlatformFeeBucket 被撤 operator，卡住撤出 | 已防：撤出费改为不阻塞，失败时记 `owedFee`，任何人 `flushFees` 补交（R3-2）。打新会 revert，直到恢复 |
 | 12 | 参考池现价可被同一笔交易拉偏 | 非白名单报价币用 V2 池子（或观测不够的 V3 池子）定价时按现价换算，dev 可借闪电贷让锁定的募集额超出 5–50 BNB 范围。沿用 V2 毕业额的同一做法，不改合约：dev 自己也按锁定价打，打新的人看到的是报价币价格；索引服务按实时价格换算募集额，偏离范围的币在页面上标出 |
 
 ---
@@ -141,21 +155,21 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 ## 4. 状态机
 
 ```
-         create
-           │
-           ▼
-   ┌──── Minting ────┐   mint / withdraw（截止前）
-   │                 │
- 打满             截止且没打满
-   │                 │
-   ▼                 ▼
- Launched          Failed ── refund()（每人自领，全额）
-   │
-   ▼
- 交易 1% 税 → keeper process → 50% DividendVault / 50% PlatformFeeBucket
+   create（dev 至少打 1 份，计时开始）
+     │
+     ▼
+  Minting ── mint / withdraw，没有时间限制；7 天没有进展 → 撤出费为 0
+     │
+   打满（最后一份那笔交易）
+     │
+     ▼
+  Launched
+     │
+     ▼
+  交易 1% 税 → keeper process → 50% DividendVault / 50% PlatformFeeBucket
 ```
 
-`Failed` 不需要专门交易触发：`block.timestamp > deadline && sold < 10,000` 即视为失败，第一个 `refund` 时记状态并发事件。
+只有两个状态：`Minting`、`Launched`（`status()` 返回 None / Minting / Launched）。
 
 ---
 
@@ -165,33 +179,37 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 
 ```solidity
 struct MintConfig {
-    uint256 raiseBnb;   // BNB 等值，[5, 50] BNB；创建时按 WBNB / QuoteRegistry / 参考池换算成报价币并锁定
-    uint16  capBps;     // [10, 50]，占总量
-    uint32  duration;   // [1h, 72h]
+    uint256 raiseBnb;   // BNB 等值，[5, 50] BNB；创建时按 WBNB / QuoteRegistry 固定换算额换算成报价币并锁定
+    uint16  capBps;     // [25, 50]，占总量
     uint16  holdBps;    // 出局线 [3000, 8000]
-    uint16  mintFeeBps; // 打新手续费 [100, 500]
-    uint16  exitFeeBps; // 撤出手续费 [100, 500]
+    uint16  mintFeeBps; // 打新手续费 [100, 300]
+    uint16  exitFeeBps; // 撤出手续费 [100, 200]
 }
 
-function create(string name, string symbol, string logoURI, address quote, address refPool, MintConfig cfg,
-    uint256 devShares) external returns (address token);          // 须 Agent ID；devShares = 创建时 dev 自己打的份数
+uint256 constant STALE_AFTER = 7 days;  // 这么久没有进展 → 撤出费为 0
+uint256 constant STALE_STEP = 10;       // 进展 = sold 达到 markSold + 10 份
+
+function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool,
+    MintConfig cfg, uint256 devShares) external returns (address token); // 须 Agent ID；devShares = dev 自己打的份数
 function mint(address token, uint256 shares, uint256 minShares) external returns (uint256 accepted);
     // 须 Agent ID；最后一笔被截断到少于 minShares 时 revert；只 transferFrom 成交部分
-function withdraw(address token, uint256 shares) external;
-function refund(address token) external;
-function mintedOf(address token, address user) external view returns (uint256 shares);
-function baselineOf(address token, address user) external view returns (uint256 tokens); // 供奖励判断
-function status(address token) external view returns (uint8); // Minting / Launched / Failed
+function withdraw(address token, uint256 shares) external returns (uint256 payout); // 按打新价卖回，扣当前撤出费
+function flushFees(address quote) external returns (uint256 amount);  // 任何人：把 owedFee 补交给 bucket
 function previewMint(address token, address user, uint256 shares)
     external view returns (uint256 accepted, uint256 cost, uint256 fee);
+function previewWithdraw(address token, address user, uint256 shares)
+    external view returns (uint256 payout, uint256 fee);                // 会 revert 时返回 (0, 0)
+function exitFeeBpsOf(address token) external view returns (uint256); // 当前撤出费：sale 自己的，或停滞后的 0
+function baselineOf(address token, address user) external view returns (uint256 tokens); // 供奖励判断
+function status(address token) external view returns (uint8); // None / Minting / Launched
 ```
 
-存储（每个币）：`creator, quote, sharePrice, capShares, deadline, holdBps, sold, escrowedFee, launched, failed, pair`；每地址：`shares, feePaid`。
+存储（每个币）：`creator, progressAt, capShares, holdBps, quote, sold, launched, mintFeeBps, exitFeeBps, gate, sharePrice, pair, refPool, markSold`（`sales(token)` 按这个顺序返回 14 个字段）；每地址：`shares`；每个报价币：`owedFee`。
 
 ### 5.2 FairToken
 
 - 基于 V2 `TaxLaunchToken`（10 亿全部铸给发射台），税率固定 1%。
-- 发射前：除发射台外一律不能转；发射台可从地址收回（撤出 / 退款用，不依赖用户授权）。
+- 发射前：除发射台外一律不能转；发射台可从地址收回（卖回用，不依赖用户授权）。
 - 发射后：池子买卖收 1% → handler 累计；每笔转账调 handler 同步奖励份额（同 V2）。
 - 创建代码放在独立的 `FairTokenDeployer` 里（V3 分支验证过的做法），发射台不受代币代码体积影响。
 
@@ -208,15 +226,16 @@ else:                                         share = min(balance, base)
 ```
 
 - 打新阶段份额由发射台在 `mint` / `withdraw` 时直接写（发射前没有转账，也就不需要 handler 同步）；发射那一刻不需要遍历地址。
+- `withdraw` 写分红合约改为不阻塞（卖回是未打满时唯一的退出方式，不能被分红合约卡住）：分红合约真拒绝时保留旧份额并发 `ShareWriteFailed(token, user, share)`；调用方卡 gas 造成的失败仍 revert（`OutOfGas`，同 §10 A-5）。全部卖回的地址基准为 0，handler 对基准为 0 的地址目标份额一律为 0，所以发射后第一次同步就清零；keeper 按 `ShareWriteFailed` 主动为这些地址调 `syncShares(token, user, 0)`，不等它们自己转账（审计说明 §14 R3-3）。
 - 写分红合约失败（如 operator 被撤）时吞掉错误：份额可能暂时不准，但不能卡住代币转账。已出局地址每次同步都把份额重写为 0，所以失败过的清零会在恢复后自动补上。
 
 ### 5.4 事件（索引服务据此改）
 
 | 合约 | 事件 |
 |---|---|
-| FairMintPad | `Created(token, creator, name, symbol, logoURI, quote, refPool, raiseBnb, sharePrice, capShares, deadline, holdBps, mintFeeBps, exitFeeBps)` |
-| | `Minted(token, user, shares, cost, fee, userShares, sold)` · `Withdrawn(token, user, shares, refund, fee, userShares, sold)` |
-| | `Launched(token, pair, quote, tokenAmount, quoteAmount, feeToPlatform)` · `Failed(token)` · `Refunded(token, user, amount)` |
+| FairMintPad | `Created(token, creator, name, symbol, logoURI, quote, refPool, raiseBnb, sharePrice, capShares, holdBps, mintFeeBps, exitFeeBps)` |
+| | `Minted(token, user, shares, cost, fee, userShares, sold)` · `Withdrawn(token, user, shares, payout, fee, userShares, sold)` |
+| | `Launched(token, pair, quote, tokenAmount, quoteAmount)` · `ShareWriteFailed(token, user, share)` · `FeeOwed(quote, amount)` · `FeesFlushed(quote, amount)` |
 | HolderRewardHandler | `TaxAccrued` · `OuterTaxProcessed(token, quote, taxTokens, quoteOut, toHolders, toPlatform)` · `Disqualified(token, user, balance, baseline)` |
 | DividendVault | 同 V2（`RewardDeposited` / `ShareSet` / `Claimed`） |
 
@@ -224,12 +243,12 @@ else:                                         share = min(balance, base)
 
 打新期间发射台托管每个币最多 50 BNB 等值的本金，所以：
 
-1. **没有任何管理员函数能动托管资金**：没有 flush、没有紧急提取。钱只有四个出口：撤出、失败退款、发射进池子、手续费进 bucket。
-2. **规则创建时快照**：单地址上限、准入开关、截止时间、出局线都存进该币自己的配置。V2 的 `setWalletCapEnabled` / `setAgentGate` 这类全局开关不能影响打新中的币，最好不提供 `setWalletCapEnabled`。
+1. **没有任何管理员函数能动托管资金**：没有紧急提取。本金只有两个出口：卖回、发射进池子；手续费进 bucket（`flushFees` 只能把 `owedFee` 交给 bucket）。
+2. **规则创建时快照**：单地址上限、准入开关、手续费、出局线都存进该币自己的配置。V2 的 `setWalletCapEnabled` / `setAgentGate` 这类全局开关不能影响打新中的币，最好不提供 `setWalletCapEnabled`。
 3. `setMigrator` 只能设一次（V2 已是一次性），`pairFactory` 构造时固定；发射时钱和币只能去这个 migrator。
 4. FairToken 的「发射台收回」只在发射前有效，发射后永久失效，且只能收回该地址打到的数量。
-5. 撤出、退款全部由用户自己领，不遍历地址；`nonReentrant`。
-6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。2026-10-26 起链上强制：`create` 只收 WBNB 或 QuoteRegistry 里设了固定换算额、且 18 位小数的币；不再按参考池换算（第二轮审计：dev 自选的池子现价可被闪电贷拉偏，审计说明 §11 R2-1）。§1.1 / §3 #12 里的「按参考池换算」以此为准。
+5. 卖回由用户自己调用，不遍历地址；`nonReentrant`。卖回不依赖分红合约和 bucket：两者拒绝时都不 revert（分红份额留待同步、撤出费记 `owedFee`），owner 无法通过它们冻结退出。
+6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（卖回要求精确记账）。2026-10-26 起链上强制：`create` 只收 WBNB 或 QuoteRegistry 里设了固定换算额、且 18 位小数的币；不再按参考池换算（第二轮审计：dev 自选的池子现价可被闪电贷拉偏，审计说明 §11 R2-1）。§1.1 / §3 #12 里的「按参考池换算」以此为准。
 7. 奖励判断只看「发射时数量」，池子、handler、migrator、发射台的基准天然为 0，不依赖 `excluded` 名单。
 8. 外部审计 V2 的结论（2026-10-26，经另一窗口转达）对本方案的处理：
    - **G-01 被排除地址保留旧份额继续分红：受影响，已修。** DividendVault 的 `setExcluded` 不清份额；handler 原先拿算出的份额和旧份额比较，相等就不写，被排除地址会一直按旧份额分钱。现在被排除地址的目标份额一律为 0（`_sync` 和 `eligibleShare`）。剩余窗口：owner 排除某地址后、该地址下次转账前仍会累计，所以**排除操作必须和 `handler.syncShares(token, user, 0)` 放在同一批交易里**。排除前已赚的奖励仍可领。
@@ -240,11 +259,11 @@ else:                                         share = min(balance, base)
 
 | 文件 | 内容 |
 |---|---|
-| `src/fair-mint/FairMintPad.sol` | 打新发射台：create / mint / withdraw / refund / 打满发射；规则按币快照；15.4 KB（via-ir） |
+| `src/fair-mint/FairMintPad.sol` | 打新发射台：create / mint / withdraw（卖回）/ flushFees / 打满发射；规则按币快照；16.5 KB（via-ir） |
 | `src/fair-mint/FairToken.sol` | 代币（发射前锁转账、发射台可收回；发射后池子买卖 1% 税）+ `FairTokenDeployer` |
 | `src/fair-mint/HolderRewardHandler.sol` | 发射后 1% 税：keeper 换币后 50% 给合格持有人 / 50% 平台；出局判断；分红合约出错不卡转账 |
-| `test/fair-mint/FairMint.t.sol` | 28 个用例：上下限、参考池 / 桥接池换算、打新上限与截断、撤出、失败退款、发射价格、池子被提前建好、奖励权重 / 出局 / 上限、分账、权限、分红合约出错后的补救 |
-
+| `test/fair-mint/FairMint.t.sol` | 33 个用例：上下限、报价币换算、打新上限与截断、卖回、打新费当笔进平台、7 天免撤出费、没有截止时间、发射价格、池子被提前建好、奖励权重 / 出局 / 上限、分账、权限、分红合约出错后的补救 |
+| `test/fair-mint/FairMintAudit.t.sol` | 8 个内部审计回归：含计时要净增份数才重启（R3-1）、bucket 拒收不卡卖回（R3-2）、金库拒写发 `ShareWriteFailed`（R3-3） |
 | `test/fair-mint/FairMintFork.t.sol` | BSC 主网分叉（需 `BSC_RPC_URL`）：真实 Pancake 全流程（WBNB）、USDT 报价经 V3 桥接、池子被提前建好并 `sync` |
 | `src/fair-mint/mocks/TestnetAgentId.sol` | 测试网用：灵魂绑定、每钱包一个、自己注册（主网用真实 SPACE ID） |
 | `config/FairMintDeployRefs.sol` | 主网 / 测试网地址（2026-10-26 链上核对） |
@@ -304,13 +323,13 @@ forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast -
 ## 7. 测试清单
 
 1. 参数上下限：每个参数越界都 revert，并给出原因。
-2. 打新：单地址上限、最后一笔截断、非 Agent 不能打、截止后不能打。
-3. 撤出：本金 −1%、打入手续费不退、上限额度释放、份额同步。
-4. 失败：截止后全额退（本金 + 打入手续费）；退两次 revert；发射前代币不能转。
-5. 发射：最后一份触发；池子数量与开盘价 = 打新价；LP 在 0xdead；托管手续费进 bucket；已存在池子的情况。
+2. 打新：单地址上限、最后一笔截断、非 Agent 不能打、任何时候都能打（没有截止）；打新费当笔进 bucket。
+3. 卖回：本金 − 撤出费、打入手续费不退、上限额度释放、份额同步；7 天没有进展后撤出费为 0；1 份或撤了再打回不重启计时；bucket 拒收时记 `owedFee` 且到手金额不变；分红合约拒写时不卡卖回。
+4. 发射前代币不能转；发射台余额 = 未发射 sale 的本金 + `owedFee`。
+5. 发射：最后一份触发；池子数量与开盘价 = 打新价；LP 在 0xdead；已存在池子的情况。
 6. 奖励：只有打新地址有份额；卖出后份额按持仓下降；跌破出局线永久出局、买回不恢复；收别人筹码份额不超基准；出局前奖励可领；没人合格时 100% 进平台。
-7. 权限：owner 在打新中改任何设置都不影响该币的上限 / 准入 / 截止；没有任何路径能把托管资金转给 owner。
-8. 最后一笔：截断后只拉成交部分；低于 `minShares` revert；建池失败时整笔回滚，币保持打新中直到截止。
+7. 权限：owner 在打新中改任何设置都不影响该币的上限 / 准入 / 手续费；没有任何路径能把托管资金转给 owner，也不能冻结卖回。
+8. 最后一笔：截断后只拉成交部分；低于 `minShares` revert；建池失败时整笔回滚，币保持打新中。
 9. fork 测试：真实 Pancake 池子、USDT 类报价币、keeper `process`（已完成，`FairMintFork.t.sol`）。
 
 ---
@@ -319,9 +338,9 @@ forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast -
 
 | 端 | 内容 |
 |---|---|
-| gangfun-server | 索引 §5.4 事件；币状态（打新中 / 已发射 / 失败）、进度、参与地址数、倒计时；每地址基准 / 是否出局 / 可领奖励；募集额按实时价格换算成 BNB，超出 5–50 BNB 的标出（§3 #12） |
-| gang.fun | 打新页（进度条、每份价格、我的份数、撤出、失败退款）；代币页「持有奖励」：合格 / 已出局、当前权重、可领；风险提示（转钱包、加池子会出局） |
-| CLI / skill | `gang create --raise 15 --cap 0.5 --hours 24`、`gang mint <token> <份数>`、`gang withdraw`、`gang refund`、`gang rewards`；preflight 显示费用与出局线 |
+| gangfun-server | 索引 §5.4 事件；币状态（打新中 / 已发射）、进度、参与地址数、还差多少份 / 至少还要多少地址、按同一规则复刻的 7 天计时（是否停滞、何时免撤出费）；每地址基准 / 是否出局 / 可领奖励 / 现在全部卖回能拿多少；募集额按实时价格换算成 BNB，超出 5–50 BNB 的标出（§3 #12）。keeper：`FAIR_PADS` 跟进 `ShareWriteFailed`（发射后 `syncShares`）和 `FeeOwed`（`flushFees`） |
+| gang.fun | 打新页（进度条、每份价格、还差多少地址、我的份数、卖回能拿多少、当前撤出费与免撤出费倒计时；停滞的 sale 默认折叠）；代币页「持有奖励」：合格 / 已出局、当前权重、可领；风险提示（转钱包、加池子会出局） |
+| CLI / skill | `gang fair create --raise 15 --cap 0.5 --hold 50 --mint-fee 1 --exit-fee 1`、`gang fair mint`、`gang fair withdraw`（按 `previewWithdraw` 报到手金额和撤出费）、`gang fair status` / `claim`；没有 `--hours` 和 `refund` |
 | 审计 | 发射台 + FairToken + handler，主网前外部审计 |
 
 ---
@@ -331,14 +350,15 @@ forge script script/FairMintTestnetE2E.s.sol --rpc-url bsc_testnet --broadcast -
 | # | 问题 | 建议 |
 |---|---|---|
 | 1 | 奖励算法 | 按当前持仓加权、上限为发射时数量；低于 50% 永久出局（§1.6） |
-| 2 | 打新失败退不退打入的 1% | 退，全额。失败还收手续费伤口碑，这点收入不值 |
+| 2 | 打新失败退不退打入的 1% | 2026-10-27 起不适用：没有失败和退款（#13） |
 | 3 | 发射后税率 | 第一版固定 1%，不让 dev 选 |
 | 4 | 出局线给不给 dev 选 | 可以给（30%–80%），这是 dev 唯一能调的经济参数，也回应了「自定义经济模型」的反馈；不影响平台收入。嫌复杂就固定 50% |
 | 5 | 报价币 | 同 V2（BNB + 白名单报价币，代码现成）；嫌复杂第一版只做 BNB |
 | 6 | V2 曲线还开不开新币 | 网站新建入口只留打新；V2 继续服务已有的币 |
 | 7 | 平台打新收入下降（§3 #2） | 需要你确认能接受 |
 | 8 | 打新 / 池子比例、份数 | 50 / 50、10,000 份。「最低 100 人」靠 50 / 50 推出来，改比例就要重算上限 |
-| 9 | 各参数上下限 | 募集 5–50 BNB、上限 0.1%–0.5%、截止 1–72 小时 |
+| 9 | 各参数上下限 | 募集 5–50 BNB、上限 0.25%–0.5%（2026-10-27 前为 0.1%–0.5%，另有截止 1–72 小时，已删） |
 | 10 | 创建时 dev 至少打 1 份 | 建议要求，挡零成本刷币 |
 | 11 | 上线前核实 | 已完成：Agent ID 灵魂绑定（链上确认）；一人只能开 1 个 Agentic Wallet（用户实测）。防刷沿用单地址上限，不加平台签名 |
-| 12 | 打新 / 撤出手续费 | 用户定：dev 创建时分开设，各 1%–5%，默认 1% / 1%；撤出费全给平台（2026-10-26） |
+| 12 | 打新 / 撤出手续费 | 用户定：dev 创建时分开设，默认 1% / 1%；撤出费全给平台（2026-10-26）。范围 2026-10-27 起改为打新 1%–3%、撤出 1%–2% |
+| 13 | 截止时间与退款 | 用户定（2026-10-27）：不设截止时间、没有退款，打满前随时按打新价卖回；Claude 建议并经同意：打新费当笔给平台、单地址 0.25%–0.5%、7 天没有进展免撤出费、停滞的 sale 默认折叠 |

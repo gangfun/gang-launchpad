@@ -1,7 +1,7 @@
 # 主网上线手册 · LaunchpadV3 税收币 + 打新 + GangRouter
 
 - 日期：2026-10-26 Asia/Shanghai（写于上线前，上线当天照着做，做完在每一步后面记下交易哈希和地址）
-- 代码：gang-launchpad `main`（合约冻结在 `47a063b`，审计说明 `docs/AUDIT-BRIEF-2026-10-26.md`）
+- 代码：gang-launchpad `main`（合约冻结在 `1bcc84f`：打新去掉截止时间 + 第三轮内部审计修复，合入 `main` 后以 `main` 为准；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §14）
 - 链：BSC 主网（chainId 56）
 - 谁做：部署钱包跑脚本；多签签 §3 的交易；服务端 / keeper 由能上服务器的人改 env
 
@@ -137,6 +137,8 @@ GANG_V3_RPC_URLS=<§0 #6 的 RPC>
 # 外盘税：两个 handler + V3 欠款补发（keeper-tax-process.sh）
 TAX_HANDLERS=v3:<V3_POSTGRAD_HANDLER>@<V3 部署区块>,fair:<HOLDER_REWARD_HANDLER>@<打新部署区块>
 TAX_ROUTERS=v3:<V3_TAX_ROUTER>@<V3 部署区块>
+# 打新卖回的善后（审计说明 §14 R3-2 / R3-3）：ShareWriteFailed → 发射后 syncShares；FeeOwed → flushFees
+FAIR_PADS=fair:<FAIR_MINT_PAD>@<打新部署区块>
 SLIPPAGE_BPS=150                 # 审计说明 K-15：容忍度不超过 1–2%，一次性卖出会被夹
 LOGS_RPC=<§0 #6 的 RPC>
 # 平台费：在原来三个分账合约后面加新的（keeper-v2-platform.sh）
@@ -145,7 +147,7 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 
 - crontab：把外盘税那一行从每小时改为每 10 分钟（`*/10 * * * *`），保证每批卖出量小。
 - keeper 地址必须等于两个 handler 和新分账合约的 `keeper()`（部署脚本已按 `KEEPER` 设好，默认 `0xB6f1…cFc7`）。
-- 先不带 `--broadcast` 手动跑一次两个脚本，确认能识别新合约、模拟全部通过。
+- 先不带 `--broadcast` 手动跑一次两个脚本，确认能识别新合约、模拟全部通过（日志首行应显示 `fair_pads=fair:…`）。
 - 后续建议：给 `keeper-tax-process.sh` 加一个只用于发送交易的私有 RPC（目前读和发用同一个 `BSC_RPC`），进一步降低被夹的风险。
 
 ---
@@ -154,6 +156,7 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 
 - 把 `skill/gang-cli/src/fair.js`、`v3.js` 里 mainnet 的 `pad`、`router` 改成上面的地址（目前是 `null`，可用 `GANG_FAIR_PAD` / `GANG_V3_PAD` / `GANG_ROUTER` 环境变量临时指定）。
 - 更新文档里「只在测试网」的说法，升版本号，然后发布。
+- 打新的参数范围（合约强制，CLI 同样校验）：募集 5–50 BNB 等值、单地址上限 0.25%–0.5%、出局线 30%–80%、打新费 1%–3%、撤出费 1%–2%；没有截止时间（CLI 已去掉 `--hours` 和 `gang fair refund`）。
 - **CLI 发布的那一刻就是对公众开放创建的那一刻**（网站上的打新和税收币页面只能查看，发币和打新要通过 CLI）。如果要分阶段放开，前一两周先不发布 CLI，只让合作方和内部用 `GANG_*_PAD` 环境变量发币。合约本身挡不住别人直接调用，所以这只能降低早期的资金规模，不是硬限制。
 
 ---
@@ -161,7 +164,7 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 ## 7. 上线后的检查
 
 - [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件、接收地址收到第一笔 `TaxPaid`
-- [ ] 一个打新 sale 跑通：打新、撤出、打满发射、池子开盘价等于打新价
+- [ ] 一个打新 sale 跑通：打新、卖回（到手 = 打新价 × 份数 − 撤出费，与 `previewWithdraw` 一致）、打满发射、池子开盘价等于打新价
 - [ ] 经 GangRouter 用 BNB 买和打新各一笔，结束后路由余额为 0
 - [ ] keeper 第一次 `process` 和 `collectPlatform` 成功，新分账合约的 80% 进入回购、20% 进入金库
 - [ ] 网站 `/v3`、`/mint` 页面与链上数据一致
@@ -178,6 +181,9 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 | 排除某个地址（G-01） | 需要时 | 同上：排除和 `syncShares(token, user, 0)` 放在同一批 |
 | 欠款 | keeper 日志里出现 `owedOf > 0` | 联系合作方处理收款问题；能收款之后 keeper 或任何人都能 `release` |
 | 接新合作方 | 需要时 | 多签 `RecipientRegistry.list(地址, 名称)` |
+| 打新撤出费欠款 | keeper 日志里出现 `flushFees`，或 `FairMintPad.owedFee(报价币) > 0` | 说明 bucket 拒收过核心（operator 被撤）。恢复 operator 后 keeper 自动 `flushFees`，任何人也可以调 |
+| 打新卖回时分红合约拒写 | keeper 日志里出现 `syncShares`（来自 `ShareWriteFailed`） | 说明分红合约当时拒绝了核心（launchpad 被改）。先恢复；代币发射后 keeper 自动为这些地址同步清零 |
+| 停滞的 sale | 网站「停滞」标记（7 天新增不到 10 份） | 无需处理：卖回免撤出费，任何人仍可把它打满 |
 
 ---
 
@@ -194,5 +200,5 @@ PLATFORM_BUCKETS=v2:0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111,u:0xe314efeB69229
 | 合约本身有漏洞 | 重新部署修复版，网站和 CLI 切到新地址；旧合约里的钱只能等用户按原规则自己取回 | 已经在旧合约里的资金无法迁移 |
 
 不要做的事：
-- 撤掉核心在分账合约的 operator 权限：V3 内盘买卖、打新撤出和发射会全部 revert（审计说明 A-1）。
+- 撤掉核心在分账合约的 operator 权限：V3 内盘买卖、打新的打新和发射会全部 revert（审计说明 A-1）；打新卖回不受影响，撤出费记为 `owedFee` 等恢复后补交（§14 R3-2）。
 - 撤掉 PostGradTaxHandlerV3 在分红合约的 operator 权限：毕业后的 V3 代币将无法转账（K-7）。
