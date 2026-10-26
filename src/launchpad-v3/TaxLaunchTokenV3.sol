@@ -5,17 +5,19 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IPostGradTaxHandler} from "../launchpad-v2/interfaces/IPostGradTaxHandler.sol";
 
 /// @title TaxLaunchTokenV3 (LaunchpadV3 taxed track)
-/// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the outer tax
-///         rate is chosen at create (`taxBps`, immutable for the token's life).
-/// @dev Bonding-phase tax (if enabled) is taken by LaunchpadV3 on quote, never here.
-///      Post-grad: `taxBps` on pair trades → PostGradTaxHandlerV3 (accrue only; keeper sells later — V2 Finding 2).
+/// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
+///         are chosen at create, one for buys and one for sells (immutable for the token's life).
+/// @dev Bonding-phase tax is taken by LaunchpadV3 on quote, never here.
+///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → PostGradTaxHandlerV3 (accrue
+///      only; keeper sells later — V2 Finding 2).
 ///      Every transfer syncs dividend shares (V2 Finding 3); the handler ignores tokens without dividends.
 contract TaxLaunchTokenV3 is ERC20 {
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000 ether;
     uint256 public constant BPS = 10_000;
 
     address public immutable launchpad;
-    uint16 public immutable taxBps;
+    uint16 public immutable buyTaxBps;
+    uint16 public immutable sellTaxBps;
     address public taxHandler;
     address public pair;
     bool public locked = true;
@@ -32,9 +34,12 @@ contract TaxLaunchTokenV3 is ERC20 {
     event OuterTax(address indexed from, address indexed to, uint256 taxed, uint256 net);
 
     /// @dev Deployed by TaxTokenDeployerV3 on behalf of `launchpad_` (keeps LaunchpadV3 under EIP-170).
-    constructor(string memory name_, string memory symbol_, uint16 taxBps_, address launchpad_) ERC20(name_, symbol_) {
+    constructor(string memory name_, string memory symbol_, uint16 buyTaxBps_, uint16 sellTaxBps_, address launchpad_)
+        ERC20(name_, symbol_)
+    {
         launchpad = launchpad_;
-        taxBps = taxBps_;
+        buyTaxBps = buyTaxBps_;
+        sellTaxBps = sellTaxBps_;
         _mint(launchpad_, TOTAL_SUPPLY);
         isExcluded[launchpad_] = true;
         isExcluded[address(0)] = true;
@@ -80,7 +85,8 @@ contract TaxLaunchTokenV3 is ERC20 {
         }
 
         if (_shouldTax(from, to) && value > 0) {
-            uint256 tax = (value * taxBps) / BPS;
+            // from the pair = a buy; into it = a sell (pair → pair cannot happen)
+            uint256 tax = (value * (from == pair ? buyTaxBps : sellTaxBps)) / BPS;
             uint256 net = value - tax;
             super._update(from, to, net);
             if (tax > 0) {
@@ -116,7 +122,10 @@ contract TaxLaunchTokenV3 is ERC20 {
 /// @notice Holds TaxLaunchTokenV3 creation code so LaunchpadV3 stays under EIP-170. Stateless: the caller becomes
 ///         the token's launchpad, so anyone may call it but only gets tokens bound to themselves.
 contract TaxTokenDeployerV3 {
-    function deploy(string calldata name, string calldata symbol, uint16 taxBps) external returns (address) {
-        return address(new TaxLaunchTokenV3(name, symbol, taxBps, msg.sender));
+    function deploy(string calldata name, string calldata symbol, uint16 buyTaxBps, uint16 sellTaxBps)
+        external
+        returns (address)
+    {
+        return address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender));
     }
 }

@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
@@ -15,41 +16,36 @@ import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
 import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {TemplateRegistry} from "../../src/launchpad-v3/TemplateRegistry.sol";
+import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {TemplateTypes} from "../../src/launchpad-v3/interfaces/TemplateTypes.sol";
-import {CreatorTreasuryFactory, CreatorTreasuryVault} from "../../src/launchpad-v3/templates/CreatorTreasury.sol";
-import {BuybackBurnFactory, BuybackBurnVault} from "../../src/launchpad-v3/templates/BuybackBurn.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
-/// @dev Listed factory whose vault lies about its token — create must reject it.
-contract LyingVault {
-    address public token = address(0xBEEF);
-    address public quote;
+/// @dev Quote that refuses transfers to blacklisted addresses (USDT-style), to make a recipient push fail.
+contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
+    mapping(address => bool) public blocked;
 
-    constructor(address quote_) {
-        quote = quote_;
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function setBlocked(address a, bool b) external {
+        blocked[a] = b;
+    }
+
+    function _update(address from, address to, uint256 value) internal override {
+        require(!blocked[to], "blacklisted");
+        super._update(from, to, value);
     }
 }
 
-contract LyingFactory {
-    function createVault(address, address quote, address, bytes calldata) external returns (address) {
-        return address(new LyingVault(quote));
-    }
-
-    function validate(bytes calldata) external pure returns (bool, string memory) {
-        return (true, "");
-    }
-}
-
-/// @notice LaunchpadV3 end to end on mocks: create rules, bonding tax split, graduation, post-grad tax via
-///         TaxRouterV3, both official templates. No broadcast.
+/// @notice LaunchpadV3 (tax recipient) on mocks: create rules, buy / sell tax on the curve and on the pool, the
+///         0.5%-of-volume platform part, dividend share, recipient pushes, owed + release, TaxPaid events, G-01.
 contract LaunchpadV3Test is Test {
     QuoteRegistry internal quoteRegistry;
     DividendVault internal divVault;
     PlatformFeeBucket internal bucket;
     TaxRouterV3 internal router;
-    TemplateRegistry internal templates;
+    RecipientRegistry internal recipients;
     PostGradTaxHandlerV3 internal handler;
     LaunchpadV3 internal pad;
     MigratorV2 internal migrator;
@@ -57,20 +53,20 @@ contract LaunchpadV3Test is Test {
     MockSPCXB internal quoteTok;
     MockSPCXB internal wbnb;
     MockAgentId internal agents;
-    CreatorTreasuryFactory internal treasury;
-    CreatorTreasuryFactory internal treasuryByAuthor;
-    BuybackBurnFactory internal buyback;
 
     address internal owner = makeAddr("owner");
     address internal keeper = makeAddr("keeper");
     address internal feeVault = makeAddr("feeVault");
-    address internal author = makeAddr("author");
+    address internal treasury = makeAddr("treasury"); // the partner's vault
     address internal agent = makeAddr("agent");
     address internal agent2 = makeAddr("agent2");
     address internal stranger = makeAddr("stranger");
+    uint256 internal nextId = 1;
 
     uint256 internal constant BPS = 10_000;
-    address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
+
+    event TaxPaid(address indexed token, address indexed recipient, address indexed quote, uint256 amount);
+    event TaxOwed(address indexed token, address indexed recipient, address indexed quote, uint256 amount);
 
     function setUp() public {
         quoteTok = new MockSPCXB();
@@ -82,7 +78,7 @@ contract LaunchpadV3Test is Test {
         divVault = new DividendVault(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
         router = new TaxRouterV3(owner, address(divVault), address(bucket));
-        templates = new TemplateRegistry(owner);
+        recipients = new RecipientRegistry(owner);
         handler = new PostGradTaxHandlerV3(owner, address(divVault), address(router));
         pad = new LaunchpadV3(
             owner,
@@ -91,15 +87,12 @@ contract LaunchpadV3Test is Test {
             address(bucket),
             address(handler),
             address(router),
-            address(templates),
+            address(recipients),
             address(new TaxTokenDeployerV3()),
             address(wbnb),
             address(pairFactory)
         );
         migrator = new MigratorV2(address(pairFactory), address(pad));
-        treasury = new CreatorTreasuryFactory(address(pad), address(router));
-        treasuryByAuthor = new CreatorTreasuryFactory(address(pad), address(router));
-        buyback = new BuybackBurnFactory(owner, address(pad), address(router), address(pairFactory));
 
         vm.startPrank(owner);
         quoteRegistry.setQuote(address(quoteTok), true, 15 ether);
@@ -111,312 +104,268 @@ contract LaunchpadV3Test is Test {
         router.setLaunchpad(address(pad));
         router.setSource(address(handler), true);
         handler.setKeeper(keeper);
-        buyback.setKeeper(keeper);
-        templates.list(address(treasury), address(0));
-        templates.list(address(treasuryByAuthor), author);
-        templates.list(address(buyback), address(0));
+        recipients.list(treasury, "partner treasury");
         pad.setMigrator(address(migrator));
         pad.setAgentGate(true, address(agents));
         vm.stopPrank();
 
-        agents.mint(agent, 1);
-        agents.mint(agent2, 2);
-        _fund(agent);
-        _fund(agent2);
+        _agent(agent);
+        _agent(agent2);
     }
 
     // ---------------------------------------------------------------- helpers
-
-    function _fund(address who) internal {
+    function _agent(address who) internal {
+        if (agents.balanceOf(who) == 0) agents.mint(who, nextId++);
         quoteTok.mintUnlimited(who, 1_000 ether);
         vm.prank(who);
         quoteTok.approve(address(pad), type(uint256).max);
     }
 
-    function _cfg(uint16 taxBps, bool bondingTax, uint16 dividendBps, address factory, bytes memory data)
+    function _tax(uint16 buyBps, uint16 sellBps, uint16 dividendBps, address recipient)
         internal
         pure
         returns (ILaunchpadV3.TaxConfig memory)
     {
         return ILaunchpadV3.TaxConfig({
-            taxBps: taxBps, bondingTax: bondingTax, dividendBps: dividendBps, vaultFactory: factory, vaultData: data
+            buyTaxBps: buyBps, sellTaxBps: sellBps, dividendBps: dividendBps, recipient: recipient
         });
     }
 
-    function _untaxed() internal pure returns (ILaunchpadV3.TaxConfig memory) {
-        return _cfg(0, false, 0, address(0), "");
-    }
-
-    function _create(ILaunchpadV3.TaxConfig memory tax) internal returns (address t) {
+    function _create(ILaunchpadV3.TaxConfig memory t) internal returns (address token) {
         vm.prank(agent);
-        t = pad.create("T", "T", "", address(quoteTok), address(0), tax);
+        token = pad.create("Tax", "TAX", "", address(quoteTok), address(0), t);
     }
 
-    function _graduated(address t) internal view returns (bool g) {
-        (,,,,,, g,,,,,) = pad.curves(t);
-    }
-
-    function _pair(address t) internal view returns (address p) {
-        (,,,,,,,,,, p,) = pad.curves(t);
-    }
-
-    /// @dev Wallet cap off, one oversized buy: the pad caps net at the remaining amount and refunds the rest.
-    function _graduate(address t, address buyer) internal {
-        vm.prank(owner);
-        pad.setWalletCapEnabled(false);
-        vm.prank(buyer);
-        pad.buy(t, 100 ether, 0);
-        assertTrue(_graduated(t), "expected graduation");
-        vm.prank(owner);
-        pad.setWalletCapEnabled(true);
-    }
-
-    function _reason(ILaunchpadV3.TaxConfig memory tax) internal view returns (string memory r) {
-        (, r) = pad.checkTaxConfig(tax);
-    }
-
-    // ---------------------------------------------------------------- create rules
-
-    function test_checkTaxConfig_rules() public {
-        (bool ok,) = pad.checkTaxConfig(_untaxed());
-        assertTrue(ok);
-        (ok,) = pad.checkTaxConfig(_cfg(300, true, 10_000, address(0), ""));
-        assertTrue(ok);
-        (ok,) = pad.checkTaxConfig(_cfg(500, false, 5_000, address(treasury), abi.encode(address(0), uint256(0))));
-        assertTrue(ok);
-
-        assertEq(
-            _reason(_cfg(0, true, 0, address(0), "")),
-            "untaxed: bondingTax/dividendBps/vaultFactory/vaultData must be empty"
-        );
-        assertEq(_reason(_cfg(400, false, 10_000, address(0), "")), "taxBps must be 100, 200, 300 or 500");
-        assertEq(_reason(_cfg(1000, false, 10_000, address(0), "")), "taxBps must be 100, 200, 300 or 500");
-        assertEq(_reason(_cfg(100, false, 5_000, address(0), "")), "no template: dividendBps must be 10000");
-        assertEq(_reason(_cfg(100, false, 10_001, address(treasury), "")), "dividendBps > 10000");
-        assertEq(_reason(_cfg(100, false, 0, makeAddr("rando"), "")), "template not listed");
-        assertEq(
-            _reason(_cfg(100, false, 0, address(treasury), hex"01")),
-            "data must be abi.encode(address beneficiary, uint256 dailyCap)"
-        );
-
+    function _expectBad(ILaunchpadV3.TaxConfig memory t, string memory reason) internal {
         vm.prank(agent);
-        vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, "template not listed"));
-        pad.create("T", "T", "", address(quoteTok), address(0), _cfg(100, false, 0, makeAddr("rando"), ""));
+        vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, reason));
+        pad.create("X", "X", "", address(quoteTok), address(0), t);
     }
 
-    function test_create_rejectsNonAgent() public {
-        vm.prank(stranger);
-        vm.expectRevert(LaunchpadV3.NotAgent.selector);
-        pad.create("T", "T", "", address(quoteTok), address(0), _untaxed());
+    function _graduated(address token) internal view returns (bool g) {
+        (,,,,,, g,,,,,) = pad.curves(token);
     }
 
-    function test_create_delistedTemplate_rejectedForNewTokens() public {
+    /// @dev Distinct agent wallets buy 1 quote each (the 1% cap truncates) until the curve graduates.
+    function _graduate(address token) internal {
+        for (uint256 i = 0; i < 400 && !_graduated(token); i++) {
+            address w = address(uint160(0xB0000 + i));
+            _agent(w);
+            vm.prank(w);
+            pad.buy(token, 1 ether, 0);
+        }
+        assertTrue(_graduated(token), "graduated");
+    }
+
+    function _poolBuy(address token, address who, uint256 quoteIn) internal {
+        MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
+        quoteTok.mintUnlimited(address(pair), quoteIn);
+        (uint256 rT, uint256 rQ) = _reserves(token, pair);
+        uint256 out = (quoteIn * rT) / (rQ + quoteIn) / 2; // well inside the curve; MockPair checks no K
+        if (pair.token0() == token) pair.swap(out, 0, who, "");
+        else pair.swap(0, out, who, "");
+    }
+
+    function _poolSell(address token, address who, uint256 amount) internal {
+        MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
+        vm.prank(who);
+        IERC20(token).transfer(address(pair), amount);
+        (uint256 rT, uint256 rQ) = _reserves(token, pair);
+        uint256 inAmt = IERC20(token).balanceOf(address(pair)) - rT;
+        uint256 out = (inAmt * rQ) / (rT + inAmt) / 2;
+        if (pair.token0() == token) pair.swap(0, out, who, "");
+        else pair.swap(out, 0, who, "");
+    }
+
+    function _reserves(address token, MockPair pair) internal view returns (uint256 rT, uint256 rQ) {
+        (uint112 r0, uint112 r1,) = pair.getReserves();
+        (rT, rQ) = pair.token0() == token ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+    }
+
+    // ---------------------------------------------------------------- 1 / 2 / 3: create rules
+    function test_create_rules() public {
+        _expectBad(_tax(99, 200, 0, treasury), "buyTaxBps and sellTaxBps must each be 100-500 (1%-5%)");
+        _expectBad(_tax(200, 501, 0, treasury), "buyTaxBps and sellTaxBps must each be 100-500 (1%-5%)");
+        _expectBad(_tax(200, 0, 0, treasury), "buyTaxBps and sellTaxBps must each be 100-500 (1%-5%)");
+        _expectBad(_tax(200, 200, 10_001, treasury), "dividendBps > 10000");
+        _expectBad(_tax(200, 200, 5_000, address(0)), "no recipient: dividendBps must be 10000");
+        _expectBad(_tax(200, 200, 0, stranger), "recipient not listed");
+        _expectBad(_tax(0, 0, 0, treasury), "untaxed: dividendBps / recipient must be empty");
+
+        address t = _create(_tax(200, 200, 0, treasury));
+        (uint16 b, uint16 s, uint16 d, address r) = pad.taxConfigOf(t);
+        assertEq(b, 200);
+        assertEq(s, 200);
+        assertEq(d, 0);
+        assertEq(r, treasury, "recipient fixed at create");
+        assertEq(TaxLaunchTokenV3(t).buyTaxBps(), 200);
+        assertEq(TaxLaunchTokenV3(t).sellTaxBps(), 200);
+
+        address u = _create(_tax(0, 0, 0, address(0)));
+        assertEq(LaunchToken(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = V2 LaunchToken");
+        _create(_tax(100, 500, 10_000, address(0))); // holder-dividend only, no recipient
+    }
+
+    function test_delistedRecipient_onlyBlocksNewTokens() public {
+        address t = _create(_tax(200, 200, 0, treasury));
         vm.prank(owner);
-        templates.delist(address(buyback));
-        vm.prank(agent);
-        vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, "template not listed"));
-        pad.create("T", "T", "", address(quoteTok), address(0), _cfg(300, false, 0, address(buyback), ""));
-    }
+        recipients.delist(treasury);
+        _expectBad(_tax(200, 200, 0, treasury), "recipient not listed");
 
-    function test_create_rejectsVaultForAnotherToken() public {
-        LyingFactory lying = new LyingFactory();
-        vm.prank(owner);
-        templates.list(address(lying), address(0));
-        vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.BadVault.selector);
-        pad.create("T", "T", "", address(quoteTok), address(0), _cfg(300, false, 0, address(lying), ""));
-    }
-
-    function test_create_untaxed() public {
-        address t = _create(_untaxed());
-        assertEq(LaunchToken(t).launchpad(), address(pad));
-        (uint16 taxBps, bool bondingTax, uint16 dividendBps, address f, address v) = pad.taxConfigOf(t);
-        assertEq(taxBps, 0);
-        assertFalse(bondingTax);
-        assertEq(dividendBps, 0);
-        assertEq(f, address(0));
-        assertEq(v, address(0));
-        (address q,,,) = router.routeOf(t);
-        assertEq(q, address(0), "untaxed tokens have no route");
-    }
-
-    function test_create_taxedWithTemplate_wiresEverything() public {
-        address t = _create(_cfg(300, true, 4_000, address(treasury), abi.encode(address(0), uint256(0))));
-        (uint16 taxBps,,, address f, address v) = pad.taxConfigOf(t);
-        assertEq(taxBps, 300);
-        assertEq(f, address(treasury));
-        assertEq(TaxLaunchTokenV3(t).taxBps(), 300);
-        assertEq(TaxLaunchTokenV3(t).launchpad(), address(pad));
-        assertEq(IERC20(t).balanceOf(address(pad)), 1_000_000_000 ether);
-        assertTrue(TaxLaunchTokenV3(t).isExcluded(v), "vault is tax-excluded");
-        assertEq(CreatorTreasuryVault(v).beneficiary(), agent);
-        assertEq(divVault.quoteOf(t), address(quoteTok));
-
-        (address q, address rv, address a, uint16 d) = router.routeOf(t);
-        assertEq(q, address(quoteTok));
-        assertEq(rv, v);
-        assertEq(a, address(0));
-        assertEq(d, 4_000);
-    }
-
-    function test_create_externalTemplate_snapshotsAuthor() public {
-        address t = _create(_cfg(100, false, 0, address(treasuryByAuthor), abi.encode(address(0), uint256(0))));
-        (,, address a,) = router.routeOf(t);
-        assertEq(a, author);
-    }
-
-    // ---------------------------------------------------------------- bonding
-
-    function test_bonding_untaxed_protocolFeeOnly() public {
-        address t = _create(_untaxed());
+        uint256 before = quoteTok.balanceOf(treasury);
         vm.prank(agent);
         pad.buy(t, 0.01 ether, 0);
-        assertEq(bucket.accruedQuote(address(quoteTok)), 0.0001 ether);
+        assertGt(quoteTok.balanceOf(treasury), before, "existing token keeps paying its recipient");
     }
 
-    function test_bonding_taxOff_onlyProtocolFee() public {
-        address t = _create(_cfg(500, false, 10_000, address(0), ""));
+    // ---------------------------------------------------------------- 2 / 3 / 4 / 6: curve tax split
+    /// @dev buy 2%: 1% protocol fee + 2% tax; of the tax 0.5% of volume → platform, 1.5% → recipient (dividend 0).
+    function test_bondingBuy_split_platformHalfPercent_restToRecipient() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+        uint256 gross = 0.01 ether;
+        vm.expectEmit(true, true, true, true, address(router));
+        emit TaxPaid(t, treasury, address(quoteTok), (gross * 150) / BPS);
         vm.prank(agent);
-        pad.buy(t, 0.01 ether, 0);
-        assertEq(bucket.accruedQuote(address(quoteTok)), 0.0001 ether);
-        assertEq(quoteTok.balanceOf(address(divVault)), 0);
+        pad.buy(t, gross, 0);
+        assertEq(quoteTok.balanceOf(treasury), (gross * 150) / BPS, "recipient 1.5%");
+        assertEq(bucket.accruedQuote(address(quoteTok)), (gross * 100) / BPS + (gross * 50) / BPS, "1% fee + 0.5% tax");
     }
 
-    /// @dev 3% bonding tax, dividends only. First buy has no eligible holders → the 70% rolls to platform.
-    ///      Second buy pays the 70% to the first buyer. Buys stay under the 1% wallet cap (no truncation).
-    function test_bonding_dividendOnly_firstBuyRollsToPlatform_thenHolders() public {
-        address t = _create(_cfg(300, true, 10_000, address(0), ""));
-
+    /// @dev sell 3% with dividend 40%: platform 0.5%, rest 2.5% → 1% dividends / 1.5% recipient.
+    function test_bondingSell_split_withDividends() public {
+        address t = _create(_tax(100, 300, 4_000, treasury));
         vm.prank(agent);
         pad.buy(t, 0.01 ether, 0);
-        // 1% protocol + 3% tax, all to platform on the first buy.
-        assertEq(bucket.accruedQuote(address(quoteTok)), 0.0004 ether);
-        assertGt(divVault.shares(t, agent), 0);
-
         vm.prank(agent2);
-        pad.buy(t, 0.01 ether, 0);
-        // second buy: 1% + 30% of 3% to platform; 70% of 3% to holders (only agent eligible).
-        assertEq(bucket.accruedQuote(address(quoteTok)), 0.0004 ether + 0.0001 ether + 0.00009 ether);
-        // DividendVault accRewardPerShare rounding: up to totalShares / 1e18 wei of dust (V2 behaviour).
-        assertApproxEqAbs(divVault.pending(t, agent), 0.00021 ether, divVault.totalShares(t) / 1e18 + 1);
-        assertEq(divVault.pending(t, agent2), 0);
-    }
-
-    function test_bonding_templateVault_andAuthor() public {
-        address t = _create(_cfg(500, true, 0, address(treasuryByAuthor), abi.encode(address(0), uint256(0))));
-        (,,,, address v) = pad.taxConfigOf(t);
-
-        vm.prank(agent);
-        pad.buy(t, 0.02 ether, 0);
-        uint256 tax = 0.001 ether; // 5% of 0.02
-        assertEq(bucket.accruedQuote(address(quoteTok)), 0.0002 ether + (tax * 2_000) / BPS);
-        assertEq(router.owed(author, address(quoteTok)), (tax * 1_000) / BPS);
-        assertEq(quoteTok.balanceOf(v), (tax * 7_000) / BPS);
-
-        vm.prank(agent);
-        CreatorTreasuryVault(v).withdraw(0.0007 ether, agent);
-        assertEq(quoteTok.balanceOf(v), 0);
-    }
-
-    function test_bonding_sell_chargesTax() public {
-        address t = _create(_cfg(200, true, 10_000, address(0), ""));
-        vm.prank(agent);
-        pad.buy(t, 1 ether, 0);
-        uint256 bal = IERC20(t).balanceOf(agent);
-
-        uint256 before = quoteTok.balanceOf(agent);
+        pad.buy(t, 0.01 ether, 0); // agent now holds dividend shares
+        uint256 bal = IERC20(t).balanceOf(agent2);
+        uint256 vaultBefore = quoteTok.balanceOf(address(divVault));
+        uint256 recBefore = quoteTok.balanceOf(treasury);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
-        vm.startPrank(agent);
+
+        vm.startPrank(agent2);
         IERC20(t).approve(address(pad), bal);
-        uint256 got = pad.sell(t, bal / 2, 0);
+        uint256 toUser = pad.sell(t, bal, 0);
         vm.stopPrank();
+        uint256 quoteOut = (toUser * BPS) / (BPS - 100 - 300); // what the curve paid before fee + tax
 
-        assertEq(quoteTok.balanceOf(agent) - before, got);
-        // gross = got / (1 - 1% - 2%); seller still held shares when the tax was split → 70% to holders.
-        uint256 gross = (got * BPS) / (BPS - 300);
-        assertApproxEqAbs(bucket.accruedQuote(address(quoteTok)) - bucketBefore, (gross * 160) / BPS, 1e9);
+        uint256 rest = (quoteOut * 300) / BPS - (quoteOut * 50) / BPS;
+        assertApproxEqAbs(
+            quoteTok.balanceOf(address(divVault)) - vaultBefore, (rest * 4_000) / BPS, 2, "40% to holders"
+        );
+        assertApproxEqAbs(quoteTok.balanceOf(treasury) - recBefore, rest - (rest * 4_000) / BPS, 2, "60% to recipient");
+        assertApproxEqAbs(bucket.accruedQuote(address(quoteTok)) - bucketBefore, (quoteOut * 150) / BPS, 2, "1% + 0.5%");
     }
 
-    function test_bonding_walletCapStillApplies() public {
-        address t = _create(_cfg(300, true, 10_000, address(0), ""));
+    function test_firstBuy_noHolders_dividendLegGoesToRecipient() public {
+        address t = _create(_tax(200, 200, 5_000, treasury));
         vm.prank(agent);
-        pad.buy(t, 10 ether, 0);
-        assertEq(IERC20(t).balanceOf(agent), pad.MAX_PER_WALLET());
+        pad.buy(t, 0.01 ether, 0);
+        assertEq(quoteTok.balanceOf(address(divVault)), 0);
+        assertEq(quoteTok.balanceOf(treasury), (0.01 ether * 150) / BPS, "whole 1.5% to recipient");
     }
 
-    // ---------------------------------------------------------------- graduation + post-grad
-
-    function test_postGrad_buybackTemplate_endToEnd() public {
-        address t = _create(_cfg(500, true, 5_000, address(buyback), ""));
-        (,,,, address v) = pad.taxConfigOf(t);
-
-        vm.prank(agent2);
-        pad.buy(t, 1 ether, 0); // agent2 becomes a dividend holder
-        _graduate(t, agent);
-
-        address pair = _pair(t);
-        assertEq(TaxLaunchTokenV3(t).pair(), pair);
-        assertEq(TaxLaunchTokenV3(t).taxHandler(), address(handler));
-
-        // Pair trade: agent sends tokens to the pair → 5% outer tax accrues in the handler.
-        uint256 trade = 1_000_000 ether;
+    // ---------------------------------------------------------------- 5 / 6: failed push → owed → release by anyone
+    function test_failedPush_isOwed_tradeStillWorks_anyoneReleases() public {
+        BlacklistQuote bq = new BlacklistQuote();
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(bq), true, 15 ether);
+        bq.mint(agent, 10 ether);
         vm.prank(agent);
-        IERC20(t).transfer(pair, trade);
-        uint256 taxTokens = (trade * 500) / BPS;
-        assertEq(handler.accruedTax(t), taxTokens);
+        bq.approve(address(pad), type(uint256).max);
+        bq.setBlocked(treasury, true);
 
-        // Wallet ↔ wallet: no tax.
         vm.prank(agent);
-        IERC20(t).transfer(stranger, 1 ether);
-        assertEq(handler.accruedTax(t), taxTokens);
+        address t = pad.create("B", "B", "", address(bq), address(0), _tax(200, 200, 0, treasury));
+        uint256 owedAmt = (0.01 ether * 150) / BPS;
+        vm.expectEmit(true, true, true, true, address(router));
+        emit TaxOwed(t, treasury, address(bq), owedAmt);
+        vm.prank(agent);
+        pad.buy(t, 0.01 ether, 0); // does not revert
+        assertEq(router.owedOf(t), owedAmt);
 
-        vm.expectRevert(PostGradTaxHandlerV3.OnlyKeeperOrOwner.selector);
-        handler.process(t, 1);
+        vm.prank(stranger);
+        vm.expectRevert(bytes("blacklisted"));
+        router.release(t); // still blocked: stays owed
+        assertEq(router.owedOf(t), owedAmt);
 
+        bq.setBlocked(treasury, false);
+        vm.expectEmit(true, true, true, true, address(router));
+        emit TaxPaid(t, treasury, address(bq), owedAmt);
+        vm.prank(stranger);
+        router.release(t);
+        assertEq(router.owedOf(t), 0);
+        assertEq(bq.balanceOf(treasury), owedAmt);
+
+        vm.expectRevert(TaxRouterV3.NothingOwed.selector);
+        router.release(t);
+    }
+
+    // ---------------------------------------------------------------- 2 / 3 / 4: pool tax, keeper sells to quote
+    /// @dev Pool buy 1% / sell 3%: the platform part is 0.5% of each trade's volume (half of a buy's tax, a sixth of
+    ///      a sell's), carried through the keeper's swap; the recipient gets the rest in quote, never the token.
+    function test_postGrad_buySellRates_platformPerTrade_recipientInQuote() public {
+        address t = _create(_tax(100, 300, 0, treasury));
+        _graduate(t);
+        uint256 recBefore = quoteTok.balanceOf(treasury);
+
+        _poolBuy(t, stranger, 1 ether);
+        uint256 buyTax = handler.accruedTax(t);
+        assertEq(handler.accruedPlatformTax(t), buyTax / 2, "buy: 0.5 of 1%");
+        uint256 sold = IERC20(t).balanceOf(stranger) / 2;
+        _poolSell(t, stranger, sold);
+        uint256 sellTax = handler.accruedTax(t) - buyTax;
+        assertEq(sellTax, (sold * 300) / BPS);
+        assertEq(handler.accruedPlatformTax(t), buyTax / 2 + (sellTax * 50) / 300, "sell: 0.5 of 3%");
+
+        uint256 platformTokens = handler.accruedPlatformTax(t);
+        uint256 totalTokens = handler.accruedTax(t);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
-        uint256 vaultBefore = quoteTok.balanceOf(v);
-        uint256 pendingBefore = divVault.pending(t, agent2);
         vm.prank(keeper);
         uint256 quoteOut = handler.process(t, 1);
-        assertGt(quoteOut, 0);
-
-        assertEq(bucket.accruedQuote(address(quoteTok)) - bucketBefore, (quoteOut * 3_000) / BPS);
-        uint256 tokenSide = quoteOut - (quoteOut * 3_000) / BPS;
-        assertEq(quoteTok.balanceOf(v) - vaultBefore, tokenSide - (tokenSide * 5_000) / BPS);
-        assertGt(divVault.pending(t, agent2), pendingBefore);
-
-        // Buyback: keeper only, burns to 0xdead, vault quote → 0.
-        vm.expectRevert(BuybackBurnVault.OnlyKeeper.selector);
-        BuybackBurnVault(v).buyback(0, 1);
-
-        uint256 deadBefore = IERC20(t).balanceOf(DEAD);
-        vm.prank(keeper);
-        uint256 burned = BuybackBurnVault(v).buyback(0, 1);
-        assertGt(burned, 0);
-        assertEq(IERC20(t).balanceOf(DEAD) - deadBefore, burned);
-        assertEq(quoteTok.balanceOf(v), 0);
-        assertEq(BuybackBurnVault(v).totalBurned(), burned);
-        assertEq(handler.accruedTax(t), 0, "vault buyback pays no tax");
+        uint256 platformQuote = (quoteOut * platformTokens) / totalTokens;
+        assertEq(bucket.accruedQuote(address(quoteTok)) - bucketBefore, platformQuote);
+        assertEq(quoteTok.balanceOf(treasury) - recBefore, quoteOut - platformQuote, "rest to recipient, in quote");
+        assertEq(IERC20(t).balanceOf(treasury), 0, "never paid in the token");
+        assertEq(handler.accruedPlatformTax(t), 0);
     }
 
-    function test_postGrad_buyback_beforeGraduation_reverts() public {
-        address t = _create(_cfg(500, true, 0, address(buyback), ""));
-        (,,,, address v) = pad.taxConfigOf(t);
+    function test_untaxed_noTaxAnywhere() public {
+        address t = _create(_tax(0, 0, 0, address(0)));
         vm.prank(agent);
-        pad.buy(t, 1 ether, 0);
-        assertGt(quoteTok.balanceOf(v), 0, "bonding tax waits in the vault");
-        vm.prank(keeper);
-        vm.expectRevert(BuybackBurnVault.NoPair.selector);
-        BuybackBurnVault(v).buyback(0, 1);
+        pad.buy(t, 0.01 ether, 0);
+        assertEq(bucket.accruedQuote(address(quoteTok)), (0.01 ether * 100) / BPS, "only the 1% protocol fee");
+        assertEq(quoteTok.balanceOf(treasury), 0);
     }
 
-    function test_postGrad_untaxed_noTax() public {
-        address t = _create(_untaxed());
-        _graduate(t, agent);
-        address pair = _pair(t);
-        uint256 before = IERC20(t).balanceOf(pair);
+    // ---------------------------------------------------------------- 7: V2 rules unchanged
+    function test_agentGateAndWalletCapUnchanged() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+        quoteTok.mintUnlimited(stranger, 1 ether);
+        vm.startPrank(stranger);
+        quoteTok.approve(address(pad), type(uint256).max);
+        vm.expectRevert(LaunchpadV3.NotAgent.selector);
+        pad.buy(t, 0.01 ether, 0);
+        vm.stopPrank();
+
         vm.prank(agent);
-        IERC20(t).transfer(pair, 1_000 ether);
-        assertEq(IERC20(t).balanceOf(pair) - before, 1_000 ether);
+        pad.buy(t, 5 ether, 0);
+        assertEq(IERC20(t).balanceOf(agent), pad.MAX_PER_WALLET(), "1% cap");
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.WalletCapReached.selector);
+        pad.buy(t, 0.01 ether, 0);
+        assertEq(pad.TARGET_GRAD_BNB(), 15 ether);
+    }
+
+    // ---------------------------------------------------------------- audit G-01 on the V3 handler
+    function test_auditG01_excludedHolderZeroedOnSync() public {
+        address t = _create(_tax(200, 200, 10_000, address(0)));
+        _graduate(t);
+        address holder = address(uint160(0xB0000)); // first graduating buyer
+        assertGt(divVault.shares(t, holder), 0);
+        vm.prank(owner);
+        divVault.setExcluded(holder, true);
+        handler.syncShares(t, holder, address(0));
+        assertEq(divVault.shares(t, holder), 0, "excluded holder no longer earns");
     }
 }

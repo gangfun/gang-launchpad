@@ -1,25 +1,29 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {TemplateTypes} from "./TemplateTypes.sol";
-
-/// @notice Single place where every V3 tax payment (bonding or post-grad) is split.
+/// @notice Single place where every V3 tax payment (bonding or post-grad) is split:
+///         platform share (fixed 0.5% of trade volume, computed by the payer) → dividends → tax recipient.
 interface ITaxRouter {
+    enum Phase {
+        Bonding,
+        PostGrad
+    }
+
     /// @notice LaunchpadV3 only, once per taxed token at create.
-    /// @param vault        0 = no template; then `dividendBps` must be 10_000.
-    /// @param author       Template author snapshotted from TemplateRegistry (0 = platform-authored, no author cut).
-    /// @param dividendBps  Share of the token side that goes to DividendVault; the rest goes to `vault`.
-    function register(address token, address quote, address vault, address author, uint16 dividendBps) external;
+    /// @param recipient    RecipientRegistry-listed address that receives the rest of the tax in quote; 0 only when
+    ///                     `dividendBps` is 10_000 (all of the non-platform tax goes to holders).
+    /// @param dividendBps  Share of the tax after the platform's part that goes to DividendVault (0 allowed).
+    function register(address token, address quote, address recipient, uint16 dividendBps) external;
 
-    /// @notice Sources only (LaunchpadV3 for bonding, post-grad handler after its swap). Pulls `amount` of the
-    ///         token's quote from the caller and splits it.
-    function distribute(address token, uint256 amount, TemplateTypes.Phase phase) external;
+    /// @notice Sources only (LaunchpadV3 for bonding, the post-grad handler after its swap). Pulls `amount` of the
+    ///         token's quote from the caller; `platformAmount` of it is the platform's (≤ amount).
+    function distribute(address token, uint256 amount, uint256 platformAmount, Phase phase) external;
 
-    /// @notice Permissionless: push quote owed to `account` (template author earnings, or a vault push that failed).
-    function release(address account, address quote) external returns (uint256 amount);
+    /// @notice Permissionless: push the quote owed to `token`'s recipient (a direct transfer that failed).
+    function release(address token) external returns (uint256 amount);
 
-    function previewSplit(address token, uint256 amount)
+    function previewSplit(address token, uint256 amount, uint256 platformAmount)
         external
         view
-        returns (uint256 toPlatform, uint256 toAuthor, uint256 toDividend, uint256 toVault);
+        returns (uint256 toPlatform, uint256 toDividend, uint256 toRecipient);
 }

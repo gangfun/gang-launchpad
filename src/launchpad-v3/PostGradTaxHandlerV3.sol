@@ -11,7 +11,7 @@ import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.
 import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
 import {TaxRouterV3} from "./TaxRouterV3.sol";
 import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
-import {TemplateTypes} from "./interfaces/TemplateTypes.sol";
+import {ITaxRouter} from "./interfaces/ITaxRouter.sol";
 
 interface IUniswapV2PairSwap4V3 {
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
@@ -19,7 +19,9 @@ interface IUniswapV2PairSwap4V3 {
 
 /// @title PostGradTaxHandlerV3
 /// @notice Same as V2 PostGradTaxHandler up to the swap; the resulting quote goes to TaxRouterV3 instead of a
-///         fixed 50/50, so the split follows each token's template.
+///         fixed 50/50, so the split follows each token's dividend share and tax recipient.
+///         Buys and sells may be taxed at different rates, so the platform's 0.5% of volume is counted per trade
+///         when the tax accrues (in tokens) and handed to the router as the same fraction of the swap's quote.
 /// @dev Must be a TaxRouterV3 source and a DividendVault operator.
 ///      V2 Finding 2: accrue only in the transfer hook. H1: `process` keeper/owner-only with mandatory minQuoteOut.
 ///      H2: the DEX pair never holds dividend shares.
@@ -29,6 +31,8 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
     /// @dev Pancake V2 fee numerator (9975/10000 = 0.25%).
     uint256 public constant DEX_FEE_NUM = 9975;
     uint256 public constant DEX_FEE_DEN = 10000;
+    /// @dev Platform's part of every taxed trade, as a share of its volume (same as LaunchpadV3.PLATFORM_TAX_BPS).
+    uint256 public constant PLATFORM_TAX_BPS = 50;
 
     DividendVault public immutable dividendVault;
     TaxRouterV3 public immutable router;
@@ -36,6 +40,8 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
     IPancakeRouter02 public dexRouter;
     address public keeper;
     mapping(address => uint256) public accruedTax;
+    /// @notice Part of `accruedTax` that is the platform's (tokens).
+    mapping(address => uint256) public accruedPlatformTax;
 
     error OnlyToken();
     error ZeroAddress();
@@ -51,7 +57,9 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
     event TaxAccrued(
         address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued
     );
-    event OuterTaxProcessed(address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut);
+    event OuterTaxProcessed(
+        address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 platformQuote
+    );
 
     constructor(address owner_, address dividendVault_, address router_) Ownable(owner_) {
         if (dividendVault_ == address(0) || router_ == address(0)) revert ZeroAddress();
@@ -75,6 +83,10 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
         if (msg.sender != token) revert OnlyToken();
         if (taxAmount == 0) revert ZeroAmount();
         accruedTax[token] += taxAmount;
+        // the token taxed this trade at its buy or sell rate; the platform's 0.5% of volume is that share of the tax
+        TaxLaunchTokenV3 t = TaxLaunchTokenV3(token);
+        uint256 rate = from == t.pair() ? t.buyTaxBps() : t.sellTaxBps();
+        if (rate > 0) accruedPlatformTax[token] += (taxAmount * PLATFORM_TAX_BPS) / rate;
         emit TaxAccrued(token, from, to, taxAmount, accruedTax[token]);
     }
 
@@ -95,13 +107,18 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
 
         address pair = TaxLaunchTokenV3(token).pair();
         if (pair == address(0)) revert NoPair();
-        (address quote,,,) = router.routeOf(token);
+        (address quote,,) = router.routeOf(token);
         if (quote == address(0)) revert UnknownToken();
 
+        uint256 platformTokens = accruedPlatformTax[token];
         uint256 bal = IERC20(token).balanceOf(address(this));
-        if (amount > bal) amount = bal;
+        if (amount > bal) {
+            platformTokens = (platformTokens * bal) / amount;
+            amount = bal;
+        }
         if (amount == 0) revert ZeroAmount();
         accruedTax[token] = 0;
+        accruedPlatformTax[token] = 0;
 
         if (address(dexRouter) != address(0)) {
             quoteOut = _swapViaRouter(token, quote, amount, minQuoteOut);
@@ -109,10 +126,11 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
             quoteOut = _swapViaPair(token, pair, quote, amount, minQuoteOut);
         }
 
+        uint256 platformQuote = (quoteOut * platformTokens) / amount;
         IERC20(quote).forceApprove(address(router), quoteOut);
-        router.distribute(token, quoteOut, TemplateTypes.Phase.PostGrad);
+        router.distribute(token, quoteOut, platformQuote, ITaxRouter.Phase.PostGrad);
 
-        emit OuterTaxProcessed(token, quote, amount, quoteOut);
+        emit OuterTaxProcessed(token, quote, amount, quoteOut, platformQuote);
     }
 
     function _syncShares(address token, address user) internal {
@@ -123,7 +141,12 @@ contract PostGradTaxHandlerV3 is IPostGradTaxHandler, Ownable2Step, ReentrancyGu
             if (dividendVault.shares(token, user) != 0) dividendVault.setShare(token, user, 0);
             return;
         }
-        if (dividendVault.excluded(user)) return;
+        // Audit G-01: setExcluded does not clear shares, so an excluded holder is written to 0 here instead of being
+        // skipped (skipping left its old share earning forever)
+        if (dividendVault.excluded(user)) {
+            if (dividendVault.shares(token, user) != 0) dividendVault.setShare(token, user, 0);
+            return;
+        }
         dividendVault.setShare(token, user, IERC20(token).balanceOf(user));
     }
 

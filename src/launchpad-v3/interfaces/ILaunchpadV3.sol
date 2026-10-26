@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @notice LaunchpadV3 surface (draft). Curve / gate / walletCap / graduation are unchanged from V2; only the
-///         `bool taxed` switch becomes a TaxConfig. Implementation is not written yet.
+/// @notice LaunchpadV3 surface. Curve / Agent gate / 1% wallet cap / ≈15 BNB graduation are unchanged from V2; the
+///         `bool taxed` switch becomes a TaxConfig with its own buy / sell tax and a platform-listed tax recipient.
 interface ILaunchpadV3 {
-    /// @param taxBps       0 = untaxed (all other fields must be zero/false). Otherwise one of 100/200/300/500.
-    ///                     Fixed for the token's life.
-    /// @param bondingTax   Also charge `taxBps` on curve buys/sells, on top of PROTOCOL_FEE_BPS.
-    /// @param dividendBps  Share of the token side (70% of each tax) → DividendVault. Must be 10_000 when
-    ///                     `vaultFactory` is 0.
-    /// @param vaultFactory TemplateRegistry-listed factory, or 0 = holder dividends only.
-    /// @param vaultData    abi-encoded per `IVaultFactory(vaultFactory).dataSchema()`.
+    /// @param buyTaxBps   Tax on buys, curve and pool. 0 together with sellTaxBps = untaxed (all fields zero);
+    ///                    otherwise 100–500. Fixed for the token's life.
+    /// @param sellTaxBps  Tax on sells, curve and pool, same bounds.
+    /// @param dividendBps Share of each tax after the platform's 0.5% of volume that goes to holder dividends
+    ///                    (0–10_000). The rest goes to `recipient`.
+    /// @param recipient   RecipientRegistry-listed address paid in quote (e.g. a project vault). Fixed for the token's
+    ///                    life. May be 0 only when dividendBps is 10_000.
     struct TaxConfig {
-        uint16 taxBps;
-        bool bondingTax;
+        uint16 buyTaxBps;
+        uint16 sellTaxBps;
         uint16 dividendBps;
-        address vaultFactory;
-        bytes vaultData;
+        address recipient;
     }
 
     /// @dev Same as V2 minus `taxed`; the tax side is in `TaxConfigured` (always emitted, also for untaxed).
@@ -31,12 +30,7 @@ interface ILaunchpadV3 {
         uint256 gradAmt
     );
     event TaxConfigured(
-        address indexed token,
-        uint16 taxBps,
-        bool bondingTax,
-        uint16 dividendBps,
-        address indexed vaultFactory,
-        address indexed vault
+        address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient
     );
 
     function create(
@@ -48,14 +42,11 @@ interface ILaunchpadV3 {
         TaxConfig calldata tax
     ) external returns (address token);
 
-    /// @notice CLI preflight: every TaxConfig check `create` would revert on (tier, registry listing,
-    ///         dividendBps, factory.validate), without reverting.
+    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting.
     function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason);
 
     function taxConfigOf(address token)
         external
         view
-        returns (uint16 taxBps, bool bondingTax, uint16 dividendBps, address vaultFactory, address vault);
-
-    function isAllowedTaxBps(uint256 taxBps) external pure returns (bool);
+        returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient);
 }
