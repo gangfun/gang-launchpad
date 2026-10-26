@@ -16,6 +16,7 @@ import { NOTE_TX, MIN_FOLLOW_USD, REASONS, noteLink, checkFollow, amountUsd, loc
 import { rememberPreview, previewFor } from './previews.js'
 import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
+import { runV3 } from './v3.js'
 
 const args = process.argv.slice(2)
 const cmd = args[0]
@@ -197,6 +198,17 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang fair info --token <addr> | gang fair list [--status minting|launched|failed|all] | gang fair tx --hash <0x..>
                                          fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
+  gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
+               [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL]
+                                         LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
+                                         0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
+                                         --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
+  gang v3 buy --token <addr> --amount <quote> [--slippage 1]   amount includes the 1% fee and the buy tax
+  gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
+  gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it
+  gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
+  gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>
+                                         v3 commands need --testnet for now (BSC testnet); --calldata / --from as in gang fair
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -219,7 +231,8 @@ update: { current, latest, cmd, skill } (npm is asked at most once a day in the 
 off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_LAUNCHPAD (default V2 ${ADDR.v2}), GANG_RPC_URL, GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes),
-GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed)`
+GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed),
+GANG_V3_TESTNET_PAD / GANG_V3_TESTNET_RPC_URL (gang v3 --testnet), GANG_V3_PAD (mainnet, once deployed)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
@@ -429,7 +442,7 @@ async function buy(token, bnb, note, followTx, checked = null) {
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'quote', 'buy',
-  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair'])
+  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3'])
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
@@ -439,6 +452,8 @@ async function main() {
   switch (cmd) {
     case 'fair':
       return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
+    case 'v3':
+      return runV3(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
     case 'preflight': {
       const issues = []
       const status = bawStatus()
@@ -682,6 +697,9 @@ async function main() {
     }
     case 'create': {
       const name = opt('name'), symbol = opt('symbol'); if (!name || !symbol) fail('--name and --symbol required')
+      // own buy / sell tax and a tax recipient are LaunchpadV3, which is only on BSC testnet until the audit
+      const v3Flag = ['buy-tax', 'sell-tax', 'dividend', 'recipient'].find((f) => flag(f))
+      if (v3Flag) fail(`--${v3Flag} is a LaunchpadV3 setting: use \`gang v3 create … --testnet\` (V3 is on BSC testnet until its audit)`)
       try { assertCreateTarget(CONFIG.launchpad) } catch (e) { fail(e.message) }
       const note = parseNote()
       const links = parseLinks()
