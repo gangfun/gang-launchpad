@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 读者：外部审计方
-- 代码：`gangfun/gang-launchpad` `main`（经 PR #19 合入，代币收紧另见 §12），合约冻结在提交 `cf96281`（含 §10、§11 两轮内部审计的修复和 §12 的代币收紧；之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`）。此后若有提交改动 `src/`，我们会单独列出 diff。
+- 代码：`gangfun/gang-launchpad` `main`（经 PR #19 合入，代币收紧另见 §12），合约冻结在提交 `a15b704`（含 §10、§11 两轮内部审计的修复和 §12 的代币收紧与元数据 URI；之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`）。此后若有提交改动 `src/`，我们会单独列出 diff。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`）。
 
