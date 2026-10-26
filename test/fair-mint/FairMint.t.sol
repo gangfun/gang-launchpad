@@ -242,10 +242,10 @@ contract FairMintTest is Test {
     /// @dev A listed quote without a fixed rate would be priced by its creator-picked reference pool at spot — one flash
     ///      swap in the create tx moves that by orders of magnitude (internal audit round 2) — so create refuses it.
     ///      previewCreate still shows what the pool says (300 Q : 150 WBNB → 1 BNB = 2 Q) for ops picking a rate.
+    /// @dev Any 18-decimal quote, priced like LaunchpadV2: the creator's reference pool (300 Q : 150 WBNB → 15 BNB =
+    ///      30 Q), unless QuoteRegistry holds a fixed rate, which wins over the pool.
     function test_create_refPoolAgainstWbnb() public {
-        MockSPCXB q = new MockSPCXB();
-        vm.prank(owner);
-        registry.setQuote(address(q), true, 0); // listed, but no fixed rate
+        MockSPCXB q = new MockSPCXB(); // not in QuoteRegistry
         address ref = _seedPair(address(q), address(wbnb), 300 ether, 150 ether);
         (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(q), ref, 15 ether);
         assertEq(raiseQuote, 30 ether);
@@ -254,17 +254,20 @@ contract FairMintTest is Test {
         q.mintUnlimited(dev, 1 ether);
         vm.startPrank(dev);
         q.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", "", address(q), ref, _cfg(), 1);
-        vm.stopPrank();
-
-        // with a fixed rate (30 Q per 15 BNB) it creates at that rate, whatever the pool says
-        vm.prank(owner);
-        registry.setQuote(address(q), true, 30 ether);
-        vm.prank(dev);
         address t = pad.create("Q", "Q", "", "", address(q), ref, _cfg(), 1);
+        vm.stopPrank();
         (,,, uint256 sharePrice,,) = _sale(t);
-        assertEq(sharePrice, price);
+        assertEq(sharePrice, price, "unlisted quote priced from its pool");
+
+        // a fixed rate (60 Q per 15 BNB) wins, whatever the pool says, and needs no pool
+        vm.prank(owner);
+        registry.setQuote(address(q), true, 60 ether);
+        (raiseQuote,) = pad.previewCreate(address(q), ref, 15 ether);
+        assertEq(raiseQuote, 60 ether);
+        vm.prank(dev);
+        t = pad.create("Q2", "Q2", "", "", address(q), address(0), _cfg(), 1);
+        (,,, sharePrice,,) = _sale(t);
+        assertEq(sharePrice, 60 ether / 10_000);
     }
 
     /// @dev Quote priced against USDT, bridged to BNB: 20,000 Q : 10,000 USDT, 600 USDT : 1 WBNB → 1 BNB = 1,200 Q.

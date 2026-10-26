@@ -121,13 +121,14 @@ contract FairMintAuditTest is FairMintTest {
         pad.flushFees(address(wbnb));
     }
 
-    /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate (rate 0: test_create_refPoolAgainstWbnb).
-    function test_audit_quoteWhitelist() public {
+    /// @dev Quote rules (2026-10-27, V2 pricing kept): WBNB or any 18-decimal ERC-20; no fixed rate → a reference pool is
+    ///      required (priced in test_create_refPoolAgainstWbnb / test_create_refPoolViaBridge). A-3: low decimals and
+    ///      non-tokens are refused even with a fixed rate.
+    function test_audit_quoteRules() public {
         MockSPCXB unlisted = new MockSPCXB();
-        address ref = _seedPair(address(unlisted), address(wbnb), 300 ether, 150 ether);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", "", address(unlisted), ref, _cfg(), 1);
+        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        pad.create("Q", "Q", "", "", address(unlisted), address(0), _cfg(), 1);
 
         SixDecimalQuote six = new SixDecimalQuote();
         vm.prank(owner);
@@ -135,6 +136,10 @@ contract FairMintAuditTest is FairMintTest {
         vm.prank(dev);
         vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
         pad.create("S", "S", "", "", address(six), address(0), _cfg(), 1);
+
+        vm.prank(dev);
+        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
+        pad.create("E", "E", "", "", makeAddr("notAToken"), address(0), _cfg(), 1);
     }
 
     /// @dev Low: a migrator bound to another pad would make every launch revert, and setMigrator is one-shot.

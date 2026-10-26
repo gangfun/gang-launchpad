@@ -96,10 +96,9 @@ contract DeployFairMint is SharedPlatform {
         PlatformFeeBucket(s.bucket).setOperator(address(handler), true);
 
         pad.setAgentGate(true, s.agentId);
-        if (mainnet) {
-            pad.setV3Factory(M.PANCAKE_V3_FACTORY);
-            pad.setBridgePool(M.USDT, M.USDT_WBNB_V3);
-        }
+        // reference pools: Pancake V2 pairs and V3 pools on both chains; the USDT → WBNB bridge is mainnet only
+        pad.setV3Factory(mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY);
+        if (mainnet) pad.setBridgePool(M.USDT, M.USDT_WBNB_V3);
         // last: create needs a migrator, so the pad only opens once the fee sinks above accept it
         pad.setMigrator(address(mig));
 

@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
+import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
@@ -31,18 +32,12 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         pad.buyFor(makeAddr("pair"), t, 0.01 ether, 0);
     }
 
-    /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate.
-    function test_audit_quoteWhitelist() public {
+    /// @dev Quote rules (2026-10-27, V2 pricing kept): WBNB or any 18-decimal ERC-20; no fixed rate → a reference pool is
+    ///      required. A-3: low decimals and non-tokens are refused even with a fixed rate.
+    function test_audit_quoteRules() public {
         MockSPCXB unlisted = new MockSPCXB();
         vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
-
-        // listed without a fixed rate: would be priced from a creator-picked pool at spot (flash-movable) — refused
-        vm.prank(owner);
-        quoteRegistry.setQuote(address(unlisted), true, 0);
-        vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        vm.expectRevert(LaunchpadV3.RefPoolRequired.selector);
         pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
 
         SixDecimalQuoteV3 six = new SixDecimalQuoteV3();
@@ -51,6 +46,32 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
         pad.create("S", "S", "", "", address(six), address(0), _tax(200, 200, 0, treasury));
+
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        pad.create("E", "E", "", "", makeAddr("notAToken"), address(0), _tax(200, 200, 0, treasury));
+    }
+
+    /// @dev An unlisted 18-decimal quote is priced like LaunchpadV2 from the creator's pool (300 Q : 150 WBNB → 15 BNB =
+    ///      30 Q); a QuoteRegistry fixed rate wins over the pool and needs none.
+    function test_create_refPoolPricesUnlistedQuote() public {
+        MockSPCXB q = new MockSPCXB();
+        address ref = pairFactory.createPair(address(q), address(wbnb));
+        q.mintUnlimited(ref, 300 ether);
+        wbnb.mintUnlimited(ref, 150 ether);
+        MockPair(ref).mint(address(0xdead));
+
+        assertEq(pad.graduationAmountOf(address(q), ref), 30 ether);
+        vm.prank(agent);
+        address t = pad.create("Q", "Q", "", "", address(q), ref, _tax(200, 200, 0, treasury));
+        assertEq(pad.gradAmtOf(t), 30 ether, "unlisted quote priced from its pool");
+
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(q), true, 60 ether);
+        assertEq(pad.graduationAmountOf(address(q), ref), 60 ether);
+        vm.prank(agent);
+        t = pad.create("Q2", "Q2", "", "", address(q), address(0), _tax(200, 200, 0, treasury));
+        assertEq(pad.gradAmtOf(t), 60 ether, "fixed rate wins");
     }
 
     /// @dev Low: a migrator bound to another pad would make every graduation revert, and setMigrator is one-shot.

@@ -261,8 +261,8 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     /// @param logoURI   Logo image URI: kept in `logoURIOf` and emitted in `Created` (what the site shows).
     /// @param metaURI   Metadata JSON URI (name, symbol, description, image, links): the token's `contractURI()` /
     ///                  `metaURI()`, fixed for good. Not checked on-chain; the CLI builds and uploads it.
-    /// @param quote     WBNB (address(0)) or a QuoteRegistry-enabled 18-decimal ERC20 with a fixed rate. Fee-on-transfer
-    ///                  quotes are also rejected at mint.
+    /// @param quote     WBNB (address(0)) or any 18-decimal ERC20. Fee-on-transfer quotes are rejected at the dev's
+    ///                  mint (same tx).
     /// @param refPool   Pancake V2 pair / V3 pool pricing `quote`; ignored for WBNB or a QuoteRegistry override.
     /// @param devShares Shares the creator mints in the same call (≥ 1); needs quote approval beforehand.
     function create(
@@ -580,15 +580,16 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         return address(agentIdRegistry);
     }
 
-    /// @dev WBNB, or a QuoteRegistry-enabled 18-decimal quote WITH a fixed rate (graduationAmount > 0): no
-    ///      fee-on-transfer / hook / low-decimal quotes (6 decimals would round holder rewards to 0 in DividendVault),
-    ///      and no pricing from a creator-picked reference pool, whose spot price one flash swap can move by 1000×
-    ///      within the create tx (2026-10-26 internal audit round 2). The multisig keeps the rate current.
+    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder rewards to 0 in DividendVault), priced like
+    ///      LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_toQuote).
+    ///      2026-10-27 product decision: keep V2's reference-pool pricing (users are used to it), accepting internal
+    ///      audit R2-1 again: a Pancake V2 pair (reserves) or a V3 pool without TWAP history is read at spot.
+    ///      Fee-on-transfer quotes still fail at the first pull (_pullExact).
     function _requireQuote(address quote) internal view {
         if (quote == wbnb) return;
-        if (quoteRegistry.graduationAmount(quote) == 0 || IERC20Metadata(quote).decimals() != 18) {
-            revert QuoteNotAllowed();
-        }
+        // low-level: a high-level call to an address without code reverts outside any try/catch
+        (bool ok, bytes memory ret) = quote.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 18) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address gate, address account) internal view {

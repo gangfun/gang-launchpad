@@ -185,11 +185,14 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
   gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1]
-                 [--shares 1] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle] [--description <text>]
+                 [--shares 1] [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL]
+                 [--twitter @handle] [--description <text>]
                                          打新 (fair mint): one price per share both ways, the last share launches on PancakeSwap at
                                          that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–0.5% of
                                          supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
                                          Wraps / approves first when needed (re-run after each)
+                                         --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
+                                         pool holding it, which prices the raise (as gang create), unless gang set a fixed rate
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
   gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
@@ -209,6 +212,9 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
                                          0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
                                          --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
+                                         --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
+                                         pool holding it, which prices the 15 BNB graduation target (as gang create), unless
+                                         gang set a fixed rate. The output shows graduationAt
   gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
                                          amount includes the 1% fee and the buy tax; WBNB-quoted: native BNB via GangRouter
   gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]

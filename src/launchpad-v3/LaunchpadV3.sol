@@ -521,15 +521,16 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         return agentIdRegistry.balanceOf(account) > 0;
     }
 
-    /// @dev WBNB, or a QuoteRegistry-enabled 18-decimal quote WITH a fixed rate (graduationAmount > 0): no
-    ///      fee-on-transfer / hook / low-decimal quotes (6 decimals would round holder dividends to 0 in DividendVault),
-    ///      and no pricing from a creator-picked reference pool, whose spot price one flash swap can move by 1000×
-    ///      within the create tx (2026-10-26 internal audit round 2). The multisig keeps the rate current.
+    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder dividends to 0 in DividendVault), priced like
+    ///      LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_lockGradAmt).
+    ///      2026-10-27 product decision: keep V2's reference-pool pricing (users are used to it), accepting internal
+    ///      audit R2-1 again: a Pancake V2 pair (reserves) or a V3 pool without TWAP history is read at spot.
+    ///      A fee-on-transfer quote is priced at what arrives (as V2).
     function _requireQuote(address quote) internal view {
         if (quote == wbnb) return;
-        if (quoteRegistry.graduationAmount(quote) == 0 || IERC20Metadata(quote).decimals() != 18) {
-            revert QuoteNotAllowed();
-        }
+        // low-level: a high-level call to an address without code reverts outside any try/catch
+        (bool ok, bytes memory ret) = quote.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 18) revert QuoteNotAllowed();
     }
 
     function _requireAgent(address account) internal view {

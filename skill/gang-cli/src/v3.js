@@ -37,6 +37,7 @@ const PAD_ABI = parseAbi([
   'function isAgent(address account) view returns (bool)',
   'function walletRoom(address token, address buyer) view returns (uint256)',
   'function graduationRemaining(address token) view returns (uint256)',
+  'function graduationAmountOf(address quote, address refPool) view returns (uint256)',
   'function router() view returns (address)',
   'function recipientRegistry() view returns (address)',
   'function PROTOCOL_FEE_BPS() view returns (uint256)',
@@ -45,7 +46,7 @@ const PAD_ABI = parseAbi([
   'error MigratorNotSet()', 'error ZeroAddress()', 'error NotAgent()', 'error WalletCapReached()', 'error RefPoolRequired()',
   'error NoBridgePool()', 'error BridgeNotWbnb()', 'error BadTaxConfig(string reason)',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error NotContract()',
-  'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()',
+  'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()', 'error V3FactoryNotSet()', 'error GradAmtZero()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)',
   'event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)',
   'event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)',
@@ -82,7 +83,15 @@ const HINTS = {
   ThinReferencePool: '--ref-pool is too shallow; pick the deepest pool for this quote',
   GradAmtTooSmall: 'the quote token is priced so high that the graduation amount rounds below the minimum',
   NothingOwed: 'the router owes this token\'s recipient nothing',
-  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token with a fixed rate, such as USDT); leave it out to use WBNB',
+  QuoteNotAllowed: '--quote must be WBNB or an 18-decimal ERC-20 token (leave it out to use WBNB)',
+  PoolNotFactory: '--ref-pool is not a PancakeSwap V2 pair / V3 pool',
+  NotContract: '--ref-pool is not a contract',
+  UnknownPoolType: '--ref-pool is not a PancakeSwap V2 pair / V3 pool',
+  PoolNoLiquidity: '--ref-pool has no liquidity',
+  V3FactoryNotSet: 'V3 pools are not enabled on this pad yet; use a Pancake V2 pair as --ref-pool',
+  NoBridgePool: '--ref-pool pairs the quote with a token that has no bridge to WBNB here; pick a pool against WBNB (or USDT on mainnet)',
+  BridgeNotWbnb: 'the bridge pool for this --ref-pool is misconfigured; pick a pool against WBNB',
+  GradAmtZero: 'the quote token is priced so high that the target rounds to 0',
   RouterNeedsGate: 'the router path is off while the Agent gate is off; re-run with --use-wbnb to buy directly',
 }
 
@@ -232,6 +241,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (!ok) fail(`tax setting refused: ${reason}`, { hint: HINTS.BadTaxConfig, tax: { buyTax, sellTax, dividend, recipient } })
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
+    // like LaunchpadV2: WBNB → 15 BNB; a fixed rate in QuoteRegistry; else --ref-pool prices the target
+    let gradAmt
+    try { gradAmt = await ctx.read(ctx.pad, PAD_ABI, 'graduationAmountOf', [quote, refPool]) } catch (e) {
+      return fail('cannot price the graduation target in this quote', revertOf(e) || { detail: e.shortMessage || e.message })
+    }
     const createData = (logoURI, metaURI) =>
       encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, tax] })
     // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
@@ -249,7 +263,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI, meta.metaURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata,
-      quote: (await symbolOf(ctx, quote)) || quote, buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
+      quote: (await symbolOf(ctx, quote)) || quote, graduationAt: await units(ctx, quote, gradAmt),
+      ...(refPool !== zeroAddress && quote.toLowerCase() !== String(ctx.wbnb).toLowerCase() && { refPool }),
+      buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
       split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
         + (dividend > 0 ? '; while no holder has 10,000+ tokens (e.g. the first buys), the holders\' part goes to the recipient too' : ''),
