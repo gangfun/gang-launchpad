@@ -122,7 +122,7 @@ abstract contract SharedPlatform is Script {
 
     /// @dev A fixed rate for `quote` (quote units per 15 BNB). The pads take any 18-decimal quote and price an unlisted
     ///      one from the creator's reference pool, as LaunchpadV2 does; a listed rate replaces that pool price.
-    ///      Mainnet USDT: USDT_PER_15_BNB, set by the multisig and kept current as BNB moves.
+    ///      Mainnet lists nothing: USDT is priced from the USDT/WBNB pool given at create (USDT_REF_POOL).
     function _listQuote(address registry, address quote, uint256 graduationQuoteAmount) internal {
         QuoteRegistry reg = QuoteRegistry(registry);
         (bool enabled, uint256 amount) = reg.quotes(quote);

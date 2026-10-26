@@ -14,12 +14,13 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 /// @title DeployFairMint — 打新发射 stack on BSC testnet (97) or mainnet (56)
 /// @notice New: HolderRewardHandler, FairMintPad, and — unless QUOTE_REGISTRY / PLATFORM_BUCKET / DIVIDEND_VAULT /
 ///         MIGRATOR / TOKEN_DEPLOYER name the ones DeployLaunchpadV3 made — the five contracts shared with LaunchpadV3
-///         (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Listed quotes: mainnet
-///         USDT at a fixed rate (USDT_PER_15_BNB); testnet the mock quote (15 mock units = 15 BNB, so a sale raises 15 units).
+///         (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Quotes: mainnet USDT has no fixed
+///         rate — a create prices it from USDT_REF_POOL (Pancake V3 USDT/WBNB 0.01%); testnet lists the mock quote at a
+///         fixed rate (15 mock units = 15 BNB, so a sale raises 15 units).
 ///         Testnet reuses the testnet Agent ID registry and mock quote; NEW_MOCKS=true deploys fresh ones.
 ///         Everything is wired before setMigrator, the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless FAIR_MINT_MAINNET_OK=true (spec: no mainnet broadcast before audit).
-///      Env: DEPLOYER_PRIVATE_KEY; USDT_PER_15_BNB (mainnet: USDT units, 18 decimals, per 15 BNB); OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
+///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
 ///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
 ///      TOKEN_DEPLOYER (reuse), AGENT_ID / TEST_QUOTE
 ///      (testnet overrides), NEW_MOCKS.
@@ -63,7 +64,6 @@ contract DeployFairMint is SharedPlatform {
         (s.quoteRegistry, s.bucket) = _platform(mainnet, deployer, keeper, M.V2_PLATFORM_BUCKET);
         if (mainnet) {
             s.agentId = M.AGENT_ID_REGISTRY;
-            _listQuote(s.quoteRegistry, M.USDT, vm.envUint("USDT_PER_15_BNB"));
         } else {
             // reuse the testnet Agent ID registry and test quote (NEW_MOCKS=true deploys fresh ones)
             bool fresh = vm.envOr("NEW_MOCKS", false);
@@ -128,7 +128,7 @@ contract DeployFairMint is SharedPlatform {
         if (address(pad.agentIdRegistry()) != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
         if (pad.taxHandler() != s.handler) revert WiringCheck("pad.taxHandler");
         _checkBucket(s.bucket, keeper, s.pad, s.handler);
-        if (!QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote == address(0) ? M.USDT : s.testQuote)) {
+        if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }
     }
@@ -141,6 +141,7 @@ contract DeployFairMint is SharedPlatform {
         _logShared(s.vault, s.migrator, s.tokenDeployer);
         console.log("AGENT_ID", s.agentId);
         if (s.testQuote != address(0)) console.log("TEST_QUOTE", s.testQuote);
+        else console.log("USDT_REF_POOL (refPool for a USDT quote)", M.USDT_REF_POOL);
         if (owner != deployer) {
             console.log("PENDING owner: acceptOwnership() on pad, handler, and the five shared contracts");
         }

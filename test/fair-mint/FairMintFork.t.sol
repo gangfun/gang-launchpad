@@ -41,6 +41,8 @@ interface IPancakePairFull {
 contract FairMintForkTest is Test {
     address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
+    /// @dev Pancake V3 USDT/WBNB 0.01%, the deepest pool: the refPool a USDT-quoted create uses (no fixed rate on mainnet)
+    address constant USDT_REF_POOL = 0x172fcD41E0913e95784454622d1c3724f546f849;
     address constant V2_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     address constant V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
     address constant V2_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
@@ -168,10 +170,10 @@ contract FairMintForkTest is Test {
         (rT, rQ) = IPancakePairFull(pair).token0() == token ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
     }
 
-    function _usdtPerBnbQ96() internal view returns (uint256) {
-        (uint160 sqrtP,,,,,,) = IV3PoolLite(bridge).slot0();
+    function _usdtPerBnbQ96(address pool) internal view returns (uint256) {
+        (uint160 sqrtP,,,,,,) = IV3PoolLite(pool).slot0();
         uint256 p1per0 = Math.mulDiv(sqrtP, sqrtP, Q96);
-        return IV3PoolLite(bridge).token0() == WBNB ? p1per0 : Math.mulDiv(Q96, Q96, p1per0);
+        return IV3PoolLite(pool).token0() == WBNB ? p1per0 : Math.mulDiv(Q96, Q96, p1per0);
     }
 
     function _process(address token, address quote) internal returns (uint256 quoteOut) {
@@ -234,16 +236,16 @@ contract FairMintForkTest is Test {
     }
 
     // ---------------------------------------------------------------- USDT quote via the USDT/WBNB V3 pool
+    /// @dev No fixed rate on mainnet: USDT is priced from USDT_REF_POOL (30-min TWAP; counter WBNB, no bridge).
     function test_fork_usdt_raiseTracksBnbPrice() public forkOnly {
-        (uint256 raiseQuote,) = pad.previewCreate(USDT, bridge, 15 ether);
-        uint256 spot = Math.mulDiv(15 ether, _usdtPerBnbQ96(), Q96);
+        (uint256 raiseQuote,) = pad.previewCreate(USDT, USDT_REF_POOL, 15 ether);
+        uint256 spot = Math.mulDiv(15 ether, _usdtPerBnbQ96(USDT_REF_POOL), Q96);
         console.log("raise USDT (1e18)", raiseQuote / 1e18, "spot", spot / 1e18);
         assertApproxEqRel(raiseQuote, spot, 0.05e18, "TWAP within 5% of spot");
+        (bool listed,) = reg.quotes(USDT);
+        assertFalse(listed, "USDT has no fixed rate");
 
-        // a non-WBNB quote needs a fixed rate: the multisig sets it (here from the pool's TWAP, as ops would)
-        vm.prank(owner);
-        reg.setQuote(USDT, true, raiseQuote);
-        address t = _create(USDT, bridge);
+        address t = _create(USDT, USDT_REF_POOL);
         _fill(t, USDT);
         (,,,,,,,,,, uint128 price,,,) = pad.sales(t);
         (uint256 rT, uint256 rQ) = _reserves(t, FairToken(t).pair());
@@ -255,6 +257,16 @@ contract FairMintForkTest is Test {
         uint256 out = _process(t, USDT);
         assertGt(out, 0);
         assertEq(IERC20(USDT).balanceOf(address(vault)), out / 2);
+    }
+
+    /// @dev A fixed rate in QuoteRegistry still wins over the pool (scaled to the raise), refPool or not.
+    function test_fork_usdt_fixedRateStillWins() public forkOnly {
+        vm.prank(owner);
+        reg.setQuote(USDT, true, 9_000 ether); // 15 BNB = 9,000 USDT, whatever the pool says
+        (uint256 withPool,) = pad.previewCreate(USDT, USDT_REF_POOL, 15 ether);
+        (uint256 noPool,) = pad.previewCreate(USDT, address(0), 30 ether);
+        assertEq(withPool, 9_000 ether);
+        assertEq(noPool, 18_000 ether);
     }
 
     // ---------------------------------------------------------------- pair created early + quote donated + sync()

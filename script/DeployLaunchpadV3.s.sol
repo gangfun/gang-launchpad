@@ -14,12 +14,13 @@ import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQ
 /// @title DeployLaunchpadV3 — LaunchpadV3 (tax recipient) on BSC testnet (97) or mainnet (56)
 /// @notice New: TaxHandlerV3 (recipients, split, pool tax), LaunchpadV3, and — unless QUOTE_REGISTRY /
 ///         PLATFORM_BUCKET / DIVIDEND_VAULT / MIGRATOR / TOKEN_DEPLOYER name the ones DeployFairMint made — the five
-///         contracts shared with 打新 (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Listed
-///         quotes: mainnet USDT at a fixed rate (USDT_PER_15_BNB); testnet the test quote and a blacklist quote (15 units = 15 BNB).
+///         contracts shared with 打新 (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Quotes:
+///         mainnet USDT has no fixed rate — a create prices it from USDT_REF_POOL (Pancake V3 USDT/WBNB 0.01%); testnet
+///         lists the test quote and a blacklist quote at a fixed rate (15 units = 15 BNB).
 ///         Testnet reuses the 打新 testnet Agent ID registry and test quote. Everything is wired before setMigrator,
 ///         the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless LAUNCHPAD_V3_MAINNET_OK=true (spec: no mainnet broadcast before audit).
-///      Env: DEPLOYER_PRIVATE_KEY; USDT_PER_15_BNB (mainnet: USDT units, 18 decimals, per 15 BNB); OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
+///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
 ///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
 ///      TOKEN_DEPLOYER (reuse), RECIPIENT + RECIPIENT_LABEL
 ///      (listed in TaxHandlerV3; testnet default: a fixed demo treasury address).
@@ -67,7 +68,6 @@ contract DeployLaunchpadV3 is SharedPlatform {
         (s.quoteRegistry, s.bucket) = _platform(mainnet, deployer, keeper, M.V2_PLATFORM_BUCKET);
         if (mainnet) {
             s.agentId = M.AGENT_ID_REGISTRY;
-            _listQuote(s.quoteRegistry, M.USDT, vm.envUint("USDT_PER_15_BNB"));
         } else {
             s.agentId = vm.envOr("AGENT_ID", T.AGENT_ID_REGISTRY);
             s.testQuote = vm.envOr("TEST_QUOTE", T.TEST_QUOTE);
@@ -146,7 +146,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
             revert WiringCheck("recipient listed");
         }
         _checkBucket(s.bucket, keeper, s.pad, s.handler);
-        if (!QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote == address(0) ? M.USDT : s.testQuote)) {
+        if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }
     }
@@ -159,6 +159,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         _logShared(s.vault, s.migrator, s.tokenDeployer);
         console.log("AGENT_ID", s.agentId);
         if (s.testQuote != address(0)) console.log("TEST_QUOTE", s.testQuote);
+        else console.log("USDT_REF_POOL (refPool for a USDT quote)", M.USDT_REF_POOL);
         if (s.blacklistQuote != address(0)) console.log("BLACKLIST_QUOTE", s.blacklistQuote);
         if (s.recipient != address(0)) {
             console.log("RECIPIENT", s.recipient);

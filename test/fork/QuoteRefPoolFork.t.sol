@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
@@ -17,6 +18,10 @@ import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+
+interface IV3PoolSlot0 {
+    function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint32, bool);
+}
 
 contract RefForkAgent {
     mapping(address => uint256) public balanceOf;
@@ -36,6 +41,8 @@ contract QuoteRefPoolForkTest is Test {
     address constant NVDAB_WBNB_V2 = 0x217e9ed14C797dF4597512D2245c00cA93e5a567;
     address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address constant USDT = 0x55d398326f99059fF775485246999027B3197955;
+    /// @dev Pancake V3 USDT/WBNB 0.01% (deepest): the refPool for a USDT quote now that mainnet sets no fixed rate
+    address constant USDT_REF_POOL = 0x172fcD41E0913e95784454622d1c3724f546f849;
     address constant V2_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     address constant V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
 
@@ -184,6 +191,30 @@ contract QuoteRefPoolForkTest is Test {
         assertEq(v3.graduationAmountOf(NVDAB, NVDAB_WBNB_V2), 77 ether);
         (uint256 raiseQuote,) = fair.previewCreate(NVDAB, address(0), 15 ether);
         assertEq(raiseQuote, 77 ether);
+    }
+
+    /// @dev USDT with no fixed rate: both cores lock ≈ 15 BNB of USDT from USDT_REF_POOL's TWAP, the same number V2
+    ///      would; a fixed rate set later still wins.
+    function test_fork_usdt_pricedFromRefPool() public forkOnly {
+        uint256 want = v2.graduationAmountOf(USDT, USDT_REF_POOL);
+        assertEq(v3.graduationAmountOf(USDT, USDT_REF_POOL), want, "V3 core prices USDT like V2");
+        (uint256 raiseQuote,) = fair.previewCreate(USDT, USDT_REF_POOL, 15 ether);
+        assertEq(raiseQuote, want, "fair core prices USDT like V2");
+        (uint160 sqrtP,,,,,,) = IV3PoolSlot0(USDT_REF_POOL).slot0(); // token0 USDT, token1 WBNB
+        uint256 spot = Math.mulDiv(15 ether, 1 << 192, uint256(sqrtP) * uint256(sqrtP));
+        assertApproxEqRel(want, spot, 0.05e18, "TWAP within 5% of spot: about 15 BNB of USDT");
+        console.log("15 BNB in USDT (e18)", want / 1e18);
+
+        vm.prank(dev);
+        address t = v3.create("U Tax", "UT", "", "", USDT, USDT_REF_POOL, _untaxed());
+        assertEq(v3.gradAmtOf(t), want, "locked at create");
+
+        QuoteRegistry reg = QuoteRegistry(address(v3.quoteRegistry()));
+        vm.prank(owner);
+        reg.setQuote(USDT, true, 9_000 ether);
+        assertEq(v3.graduationAmountOf(USDT, USDT_REF_POOL), 9_000 ether, "fixed rate wins over the pool");
+        (raiseQuote,) = fair.previewCreate(USDT, USDT_REF_POOL, 15 ether);
+        assertEq(raiseQuote, 9_000 ether);
     }
 
     /// @dev Matches what the live LaunchpadV2 (0x1B8F…966E) returns for the same V2 pair: reserves, no TWAP.
