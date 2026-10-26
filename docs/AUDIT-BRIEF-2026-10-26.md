@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 读者：外部审计方
-- 代码：`gangfun/gang-launchpad` PR #19（分支 `feat/core-router`），合约冻结在提交 `36d8a7e`（含 §10 内部审计的修复；上一版冻结点 `5854a35`）。此后若有提交改动 `src/`，我们会单独列出 diff。
+- 代码：`gangfun/gang-launchpad` PR #19（分支 `feat/core-router`），合约冻结在提交 `47a063b`（含 §10、§11 两轮内部审计的修复；之前的冻结点依次是 `5854a35`、`36d8a7e`）。此后若有提交改动 `src/`，我们会单独列出 diff。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`）。
 
@@ -26,14 +26,14 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 
 ## 2. 范围
 
-### 2.1 在范围内（约 1,980 nSLOC）
+### 2.1 在范围内（约 1,985 nSLOC）
 
 | 文件 | nSLOC | 职责 |
 |---|---|---|
-| `src/fair-mint/FairMintPad.sol` | 501 | 创建、打新、撤出、失败退款、打满发射；每个 sale 创建时快照规则；持有全部托管资金 |
+| `src/fair-mint/FairMintPad.sol` | 503 | 创建、打新、撤出、失败退款、打满发射；每个 sale 创建时快照规则；持有全部托管资金 |
 | `src/fair-mint/FairToken.sol` | 85 | 打新代币 + `FairTokenDeployer`：发射前锁转账、发射台可收回；发射后池子买卖收 1% 税 |
 | `src/fair-mint/HolderRewardHandler.sol` | 185 | 发射后的税：keeper 换成报价币，50% 给合格持有人 / 50% 平台；出局判断 |
-| `src/launchpad-v3/LaunchpadV3.sol` | 560 | V2 曲线 + 买 / 卖税 + 接收地址；`buyFor` 路由入口 |
+| `src/launchpad-v3/LaunchpadV3.sol` | 562 | V2 曲线 + 买 / 卖税 + 接收地址；`buyFor` 路由入口 |
 | `src/launchpad-v3/TaxLaunchTokenV3.sol` | 99 | 带买、卖两个税率（immutable）的代币 + `TaxTokenDeployerV3` |
 | `src/launchpad-v3/PostGradTaxHandlerV3.sol` | 153 | 毕业后的税：按每笔方向记平台部分，keeper 换币后交给 TaxRouterV3 |
 | `src/launchpad-v3/TaxRouterV3.sol` | 140 | 分账：平台 → 分红 → 接收地址；推送失败记欠款，任何人可补发 |
@@ -71,7 +71,7 @@ mint / mintFor ── 本金 + 打新费 ──▶ FairMintPad（托管）
 
 - 每个币总量 10 亿：5 亿分成 10,000 份打新（每份 5 万枚），5 亿进池子。开盘价等于打新价。
 - dev 在平台上下限内设：募集额 5–50 BNB 等值、单地址上限 0.1%–0.5%、截止 1–72 小时、出局线 30%–80%、打新费 1%–5%、撤出费 1%–5%。创建时 dev 至少自己打 1 份。
-- 报价币只收 WBNB，或 QuoteRegistry 里已启用、且 18 位小数的币（`_requireQuote`）；创建时按 QuoteRegistry 登记的价格或参考池换算成报价币并锁定。
+- 报价币只收 WBNB，或 QuoteRegistry 里设了固定换算额、且 18 位小数的币（`_requireQuote`）；创建时按这个换算额锁定募集额，不再按参考池换算（§11 R2-1）。
 - 只收 ERC-20 报价币（BNB 用 WBNB）；`_pullExact` 另外拒绝转账扣费的报价币。
 - 合格持有人的权重 = `min(当前余额, 发射时基准)`；余额一旦低于 `基准 × 出局线` 就永久出局。
 
@@ -90,7 +90,7 @@ mint / mintFor ── 本金 + 打新费 ──▶ FairMintPad（托管）
 - 税率、分红比例、接收地址都在创建时写死（代币里的税率是 immutable，路由里的 `routeOf` 只能登记一次）。
 - 接收地址必须在 RecipientRegistry 白名单里；下架只影响之后新发的币。
 - 无税币等同 V2 无税轨（只收 1% 内盘手续费）。
-- 报价币规则与打新相同：只收 WBNB 或 QuoteRegistry 里已启用的 18 位币。
+- 报价币规则与打新相同：只收 WBNB 或 QuoteRegistry 里设了固定换算额的 18 位币，毕业额按这个换算额锁定。
 - 内盘买入先分账、再更新买家份额（奖励的是交易前的持有人）；卖出先更新卖家份额、再分账（卖家拿不回自己的卖出税）。
 
 ### 3.3 GangRouter
@@ -127,7 +127,7 @@ mint / mintFor ── 本金 + 打新费 ──▶ FairMintPad（托管）
 | GangRouter | 无 | — | — | 全部函数 |
 | DividendVault（复用） | `setLaunchpad`、`setOperator`、`setExcluded`、`setMinimumShareBalance` | — | 发射台 / operator：`setShare`、`depositReward` 等 | `claim` |
 | PlatformFeeBucket（复用代码，V3 / 打新共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（80% 回购销毁 / 20% 金库） | operator：`notifyAccrual` | — |
-| QuoteRegistry（复用代码，V3 / 打新共用一份新实例） | `setQuote`：启用 / 停用报价币、设固定换算额（只影响之后创建的币） | — | — | 查询 |
+| QuoteRegistry（复用代码，V3 / 打新共用一份新实例） | `setQuote`：启用 / 停用报价币、设固定换算额（15 BNB 合多少该币；只影响之后创建的币，换算额为 0 的币不能用来发币） | — | — | 查询 |
 
 ### 4.2 我们的信任假设（请验证或推翻）
 
@@ -176,7 +176,7 @@ GangRouter：
 
 | # | 内容 |
 |---|---|
-| K-1 | **参考池现价可被同一笔交易拉偏**：白名单里没设固定换算额的报价币（主网上线时只有 USDT），创建时按参考池现价（或观测不足的 V3 池子）换算募集额 / 毕业额，dev 可借闪电贷让锁定值偏离 5–50 BNB 的范围。沿用 V2 的同一做法。所有参与者看到的是锁定后的报价币价格，服务端会标出偏离范围的币。 |
+| K-1 | **非 WBNB 报价币按多签设的固定换算额锁价**：不再读参考池（上一版的「参考池现价可被闪电贷拉偏」在第二轮审计里被证明影响远超预期，已改，§11 R2-1）。剩下的风险是换算额过时：BNB 涨跌后，新币锁定的募集额 / 毕业额按 BNB 计会偏离 5–50 BNB / 15 BNB。运维规定：多签在 BNB 价格偏离换算额超过 10% 时更新；只影响之后创建的币。 |
 | K-2 | **税只对官方池子收**：别人另建交易对可以绕开税（同 V2）。 |
 | K-3 | **打新的出局按余额判断**：转去另一个钱包、拿去加池子、放进别的合约，余额都会下降，跌破线就永久出局，哪怕同一笔交易里又转回来。网站和 CLI 会提前提示。 |
 | K-4 | **提前建好的池子**：有人在发射 / 毕业前用同名代币建好 Pancake 池子并打入报价币时，MigratorV2 直接沿用这个池子：把代币和报价币转进去后 `mint`（不先 `sync`）。对方打入（或打入后 `sync` 进储备）的报价币等于送给锁死的 LP，开盘价略高于打新价 / 毕业价。代币发射前锁转账，直接打新时 `msg.sender` 就是持有人，路由入口又要求准入开启（池子拿不到 Agent ID），所以对方打不进代币（上一版漏了路由入口这条路，见 §10 A-2）。 |
@@ -188,9 +188,9 @@ GangRouter：
 | K-10 | **V3 内盘的分红部分在没有合格持有人时并入接收地址**；打新发射后的分红部分在没有合格持有人时并入平台。两者不同是因为 V3 里剩余的税本来就归接收地址。 |
 | K-11 | **路由不提供 sweep**：误转进 GangRouter 的代币 / 报价币会永远留在那里。 |
 | K-12 | **报价币**：链上强制只收 WBNB 和 QuoteRegistry 白名单里的 18 位币（§10 A-3）。加新报价币前由多签确认：标准 ERC-20、转账不扣费、没有回调。打新另外在扣款时拒绝转账扣费；V3 和 TaxRouterV3 按实际到账等比缩小各部分。 |
-| K-13 | **非官方池子也会累计 V3 分红份额**：只有官方池子被设为 0。别人另建的交易对（其他 DEX、Pancake V3 池子）持有代币就有份额，任何人都能用 `claimFor` 把分红推进去，留在那里或被 `skim` 走。运维：发现这类池子后，owner 在 DividendVault 排除它，并在同一批交易里 `handler.syncShares(token, pool, 0)`。打新不受影响：非打新地址的基准为 0。 |
+| K-13 | **非官方池子也会累计 V3 分红份额**（migrator 已在部署时排除，§11 R2-4）：只有官方池子被设为 0。别人另建的交易对（其他 DEX、Pancake V3 池子）持有代币就有份额，任何人都能用 `claimFor` 把分红推进去，留在那里或被 `skim` 走。运维：发现这类池子后，owner 在 DividendVault 排除它，并在同一批交易里 `handler.syncShares(token, pool, 0)`。打新不受影响：非打新地址的基准为 0。 |
 | K-14 | **接收地址永久收不了款时，欠款会一直留在 TaxRouterV3**：例如合作方金库被 USDT 拉黑。接收地址发币后不可改是产品承诺，没有改向出口。 |
-| K-15 | **keeper 每次 `process` 会把该币累计的税一次卖光**，不能只卖一部分。累计越多，滑点越大，所以 keeper 要高频小额处理。`dexRouter` 只支持 Router02 的 fee-on-transfer 直连路径；经中间合约转一手的路由会触发带税转账，在 `process` 持锁时 revert。 |
+| K-15 | **keeper 每次 `process` 会把该币累计的税一次卖光**，不能只卖一部分。累计越多滑点越大，而且这一笔可以被夹：攻击者在 keeper 的 `minQuoteOut` 容忍范围内先卖后买，最多拿走约「容忍度 × 这一批的卖出所得」（§11 R2-2）。运维规定：keeper 高频小额处理，`minQuoteOut` 容忍度不超过 1–2%，通过私有 RPC 发交易。`dexRouter` 只支持 Router02 的 fee-on-transfer 直连路径；经中间合约转一手的路由会触发带税转账，在 `process` 持锁时 revert。 |
 
 ### 6.1 V2 审计结论在新合约里的处理
 
@@ -206,7 +206,7 @@ GangRouter：
 
 ```sh
 forge build --sizes
-forge test                    # 209 个通过（含 V2 原有用例；审计回归套件继承基础套件，基础用例会再跑一遍）
+forge test                    # 234 个通过（含 V2 原有用例；审计回归套件继承基础套件，基础用例会再跑一遍）
 BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.sol   # 主网分叉
 ```
 
@@ -217,6 +217,8 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 | `test/launchpad-v3/LaunchpadV3.t.sol` | 14 | 创建规则、下架只拦新币、内盘买卖分账（含不对称税率）、没有持有人时分红并入接收地址、推送失败记欠款 / 补发、外盘按每笔方向记账、无税币、门槛与上限、G-01、各合约权限 |
 | `test/fair-mint/FairMintAudit.t.sol` | 6 | 内部审计回归：路由入口须开准入、退款不依赖分红合约、报价币白名单 + 18 位、migrator 绑定检查、收币方卡 gas 不能留下过期份额、分红合约真拒绝时仍不卡交易 |
 | `test/launchpad-v3/LaunchpadV3Audit.t.sol` | 5 | 内部审计回归：`buyFor` 须开准入、报价币白名单 + 18 位、migrator 绑定检查、卖家拿不回自己的卖出税、其他持有人照常分到 |
+| `test/launchpad-v3/LaunchpadV3Fuzz.t.sol` | 3 | fuzz（各 1000 轮）：每笔买 / 卖恰好拆成曲线、1% 手续费、税，平台拿成交额 0.5%，上限 / 毕业截断只按实付收费 |
+| `test/invariant/CoreInvariants.t.sol` | 8 条不变量 | V3、打新、共用 registry / bucket、GangRouter 放在一起随机操作（发币、直接 / 经路由买卖、打新、撤出、退款、跳时间、打满、毕业、池子交易、keeper 处理、拉黑接收地址、补发），每步后检查 §5 的资金不变量和 bucket / 分红合约的偿付能力。CI 跑 24 × 50；发布前压力跑 400 轮 × 80 步（32,000 次调用）全过 |
 | `test/router/GangRouter.t.sol` | 19 | BNB / 报价币两种路径、交易者拿币、门槛和上限按交易者、分红权重归交易者、截断退款、经路由毕业 / 发射、截止时间、只有白名单路由能代买、流氓路由只能花自己的钱、失败后退款给交易者本人 |
 
 另外：
@@ -224,9 +226,9 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 - 本地 anvil 测试网 fork 上按主网顺序跑过部署（V3 → 打新共用 registry / bucket → 路由）、路由冒烟、V3 整轮（毕业 + 外盘税 + 补发）和打新整轮（100 个地址打满 + 发射 + 分账 + 领取），全部通过（`script/LaunchpadV3TestnetE2E.s.sol`、`script/FairMintTestnetE2E.s.sol`）。
 - BSC 主网状态上做过部署的进程内模拟（不广播）：不设 `OWNER` 时拒绝；设了之后接线检查全部通过。
 - BSC 测试网实部署（含修复）：`docs/TESTNET-CORE-ROUTER-2026-10-26.md`（GangRouter `0x3B497A335432f4A3f761063e44eb58D15F7fa57a`、V3 核心 `0x5D5068d11Cc3c768dc0Cc8F460a5593F5b76ce83`、打新核心 `0x5ef164cc3A812a5892Ed6ab33e7754339dFcA1d7`）。
-- 运行时字节码：LaunchpadV3 22,065 B，FairMintPad 16,695 B，HolderRewardHandler 7,122 B，GangRouter 4,142 B。
+- 运行时字节码：LaunchpadV3 22,072 B，FairMintPad 16,686 B，HolderRewardHandler 7,122 B，GangRouter 4,142 B。
 
-**测试的不足**：仓库里没有 fuzz 或 invariant 测试，§5 的不变量目前只靠单元测试里的具体场景检查（内部审计时在审计副本里写过 V3 记账的 fuzz，1000 轮通过，未并入仓库）。如果您的流程里会写 invariant 测试，我们很欢迎，也愿意补进仓库。
+**测试的不足**：invariant 测试用的是仓库里简化的 MockPair（不检查 K、不收 0.25% 手续费），池子相关的经济攻击（夹子、闪电贷）由第二轮审计员用仿真的 Pancake V2 池子另外验证过（§11），那些 PoC 没有并入仓库。
 
 ---
 
@@ -247,11 +249,13 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 ## 9. 主网部署计划
 
 - 部署脚本：`script/DeployLaunchpadV3.s.sol`、`script/DeployFairMint.s.sol`、`script/DeployGangRouter.s.sol`。主网广播分别需要 `LAUNCHPAD_V3_MAINNET_OK=true`、`FAIR_MINT_MAINNET_OK=true`、`GANG_ROUTER_MAINNET_OK=true`，审计通过前不会设置。
+- 环境变量：`OWNER`（多签）、`USDT_PER_15_BNB`（主网 USDT 的固定换算额，按当时价格算好，18 位小数）。
+- 部署前：核对主网上链接的 PoolCheck 库（`0xd2B1…bDb3`，按地址链接、delegatecall 调用）的字节码与本仓库源码一致。
 - 顺序：`DeployLaunchpadV3` → `DeployFairMint`（带上前一步输出的 `QUOTE_REGISTRY` / `PLATFORM_BUCKET`，两者共用）→ `DeployGangRouter`。
 - owner：主网必须设 `OWNER`（多签），否则脚本拒绝。部署后所有合约进入待接受状态，多签对每个合约调用 `acceptOwnership()`（`Ownable2Step`）。`DeployFairMint` 必须在多签接受之前跑，那时 registry / bucket 还归部署钱包，能加 operator。
 - 接线顺序：分红合约、税务路由、handler、bucket operator、接收地址白名单、准入都设好之后，最后一步才 `setMigrator`，核心从这一刻起才能发币。
-- keeper：独立热钱包，只有 `process` 和 bucket 的 `collectPlatform` 权限。
-- PlatformFeeBucket 和 QuoteRegistry 新部署一份、V3 和打新共用；bucket 的金库和回购销毁合约与 V2 那份相同（脚本从 V2 bucket 链上读取）。主网 QuoteRegistry 上线时只启用 USDT（按 USDT/WBNB 池子换算）。DividendVault 和 MigratorV2 每个核心各一份。
+- keeper：独立热钱包，只有 `process` 和 bucket 的 `collectPlatform` 权限。高频小额处理外盘税，`minQuoteOut` 容忍度不超过 1–2%，经私有 RPC 发交易（K-15）。
+- PlatformFeeBucket 和 QuoteRegistry 新部署一份、V3 和打新共用；bucket 的金库和回购销毁合约与 V2 那份相同（脚本从 V2 bucket 链上读取）。主网 QuoteRegistry 上线时只启用 USDT，按 `USDT_PER_15_BNB` 固定换算，多签在 BNB 价格偏离超过 10% 时更新（K-1）。V3 的 DividendVault 排除 migrator。DividendVault 和 MigratorV2 每个核心各一份。
 - 接收地址白名单：上线时只列合作方的主网金库（地址待定）。
 - V2 自己的 bucket / registry / 分红合约 / 发射台目前 owner 是普通钱包 `0x4EEd…`，同样能冻结 V2 内盘。建议多签建好后由它发起 `transferOwnership`、多签接受；不挡这次上线。
 
@@ -277,5 +281,23 @@ BSC_RPC_URL=<主网 RPC> forge test --match-path test/fair-mint/FairMintFork.t.s
 | A-10 | V3 | 低 | 非官方池子累计分红份额。 | 运维处理，见 K-13 | — |
 | A-11 | V3 | 提示 | DividendVault `setLaunchpad` 能转走已存入的分红；欠款在接收地址永久不可收时卡住；`process` 一次卖光。 | 写入 §4.2、K-14、K-15 | — |
 | A-12 | 打新 | 提示 | `refund` 不减 `sold`。 | 不改，§5 #2 改为只对未失败的 sale | — |
+| K-16（新增已知问题） | V3 | 低 | 毕业前卖出要求卖家当时仍持有 Agent ID（与 V2 一致）。Agent ID 是灵魂绑定的，正常不会失去；如果注册表收回某个 ID，这个持有人毕业前就卖不掉（代币锁转账）。 | 不改，与 V2 一致 | — |
 
 审计员核对后认为没问题的部分（摘要）：多个 sale / 曲线共用报价币时的资金隔离；部分撤出的手续费取整；截止那一秒的边界；类型截断；发射 / 毕业不能被提前建池、打入、`sync` 阻止；V3 买卖记账（fuzz 1000 轮：平台恰好拿到 1% + 0.5%，核心最多留 1 wei）；TaxRouterV3 的欠款隔离与重入；税的方向判断；`fairMintBNB` 付款额与核心扣款完全一致（fuzz）；路由的余额差结算、重入、2300 gas 退款、转账扣费报价币不留余额 / 授权；部署脚本的一次性设置不能被抢跑。
+
+---
+
+## 11. 第二轮内部审计（2026-10-26）
+
+审计对象 `7ec80dd`（含第一轮修复），修复在 `47a063b`。这一轮按攻击目标分三组：拿走不属于自己的钱、让别人的钱卡住 / 系统停摆、白拿收益或少交费用。每组跨所有模块审，换了一个模型，只给代码和规格，不给本文档和第一轮结论；池子相关的攻击用仿真 Pancake V2 池子（K 检查、0.25% 手续费、skim、sync、MINIMUM_LIQUIDITY）实测。没有发现严重 / 高危问题；「拿钱」和「卡钱」两组都没有找到可行路径。
+
+| ID | 来源 | 严重度 | 问题 | 处理 | 回归测试 |
+|---|---|---|---|---|---|
+| R2-1 | 白拿收益 | 中 | 白名单里没设固定换算额的报价币按 dev 自选参考池的**现价**锁定募集额 / 毕业额。同一笔交易里闪电贷拉偏浅池子，15 BNB 的募集可以锁成真实价值的万分之一（PoC：成本约 0.005 BNB），一伙人低价打满、拿走 50% 筹码后砸给后来的买家。主网计划里 USDT 正是按池子换算，可以被利用。 | 非 WBNB 报价币必须有固定换算额（`graduationAmount > 0`），主网 USDT 由 `USDT_PER_15_BNB` 设定、多签维护 | `test_create_refPoolAgainstWbnb`、`test_audit_quoteWhitelist`（两套）、主网分叉 `test_fork_usdt_raiseTracksBnbPrice` |
+| R2-2 | 白拿收益 | 中（金额小） | keeper 的外盘税一次性卖出可以被夹：在 keeper 的 `minQuoteOut` 容忍范围内先卖后买。15 BNB 池子、1% 税时，容忍 3% 赚 0.008 BNB，10% 赚 0.23 BNB；容忍度大时前置卖单还能让 keeper 的交易 revert。 | 运维：高频小额、容忍度 ≤ 1–2%、私有 RPC（K-15） | — |
+| R2-3 | 白拿收益 | 低（有条件） | 如果 V3 和打新共用同一个 DividendVault，V3 handler 的 `syncShares` 能给打新代币写份额，绕过出局规则。 | 当前不可达：每个核心一个 DividendVault，而 DividendVault 只认一个 launchpad 登记代币。部署时保持分开 | — |
+| R2-4 | 拿钱 / 卡钱 | 低 | migrator 免税、不能领取，有人把 V3 代币转给它，它会累计永远领不走的分红，稀释其他持有人；非官方池子的分红可被 `claimFor` + `skim` 拿走（K-13）。 | 部署时 V3 的 DividendVault 排除 migrator（测试网已补发这笔交易）；其他池子按 K-13 运维处理 | 部署接线检查 |
+| R2-5 | 卡钱 | 低 | V3 毕业前卖出要求卖家当时持有 Agent ID。 | 不改，与 V2 一致（K-16） | — |
+| R2-6 | 拿钱 | 提示 | 主网按地址链接已部署的 PoolCheck 库，核心经 delegatecall 执行它。 | 部署前核对字节码（§9） | — |
+
+审计员试过但失败的攻击（摘要）：打满前抢建池子并打入报价币 / `sync`（只让开盘价略高、捐赠者亏钱）；经路由把代币塞进池子（准入开启时不可能）；让 keeper `process`、`distribute`、`release`、毕业 / 发射、转账钩子永久 revert；用会 revert 或耗 gas 的接收地址卡交易（只是记欠款）；抢在 keeper 前买入吃分红（三组分别实测都亏钱，keeper 自己卖出的冲击大于分到的分红）；夹内盘买卖（两边各付 1% 手续费加税）；曲线取整、上限 / 毕业截断、手续费 / 税规避（fuzz 1000 轮无利可图）；刷单赚分红或接收地址那份；女巫地址绕过出局线；部分撤出的取整；GangRouter 误转余额、重入、残留授权；部署脚本的抢跑窗口。

@@ -8,6 +8,7 @@
   - 同日第 1 套核心 + 路由（V3 `0x3184…e541`、打新 `0x4D26…05F8`、路由 `0x499F…2C81`）：审计前的代码，已废弃。
   - `docs/TESTNET-LAUNCHPAD-V3-2026-10-26.md`、`docs/TESTNET-FAIR-MINT-2026-10-26.md` 里的部署（没有路由入口，已废弃；整轮记录仍可参考）。
 - Agent ID 注册表和测试报价币沿用原来的，注册过的钱包继续可用。
+- 代码：这一套部署自 `36d8a7e`。之后的 `47a063b`（第二轮审计）只多了两点：非 WBNB 报价币必须有固定换算额（测试网 registry 里的两个报价币本来就是固定 15 枚 = 15 BNB，行为不变），V3 的 DividendVault 排除 migrator（已在测试网补发：[`0x4b30…2f55`](https://testnet.bscscan.com/tx/0x4b301333ff5e1beadac00dcc70c025575eacc105432a1c13454b66818fbb2f55)）。所以没有重新部署。
 - 与上一套的不同：V3 和打新**共用一份新的 QuoteRegistry 和 PlatformFeeBucket**（`script/SharedPlatform.sol`）；报价币只收 WBNB 和这份白名单里的 18 位币；所有接线做完之后才 `setMigrator`（核心从这一刻起可用）。
 
 ## 合约
