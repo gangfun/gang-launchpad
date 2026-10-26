@@ -608,21 +608,26 @@ contract FairMintTest is Test {
     function test_rewards_processSplitsHalfToEligibleHolders() public {
         address t = _create();
         _fill(t);
+        uint256 sharesAtTax = vault.totalShares(t); // every baseline share is held at both taxes below
         _buy(t, buyer, 3 ether);
+        // minter 0's sell first sells the buy tax (swap-back); its own tax is credited before its share falls
         _sell(t, _minter(0), 20 * TPS);
         uint256 taxTokens = handler.accruedTax(t);
         assertGt(taxTokens, 0);
+        assertGt(wbnb.balanceOf(address(vault)), 0, "the buy tax's holder half is already in quote");
 
+        uint256 vaultBefore = wbnb.balanceOf(address(vault));
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(owner);
-        uint256 quoteOut = handler.process(t, 1);
-        uint256 toHolders = quoteOut / 2;
-        assertEq(wbnb.balanceOf(address(vault)), toHolders);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
+        uint256 toHolders = wbnb.balanceOf(address(vault)) - vaultBefore;
+        assertApproxEqAbs(toHolders, quoteOut / 2, 1, "half the chunk to holders");
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, quoteOut - toHolders);
+        assertEq(vault.unsoldUnits(t), 0);
 
-        // minter 5 still holds its full baseline: 100 of the 10,000 baseline shares minus minter 0's 20.
-        uint256 expected = toHolders * (100 * TPS) / vault.totalShares(t);
-        assertApproxEqAbs(vault.pending(t, _minter(5)), expected, vault.totalShares(t) / 1e18 + 1);
+        // minter 5 held 100 of the 10,000 baseline shares when both taxes were paid
+        uint256 expected = (wbnb.balanceOf(address(vault)) * (100 * TPS)) / sharesAtTax;
+        assertApproxEqAbs(vault.pending(t, _minter(5)), expected, 1e6);
         vm.prank(_minter(5));
         vault.claim(t);
     }
@@ -644,7 +649,7 @@ contract FairMintTest is Test {
         _sell(t, buyer, 1_000_000 ether);
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(owner);
-        uint256 quoteOut = handler.process(t, 1);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, quoteOut);
         assertEq(wbnb.balanceOf(address(vault)), 0);
     }
@@ -702,7 +707,7 @@ contract FairMintTest is Test {
         address m = _minter(3);
         _buy(t, buyer, 2 ether);
         vm.prank(owner);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
         uint256 earned = vault.pending(t, m);
         assertGt(earned, 0);
 
@@ -713,7 +718,7 @@ contract FairMintTest is Test {
 
         _buy(t, buyer, 2 ether);
         vm.prank(owner);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
         assertEq(vault.pending(t, m), earned, "no accrual after exclusion");
 
         _sell(t, m, 1 * TPS); // ordinary transfers keep it at 0
@@ -740,7 +745,7 @@ contract FairMintTest is Test {
         _buy(t, buyer, 2 ether);
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(owner);
-        uint256 out = handler.process(t, 1);
+        uint256 out = handler.process(t, type(uint256).max, 1);
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, out, "100% to platform");
         assertEq(wbnb.balanceOf(address(vault)), 0, "nothing stranded in the vault");
     }

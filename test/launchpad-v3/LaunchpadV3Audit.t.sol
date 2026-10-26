@@ -159,13 +159,13 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
 
         vm.prank(keeper);
         vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
-        handler.process(t, 1); // pair path
+        handler.process(t, type(uint256).max, 1); // pair path
 
         vm.prank(owner);
         handler.setDexRouter(makeAddr("dexRouter"));
         vm.prank(keeper);
         vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
-        handler.process(t, 1); // router path: refused before any approve / swap
+        handler.process(t, type(uint256).max, 1); // router path: refused before any approve / swap
 
         vm.clearMockedCalls();
         assertGt(handler.accruedTax(t), 0, "nothing consumed");
@@ -178,7 +178,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         _poolSell(t, address(uint160(0xB0000)), 1_000_000 ether);
         uint256 before = quoteTok.balanceOf(treasury);
         vm.prank(keeper);
-        uint256 out = handler.process(t, 1);
+        uint256 out = handler.process(t, type(uint256).max, 1);
         assertGt(out, 0);
         assertGt(quoteTok.balanceOf(treasury), before, "recipient paid in the quote");
         assertEq(handler.accruedTax(t), 0);
@@ -221,7 +221,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         assertEq(IERC20(x).balanceOf(address(handler)), accruedX + owed, "pool tax and owed side by side");
 
         vm.prank(keeper);
-        handler.process(x, 1);
+        handler.process(x, type(uint256).max, 1);
         assertEq(handler.accruedTax(x), 0);
         assertEq(IERC20(x).balanceOf(address(handler)), owed, "only the pool tax was sold");
 

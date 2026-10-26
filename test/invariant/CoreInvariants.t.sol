@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
+import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
@@ -370,7 +371,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (v3Tokens.length == 0) return;
         address t = _v3(seed);
-        try v3Handler.process(t, 1) {} catch {}
+        try v3Handler.process(t, type(uint256).max, 1) {} catch {}
         _afterV3(t);
     }
 
@@ -498,7 +499,8 @@ contract CoreHandler is CoreSystem {
     function fairProcess(uint256 seed) external {
         calls++;
         if (sales.length == 0) return;
-        try fairHandler.process(_sale(seed), 1) {} catch {}
+        address t = _sale(seed);
+        try fairHandler.process(t, type(uint256).max, 1) {} catch {}
     }
 
     function fairClaim(uint256 seed) external {
@@ -695,6 +697,60 @@ contract CoreInvariantsTest is Test {
                 IERC20(qs[k]).balanceOf(address(h.fairVault())), _pendingSum(h.fairVault(), qs[k], false), "fair vault"
             );
         }
+    }
+
+    /// @dev #12 (tax-time dividends): the vault (shared by both cores) holds every holder's claimable quote plus the
+    ///      quote of batches still being sold; each handler holds at least its accrued tax, the holders' unsold units
+    ///      are part of it, and the units credited to holders never exceed them.
+    function invariant_taxTimeDividendsBacked() public view {
+        SharedDividendVault vault = h.v3Vault();
+        assertEq(address(vault), address(h.fairVault()), "one shared vault");
+        address[3] memory qs = _quotes();
+        for (uint256 k = 0; k < 3; k++) {
+            uint256 owed = _pendingSum(vault, qs[k], true) + _pendingSum(vault, qs[k], false);
+            owed += _sellingQuote(vault, qs[k], true) + _sellingQuote(vault, qs[k], false);
+            assertGe(IERC20(qs[k]).balanceOf(address(vault)), owed, "vault >= claimable + selling batches");
+        }
+        for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+            _checkUnits(vault, h.v3Tokens(i), address(h.v3Handler()), h.v3Handler().accruedTax(h.v3Tokens(i)));
+        }
+        for (uint256 i = 0; i < h.saleCount(); i++) {
+            _checkUnits(vault, h.sales(i), address(h.fairHandler()), h.fairHandler().accruedTax(h.sales(i)));
+        }
+    }
+
+    function _sellingQuote(SharedDividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
+        uint256 n = isV3 ? h.v3TokenCount() : h.saleCount();
+        for (uint256 i = 0; i < n; i++) {
+            address t = isV3 ? h.v3Tokens(i) : h.sales(i);
+            if (vault.quoteOf(t) != quote) continue;
+            (, uint64 selling,) = vault.pipeOf(t);
+            if (selling == 0) continue;
+            (,, uint256 q,,) = vault.batchOf(t, selling);
+            sum += q;
+        }
+    }
+
+    function _checkUnits(SharedDividendVault vault, address t, address handler, uint256 accrued) internal view {
+        uint256 unsold = vault.unsoldUnits(t) - PostGradHandlerBase(handler).pendingHolderUnits(t);
+        assertGe(accrued, unsold, "holders' unsold units are part of the accrued tax");
+        assertGe(IERC20(t).balanceOf(handler), accrued, "handler holds its accrued tax");
+        // holders' units wait for their batch to settle: at most the units of the unsettled batches
+        (uint64 open, uint64 selling,) = vault.pipeOf(t);
+        uint256 unsettled;
+        if (selling != 0) {
+            (uint128 su,,,,) = vault.batchOf(t, selling);
+            unsettled += su;
+        }
+        if (open != 0) {
+            (uint128 ou,,,,) = vault.batchOf(t, open);
+            unsettled += ou;
+        }
+        uint256 credited;
+        for (uint256 j = 0; j < h.holderCount(); j++) {
+            credited += vault.pendingUnits(t, h.holders(j));
+        }
+        assertLe(credited, unsettled, "units credited <= units of the unsettled batches");
     }
 
     function _pendingSum(SharedDividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {

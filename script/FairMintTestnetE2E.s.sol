@@ -65,9 +65,11 @@ contract FairMintTestnetE2E is Script {
         address[] memory path = new address[](2);
         path[0] = token;
         path[1] = address(quote);
-        uint256 quoted = IPancakeRouter02(T.PANCAKE_V2_ROUTER).getAmountsOut(handler.accruedTax(token), path)[1];
+        // the buys' tax was already sold by minter 0's sell (swap-back); the keeper sells one chunk of what is left
+        uint256 chunk = handler.maxChunk(token);
+        uint256 quoted = IPancakeRouter02(T.PANCAKE_V2_ROUTER).getAmountsOut(chunk, path)[1];
         vm.startBroadcast(deployerPk);
-        uint256 out = handler.process(token, (quoted * 99) / 100);
+        uint256 out = handler.process(token, chunk, (quoted * 99) / 100);
         vm.stopBroadcast();
 
         SharedDividendVault vault = pad.dividendVault();

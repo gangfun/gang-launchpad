@@ -310,16 +310,21 @@ contract LaunchpadV3Test is Test {
         uint256 buyTax = handler.accruedTax(t);
         assertEq(handler.accruedPlatformTax(t), buyTax / 2, "buy: 0.5 of 1%");
         uint256 sold = IERC20(t).balanceOf(stranger) / 2;
+        uint256 bucket0 = bucket.accruedQuote(address(quoteTok));
         _poolSell(t, stranger, sold);
-        uint256 sellTax = handler.accruedTax(t) - buyTax;
-        assertEq(sellTax, (sold * 300) / BPS);
-        assertEq(handler.accruedPlatformTax(t), buyTax / 2 + (sellTax * 50) / 300, "sell: 0.5 of 3%");
+        // the sell first sold the buy tax (swap-back, well under the 0.5% chunk cap): only its own tax is left
+        uint256 sellTax = handler.accruedTax(t);
+        assertEq(sellTax, (sold * 300) / BPS, "the buy tax was sold before this sell");
+        assertEq(handler.accruedPlatformTax(t), (sellTax * 50) / 300, "sell: 0.5 of 3%");
+        assertGt(bucket.accruedQuote(address(quoteTok)) - bucket0, 0, "buy tax: platform part paid in quote");
+        assertGt(quoteTok.balanceOf(treasury) - recBefore, 0, "buy tax: rest to the recipient, in quote");
+        recBefore = quoteTok.balanceOf(treasury);
 
         uint256 platformTokens = handler.accruedPlatformTax(t);
         uint256 totalTokens = handler.accruedTax(t);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
         vm.prank(keeper);
-        uint256 quoteOut = handler.process(t, 1);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         uint256 platformQuote = (quoteOut * platformTokens) / totalTokens;
         assertEq(bucket.accruedQuote(address(quoteTok)) - bucketBefore, platformQuote);
         assertEq(quoteTok.balanceOf(treasury) - recBefore, quoteOut - platformQuote, "rest to recipient, in quote");
@@ -462,7 +467,7 @@ contract LaunchpadV3Test is Test {
         handler.notifyTax(t, stranger, stranger, 1, 200);
         vm.prank(stranger);
         vm.expectRevert(PostGradHandlerBase.OnlyKeeperOrOwner.selector);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
     }
 }
 

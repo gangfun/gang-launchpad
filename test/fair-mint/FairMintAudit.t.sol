@@ -174,7 +174,7 @@ contract FairMintAuditTest is FairMintTest {
         assertEq(vault.shares(t, v), 60 * TPS);
         _buy(t, buyer, 3 ether);
         vm.prank(owner);
-        handler.process(t, 1); // v has unharvested rewards → setShare(v) does a real harvest
+        handler.process(t, type(uint256).max, 1); // v has unharvested rewards → setShare(v) does a real harvest
 
         Gifter gifter = new Gifter();
         vm.prank(buyer);

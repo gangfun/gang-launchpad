@@ -13,8 +13,10 @@ import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
 /// @notice The tax recipients the platform allows, each token's route (quote, recipient, dividend share), the split of
 ///         every tax payment, and the pool tax after graduation:
 ///         - Bonding: LaunchpadV3 hands each curve trade's tax over (`distribute`).
-///         - Post-grad: the token's transfer hook accrues the tax in tokens (`notifyTax`), the keeper sells it
-///           (`process`) and the quote is split the same way.
+///         - Post-grad: the token's transfer hook accrues the tax in tokens (`notifyTax`); the holders' share of it is
+///           credited to holders right then (tax-time units in the vault). It is sold in small chunks — one before
+///           every sell into the pair (`swapBack`), or by the keeper when no sells come (`process`) — and each
+///           chunk's quote is split the same way.
 ///         Split: the platform's part (0.5% of the trade's volume, counted per trade since buys and sells may be taxed
 ///         at different rates) → `dividendBps` of the rest to DividendVault → the remainder to the recipient, in quote.
 /// @dev Must be a DividendVault operator and a PlatformFeeBucket operator.
@@ -49,7 +51,8 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     /// @notice Σ owedOf per quote: held here for recipients, so `process` never sells it (a quote can itself be a
     ///         token this handler taxes).
     mapping(address quote => uint256) public owedTotalOf;
-    /// @notice Part of `accruedTax` that is the platform's (tokens).
+    /// @notice Part of `accruedTax` that is the platform's (tokens). The holders' part is the vault's unsold units;
+    ///         the rest is the recipient's.
     mapping(address => uint256) public accruedPlatformTax;
     /// @notice Tax recipients the platform allows. Delisting only stops new tokens from choosing one: tokens already
     ///         created keep paying it.
@@ -190,10 +193,19 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         if (routeOf[token].quote == address(0)) revert UnknownToken();
         // the token taxed this trade at `rateBps` (its buy or sell tax): the platform's 0.5% of volume is that share,
         // never more than the tax itself
+        uint256 platform;
         if (rateBps > 0) {
-            uint256 platform = (taxAmount * PLATFORM_TAX_BPS) / rateBps;
-            accruedPlatformTax[token] += platform > taxAmount ? taxAmount : platform;
+            platform = (taxAmount * PLATFORM_TAX_BPS) / rateBps;
+            if (platform > taxAmount) platform = taxAmount;
         }
+        // the holders' share of the rest goes to the holders of this moment; with none, to the recipient (or the
+        // platform). The token calls this before it syncs the trade's shares, so "this moment" is just before the
+        // trade: a seller is credited for its own sell's tax on its share before the sell (it held until then), a buyer
+        // is not credited for its own buy's tax.
+        Route memory r = routeOf[token];
+        uint256 toHolders = ((taxAmount - platform) * r.dividendBps) / BPS;
+        if (!_creditHolders(token, toHolders) && r.recipient == address(0)) platform += toHolders;
+        accruedPlatformTax[token] += platform;
         _accrue(token, from, to, taxAmount);
     }
 
@@ -206,8 +218,18 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     }
 
     /// @inheritdoc IPostGradTaxHandlerV3
-    function process(address token, uint256 minQuoteOut) external nonReentrant returns (uint256 quoteOut) {
-        return _process(token, minQuoteOut);
+    function process(address token, uint256 amount, uint256 minQuoteOut)
+        external
+        nonReentrant
+        returns (uint256 quoteOut)
+    {
+        return _process(token, amount, minQuoteOut);
+    }
+
+    /// @inheritdoc IPostGradTaxHandlerV3
+    function swapBack(address token, uint256 sellAmount) external nonReentrant returns (uint256 quoteOut) {
+        if (routeOf[token].quote == address(0)) revert UnknownToken();
+        return _swapBack(token, sellAmount);
     }
 
     // ---------------------------------------------------------------- internal
@@ -216,42 +238,66 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         if (quote == address(0)) revert UnknownToken();
     }
 
+    function _sellTaxBps(address token) internal view override returns (uint256) {
+        return TaxLaunchTokenV3(token).sellTaxBps();
+    }
+
+    function _bucket() internal view override returns (PlatformFeeBucket) {
+        return platformBucket;
+    }
+
     function _sellable(address token) internal view override returns (uint256) {
         return IERC20(token).balanceOf(address(this)) - owedTotalOf[token];
     }
 
-    /// @dev The platform's part of what is sold, scaled down with it when the balance fell short.
-    function _takeAccrued(address token, uint256 amount, uint256 accrued)
+    /// @dev The platform's part of the chunk: the same share of it as of what is accrued (all of it on the last chunk),
+    ///      never more than what the holders' part leaves.
+    function _takeAccrued(address token, uint256 amount, uint256 accrued, uint256 holderUnits)
         internal
         override
         returns (uint256 platformTokens)
     {
-        platformTokens = accruedPlatformTax[token];
-        if (amount < accrued) platformTokens = (platformTokens * amount) / accrued;
-        accruedPlatformTax[token] = 0;
+        uint256 all = accruedPlatformTax[token];
+        platformTokens = amount == accrued ? all : (all * amount) / accrued;
+        if (platformTokens > amount - holderUnits) platformTokens = amount - holderUnits;
+        accruedPlatformTax[token] = amount == accrued ? 0 : all - platformTokens;
     }
 
-    function _onProceeds(address token, address quote, uint256 amount, uint256 quoteOut, uint256 platformTokens)
-        internal
-        override
-    {
-        uint256 platformQuote = (quoteOut * platformTokens) / amount;
-        if (quoteOut > 0) _payOut(token, routeOf[token], quoteOut, platformQuote, Phase.PostGrad);
-        emit OuterTaxProcessed(token, quote, amount, quoteOut, platformQuote);
+    /// @dev The holders' quote is already in the vault; the platform gets its tokens' share of the chunk's quote and
+    ///      the recipient the rest (the platform when there is none).
+    function _onProceeds(
+        address token,
+        address quote,
+        uint256 amount,
+        uint256 quoteOut,
+        uint256 toHolders,
+        uint256 platformTokens
+    ) internal override {
+        Route memory r = routeOf[token];
+        uint256 rest = quoteOut - toHolders;
+        uint256 toPlatform = (quoteOut * platformTokens) / amount;
+        if (toPlatform > rest) toPlatform = rest;
+        uint256 toRecipient = rest - toPlatform;
+        if (r.recipient == address(0)) (toPlatform, toRecipient) = (rest, 0);
+        _send(token, r, toPlatform, toRecipient);
+        emit TaxDistributed(token, Phase.PostGrad, quoteOut, toPlatform, toHolders, toRecipient);
+        emit OuterTaxProcessed(token, quote, amount, quoteOut, toPlatform);
     }
 
-    /// @dev `amount` of the route's quote is held here: split it and send each leg.
+    /// @dev `amount` of the route's quote is held here (a bonding-curve tax): split it and send each leg.
     function _payOut(address token, Route memory r, uint256 amount, uint256 platformAmount, Phase phase) internal {
         (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = _split(token, r, amount, platformAmount);
-        IERC20 quote = IERC20(r.quote);
-        if (toPlatform > 0) {
-            quote.forceApprove(address(platformBucket), toPlatform);
-            platformBucket.notifyAccrual(r.quote, toPlatform);
-        }
         if (toDividend > 0) {
-            quote.forceApprove(address(dividendVault), toDividend);
+            _allow(r.quote, address(dividendVault), toDividend);
             dividendVault.depositReward(token, toDividend);
         }
+        _send(token, r, toPlatform, toRecipient);
+        emit TaxDistributed(token, phase, amount, toPlatform, toDividend, toRecipient);
+    }
+
+    /// @dev The platform's and the recipient's legs (a failed push is booked as owed).
+    function _send(address token, Route memory r, uint256 toPlatform, uint256 toRecipient) internal {
+        _payPlatform(r.quote, toPlatform);
         if (toRecipient > 0) {
             if (_tryTransfer(r.quote, r.recipient, toRecipient)) {
                 emit TaxPaid(token, r.recipient, r.quote, toRecipient);
@@ -261,7 +307,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
                 emit TaxOwed(token, r.recipient, r.quote, toRecipient);
             }
         }
-        emit TaxDistributed(token, phase, amount, toPlatform, toDividend, toRecipient);
     }
 
     function _split(address token, Route memory r, uint256 amount, uint256 platformAmount)
@@ -285,17 +330,19 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         if (user == address(0)) return;
         if (user == address(this)) return;
         address pair = TaxLaunchTokenV3(token).pair();
+        // runs inside token transfers: a vault-side failure (e.g. operator revoked, K-7) must not freeze trading, so
+        // every write is guarded (ShareWriteFailed; retried by the holder's next sync)
         if (user == pair) {
-            if (dividendVault.shares(token, user) != 0) dividendVault.setShare(token, user, 0);
+            if (dividendVault.shares(token, user) != 0) _setShareGuarded(token, user, 0);
             return;
         }
         // Audit G-01: setExcluded does not clear shares, so an excluded holder is written to 0 here instead of being
         // skipped (skipping left its old share earning forever)
         if (dividendVault.excluded(user)) {
-            if (dividendVault.shares(token, user) != 0) dividendVault.setShare(token, user, 0);
+            if (dividendVault.shares(token, user) != 0) _setShareGuarded(token, user, 0);
             return;
         }
-        dividendVault.setShare(token, user, IERC20(token).balanceOf(user));
+        _setShareGuarded(token, user, IERC20(token).balanceOf(user));
     }
 
     /// @dev OZ 5.1 has no trySafeTransfer. Accepts tokens that return nothing (USDT-style) or `true`.

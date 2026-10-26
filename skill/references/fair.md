@@ -46,11 +46,14 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   (at least this many more wallets are needed to fill, given the cap).
 - **Locked until launch**: minted tokens sit in the wallet but can't be transferred or traded before launch.
 - **After launch**: every buy / sell on the official pool pays 1%. Half goes to **holder rewards**, half to the platform
-  (80% GANG buyback / 20% vault).
+  (80% GANG buyback / 20% vault). The reward half is credited to the eligible minters of the moment the tax is paid; the
+  tax is sold in small chunks right before taxed sells into the pool (once per block, ≤ 25% of that sell, ≤ 0.5% of the
+  pool's token side), or by the keeper, and paid in the quote. A sell fills a little below a plain `getAmountsOut` quote
+  (about half its own price impact more); `previewSell(token, amount)` on the handler gives the exact amount.
 - **Holder reward**: only wallets that minted. Weight = current balance, capped at what the wallet minted.
   **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
-  Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards earned before
-  going out stay claimable.
+  Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards credited
+  before going out (taxes paid while the wallet was in) stay claimable, even if they are sold after it went out.
 
 - **Logo**: same as `gang create` — `--logo ./file.png` is uploaded to gang.fun; a `--logo-uri` on another host is copied
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.

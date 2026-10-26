@@ -118,14 +118,15 @@ contract Audit4V3RegressionTest is LaunchpadV3Test {
         uint256 expected = (acc * 9975 * rQ) / (rT * 10_000 + acc * 9975);
         vm.prank(keeper);
         vm.expectRevert(PostGradHandlerBase.Slippage.selector); // 1% less arrives than the pair quoted
-        handler.process(t, expected);
+        handler.process(t, type(uint256).max, expected);
 
         uint256 vaultBefore = swf.balanceOf(address(divVault));
-        uint256 accBefore = divVault.accRewardPerShare(t);
         vm.prank(keeper);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
         uint256 arrived = swf.balanceOf(address(divVault)) - vaultBefore;
-        uint256 credited = ((divVault.accRewardPerShare(t) - accBefore) * divVault.totalShares(t)) / 1e18;
+        // post-grad dividends are credited at tax time in units and settle at the quote their sale brought in
+        (,, uint64 settled) = divVault.pipeOf(t);
+        (,, uint256 credited,,) = divVault.batchOf(t, settled);
         assertGt(arrived, 0);
         assertLe(credited, arrived, "never credits more than arrived");
         assertGt(credited, arrived - arrived / 1e6, "credits what arrived (rounding only)");

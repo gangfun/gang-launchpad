@@ -180,9 +180,10 @@ contract FairMintForkTest is Test {
         address[] memory path = new address[](2);
         path[0] = token;
         path[1] = quote;
-        uint256 quoted = IPancakeRouter02(V2_ROUTER).getAmountsOut(handler.accruedTax(token), path)[1];
+        uint256 chunk = handler.maxChunk(token);
+        uint256 quoted = IPancakeRouter02(V2_ROUTER).getAmountsOut(chunk, path)[1];
         vm.prank(keeper);
-        quoteOut = handler.process(token, (quoted * 99) / 100);
+        quoteOut = handler.process(token, chunk, (quoted * 99) / 100);
     }
 
     // ---------------------------------------------------------------- WBNB: create → fill → launch → trade → split
@@ -223,8 +224,9 @@ contract FairMintForkTest is Test {
         uint256 bucketBefore = bucket.accruedQuote(WBNB);
         uint256 out = _process(t, WBNB);
         assertGt(out, 0);
-        assertEq(IERC20(WBNB).balanceOf(address(vault)) - vaultBefore, out / 2);
-        assertEq(bucket.accruedQuote(WBNB) - bucketBefore, out - out / 2);
+        uint256 toHolders = IERC20(WBNB).balanceOf(address(vault)) - vaultBefore;
+        assertApproxEqAbs(toHolders, out / 2, 1, "holders' half (their units of the chunk, rounded up)");
+        assertEq(bucket.accruedQuote(WBNB) - bucketBefore, out - toHolders);
 
         address m5 = _minter(5);
         uint256 pend = vault.pending(t, m5);
@@ -232,7 +234,89 @@ contract FairMintForkTest is Test {
         vm.prank(m5);
         vault.claim(t);
         assertEq(IERC20(WBNB).balanceOf(m5), pend);
-        assertEq(vault.pending(t, m), 0, "out before the deposit: nothing");
+        // m held when the buy and its own first sell were taxed: those halves are m's even though it is out now
+        assertGt(vault.pending(t, m), 0, "credited at tax time, kept after going out");
+    }
+
+    // ---------------------------------------------------------------- sell-time swap-back on a real Pancake pair
+    /// @dev Buys pile tax past one chunk; a router sell first sells one chunk (≤ 0.5% of the token side, ~1% price
+    ///      move) and still goes through with a normal slippage setting; the keeper drains the rest chunk by chunk.
+    function test_fork_swapBack_realPancake() public forkOnly {
+        address t = _create(WBNB, address(0));
+        _fill(t, WBNB);
+        address pair = FairToken(t).pair();
+        for (uint256 i = 0; i < 12; i++) {
+            address b = address(uint160(0xB0B000 + i));
+            deal(WBNB, b, 3 ether);
+            _swap(b, WBNB, t, 3 ether);
+        }
+        uint256 accrued = handler.accruedTax(t);
+        (uint256 rT0,) = _reserves(t, pair);
+        uint256 cap = (rT0 * 50) / 10_000;
+        assertGt(accrued, cap, "backlog past one chunk");
+
+        // a seller quoting with previewSell (chunk included) fills at that exact amount
+        address m = _minter(10);
+        uint256 amount = 50 * TPS;
+        address[] memory path = new address[](2);
+        path[0] = t;
+        path[1] = WBNB;
+        uint256 naive = IPancakeRouter02(V2_ROUTER).getAmountsOut(amount, path)[1];
+        (uint256 quoted, uint256 chunk) = handler.previewSell(t, amount);
+        assertEq(chunk, amount / 4 < cap ? amount / 4 : cap, "<= 25% of the sell, <= 0.5% of the token side");
+        console.log("sell 50 shares: naive quote / previewSell (bps of naive)", naive, (quoted * 10_000) / naive);
+        vm.startPrank(m);
+        IERC20(t).approve(V2_ROUTER, amount);
+        uint256 got0 = IERC20(WBNB).balanceOf(m);
+        uint256 g = gasleft();
+        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            amount, quoted, path, m, block.timestamp
+        );
+        uint256 gasWithChunk = g - gasleft();
+        vm.stopPrank();
+        assertEq(IERC20(WBNB).balanceOf(m) - got0, quoted, "previewSell is exact");
+        assertEq(handler.accruedTax(t), accrued - chunk + amount / 100, "one chunk sold before the sell");
+
+        // the keeper drains the rest, one chunk at a time
+        uint256 rounds;
+        while (handler.accruedTax(t) > 0 && rounds < 100) {
+            assertLe(handler.maxChunk(t), cap * 2, "a chunk stays ~0.5% of the token side");
+            _process(t, WBNB);
+            rounds++;
+        }
+        assertEq(handler.accruedTax(t), 0, "drained");
+        assertEq(vault.unsoldUnits(t), 0, "every holder unit sold");
+        assertGt(vault.pending(t, _minter(5)), 0);
+
+        // one chunk on its own: the price moves about 1%
+        for (uint256 i = 0; i < 6; i++) {
+            address b = address(uint160(0xB0C000 + i));
+            deal(WBNB, b, 3 ether);
+            _swap(b, WBNB, t, 3 ether);
+        }
+        (uint256 rTa, uint256 rQa) = _reserves(t, pair);
+        vm.prank(t);
+        handler.swapBack(t, type(uint128).max);
+        (uint256 rTb, uint256 rQb) = _reserves(t, pair);
+        assertLe(rTb - rTa, (rTa * 50) / 10_000, "<= 0.5% of the token side");
+        assertGe(rQb * rTa * 1000, rQa * rTb * 989, "price moves <= ~1.1%");
+
+        // a sell with nothing accrued: the same path without a chunk (gas baseline)
+        while (handler.accruedTax(t) > 0) _process(t, WBNB);
+        g = gasleft();
+        _swap(_minter(11), t, WBNB, amount);
+        uint256 gasNoChunk = g - gasleft();
+        // the same holder again, a small chunk pending (warm storage: the usual case)
+        deal(WBNB, buyer, 1 ether);
+        _swap(buyer, WBNB, t, 1 ether);
+        vm.roll(block.number + 1); // one swap-back per block
+        g = gasleft();
+        _swap(_minter(11), t, WBNB, amount);
+        uint256 gasWarm = g - gasleft();
+        console.log("gas: router sell with a swap-back chunk", gasWithChunk);
+        console.log("gas: router sell, nothing accrued (first touch)", gasNoChunk);
+        console.log("gas: router sell again, small chunk (warm)", gasWarm);
+        console.log("keeper chunks to drain the backlog", rounds);
     }
 
     // ---------------------------------------------------------------- USDT quote via the USDT/WBNB V3 pool
@@ -256,7 +340,7 @@ contract FairMintForkTest is Test {
         _swap(buyer, USDT, t, 1_000 ether);
         uint256 out = _process(t, USDT);
         assertGt(out, 0);
-        assertEq(IERC20(USDT).balanceOf(address(vault)), out / 2);
+        assertApproxEqAbs(IERC20(USDT).balanceOf(address(vault)), out / 2, 1);
     }
 
     /// @dev A fixed rate in QuoteRegistry still wins over the pool (scaled to the raise), refPool or not.
