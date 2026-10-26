@@ -275,7 +275,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const token = tokenArg(opt, fail)
     const sale = await saleOf(ctx, token)
     if (!sale) return fail('not a fair-mint sale on this pad', { token, chainId: ctx.chainId })
-    const { sharePriceRaw: _raw, ...pub } = sale
+    const { sharePriceRaw: _raw, exitFeeBps: _exit, ...pub } = sale
     if (sub === 'info') return out({ success: true, chainId: Number(ctx.chainId), ...pub })
     const me = walletFor(ctx, opt('from'))
     return out({ success: true, chainId: Number(ctx.chainId), wallet: me, sale: pub, position: await positionOf(ctx, token, me, sale) })
