@@ -64,7 +64,7 @@ contract CoreSystem is Test {
         fairVault = v3Vault;
         SharedMigrator mig = new SharedMigrator(owner, address(pairFactory));
         TokenDeployer deployer = new TokenDeployer(owner);
-        v3Handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket));
+        v3Handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner,
             address(registry),
@@ -76,7 +76,7 @@ contract CoreSystem is Test {
             address(pairFactory)
         );
 
-        fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket));
+        fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket), address(0));
         fair = new FairMintPad(
             owner,
             address(registry),
@@ -449,7 +449,7 @@ contract CoreHandler is CoreSystem {
         if (held == 0) return;
         bool stale = fair.exitFeeBpsOf(t) == 0;
         vm.prank(who);
-        try fair.withdraw(t, bound(shares, 1, held)) {
+        try fair.withdraw(t, bound(shares, 1, held), 0) {
             if (stale) staleExits++;
         } catch {}
     }

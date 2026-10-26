@@ -79,7 +79,7 @@ contract GangRouterTest is Test {
     function _deployV3() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
-        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket));
+        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner,
             address(reg),
@@ -110,7 +110,7 @@ contract GangRouterTest is Test {
         QuoteRegistry reg = new QuoteRegistry(owner);
         SharedDividendVault vault = v3Vault;
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault2"));
-        HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket));
+        HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
         fair = new FairMintPad(
             owner,
             address(reg),
@@ -356,7 +356,7 @@ contract GangRouterTest is Test {
         bytes[3] memory calls = [
             abi.encodeWithSignature("withdrawFor(address,address,uint256)", agent2, token, 30),
             abi.encodeWithSignature("refundFor(address,address)", agent2, token),
-            abi.encodeWithSignature("withdraw(address,uint256)", token, 30) // the rogue's own position (none)
+            abi.encodeWithSignature("withdraw(address,uint256,uint256)", token, 30, 0) // the rogue's own position (none)
         ];
         for (uint256 i = 0; i < calls.length; i++) {
             vm.prank(rogue);
@@ -440,7 +440,7 @@ contract GangRouterTest is Test {
         vm.warp(block.timestamp + 7 days);
         uint256 before = wbnb.balanceOf(agent2);
         vm.prank(agent2);
-        fair.withdraw(token, 30);
+        fair.withdraw(token, 30, 0);
         assertEq(wbnb.balanceOf(agent2) - before, cost, "stale: principal back, no exit fee");
         assertEq(wbnb.balanceOf(address(router)), 0);
     }

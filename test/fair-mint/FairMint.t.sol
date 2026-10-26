@@ -64,7 +64,7 @@ contract FairMintTest is Test {
         registry = new QuoteRegistry(owner);
         vault = new SharedDividendVault(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new HolderRewardHandler(owner, address(vault), address(bucket));
+        handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
         tokenDeployer = new TokenDeployer(owner);
         pad = new FairMintPad(
             owner,
@@ -383,7 +383,7 @@ contract FairMintTest is Test {
         uint256 before = wbnb.balanceOf(m);
         (uint256 previewOut, uint256 previewFee) = pad.previewWithdraw(t, m, 40);
         vm.prank(m);
-        uint256 out = pad.withdraw(t, 40);
+        uint256 out = pad.withdraw(t, 40, 0);
         uint256 principal = 40 * SHARE_PRICE;
         assertEq(out, principal - principal / 100);
         assertEq(previewOut, out);
@@ -420,7 +420,7 @@ contract FairMintTest is Test {
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         uint256 before = wbnb.balanceOf(m);
         vm.prank(m);
-        uint256 out = pad.withdraw(t, 20);
+        uint256 out = pad.withdraw(t, 20, 0);
         uint256 principal = 20 * SHARE_PRICE;
         assertEq(out, principal - (principal * 200) / 10_000, "withdraw: -2%");
         assertEq(wbnb.balanceOf(m) - before, out);
@@ -466,7 +466,7 @@ contract FairMintTest is Test {
         assertEq(previewFee, 0);
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(m);
-        uint256 out = pad.withdraw(t, 20);
+        uint256 out = pad.withdraw(t, 20, 0);
         assertEq(out, 20 * SHARE_PRICE, "full principal back");
         assertEq(previewOut, out);
         assertEq(bucket.accruedQuote(address(wbnb)), bucketBefore, "no exit fee");
@@ -480,7 +480,7 @@ contract FairMintTest is Test {
         pad.mint(t, 1, 1); // 61
         assertEq(pad.exitFeeBpsOf(t), 200);
         vm.prank(m);
-        assertEq(pad.withdraw(t, 10), 10 * SHARE_PRICE * 98 / 100);
+        assertEq(pad.withdraw(t, 10, 0), 10 * SHARE_PRICE * 98 / 100);
     }
 
     function test_withdraw_previewZeroWhenItWouldRevert() public {
@@ -498,9 +498,9 @@ contract FairMintTest is Test {
             pad.mint(t, 37 + i, 1);
         }
         vm.prank(_minter(2));
-        pad.withdraw(t, 13);
+        pad.withdraw(t, 13, 0);
         vm.prank(_minter(4));
-        pad.withdraw(t, 41);
+        pad.withdraw(t, 41, 0);
         (, uint256 sold,, uint256 price,,) = _sale(t);
         assertEq(wbnb.balanceOf(address(pad)), sold * price, "pad holds exactly the principal of the shares out");
     }
@@ -513,7 +513,7 @@ contract FairMintTest is Test {
         pad.mint(t, 100, 1);
         vm.warp(block.timestamp + 200 days);
         vm.prank(_minter(0));
-        pad.withdraw(t, 100); // stale: full principal back
+        pad.withdraw(t, 100, 0); // stale: full principal back
         vm.warp(block.timestamp + 165 days);
         _fill(t);
         (,, bool launched,,,) = _sale(t);
@@ -567,7 +567,7 @@ contract FairMintTest is Test {
         FairToken(t).reclaim(dev, 1);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.NotMinting.selector);
-        pad.withdraw(t, 1);
+        pad.withdraw(t, 1, 0);
     }
 
     // ---------------------------------------------------------------- rewards
@@ -684,16 +684,18 @@ contract FairMintTest is Test {
     function test_vaultFailureDoesNotFreezeTrading() public {
         address t = _create();
         _fill(t);
-        vm.prank(owner);
-        vault.setOperator(address(handler), address(0));
+        // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         address m = _minter(0);
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);
         assertTrue(handler.isOut(t, m));
         assertEq(vault.shares(t, m), 100 * TPS, "zeroing failed while the vault refused");
 
-        vm.prank(owner);
-        vault.setOperator(address(handler), address(pad));
+        vm.clearMockedCalls();
         handler.syncShares(t, m, address(0));
         assertEq(vault.shares(t, m), 0, "retried once the vault accepts again");
     }

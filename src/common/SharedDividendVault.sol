@@ -29,7 +29,12 @@ contract SharedDividendVault is Ownable2Step {
     mapping(address => bool) public launchpads;
     /// @notice The one core an operator may act for (0 = not an operator).
     mapping(address account => address launchpad) public operatorOf;
+    /// @notice The one operator bound to each core (its tax handler); set once, never changed.
+    mapping(address launchpad => address) public operatorFor;
+    /// @notice Each core's floor for tokens it registers from now on (snapshotted per token at registerToken).
     mapping(address launchpad => uint256) public minimumShareBalanceOf;
+    /// @notice A token's floor, fixed when it was registered: later floor changes never touch existing holders.
+    mapping(address token => uint256) public tokenMinimumShareBalance;
 
     mapping(address token => address launchpad) public launchpadOf;
     mapping(address token => address quote) public quoteOf;
@@ -95,6 +100,7 @@ contract SharedDividendVault is Ownable2Step {
     error AlreadyRegistered();
     error NoShares();
     error TooManyUnits();
+    error OperatorAlreadyBound();
 
     constructor(address owner_) Ownable(owner_) {
         excluded[address(0)] = true;
@@ -112,14 +118,18 @@ contract SharedDividendVault is Ownable2Step {
         emit LaunchpadSet(launchpad, enabled);
     }
 
-    /// @notice Bind `account` to one core (launchpad = 0 removes it). The core must be listed when binding.
+    /// @notice Bind `account` (the core's tax handler) as the core's one operator. Once per core and per account,
+    ///         with no unbind or rebind: an operator writes every share and deposits every reward of the core's tokens,
+    ///         so a rebindable slot would let the owner install a contract that pays itself the holders' part
+    ///         (flow review F4a). No emergency unbind is needed: the handlers' code is immutable, and their share writes
+    ///         are guarded, so a vault refusal never freezes token transfers.
     function setOperator(address account, address launchpad) external onlyOwner {
-        if (account == address(0)) revert ZeroAddress();
-        if (launchpad != address(0)) {
-            if (!launchpads[launchpad]) revert OnlyLaunchpad();
-            excluded[account] = true;
-        }
+        if (account == address(0) || launchpad == address(0)) revert ZeroAddress();
+        if (!launchpads[launchpad]) revert OnlyLaunchpad();
+        if (operatorFor[launchpad] != address(0) || operatorOf[account] != address(0)) revert OperatorAlreadyBound();
+        excluded[account] = true;
         operatorOf[account] = launchpad;
+        operatorFor[launchpad] = account;
         emit OperatorSet(account, launchpad);
     }
 
@@ -128,6 +138,7 @@ contract SharedDividendVault is Ownable2Step {
         emit Excluded(account, isExc);
     }
 
+    /// @notice The floor `launchpad`'s tokens registered from now on get; tokens already registered keep their own.
     function setMinimumShareBalance(address launchpad, uint256 amount) external onlyOwner {
         minimumShareBalanceOf[launchpad] = amount;
         emit MinimumShareBalanceUpdated(launchpad, amount);
@@ -150,6 +161,8 @@ contract SharedDividendVault is Ownable2Step {
         if (launchpadOf[token] != address(0)) revert AlreadyRegistered();
         launchpadOf[token] = msg.sender;
         quoteOf[token] = quote;
+        // flow review F4c: the floor is the token's own from here; raising the core's floor later only affects new tokens
+        tokenMinimumShareBalance[token] = minimumShareBalanceOf[msg.sender];
         emit TokenRegistered(token, quote, msg.sender);
     }
 
@@ -169,10 +182,10 @@ contract SharedDividendVault is Ownable2Step {
         emit RewardDeposited(token, amount);
     }
 
-    /// @dev Strict `>` floor (the token's core's floor): `newShare <= floor` → 0 shares.
+    /// @dev Strict `>` floor (the token's floor, snapshotted at registration): `newShare <= floor` → 0 shares.
     function setShare(address token, address user, uint256 newShare) external {
-        address lp = _onlyFor(token);
-        if (excluded[user] || newShare <= minimumShareBalanceOf[lp]) newShare = 0;
+        _onlyFor(token);
+        if (excluded[user] || newShare <= tokenMinimumShareBalance[token]) newShare = 0;
         _harvest(token, user);
         uint256 old = shares[token][user];
         if (old != 0 || newShare != 0) _harvestUnits(token, user, old);
@@ -279,9 +292,9 @@ contract SharedDividendVault is Ownable2Step {
         if (p.open != 0) units += batchOf[token][p.open].units;
     }
 
-    /// @notice Floor of the core that owns `token` (0 for an unknown token).
+    /// @notice `token`'s floor, fixed at registration (0 for an unknown token).
     function minimumShareBalanceFor(address token) external view returns (uint256) {
-        return minimumShareBalanceOf[launchpadOf[token]];
+        return tokenMinimumShareBalance[token];
     }
 
     // ---------------------------------------------------------------- internal

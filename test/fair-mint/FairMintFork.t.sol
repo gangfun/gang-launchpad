@@ -80,7 +80,7 @@ contract FairMintForkTest is Test {
         vault = new SharedDividendVault(owner);
         TokenDeployer deployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new HolderRewardHandler(owner, address(vault), address(bucket));
+        handler = new HolderRewardHandler(owner, address(vault), address(bucket), V2_ROUTER);
         agent = new ForkAgent();
         pad = new FairMintPad(
             owner,
@@ -102,7 +102,6 @@ contract FairMintForkTest is Test {
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
         handler.setPad(address(pad));
-        handler.setDexRouter(V2_ROUTER);
         handler.setKeeper(keeper);
         pad.setMigrator(address(mig));
         pad.setAgentGate(true, address(agent));

@@ -15,6 +15,7 @@ gang fair status --token <addr> --testnet                    # my shares; after 
 gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
+                                                                   # (reverts if a 1–2% exit fee comes back before it lands)
 gang fair claim --token <addr> --testnet
 gang execute --request-id …
 gang fair tx --hash 0x… --testnet                            # decode Created / Minted / Launched / … on the fair chain

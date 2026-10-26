@@ -87,7 +87,7 @@ contract QuoteRefPoolForkTest is Test {
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, owner);
 
         // V3 core
-        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(div), address(bucket));
+        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(div), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner, address(reg), address(div), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );
@@ -105,7 +105,7 @@ contract QuoteRefPoolForkTest is Test {
         v3.setBridgePool(USDT, bridge);
 
         // 打新 core
-        HolderRewardHandler fh = new HolderRewardHandler(owner, address(div), address(bucket));
+        HolderRewardHandler fh = new HolderRewardHandler(owner, address(div), address(bucket), address(0));
         fair = new FairMintPad(
             owner, address(reg), address(div), address(bucket), address(fh), address(deployer), WBNB, V2_FACTORY
         );

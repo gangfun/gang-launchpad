@@ -78,7 +78,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
 
         (s.vault, s.migrator, s.tokenDeployer) = _shared(deployer, factory);
         SharedDividendVault vault = SharedDividendVault(s.vault);
-        TaxHandlerV3 handler = new TaxHandlerV3(deployer, address(vault), s.bucket);
+        TaxHandlerV3 handler = new TaxHandlerV3(deployer, address(vault), s.bucket, dexRouter);
         LaunchpadV3 pad = new LaunchpadV3(
             deployer,
             s.quoteRegistry,
@@ -94,7 +94,6 @@ contract DeployLaunchpadV3 is SharedPlatform {
         _wireCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
 
         handler.setLaunchpad(address(pad));
-        handler.setDexRouter(dexRouter);
         handler.setKeeper(keeper);
 
         PlatformFeeBucket(s.bucket).setOperator(address(pad), true);

@@ -84,8 +84,9 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     error AlreadyListed();
     error NotListed();
 
-    constructor(address owner_, address dividendVault_, address platformBucket_)
-        PostGradHandlerBase(owner_, dividendVault_)
+    /// @param dexRouter_ Pancake V2 router `process` sells through (0 = straight into the pair); changes are delayed.
+    constructor(address owner_, address dividendVault_, address platformBucket_, address dexRouter_)
+        PostGradHandlerBase(owner_, dividendVault_, dexRouter_)
     {
         if (platformBucket_ == address(0)) revert ZeroAddress();
         platformBucket = PlatformFeeBucket(platformBucket_);

@@ -78,7 +78,7 @@ contract LaunchpadV3Test is Test {
         divVault = new SharedDividendVault(owner);
         tokenDeployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new TaxHandlerV3(owner, address(divVault), address(bucket));
+        handler = new TaxHandlerV3(owner, address(divVault), address(bucket), address(0));
         pad = new LaunchpadV3(
             owner,
             address(quoteRegistry),

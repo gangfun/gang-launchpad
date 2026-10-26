@@ -29,7 +29,7 @@ export const FAIR_NETS = {
 const PAD_ABI = parseAbi([
   'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
-  'function withdraw(address token, uint256 shares) returns (uint256)',
+  'function withdraw(address token, uint256 shares, uint256 minPayout) returns (uint256)',
   'function sales(address token) view returns (address creator, uint64 progressAt, uint16 capShares, uint16 holdBps, address quote, uint16 sold, bool launched, uint16 mintFeeBps, uint16 exitFeeBps, address gate, uint128 sharePrice, address pair, address refPool, uint16 markSold)',
   'function positions(address token, address user) view returns (uint16 shares)',
   'function previewWithdraw(address token, address user, uint256 shares) view returns (uint256 payout, uint256 fee)',
@@ -203,6 +203,8 @@ async function positionOf(ctx, token, me, sale) {
  * (summarize = summarizePreview, so previews look like every other command's).
  */
 const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'claim', 'tx']
+/** withdraw reverts below the preview minus this (bps): it catches an exit fee coming back (≥ 1%). */
+const WITHDRAW_TOLERANCE_BPS = 10n
 const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|claim|tx> [--testnet] — see gang help'
 
 export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
@@ -343,12 +345,16 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!held) return fail('this wallet has no shares in this sale')
     const shares = flag('all') ? Number(held) : parseIntIn(fail, 'shares', opt('shares'), 1, Number(held))
     const [payout, fee] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
-    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'withdraw', args: [token, BigInt(shares)] })
+    // the price is fixed, so only the exit fee can move the payout: a mint landing first can restart the 7-day clock
+    // and bring a 1–2% fee back. 0.1% below the preview refuses that and nothing else.
+    const minPayout = (payout * (10_000n - WITHDRAW_TOLERANCE_BPS)) / 10_000n
+    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'withdraw', args: [token, BigInt(shares), minPayout] })
     const dry = await dryRun(ctx, me, ctx.pad, data)
     if (dry) return out({ success: false, step: 'withdraw', ...dry })
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
       step: 'withdraw', chainId: Number(ctx.chainId), token, shares,
-      receive: await units(ctx, sale.quote, payout), exitFee: await units(ctx, sale.quote, fee), quote: sale.quoteSymbol,
+      receive: await units(ctx, sale.quote, payout), minReceive: await units(ctx, sale.quote, minPayout),
+      exitFee: await units(ctx, sale.quote, fee), quote: sale.quoteSymbol,
       exitFeePct: sale.exitFeeNowPct,
       note: sale.stale
         ? `no progress for 7 days: no exit fee, the full mint price back; the ${sale.mintFeePct}% paid at mint is not returned`

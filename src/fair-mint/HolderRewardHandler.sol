@@ -47,8 +47,9 @@ contract HolderRewardHandler is ISwapBack, PostGradHandlerBase {
     );
     event Disqualified(address indexed token, address indexed user, uint256 balance, uint256 baseline);
 
-    constructor(address owner_, address dividendVault_, address platformBucket_)
-        PostGradHandlerBase(owner_, dividendVault_)
+    /// @param dexRouter_ Pancake V2 router `process` sells through (0 = straight into the pair); changes are delayed.
+    constructor(address owner_, address dividendVault_, address platformBucket_, address dexRouter_)
+        PostGradHandlerBase(owner_, dividendVault_, dexRouter_)
     {
         if (platformBucket_ == address(0)) revert ZeroAddress();
         platformBucket = PlatformFeeBucket(platformBucket_);

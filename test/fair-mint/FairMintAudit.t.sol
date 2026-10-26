@@ -61,7 +61,7 @@ contract FairMintAuditTest is FairMintTest {
         vm.expectEmit(true, true, false, true, address(pad));
         emit FairMintPad.ShareWriteFailed(t, m, 0);
         vm.prank(m);
-        uint256 got = pad.withdraw(t, 100);
+        uint256 got = pad.withdraw(t, 100, 0);
         assertEq(got, 100 * SHARE_PRICE * 99 / 100, "principal minus the 1% exit fee");
         assertEq(wbnb.balanceOf(m), before + got);
         assertEq(vault.shares(t, m), 100 * TPS, "the vault refused: share left as is");
@@ -85,11 +85,11 @@ contract FairMintAuditTest is FairMintTest {
             vm.prank(g);
             pad.mint(t, 1, 1);
             vm.prank(g);
-            pad.withdraw(t, 1); // churn: sold never passes 111
+            pad.withdraw(t, 1, 0); // churn: sold never passes 111
         }
         assertEq(pad.exitFeeBpsOf(t), 0, "griefer's 1-share churn did not restart the clock");
         vm.prank(v);
-        assertEq(pad.withdraw(t, 100), 100 * SHARE_PRICE, "victim leaves free");
+        assertEq(pad.withdraw(t, 100, 0), 100 * SHARE_PRICE, "victim leaves free");
     }
 
     /// @dev R3-2: a bucket that refuses the pad can't freeze withdraws; the fee is owed and flushed once it accepts.
@@ -104,7 +104,7 @@ contract FairMintAuditTest is FairMintTest {
         vm.prank(owner);
         bucket.setLaunchpad(address(1)); // the pad is neither launchpad nor operator now
         vm.prank(m);
-        assertEq(pad.withdraw(t, 100), principal - fee, "same payout as with a working bucket");
+        assertEq(pad.withdraw(t, 100, 0), principal - fee, "same payout as with a working bucket");
         assertEq(pad.owedFee(address(wbnb)), fee);
         assertEq(wbnb.allowance(address(pad), address(bucket)), 0, "no allowance left behind");
         vm.expectRevert(PlatformFeeBucket.OnlyLaunchpad.selector);
@@ -208,8 +208,11 @@ contract FairMintAuditTest is FairMintTest {
         address t = _create();
         _fill(t);
         address v = _minter(8);
-        vm.prank(owner);
-        vault.setOperator(address(handler), address(0));
+        // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         _sell(t, v, 10 * TPS); // the handler's setShare reverts (not out of gas) → swallowed, the sell goes through
         assertEq(IERC20(t).balanceOf(v), 90 * TPS);
         assertEq(vault.shares(t, v), 100 * TPS, "stale until the vault accepts writes again");

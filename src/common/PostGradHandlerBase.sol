@@ -50,10 +50,17 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     uint256 public constant SWAP_BACK_SLIPPAGE_BPS = 100;
     /// @notice A swap-back chunk is at most this share of the sell that triggers it (bps).
     uint256 public constant SWAP_BACK_SELL_BPS = 2500;
+    /// @notice Delay between proposing and accepting a new DEX router (flow review F4b: a router swap plus a keeper
+    ///         `process` with a 1-wei floor would otherwise hand the whole chunk to the owner's router at once).
+    uint256 public constant DEX_ROUTER_DELAY = 48 hours;
 
     SharedDividendVault public immutable dividendVault;
 
+    /// @notice Router `process` sells through; 0 = sell straight into the token's pair.
     IPancakeRouter02 public dexRouter;
+    /// @notice A proposed router (0 = direct pair) and when it can be accepted; `dexRouterEta == 0` = no proposal.
+    address public pendingDexRouter;
+    uint256 public dexRouterEta;
     address public keeper;
     /// @notice Tax tokens of each token held here and not sold yet (the holders' part included).
     mapping(address => uint256) public accruedTax;
@@ -74,8 +81,12 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     error OnlyKeeperOrOwner();
     error PairQuoteMismatch();
     error OutOfGas();
+    error NoProposal();
+    error TooEarly();
 
     event DexRouterSet(address indexed router);
+    event DexRouterProposed(address indexed router, uint256 eta);
+    event DexRouterCancelled(address indexed router);
     event KeeperSet(address indexed keeper);
     event TaxAccrued(
         address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued
@@ -88,16 +99,38 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     /// @notice The vault refused a share write (it is retried by the holder's next sync).
     event ShareWriteFailed(address indexed token, address indexed user, uint256 share);
 
-    constructor(address owner_, address dividendVault_) Ownable(owner_) {
+    /// @param dexRouter_ Router set at deploy (0 = sell straight into the pair); later changes go through the delay.
+    constructor(address owner_, address dividendVault_, address dexRouter_) Ownable(owner_) {
         if (dividendVault_ == address(0)) revert ZeroAddress();
         dividendVault = SharedDividendVault(dividendVault_);
+        dexRouter = IPancakeRouter02(dexRouter_);
+        emit DexRouterSet(dexRouter_);
     }
 
-    /// @notice 0 = sell straight into the token's pair.
-    function setDexRouter(address router_) external onlyOwner {
-        if (router_ == address(0)) revert ZeroAddress();
+    /// @notice Step 1 of a router change: `router_` (0 = sell straight into the pair) takes effect after DEX_ROUTER_DELAY.
+    function proposeDexRouter(address router_) external onlyOwner {
+        pendingDexRouter = router_;
+        dexRouterEta = block.timestamp + DEX_ROUTER_DELAY;
+        emit DexRouterProposed(router_, dexRouterEta);
+    }
+
+    /// @notice Step 2: apply the proposed router once its delay has passed.
+    function acceptDexRouter() external onlyOwner {
+        uint256 eta = dexRouterEta;
+        if (eta == 0) revert NoProposal();
+        if (block.timestamp < eta) revert TooEarly();
+        address router_ = pendingDexRouter;
         dexRouter = IPancakeRouter02(router_);
+        delete pendingDexRouter;
+        delete dexRouterEta;
         emit DexRouterSet(router_);
+    }
+
+    function cancelDexRouter() external onlyOwner {
+        if (dexRouterEta == 0) revert NoProposal();
+        emit DexRouterCancelled(pendingDexRouter);
+        delete pendingDexRouter;
+        delete dexRouterEta;
     }
 
     function setKeeper(address keeper_) external onlyOwner {

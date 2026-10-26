@@ -161,8 +161,11 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
         handler.process(t, type(uint256).max, 1); // pair path
 
-        vm.prank(owner);
-        handler.setDexRouter(makeAddr("dexRouter"));
+        vm.startPrank(owner);
+        handler.proposeDexRouter(makeAddr("dexRouter"));
+        vm.warp(vm.getBlockTimestamp() + handler.DEX_ROUTER_DELAY());
+        handler.acceptDexRouter();
+        vm.stopPrank();
         vm.prank(keeper);
         vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
         handler.process(t, type(uint256).max, 1); // router path: refused before any approve / swap

@@ -143,8 +143,11 @@ contract FairSwapBackTest is FairMintTest {
     /// @dev The vault refusing the credit (e.g. operator revoked) never freezes trading; that half is the platform's.
     function test_vaultRefusingCredit_tradingContinues() public {
         (address t,) = _launched();
-        vm.prank(owner);
-        vault.setOperator(address(handler), address(0));
+        // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         uint256 unsold0 = vault.unsoldUnits(t);
         _buy(t, buyer, 2 ether);
         _sell(t, buyer, IERC20(t).balanceOf(buyer) / 2);

@@ -351,13 +351,16 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
 
     /// @notice Before the sale fills: sell `shares` back to the pad at the mint price, minus the exit fee (none once
     ///         the sale is stale). The mint fee paid is the platform's and is not returned.
-    function withdraw(address token, uint256 shares) external nonReentrant returns (uint256 payout) {
+    /// @param minPayout Reverts (Slippage) below this: a mint landing first can restart the stale clock and bring the
+    ///        exit fee back (flow review F3). Use `previewWithdraw` for the expected payout.
+    function withdraw(address token, uint256 shares, uint256 minPayout) external nonReentrant returns (uint256 payout) {
         Sale storage s = _minting(token);
         Position storage p = positions[token][msg.sender];
         if (shares == 0 || shares > p.shares) revert BadAmount();
 
         uint256 exitFee;
         (payout, exitFee) = _withdrawQuote(s, shares);
+        if (payout < minPayout) revert Slippage();
 
         p.shares -= shares.toUint16();
         s.sold -= shares.toUint16();

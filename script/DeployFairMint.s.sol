@@ -73,7 +73,7 @@ contract DeployFairMint is SharedPlatform {
         }
 
         (s.vault, s.migrator, s.tokenDeployer) = _shared(deployer, factory);
-        HolderRewardHandler handler = new HolderRewardHandler(deployer, s.vault, s.bucket);
+        HolderRewardHandler handler = new HolderRewardHandler(deployer, s.vault, s.bucket, router);
         FairMintPad pad = new FairMintPad(
             deployer, s.quoteRegistry, s.vault, s.bucket, address(handler), s.tokenDeployer, wbnb, factory
         );
@@ -82,7 +82,6 @@ contract DeployFairMint is SharedPlatform {
         _wireCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
 
         handler.setPad(address(pad));
-        handler.setDexRouter(router);
         handler.setKeeper(keeper);
 
         PlatformFeeBucket(s.bucket).setOperator(address(pad), true);

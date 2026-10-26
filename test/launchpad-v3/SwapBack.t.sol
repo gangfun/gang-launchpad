@@ -295,8 +295,11 @@ contract SwapBackTest is LaunchpadV3Test {
     /// @dev C (K-7): the vault refusing share writes (operator unbound) no longer freezes V3 transfers.
     function test_shareWriteRefused_tradingContinues() public {
         (address t,) = _dividendToken();
-        vm.prank(owner);
-        divVault.setOperator(address(handler), address(0));
+        // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
+        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
+        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
+        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         address a = address(uint160(0xB0000));
         vm.expectEmit(true, true, false, false, address(handler));
         emit PostGradHandlerBase.ShareWriteFailed(t, a, 0);
