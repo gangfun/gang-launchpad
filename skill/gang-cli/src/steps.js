@@ -1,4 +1,4 @@
-import { parseAbi, encodeFunctionData, decodeErrorResult, formatUnits } from 'viem'
+import { parseAbi, encodeFunctionData, decodeErrorResult, formatUnits, parseEther } from 'viem'
 import { bawPreview } from './baw.js'
 
 /**
@@ -25,6 +25,8 @@ export const ROUTER_ABI = parseAbi([
 ])
 /** Router deadline: half an hour, for a preview that is executed a few minutes later. */
 export const routerDeadline = () => BigInt(Math.floor(Date.now() / 1000) + 1800)
+/** Native BNB kept back for gas on a router call, as `gang buy` keeps for wrap + approve + buy. */
+export const GAS_RESERVE = parseEther('0.002')
 /** The router path applies: a router on this chain, a WBNB quote, and no --use-wbnb. */
 export const viaRouter = (ctx, quote, flag) => !!ctx.router && quote.toLowerCase() === ctx.wbnb.toLowerCase() && !flag('use-wbnb')
 

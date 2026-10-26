@@ -282,23 +282,91 @@ contract GangRouterTest is Test {
         router.v3BuyBNB{value: 0.1 ether}(token, 0, block.timestamp);
     }
 
-    /// @dev Worst case of a listed router: it buys for someone with its own money. It can't take anyone's tokens.
+    /// @dev Worst case of a listed router: it buys for someone with its own money. The trader has approved the core
+    ///      for both the quote and the token (as anyone who sells does), yet nothing of theirs can move: the cores have
+    ///      no entry that spends or sells for a trader, only buyFor / mintFor paid by the router itself.
     function test_v3_listedRouterOnlySpendsItsOwnQuote() public {
         address token = _v3Token(0);
+        vm.prank(agent2);
+        v3.buy(token, 0.01 ether, 0);
+        vm.prank(agent2);
+        IERC20(token).approve(address(v3), type(uint256).max); // a seller's standing approval
+
         address rogue = makeAddr("rogue");
         vm.prank(owner);
         v3.setRouter(rogue, true);
         wbnb.mintUnlimited(rogue, 1 ether);
-        vm.startPrank(rogue);
-        wbnb.approve(address(v3), type(uint256).max);
-        uint256 out = v3.buyFor(agent2, token, 0.1 ether, 0);
-        vm.stopPrank();
-        assertEq(IERC20(token).balanceOf(agent2), out, "a gift to the trader");
-        assertEq(IERC20(token).balanceOf(rogue), 0);
-        // the trader's own tokens can only leave through the trader's own sell
         vm.prank(rogue);
-        vm.expectRevert();
-        IERC20(token).transferFrom(agent2, rogue, out);
+        wbnb.approve(address(v3), type(uint256).max);
+
+        uint256 quoteBefore = wbnb.balanceOf(agent2);
+        uint256 tokensBefore = IERC20(token).balanceOf(agent2);
+        vm.prank(rogue);
+        uint256 out = v3.buyFor(agent2, token, 0.01 ether, 0);
+        assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader paid nothing");
+        assertEq(IERC20(token).balanceOf(agent2), tokensBefore + out, "only a gift to the trader");
+        assertEq(IERC20(token).balanceOf(rogue), 0);
+        assertEq(wbnb.balanceOf(rogue), 1 ether - 0.01 ether, "the router spent its own quote");
+
+        // no way to spend or sell for someone else
+        bytes[4] memory calls = [
+            abi.encodeWithSignature("sellFor(address,address,uint256,uint256)", agent2, token, tokensBefore, 0),
+            abi.encodeWithSignature("buyFrom(address,address,uint256,uint256)", agent2, token, 0.1 ether, 0),
+            abi.encodeWithSignature(
+                "createFor(address,string,string,string,address,address,(uint16,uint16,uint16,address))",
+                agent2,
+                "X",
+                "X",
+                "",
+                address(0),
+                address(0),
+                _tax(0)
+            ),
+            abi.encodeWithSignature("sell(address,uint256,uint256)", token, tokensBefore, 0) // sells the rogue's own (none)
+        ];
+        for (uint256 i = 0; i < calls.length; i++) {
+            vm.prank(rogue);
+            (bool ok,) = address(v3).call(calls[i]);
+            assertFalse(ok, "no spend-for-someone entry");
+        }
+        assertEq(IERC20(token).balanceOf(agent2), tokensBefore + out, "trader's tokens untouched");
+        assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader's quote untouched");
+    }
+
+    /// @dev Same for 打新: a listed router can mint for a trader with its own quote, and nothing else. The trader's
+    ///      position (withdraw / refund) and reward (claim) stay msg.sender-only.
+    function test_fair_listedRouterOnlySpendsItsOwnQuote() public {
+        address token = _fairSale();
+        vm.prank(agent2);
+        fair.mint(token, 20, 20);
+
+        address rogue = makeAddr("rogue");
+        vm.prank(owner);
+        fair.setRouter(rogue, true);
+        wbnb.mintUnlimited(rogue, 1 ether);
+        vm.prank(rogue);
+        wbnb.approve(address(fair), type(uint256).max);
+
+        uint256 quoteBefore = wbnb.balanceOf(agent2);
+        vm.prank(rogue);
+        fair.mintFor(agent2, token, 10, 10);
+        (uint16 shares,) = fair.positions(token, agent2);
+        assertEq(shares, 30, "gift of 10 shares");
+        assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader paid nothing");
+
+        bytes[3] memory calls = [
+            abi.encodeWithSignature("withdrawFor(address,address,uint256)", agent2, token, 30),
+            abi.encodeWithSignature("refundFor(address,address)", agent2, token),
+            abi.encodeWithSignature("withdraw(address,uint256)", token, 30) // the rogue's own position (none)
+        ];
+        for (uint256 i = 0; i < calls.length; i++) {
+            vm.prank(rogue);
+            (bool ok,) = address(fair).call(calls[i]);
+            assertFalse(ok, "no spend-for-someone entry");
+        }
+        (shares,) = fair.positions(token, agent2);
+        assertEq(shares, 30, "trader's position untouched");
+        assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader's quote untouched");
     }
 
     function test_unknownTokenAndNoCore() public {

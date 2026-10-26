@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter } from './steps.js'
+import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -270,7 +270,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet, refunds come back as BNB)
     if (viaRouter(ctx, c.quote, flag)) {
       const native = await ctx.client.getBalance({ address: me })
-      if (native < quoteIn) fail('not enough BNB for this buy', { haveBnb: formatUnits(native, 18), needBnb: raw, hint: 'add --use-wbnb to pay from WBNB instead' })
+      if (native < quoteIn + GAS_RESERVE) {
+        fail('not enough BNB for this buy (native BNB must also cover gas)', {
+          haveBnb: formatUnits(native, 18), needBnb: raw, reserveForGas: formatUnits(GAS_RESERVE, 18), hint: 'add --use-wbnb to pay from WBNB instead',
+        })
+      }
       const sim = await simulate(ctx, me, ctx.router, GANG_ROUTER_ABI, 'v3BuyBNB', [token, 0n, routerDeadline()], quoteIn)
       if (sim.failed) return out({ success: false, step: 'buy', via: 'router', ...sim.failed })
       const minOut = minOf(sim.result, slippage)

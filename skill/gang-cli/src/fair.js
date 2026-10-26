@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
-import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter } from './steps.js'
+import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -283,7 +283,11 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     // WBNB sale: pay native BNB through the router in one tx (it wraps; the position is still this wallet's)
     if (viaRouter(ctx, sale.quote, flag)) {
       const native = await ctx.client.getBalance({ address: me })
-      if (native < need) return fail('not enough BNB for this mint', { haveBnb: formatUnits(native, 18), needBnb: formatUnits(need, 18), hint: 'add --use-wbnb to pay from WBNB instead' })
+      if (native < need + GAS_RESERVE) {
+        return fail('not enough BNB for this mint (native BNB must also cover gas)', {
+          haveBnb: formatUnits(native, 18), needBnb: formatUnits(need, 18), reserveForGas: formatUnits(GAS_RESERVE, 18), hint: 'add --use-wbnb to pay from WBNB instead',
+        })
+      }
       const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: 'fairMintBNB', args: [token, accepted, BigInt(minShares), routerDeadline()] })
       const dry = await dryRun(ctx, me, ctx.router, data, need)
       if (dry) return out({ success: false, step: 'mint', via: 'router', ...dry })
