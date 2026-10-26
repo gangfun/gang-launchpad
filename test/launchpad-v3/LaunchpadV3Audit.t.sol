@@ -6,7 +6,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
 contract SixDecimalQuoteV3 is ERC20("Six", "SIX") {
@@ -104,5 +105,61 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.stopPrank();
         assertGt(divVault.pending(t, agent), before, "agent earns agent2's sell tax");
         assertEq(divVault.shares(t, agent2), 0);
+    }
+
+    /// @dev Anyone can deploy a TaxLaunchTokenV3 bound to themselves with our handler and a 1 bps rate (its "platform
+    ///      part" would be 50× its tax). Only route-registered tokens may accrue: the fake one's taxed transfer reverts.
+    function test_audit_unregisteredTokenCannotAccrue() public {
+        TaxTokenDeployerV3 d = new TaxTokenDeployerV3();
+        TaxLaunchTokenV3 fake = TaxLaunchTokenV3(d.deploy("Fake", "FAKE", 1, 1, address(handler), ""));
+        address fakePair = makeAddr("fakePair");
+        fake.unlock(makeAddr("fakeMigrator"));
+        fake.setPair(fakePair);
+        address user = makeAddr("fakeUser");
+        fake.transfer(user, 1_000_000 ether); // from the "launchpad" (this test): untaxed
+        vm.prank(user);
+        vm.expectRevert(PostGradTaxHandlerV3.UnknownToken.selector);
+        fake.transfer(fakePair, 100_000 ether); // a taxed sell into the fake pair → notifyTax refuses
+        assertEq(handler.accruedTax(address(fake)), 0);
+        assertEq(handler.accruedPlatformTax(address(fake)), 0);
+    }
+
+    /// @dev The split pays in the route's quote; the pair the tax is sold into must be token / that quote — on the
+    ///      pair path and on the DEX-router path (which picks its pool from the path and used to skip the check).
+    function test_audit_processChecksPairQuote_bothPaths() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+        _graduate(t);
+        _poolSell(t, address(uint160(0xB0000)), 1_000_000 ether);
+        assertGt(handler.accruedTax(t), 0);
+
+        // a pair of the token against another quote (e.g. a rogue pool) stands in for the token's pair
+        address other = pairFactory.createPair(t, address(wbnb));
+        vm.mockCall(t, abi.encodeWithSignature("pair()"), abi.encode(other));
+
+        vm.prank(keeper);
+        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
+        handler.process(t, 1); // pair path
+
+        vm.prank(owner);
+        handler.setDexRouter(makeAddr("dexRouter"));
+        vm.prank(keeper);
+        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
+        handler.process(t, 1); // router path: refused before any approve / swap
+
+        vm.clearMockedCalls();
+        assertGt(handler.accruedTax(t), 0, "nothing consumed");
+    }
+
+    /// @dev With the token's real pair the check passes and the tax is processed as before.
+    function test_audit_processWithRealPair() public {
+        address t = _create(_tax(200, 200, 0, treasury));
+        _graduate(t);
+        _poolSell(t, address(uint160(0xB0000)), 1_000_000 ether);
+        uint256 before = quoteTok.balanceOf(treasury);
+        vm.prank(keeper);
+        uint256 out = handler.process(t, 1);
+        assertGt(out, 0);
+        assertGt(quoteTok.balanceOf(treasury), before, "recipient paid in the quote");
+        assertEq(handler.accruedTax(t), 0);
     }
 }
