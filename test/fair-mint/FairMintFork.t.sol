@@ -238,6 +238,9 @@ contract FairMintForkTest is Test {
         console.log("raise USDT (1e18)", raiseQuote / 1e18, "spot", spot / 1e18);
         assertApproxEqRel(raiseQuote, spot, 0.05e18, "TWAP within 5% of spot");
 
+        // a non-WBNB quote needs a fixed rate: the multisig sets it (here from the pool's TWAP, as ops would)
+        vm.prank(owner);
+        reg.setQuote(USDT, true, raiseQuote);
         address t = _create(USDT, bridge);
         _fill(t, USDT);
         (,,,,,,,,,,, uint128 price,,,) = pad.sales(t);

@@ -245,11 +245,13 @@ contract FairMintTest is Test {
         assertEq(price, 1.8 ether);
     }
 
-    /// @dev Non-registry quote priced by a V2 pair against WBNB: 300 Q : 150 WBNB → 1 BNB = 2 Q.
+    /// @dev A listed quote without a fixed rate would be priced by its creator-picked reference pool at spot — one flash
+    ///      swap in the create tx moves that by orders of magnitude (internal audit round 2) — so create refuses it.
+    ///      previewCreate still shows what the pool says (300 Q : 150 WBNB → 1 BNB = 2 Q) for ops picking a rate.
     function test_create_refPoolAgainstWbnb() public {
         MockSPCXB q = new MockSPCXB();
         vm.prank(owner);
-        registry.setQuote(address(q), true, 0); // listed, priced by its reference pool (no override)
+        registry.setQuote(address(q), true, 0); // listed, but no fixed rate
         address ref = _seedPair(address(q), address(wbnb), 300 ether, 150 ether);
         (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(q), ref, 15 ether);
         assertEq(raiseQuote, 30 ether);
@@ -258,8 +260,15 @@ contract FairMintTest is Test {
         q.mintUnlimited(dev, 1 ether);
         vm.startPrank(dev);
         q.approve(address(pad), type(uint256).max);
-        address t = pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
+        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
+        pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
         vm.stopPrank();
+
+        // with a fixed rate (30 Q per 15 BNB) it creates at that rate, whatever the pool says
+        vm.prank(owner);
+        registry.setQuote(address(q), true, 30 ether);
+        vm.prank(dev);
+        address t = pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
         (,,, uint256 sharePrice,,) = _sale(t);
         assertEq(sharePrice, price);
     }

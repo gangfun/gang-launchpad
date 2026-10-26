@@ -63,7 +63,7 @@ contract FairMintAuditTest is FairMintTest {
         assertEq(wbnb.balanceOf(m), before + got);
     }
 
-    /// @dev A-3 / A-6: only WBNB or a listed 18-decimal quote.
+    /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate (rate 0: test_create_refPoolAgainstWbnb).
     function test_audit_quoteWhitelist() public {
         MockSPCXB unlisted = new MockSPCXB();
         address ref = _seedPair(address(unlisted), address(wbnb), 300 ether, 150 ether);

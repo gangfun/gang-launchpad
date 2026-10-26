@@ -30,9 +30,16 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         pad.buyFor(makeAddr("pair"), t, 0.01 ether, 0);
     }
 
-    /// @dev A-3 / A-6: only WBNB or a listed 18-decimal quote.
+    /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate.
     function test_audit_quoteWhitelist() public {
         MockSPCXB unlisted = new MockSPCXB();
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        pad.create("Q", "Q", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
+
+        // listed without a fixed rate: would be priced from a creator-picked pool at spot (flash-movable) — refused
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(unlisted), true, 0);
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
         pad.create("Q", "Q", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));

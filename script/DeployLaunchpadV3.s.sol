@@ -19,11 +19,11 @@ import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQ
 /// @notice New: DividendVault (floor 10k), TaxRouterV3, RecipientRegistry, PostGradTaxHandlerV3, TaxTokenDeployerV3,
 ///         LaunchpadV3, MigratorV2, and — unless QUOTE_REGISTRY / PLATFORM_BUCKET name the ones DeployFairMint made —
 ///         the QuoteRegistry and PlatformFeeBucket shared with 打新 (see SharedPlatform; never the V2 ones). Listed
-///         quotes: mainnet USDT (priced by its pool); testnet the test quote and a blacklist quote (15 units = 15 BNB).
+///         quotes: mainnet USDT at a fixed rate (USDT_PER_15_BNB); testnet the test quote and a blacklist quote (15 units = 15 BNB).
 ///         Testnet reuses the 打新 testnet Agent ID registry and test quote. Everything is wired before setMigrator,
 ///         the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless LAUNCHPAD_V3_MAINNET_OK=true (spec: no mainnet broadcast before audit).
-///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
+///      Env: DEPLOYER_PRIVATE_KEY; USDT_PER_15_BNB (mainnet: USDT units, 18 decimals, per 15 BNB); OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
 ///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET (reuse), RECIPIENT + RECIPIENT_LABEL
 ///      (listed in RecipientRegistry; testnet default: a fixed demo treasury address).
 ///      Mainnet: link the live PoolCheck with
@@ -72,7 +72,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         (s.quoteRegistry, s.bucket) = _platform(mainnet, deployer, keeper, M.V2_PLATFORM_BUCKET);
         if (mainnet) {
             s.agentId = M.AGENT_ID_REGISTRY;
-            _listQuote(s.quoteRegistry, M.USDT, 0);
+            _listQuote(s.quoteRegistry, M.USDT, vm.envUint("USDT_PER_15_BNB"));
         } else {
             s.agentId = vm.envOr("AGENT_ID", T.AGENT_ID_REGISTRY);
             s.testQuote = vm.envOr("TEST_QUOTE", T.TEST_QUOTE);
@@ -114,6 +114,8 @@ contract DeployLaunchpadV3 is SharedPlatform {
         vault.setLaunchpad(address(pad));
         vault.setOperator(address(router), true);
         vault.setOperator(address(handler), true);
+        // the migrator is tax-exempt and can never claim: a bag sent there would earn dividends that stay stuck
+        vault.setExcluded(address(mig), true);
 
         router.setLaunchpad(address(pad));
         router.setSource(address(handler), true);
@@ -155,6 +157,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         if (vault.launchpad() != s.pad) revert WiringCheck("vault.launchpad");
         if (!vault.operators(s.router) || !vault.operators(s.handler)) revert WiringCheck("vault operators");
         if (vault.minimumShareBalance() != MIN_SHARE) revert WiringCheck("vault floor");
+        if (!vault.excluded(s.migrator)) revert WiringCheck("vault excludes migrator");
         if (router.launchpad() != s.pad || !router.sources(s.pad) || !router.sources(s.handler)) {
             revert WiringCheck("router launchpad / sources");
         }

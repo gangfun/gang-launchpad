@@ -85,7 +85,7 @@ const HINTS = {
   FeeOnTransferQuote: 'the quote token takes a fee on transfer; it cannot be used',
   RefPoolRequired: 'this quote needs --ref-pool (a Pancake pool pricing it)',
   PriceTooSmall: 'the raise in this quote is too small to split into 10,000 shares',
-  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token such as USDT); leave it out to use WBNB',
+  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token with a fixed rate, such as USDT); leave it out to use WBNB',
   RouterNeedsGate: 'this sale has no Agent gate, so the router path is off; re-run with --use-wbnb to mint directly',
 }
 

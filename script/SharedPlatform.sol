@@ -46,8 +46,9 @@ abstract contract SharedPlatform is Script {
         }
     }
 
-    /// @dev Listed quotes: WBNB is implicit; anything else must be enabled here (and have 18 decimals, checked by the
-    ///      pads). graduationQuoteAmount 0 = priced by its reference pool at create.
+    /// @dev Listed quotes: WBNB is implicit; anything else must be enabled here WITH a fixed rate (quote units per
+    ///      15 BNB; the pads refuse a rate of 0, i.e. pricing from a creator-picked pool) and have 18 decimals.
+    ///      Mainnet USDT: USDT_PER_15_BNB, set by the multisig and kept current as BNB moves.
     function _listQuote(address registry, address quote, uint256 graduationQuoteAmount) internal {
         QuoteRegistry reg = QuoteRegistry(registry);
         (bool enabled, uint256 amount) = reg.quotes(quote);

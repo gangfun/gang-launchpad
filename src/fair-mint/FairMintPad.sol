@@ -548,11 +548,15 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         return address(agentIdRegistry);
     }
 
-    /// @dev WBNB or a QuoteRegistry-enabled quote with 18 decimals: no fee-on-transfer / hook / low-decimal quotes
-    ///      (6 decimals would round holder rewards to 0 in DividendVault).
+    /// @dev WBNB, or a QuoteRegistry-enabled 18-decimal quote WITH a fixed rate (graduationAmount > 0): no
+    ///      fee-on-transfer / hook / low-decimal quotes (6 decimals would round holder rewards to 0 in DividendVault),
+    ///      and no pricing from a creator-picked reference pool, whose spot price one flash swap can move by 1000×
+    ///      within the create tx (2026-10-26 internal audit round 2). The multisig keeps the rate current.
     function _requireQuote(address quote) internal view {
         if (quote == wbnb) return;
-        if (!quoteRegistry.isQuoted(quote) || IERC20Metadata(quote).decimals() != 18) revert QuoteNotAllowed();
+        if (quoteRegistry.graduationAmount(quote) == 0 || IERC20Metadata(quote).decimals() != 18) {
+            revert QuoteNotAllowed();
+        }
     }
 
     function _requireAgent(address gate, address account) internal view {

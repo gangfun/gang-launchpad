@@ -82,7 +82,7 @@ const HINTS = {
   ThinReferencePool: '--ref-pool is too shallow; pick the deepest pool for this quote',
   GradAmtTooSmall: 'the quote token is priced so high that the graduation amount rounds below the minimum',
   NothingOwed: 'the router owes this token\'s recipient nothing',
-  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token such as USDT); leave it out to use WBNB',
+  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token with a fixed rate, such as USDT); leave it out to use WBNB',
   RouterNeedsGate: 'the router path is off while the Agent gate is off; re-run with --use-wbnb to buy directly',
 }
 
