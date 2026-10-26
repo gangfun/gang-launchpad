@@ -19,11 +19,12 @@
 
 - `LaunchpadV3.buyFor(trader, token, quoteIn, minTokensOut)`：路由付钱（报价币从路由扣）；代币、分红权重、Agent 门槛和单地址上限都按 `trader` 算；上限 / 毕业截断时多付的退回给付款的路由，路由再退给用户。
 - `FairMintPad.mintFor(trader, token, shares, minShares)`：路由付成本 + 打新手续费；份额、代币、手续费托管都记在 `trader` 名下，之后的撤出 / 退款只付给 `trader`。
+- 两个入口都**只在准入开启时可用**（V3 看 `agentGateEnabled`，打新看该 sale 创建时快照的准入），否则 `RouterNeedsGate`。准入关闭时路由能把 `trader` 指定成未来的池子地址，在发射 / 毕业前往池子里塞代币、分走流动性（内部审计 A-2，`docs/AUDIT-BRIEF-2026-10-26.md` §10）。直接买 / 打新不受影响。
 
 没有对应的「代卖」「代撤出」「代退款」「代领取」：
 
 - 毕业 / 发射前代币是锁定的，只有核心能转（`TransfersLocked`），用户的币进不了路由；如果核心替路由去扣用户的币，一个有问题的路由就能强卖任何人的持仓。所以卖出、撤出、退款、领取都只能由本人直接调用核心。
-- 因此一个被列入白名单的路由最坏也只能「用自己的钱替别人买」：拿不走任何人的储备、代币或份额。测试 `test_v3_listedRouterOnlySpendsItsOwnQuote` / `test_fair_listedRouterOnlySpendsItsOwnQuote` 用一个列入白名单的流氓路由验证：交易者已为卖出给核心授权了代币和报价币，流氓路由也只能自掏腰包替交易者买 / 打新，交易者的报价币、代币、份额都没少；核心上不存在代卖 / 代撤出 / 代退款之类的入口。
+- 因此在准入开启时，一个被列入白名单的路由最坏也只能「用自己的钱替别人买」：拿不走任何人的储备、代币或份额。测试 `test_v3_listedRouterOnlySpendsItsOwnQuote` / `test_fair_listedRouterOnlySpendsItsOwnQuote` 用一个列入白名单的流氓路由验证：交易者已为卖出给核心授权了代币和报价币，流氓路由也只能自掏腰包替交易者买 / 打新，交易者的报价币、代币、份额都没少；核心上不存在代卖 / 代撤出 / 代退款之类的入口。
 - 用户要给每个版本的路由单独授权（ERC-20 路径），或者直接发 BNB（BNB 路径，无需授权）；用不用新路由由用户决定。
 
 `routers` 名单由核心 owner 管理（`setRouter`，有 `RouterSet` 事件）。主网 owner 应是多签。
@@ -47,7 +48,7 @@
 
 ## 验证
 
-- 单元测试 `test/router/GangRouter.t.sol` 19 个：BNB / 报价币两种路径、交易者拿币、门槛和上限按交易者、分红权重归交易者、截断退款、经路由毕业 / 发射、截止时间、只有白名单路由能代买、流氓路由只能花自己的钱、失败后退款给交易者本人。全仓 152 个通过。
+- 单元测试 `test/router/GangRouter.t.sol` 19 个：BNB / 报价币两种路径、交易者拿币、门槛和上限按交易者、分红权重归交易者、截断退款、经路由毕业 / 发射、截止时间、只有白名单路由能代买、流氓路由只能花自己的钱、失败后退款给交易者本人。全仓 209 个通过（含内部审计回归）。
 - BSC 测试网 fork 上：部署两个核心 + 路由、路由冒烟、V3 整轮（毕业 + 外盘税）和打新整轮（打满 + 发射 + 分账 + 领取）全部通过，打新的关键数字和第一次测试网整轮一致。
 - BSC 测试网：部署与冒烟见 `docs/TESTNET-CORE-ROUTER-2026-10-26.md`。
 
@@ -55,6 +56,6 @@
 
 | 合约 | 运行时字节码 |
 |---|---|
-| LaunchpadV3 | 20,257 B |
-| FairMintPad | 16,321 B |
+| LaunchpadV3 | 22,065 B |
+| FairMintPad | 16,695 B |
 | GangRouter | 4,142 B |
