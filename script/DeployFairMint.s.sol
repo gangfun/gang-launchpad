@@ -5,7 +5,7 @@ import {console} from "forge-std/Script.sol";
 import {SharedPlatform} from "./SharedPlatform.sol";
 import {FairMintMainnetRefs as M, FairMintTestnetRefs as T} from "../config/FairMintDeployRefs.sol";
 import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
-import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {FairMintPad} from "../src/fair-mint/FairMintPad.sol";
 import {HolderRewardHandler} from "../src/fair-mint/HolderRewardHandler.sol";
@@ -104,7 +104,7 @@ contract DeployFairMint is SharedPlatform {
 
         vm.stopBroadcast();
 
-        _check(s, keeper);
+        _check(s, keeper, owner, mainnet);
         _log(s, owner, deployer);
     }
 
@@ -114,7 +114,7 @@ contract DeployFairMint is SharedPlatform {
         ops[0] = s.handler;
     }
 
-    function _check(Stack memory s, address keeper) internal view {
+    function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
         HolderRewardHandler handler = HolderRewardHandler(s.handler);
         FairMintPad pad = FairMintPad(s.pad);
         _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
@@ -126,7 +126,9 @@ contract DeployFairMint is SharedPlatform {
         if (address(pad.migrator()) != s.migrator) revert WiringCheck("pad.migrator");
         if (address(pad.agentIdRegistry()) != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
         if (pad.taxHandler() != s.handler) revert WiringCheck("pad.taxHandler");
-        _checkBucket(s.bucket, keeper, s.pad, s.handler);
+        _checkBucket(mainnet, M.V2_PLATFORM_BUCKET, s.bucket, keeper, s.pad, s.handler);
+        address[7] memory owned = [s.vault, s.migrator, s.tokenDeployer, s.handler, s.pad, s.quoteRegistry, s.bucket];
+        for (uint256 i = 0; i < owned.length; i++) _checkOwner(owner, owned[i]);
         if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }

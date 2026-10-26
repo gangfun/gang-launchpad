@@ -12,7 +12,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {LaunchTokenV3} from "./LaunchTokenV3.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {SharedDividendVault} from "../common/SharedDividendVault.sol";
-import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
 import {SharedMigrator} from "../common/SharedMigrator.sol";
 import {TokenDeployer} from "../common/TokenDeployer.sol";
@@ -140,6 +140,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     error FeeOnTransferQuote();
     error WrongMigrator();
     error RouterNeedsGate();
+    error VaultFloorTooHigh();
 
     constructor(
         address owner_,
@@ -264,6 +265,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     ) internal returns (address token) {
         token = tokenDeployer.deployTax(name, symbol, tax.buyTaxBps, tax.sellTaxBps, address(taxHandler), uri);
         if (tax.dividendBps > 0) {
+            // internal audit 5 C-F4 (as FairMintPad): a floor the vault owner raised above TAXED_MIN_SHARE would leave
+            // the new token with no shareholders and send the holders' part of its tax elsewhere
+            if (dividendVault.minimumShareBalanceOf(address(this)) > TAXED_MIN_SHARE) revert VaultFloorTooHigh();
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);
         }
@@ -505,11 +509,11 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         return agentIdRegistry.balanceOf(account) > 0;
     }
 
-    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder dividends to 0 in DividendVault), priced like
-    ///      LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_lockGradAmt).
+    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder dividends to 0 in the shared vault), priced
+    ///      like LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_lockGradAmt).
     ///      2026-10-27 product decision: keep V2's reference-pool pricing (users are used to it), accepting internal
     ///      audit R2-1 again: a Pancake V2 pair (reserves) or a V3 pool without TWAP history is read at spot.
-    ///      A fee-on-transfer quote is priced at what arrives (as V2).
+    ///      A fee-on-transfer quote is refused at its first pull (FeeOnTransferQuote, audit 4).
     function _requireQuote(address quote) internal view {
         if (quote == wbnb) return;
         // low-level: a high-level call to an address without code reverts outside any try/catch

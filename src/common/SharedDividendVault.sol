@@ -101,6 +101,7 @@ contract SharedDividendVault is Ownable2Step {
     error NoShares();
     error TooManyUnits();
     error OperatorAlreadyBound();
+    error NotAContract();
 
     constructor(address owner_) Ownable(owner_) {
         excluded[address(0)] = true;
@@ -133,7 +134,11 @@ contract SharedDividendVault is Ownable2Step {
         emit OperatorSet(account, launchpad);
     }
 
+    /// @notice Exclude a contract (a pool, a locker, an exchange's contract wallet) from shares; un-excluding is
+    ///         free. Internal audit 5 C-F5: only an address with code can be excluded, so the owner can't exclude every
+    ///         holder but chosen wallets and steer all future dividends to them.
     function setExcluded(address account, bool isExc) external onlyOwner {
+        if (isExc && account.code.length == 0) revert NotAContract();
         excluded[account] = isExc;
         emit Excluded(account, isExc);
     }

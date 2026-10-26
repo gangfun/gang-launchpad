@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {PostGradHandlerBase} from "../common/PostGradHandlerBase.sol";
 import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol";
@@ -18,11 +18,12 @@ import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
 ///           every sell into the pair (`swapBack`), or by the keeper when no sells come (`process`) — and each
 ///           chunk's quote is split the same way.
 ///         Split: the platform's part (0.5% of the trade's volume, counted per trade since buys and sells may be taxed
-///         at different rates) → `dividendBps` of the rest to DividendVault → the remainder to the recipient, in quote.
-/// @dev Must be a DividendVault operator and a PlatformFeeBucket operator.
+///         at different rates) → `dividendBps` of the rest to the shared dividend vault → the remainder to the
+///         recipient, in quote.
+/// @dev Must be the shared dividend vault's operator for LaunchpadV3 and a SharedPlatformFeeBucket operator.
 ///      Never reverts because of the recipient: the push is a low-level transfer; a failed one is booked as `owedOf`
 ///      (held here, never sold by `process`) and anyone can `release` it later. Every payment that reaches the
-///      recipient emits `TaxPaid`. A dividend leg with zero total shares would strand funds in DividendVault →
+///      recipient emits `TaxPaid`. A dividend leg with zero total shares would strand funds in the vault →
 ///      recipient, else platform. H2: the DEX pair never holds dividend shares.
 contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBase {
     using SafeERC20 for IERC20;
@@ -200,10 +201,11 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
             if (platform > taxAmount) platform = taxAmount;
         }
         // the holders' share of the rest goes to the holders of this moment; with none, to the recipient (or the
-        // platform). The token calls this before it syncs the trade's shares, so "this moment" is just before the
-        // trade: a seller is credited for its own sell's tax on its share before the sell (it held until then), a buyer
-        // is not credited for its own buy's tax.
+        // platform). Internal audit 5 C-F7: as on the bonding curve (A-6), nobody gets a part of its own trade's tax —
+        // on a sell the seller's share is synced to what it holds after the sell before the credit (the token has
+        // already moved the tokens), and a buyer's share is only written after this call.
         Route memory r = routeOf[token];
+        if (r.dividendBps > 0 && to == TaxLaunchTokenV3(token).pair()) _syncShare(token, from);
         uint256 toHolders = ((taxAmount - platform) * r.dividendBps) / BPS;
         if (!_creditHolders(token, toHolders) && r.recipient == address(0)) platform += toHolders;
         accruedPlatformTax[token] += platform;

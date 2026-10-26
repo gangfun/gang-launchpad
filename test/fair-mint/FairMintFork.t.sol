@@ -175,7 +175,10 @@ contract FairMintForkTest is Test {
         return IV3PoolLite(pool).token0() == WBNB ? p1per0 : Math.mulDiv(Q96, Q96, p1per0);
     }
 
+    /// @dev One keeper chunk in a fresh block (audit 5: one chunk budget per token per block, and no chunk below the
+    ///      block's reference price — a sell earlier in the same block may have moved it).
     function _process(address token, address quote) internal returns (uint256 quoteOut) {
+        vm.roll(vm.getBlockNumber() + 1);
         address[] memory path = new address[](2);
         path[0] = token;
         path[1] = quote;
@@ -308,7 +311,7 @@ contract FairMintForkTest is Test {
         // the same holder again, a small chunk pending (warm storage: the usual case)
         deal(WBNB, buyer, 1 ether);
         _swap(buyer, WBNB, t, 1 ether);
-        vm.roll(block.number + 1); // one swap-back per block
+        vm.roll(vm.getBlockNumber() + 1); // one swap-back per block
         g = gasleft();
         _swap(_minter(11), t, WBNB, amount);
         uint256 gasWarm = g - gasleft();

@@ -16,7 +16,7 @@ interface ITaxHandlerV3 {
     /// @notice LaunchpadV3 only, once per taxed token at create.
     /// @param recipient    Listed address that receives the rest of the tax in quote; 0 only when `dividendBps` is
     ///                     10_000 (all of the non-platform tax goes to holders).
-    /// @param dividendBps  Share of the tax after the platform's part that goes to DividendVault (0 allowed).
+    /// @param dividendBps  Share of the tax after the platform's part that goes to the shared dividend vault (0 allowed).
     function register(address token, address quote, address recipient, uint16 dividendBps) external;
 
     /// @notice LaunchpadV3 only (bonding tax). Pulls `amount` of the token's quote from the caller; `platformAmount`

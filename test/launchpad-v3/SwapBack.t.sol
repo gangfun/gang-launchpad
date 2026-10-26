@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
@@ -10,8 +11,9 @@ import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
-/// @notice Pool tax after graduation: sold in chunks — before a taxed sell (≤ 0.5% of the pair's token side and
-///         ≤ 25% of that sell, once per block), by the keeper otherwise — with the holders' part credited when paid.
+/// @notice Pool tax after graduation: sold in chunks — before a taxed sell (≤ 25% of that sell), by the keeper
+///         otherwise — all within one budget per token per block (0.5% of the token side at the block's first chunk
+///         attempt), never below the block's reference price by more than 2%; the holders' part credited when paid.
 contract SwapBackTest is LaunchpadV3Test {
     function _dividendToken() internal returns (address t, MockPair pair) {
         t = _create(_tax(300, 300, 5000, treasury));
@@ -63,21 +65,32 @@ contract SwapBackTest is LaunchpadV3Test {
         assertEq(handler.accruedTax(t), accrued - sold / 4 + (sold * 300) / BPS);
     }
 
-    /// @dev D1: once per token per block; again next block.
-    function test_swapBack_oncePerBlock() public {
-        (address t,) = _dividendToken();
+    /// @dev Audit 5 (B-F1 / A): one budget per token per block, drawn by what is sold — sells in the same block share
+    ///      it (a dust sell only uses dust of it), the next block opens a fresh one.
+    function test_swapBack_blockBudgetSharedBySells() public {
+        (address t, MockPair pair) = _dividendToken();
         _buyBacklog(t, 12);
         address seller = address(uint160(0xC0000));
-        uint256 sold = IERC20(t).balanceOf(seller) / 4;
-        _poolSell(t, seller, sold);
+        uint256 budget = _cap(t, pair);
+        uint256 small = budget; // its chunk: a quarter of it
         uint256 accrued = handler.accruedTax(t);
-        _poolSell(t, seller, sold); // same block
-        assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "no second chunk this block");
-        vm.roll(block.number + 1);
+        vm.prank(seller);
+        IERC20(t).transfer(address(pair), small); // a plain transfer into the pair: the chunk runs, no swap after
+        uint256 first = accrued + (small * 300) / BPS - handler.accruedTax(t);
+        assertEq(first, small / 4, "a quarter of the sell");
+        (, uint96 used) = handler.windowOf(t);
+        assertEq(used, first, "budget drawn by what was sold");
+        assertEq(handler.maxChunk(t), budget - first, "the rest of the budget is left this block");
+        // a second, larger sell in the same block takes what is left — no more
         accrued = handler.accruedTax(t);
-        uint256 chunk = _expectedChunk(t, sold);
-        _poolSell(t, seller, sold);
-        assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "next block: a chunk again");
+        uint256 big = IERC20(t).balanceOf(seller) / 2;
+        vm.prank(seller);
+        IERC20(t).transfer(address(pair), big);
+        uint256 second = accrued + (big * 300) / BPS - handler.accruedTax(t);
+        assertEq(first + second, budget, "the whole block budget, not more");
+        assertEq(handler.maxChunk(t), 0, "spent this block");
+        vm.roll(vm.getBlockNumber() + 1);
+        assertGt(handler.maxChunk(t), 0, "next block: a fresh budget");
     }
 
     /// @dev D1: a transfer into the pair that pays no tax (dust) triggers nothing — no transfer-1-and-skim loop.
@@ -89,18 +102,35 @@ contract SwapBackTest is LaunchpadV3Test {
         vm.prank(seller);
         IERC20(t).transfer(address(pair), 33); // 3% of 33 wei = 0
         assertEq(handler.accruedTax(t), accrued, "no chunk, no tax");
-        assertEq(handler.lastSwapBackBlock(t), 0);
+        (uint64 windowBlock,) = handler.windowOf(t);
+        assertEq(windowBlock, 0, "no chunk attempt");
     }
 
-    /// @dev D2: the pair holds an unsynced balance (someone mid-way adding liquidity): no chunk swallows it.
+    /// @dev D2 / audit 5 B-F2: an unsynced balance worth at least half the sell (someone mid-way adding liquidity)
+    ///      skips the chunk and spends the block's budget; a dust donation is absorbed and the chunk runs.
     function test_swapBack_skippedWhilePairUnsynced() public {
         (address t, MockPair pair) = _dividendToken();
         _buyBacklog(t, 12);
-        quoteTok.mintUnlimited(address(pair), 1 ether); // one side sent, not minted
+        uint256 sold = 1_000_000 ether;
+        (uint256 rT, uint256 rQ) = _reserves(t, pair);
+        quoteTok.mintUnlimited(address(pair), (sold * rQ) / rT); // one side sent, not minted: about the sell's value
+        uint256 accrued = handler.accruedTax(t);
+        vm.prank(address(uint160(0xC0000)));
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "skipped");
+        assertEq(handler.maxChunk(t), 0, "and the block's budget is spent");
+    }
+
+    function test_swapBack_dustDonationDoesNotSkip() public {
+        (address t, MockPair pair) = _dividendToken();
+        _buyBacklog(t, 12);
+        quoteTok.mintUnlimited(address(pair), 1); // B-F2: 1 wei used to skip the chunk for free
         uint256 accrued = handler.accruedTax(t);
         uint256 sold = 1_000_000 ether;
-        _poolSell(t, address(uint160(0xC0000)), sold);
-        assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "skipped");
+        uint256 chunk = _expectedChunk(t, sold);
+        vm.prank(address(uint160(0xC0000)));
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "the chunk ran anyway");
     }
 
     /// @dev B: previewSell quotes the sell with its chunk included (Pancake math, the 0.25% fee).
@@ -182,7 +212,7 @@ contract SwapBackTest is LaunchpadV3Test {
     }
 
     /// @dev Buys never swap back (the pair is locked during a buy): the keeper drains a buy-only backlog chunk by
-    ///      chunk, any number per block (D).
+    ///      chunk, one block budget at a time (audit 5 B-F4: a second call in the same block finds it spent).
     function test_keeper_drainsBuyOnlyBacklogInChunks() public {
         (address t, MockPair pair) = _dividendToken();
         _buyBacklog(t, 20);
@@ -192,9 +222,16 @@ contract SwapBackTest is LaunchpadV3Test {
             assertLe(chunk, _cap(t, pair), "never more than one chunk");
             vm.prank(keeper);
             handler.process(t, chunk, 1);
+            if (handler.accruedTax(t) > 0) {
+                assertEq(handler.maxChunk(t), 0, "one budget per block");
+                vm.prank(keeper);
+                vm.expectRevert(PostGradHandlerBase.ZeroAmount.selector);
+                handler.process(t, 1, 1);
+            }
+            vm.roll(vm.getBlockNumber() + 1);
             rounds++;
         }
-        assertEq(handler.accruedTax(t), 0, "drained, all in this block");
+        assertEq(handler.accruedTax(t), 0, "drained, a budget a block");
         assertGt(rounds, 1, "took several chunks");
         assertEq(divVault.unsoldUnits(t), 0, "every holder unit sold");
         assertEq(handler.accruedPlatformTax(t), 0);
@@ -221,13 +258,16 @@ contract SwapBackTest is LaunchpadV3Test {
         _buyBacklog(t, 4);
         assertGt(divVault.pendingUnits(t, a), 0, "a credited at tax time");
 
-        _poolSell(t, a, IERC20(t).balanceOf(a)); // credited for its own sell's tax on its pre-sell share
+        uint256 beforeSell = divVault.pendingUnits(t, a);
+        _poolSell(t, a, IERC20(t).balanceOf(a)); // audit 5 C-F7: synced to 0 first, nothing of its own sell's tax
         assertEq(divVault.shares(t, a), 0);
+        assertEq(divVault.pendingUnits(t, a), beforeSell, "no part of its own sell's tax");
         address late = makeAddr("late");
         _poolBuy(t, late, 1 ether);
         assertEq(divVault.pendingUnits(t, late), 0, "late buyer: nothing from earlier taxes (nor its own buy's)");
 
         while (handler.accruedTax(t) > 0) {
+            vm.roll(vm.getBlockNumber() + 1);
             vm.prank(keeper);
             handler.process(t, type(uint256).max, 1);
         }
@@ -285,6 +325,7 @@ contract SwapBackTest is LaunchpadV3Test {
         assertEq(handler.pendingHolderUnits(t), 0, "converted");
         // a batch pays out once all of it is sold
         while (handler.accruedTax(t) > 0) {
+            vm.roll(vm.getBlockNumber() + 1);
             vm.prank(keeper);
             handler.process(t, type(uint256).max, 1);
         }
@@ -307,6 +348,21 @@ contract SwapBackTest is LaunchpadV3Test {
         IERC20(t).transfer(makeAddr("friend"), 1 ether);
         _poolBuy(t, makeAddr("b"), 1 ether);
         _poolSell(t, a, 1_000 ether);
+    }
+
+    /// @dev Audit 5 C-F7: the seller's pre-credit sync only runs for dividend tokens — a token without dividends isn't
+    ///      in the vault, so syncing there would only emit ShareWriteFailed on every sell.
+    function test_sellOfTokenWithoutDividends_noShareWrite() public {
+        address t = _create(_tax(300, 300, 0, treasury));
+        _graduate(t);
+        _poolBuy(t, stranger, 1 ether);
+        vm.recordLogs();
+        _poolSell(t, stranger, IERC20(t).balanceOf(stranger) / 2);
+        bytes32 sig = PostGradHandlerBase.ShareWriteFailed.selector;
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].topics.length == 0 || logs[i].topics[0] != sig, "no ShareWriteFailed");
+        }
     }
 
     /// @dev The vault refusing the tax-time credit never freezes trading: that part goes to the recipient.

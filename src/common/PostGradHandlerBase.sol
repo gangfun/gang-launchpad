@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SharedDividendVault} from "./SharedDividendVault.sol";
-import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "./SharedPlatformFeeBucket.sol";
 import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.sol";
 import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
 
@@ -24,13 +24,17 @@ interface IHasPair {
 ///         the holders' part of it is credited to holders right then (SharedDividendVault, tax-time units). The tax is
 ///         sold in small chunks — at most CHUNK_MAX_BPS (0.5%) of the token side of its pair each — so it never piles
 ///         up into one large sell:
-///         - `_swapBack`: a taxed sell into the pair asks for one chunk first (straight into the pair, priced from its
-///           reserves in the same call) — at most once per token per block, and never more than SWAP_BACK_SELL_BPS
-///           (25%) of that sell, so it can't be looped by tiny transfers or skims, and it adds at most about half the
-///           seller's own price impact. Skipped when the pair holds unsynced balances (someone mid-way adding
-///           liquidity). `previewSell` quotes a sell with its chunk included.
+///         - `_swapBack`: a taxed sell into the pair asks for a chunk first (straight into the pair), never more than
+///           SWAP_BACK_SELL_BPS (25%) of that sell, so it adds at most about half the seller's own price impact.
 ///         - `_process`: the keeper sells a chunk when no sells come (mandatory off-chain minQuoteOut, V2 H1),
-///           through the Pancake router or straight into the pair; any number per block.
+///           through the Pancake router or straight into the pair.
+///         Both draw on one budget per token per block (internal audit 5, B-F1 / B-F4 / C-F6): at most CHUNK_MAX_BPS
+///         of the token's reserve as it stood at the block's first chunk attempt, counted by tokens sold — so neither
+///         a dust sell nor a keeper looping `process` with a 1-wei floor can sell more than one chunk's worth a block.
+///         Every chunk also refuses to sell more than MAX_PRICE_DROP_BPS below that same block-start reference: a
+///         sell (or a keeper) can't first dump the price and then convert the holders' tax at it. Unsynced pair
+///         balances only skip the chunk when they look like a half-made LP add (not a 1-wei donation), and a skip
+///         spends the block's budget. `previewSell` / `previewSellNextBlock` quote a sell with its chunk included.
 ///         Each chunk's quote is split at once: the holders' units sold go to the vault (`convertDividend`), the rest to
 ///         the subclass (`_onProceeds`). Neither sink can make a chunk fail: a conversion the vault refuses waits here
 ///         (`pendingHolderUnits` / `pendingHolderQuote`, retried by the next chunk or `flushHolders`), and platform
@@ -53,6 +57,10 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     /// @notice Delay between proposing and accepting a new DEX router (flow review F4b: a router swap plus a keeper
     ///         `process` with a 1-wei floor would otherwise hand the whole chunk to the owner's router at once).
     uint256 public constant DEX_ROUTER_DELAY = 48 hours;
+    /// @notice Same delay for a new keeper (internal audit 5, C-F6); the first keeper is set at deploy.
+    uint256 public constant KEEPER_DELAY = 48 hours;
+    /// @notice A chunk never sells at a price more than this below the block's reference price (bps).
+    uint256 public constant MAX_PRICE_DROP_BPS = 200;
 
     SharedDividendVault public immutable dividendVault;
 
@@ -62,10 +70,25 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     address public pendingDexRouter;
     uint256 public dexRouterEta;
     address public keeper;
+    address public pendingKeeper;
+    uint256 public keeperEta;
     /// @notice Tax tokens of each token held here and not sold yet (the holders' part included).
     mapping(address => uint256) public accruedTax;
-    /// @notice Block of the last swap-back per token (one per block).
-    mapping(address token => uint256) public lastSwapBackBlock;
+
+    /// @dev A token's chunk budget for one block: tax tokens sold in `blockNumber` so far, against the reserves the
+    ///      pair had at the block's first chunk attempt (`refT` / `refQ`: the reference price and the budget base).
+    struct Window {
+        uint64 blockNumber;
+        uint96 used;
+    }
+
+    struct Ref {
+        uint112 refT;
+        uint112 refQ;
+    }
+
+    mapping(address token => Window) public windowOf;
+    mapping(address token => Ref) public refOf;
     /// @notice Holders' units sold whose quote the vault refused: held here, converted by the next chunk / flushHolders.
     mapping(address token => uint256) public pendingHolderUnits;
     mapping(address token => uint256) public pendingHolderQuote;
@@ -83,11 +106,15 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     error OutOfGas();
     error NoProposal();
     error TooEarly();
+    error KeeperAlreadySet();
+    error PriceBelowReference();
 
     event DexRouterSet(address indexed router);
     event DexRouterProposed(address indexed router, uint256 eta);
     event DexRouterCancelled(address indexed router);
     event KeeperSet(address indexed keeper);
+    event KeeperProposed(address indexed keeper, uint256 eta);
+    event KeeperCancelled(address indexed keeper);
     event TaxAccrued(
         address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued
     );
@@ -133,9 +160,35 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         delete dexRouterEta;
     }
 
+    /// @notice The first keeper (deploy). Later changes go through `proposeKeeper` → KEEPER_DELAY → `acceptKeeper`
+    ///         (C-F6): an instant swap to a new key plus `process` would skip the router delay's warning period.
     function setKeeper(address keeper_) external onlyOwner {
+        if (keeper != address(0)) revert KeeperAlreadySet();
         keeper = keeper_;
         emit KeeperSet(keeper_);
+    }
+
+    function proposeKeeper(address keeper_) external onlyOwner {
+        pendingKeeper = keeper_;
+        keeperEta = block.timestamp + KEEPER_DELAY;
+        emit KeeperProposed(keeper_, keeperEta);
+    }
+
+    function acceptKeeper() external onlyOwner {
+        uint256 eta = keeperEta;
+        if (eta == 0) revert NoProposal();
+        if (block.timestamp < eta) revert TooEarly();
+        keeper = pendingKeeper;
+        delete pendingKeeper;
+        delete keeperEta;
+        emit KeeperSet(keeper);
+    }
+
+    function cancelKeeper() external onlyOwner {
+        if (keeperEta == 0) revert NoProposal();
+        emit KeeperCancelled(pendingKeeper);
+        delete pendingKeeper;
+        delete keeperEta;
     }
 
     // ---------------------------------------------------------------- for subclasses
@@ -176,8 +229,9 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         return IERC20(token).balanceOf(address(this));
     }
 
-    /// @notice Largest chunk of `token`'s tax that can be sold now: ≤ accrued, ≤ held, ≤ CHUNK_MAX_BPS of the token's
-    ///         reserve in its pair (0 before the pair exists).
+    /// @notice Largest chunk of `token`'s tax that can be sold now: ≤ accrued, ≤ held, ≤ what is left of this block's
+    ///         budget (CHUNK_MAX_BPS of the token's reserve at the block's first chunk attempt; the current reserve if
+    ///         none ran yet). 0 before the pair exists.
     function maxChunk(address token) public view returns (uint256 amount) {
         amount = accruedTax[token];
         if (amount == 0) return 0;
@@ -185,14 +239,14 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (amount > bal) amount = bal;
         address pair = IHasPair(token).pair();
         if (pair == address(0)) return 0;
-        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
-        uint256 reserve = IUniswapV2PairLite(pair).token0() == token ? uint256(r0) : uint256(r1);
-        uint256 cap = (reserve * CHUNK_MAX_BPS) / 10_000;
-        if (amount > cap) amount = cap;
+        (uint256 rT,) = _reserves(pair, token);
+        uint256 left = _budgetLeft(token, rT, false);
+        if (amount > left) amount = left;
     }
 
     /// @dev Keeper/owner only: sells `amount`, cut to `maxChunk` (only ever less than asked, so a minQuoteOut quoted for
-    ///      `amount` can only make it revert), with a mandatory off-chain minQuoteOut. Subclasses expose it as `process`
+    ///      `amount` can only make it revert), with a mandatory off-chain minQuoteOut, inside this block's budget and
+    ///      never below the block's reference price by more than MAX_PRICE_DROP_BPS. Subclasses expose it as `process`
     ///      (nonReentrant).
     function _process(address token, uint256 amount, uint256 minQuoteOut) internal returns (uint256 quoteOut) {
         if (msg.sender != keeper && msg.sender != owner()) revert OnlyKeeperOrOwner();
@@ -201,52 +255,123 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         address pair = IHasPair(token).pair();
         if (pair == address(0)) revert NoPair();
         _tokenIs0(pair, token, _quoteOf(token));
+        (uint256 rT, uint256 rQ) = _reserves(pair, token);
+        Ref memory ref = _openWindow(token, rT, rQ);
+        if (_belowRef(rT, rQ, ref)) revert PriceBelowReference();
         uint256 max = maxChunk(token);
         if (amount > max) amount = max;
         if (amount == 0) revert ZeroAmount();
+        windowOf[token].used += uint96(amount);
         return _sellChunk(token, amount, minQuoteOut, false);
     }
 
     /// @dev The token is selling `sellAmount` into its pair (the seller's tokens not moved yet, pair unlocked): sell
-    ///      one chunk straight into the pair at its current reserves. Callers wrap this so it can never fail the trade.
+    ///      a chunk straight into the pair. Callers wrap this so it can never fail the trade.
     function _swapBack(address token, uint256 sellAmount) internal returns (uint256 quoteOut) {
         if (msg.sender != token) revert OnlyToken();
-        (uint256 amount, uint256 out) = _swapBackChunk(token, sellAmount);
+        address pair = IHasPair(token).pair();
+        (uint256 rT, uint256 rQ) = _reserves(pair, token);
+        _openWindow(token, rT, rQ);
+        (uint256 amount, uint256 out, bool spend) = _swapBackChunk(token, sellAmount, false);
+        // a skip for unsynced balances spends the block's budget: nothing can be dumped first and converted after
+        if (spend) windowOf[token].used = type(uint96).max;
         if (amount == 0 || out == 0) return 0;
-        lastSwapBackBlock[token] = block.number;
+        windowOf[token].used += uint96(amount);
         return _sellChunk(token, amount, (out * (10_000 - SWAP_BACK_SLIPPAGE_BPS)) / 10_000, true);
     }
 
-    /// @dev The chunk a sell of `sellAmount` would trigger now, and what it fetches: none if one ran this block, if the
-    ///      pair holds unsynced balances, or if the sell pays no tax.
-    function _swapBackChunk(address token, uint256 sellAmount) internal view returns (uint256 amount, uint256 out) {
-        if (lastSwapBackBlock[token] == block.number) return (0, 0);
-        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0);
-        amount = maxChunk(token);
+    /// @dev The chunk a sell of `sellAmount` would trigger and what it fetches (`fresh`: as the first chunk attempt of
+    ///      a new block). None when the sell pays no tax, the budget is spent, the price is below the block's
+    ///      reference, or the pair holds unsynced balances that look like a half-made LP add (`spend` then: the
+    ///      caller spends the block's budget). A 1-wei donation is not that: it is simply absorbed.
+    function _swapBackChunk(address token, uint256 sellAmount, bool fresh)
+        internal
+        view
+        returns (uint256 amount, uint256 out, bool spend)
+    {
+        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0, false);
+        address pair = IHasPair(token).pair();
+        (uint256 rT, uint256 rQ) = _reserves(pair, token);
+        Ref memory ref = fresh || windowOf[token].blockNumber != block.number
+            ? Ref(uint112(rT), uint112(rQ))
+            : refOf[token];
+        if (_belowRef(rT, rQ, ref)) return (0, 0, false);
+        // someone mid-way adding liquidity (one side sent, not minted yet): a swap now would absorb it. Only an
+        // excess worth at least half the sell counts (B-F2: a 1-wei donation must not skip the chunk for free).
+        uint256 bT = IERC20(token).balanceOf(pair);
+        uint256 bQ = IERC20(_quoteOf(token)).balanceOf(pair);
+        // a balance below its reserve: mid-swap (a flash-swap callback) — never sell into that
+        if (bT < rT || bQ < rQ) return (0, 0, true);
+        (uint256 exT, uint256 exQ) = (bT - rT, bQ - rQ);
+        if ((exT > 0 || exQ > 0) && (exT * 2 >= sellAmount || exQ * rT * 2 >= sellAmount * rQ)) return (0, 0, true);
+        amount = accruedTax[token];
+        uint256 bal = _sellable(token);
+        if (amount > bal) amount = bal;
+        uint256 left = _budgetLeft(token, rT, fresh);
+        if (amount > left) amount = left;
         uint256 bySell = (sellAmount * SWAP_BACK_SELL_BPS) / 10_000;
         if (amount > bySell) amount = bySell;
-        if (amount == 0) return (0, 0);
-        address pair = IHasPair(token).pair();
-        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
-        bool tokenIs0 = IUniswapV2PairLite(pair).token0() == token;
-        (uint256 rT, uint256 rQ) = tokenIs0 ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
-        // someone mid-way adding liquidity (one side sent, not minted yet): a swap now would absorb it
-        if (IERC20(token).balanceOf(pair) != rT || IERC20(_quoteOf(token)).balanceOf(pair) != rQ) return (0, 0);
+        if (amount == 0) return (0, 0, false);
         out = _amountOut(amount, rT, rQ);
     }
 
-    /// @notice What selling `amountIn` into the pool pays out now, the swap-back chunk it triggers included (for a
-    ///         seller the token taxes; `chunk` = tax tokens sold right before it).
+    /// @notice What selling `amountIn` into the pool pays out in this block, the swap-back chunk it triggers included
+    ///         (`chunk` = tax tokens sold right before it). A wallet's transaction usually lands in a later block,
+    ///         where the chunk may run although this block's was spent: frontends should use `previewSellNextBlock`.
     function previewSell(address token, uint256 amountIn) external view returns (uint256 quoteOut, uint256 chunk) {
+        return _previewSell(token, amountIn, false);
+    }
+
+    /// @notice `previewSell` as the first sell of a new block (a fresh chunk budget at today's reserves): what a
+    ///         sell sent now most likely gets. Use this for a seller's amountOutMin (internal audit 5, B-F3).
+    function previewSellNextBlock(address token, uint256 amountIn)
+        external
+        view
+        returns (uint256 quoteOut, uint256 chunk)
+    {
+        return _previewSell(token, amountIn, true);
+    }
+
+    function _previewSell(address token, uint256 amountIn, bool fresh)
+        internal
+        view
+        returns (uint256 quoteOut, uint256 chunk)
+    {
         address pair = IHasPair(token).pair();
         if (pair == address(0)) return (0, 0);
-        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
-        bool tokenIs0 = IUniswapV2PairLite(pair).token0() == token;
-        (uint256 rT, uint256 rQ) = tokenIs0 ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+        (uint256 rT, uint256 rQ) = _reserves(pair, token);
         uint256 chunkOut;
-        (chunk, chunkOut) = _swapBackChunk(token, amountIn);
+        (chunk, chunkOut,) = _swapBackChunk(token, amountIn, fresh);
         uint256 net = amountIn - (amountIn * _sellTaxBps(token)) / 10_000;
         quoteOut = _amountOut(net, rT + chunk, rQ - chunkOut);
+    }
+
+    /// @dev `pair`'s reserves as (token side, quote side).
+    function _reserves(address pair, address token) internal view returns (uint256 rT, uint256 rQ) {
+        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
+        (rT, rQ) = IUniswapV2PairLite(pair).token0() == token ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+    }
+
+    /// @dev The block's first chunk attempt records the reserves as the reference and opens a fresh budget.
+    function _openWindow(address token, uint256 rT, uint256 rQ) internal returns (Ref memory ref) {
+        if (windowOf[token].blockNumber == block.number) return refOf[token];
+        windowOf[token] = Window({blockNumber: uint64(block.number), used: 0});
+        ref = Ref({refT: uint112(rT), refQ: uint112(rQ)});
+        refOf[token] = ref;
+    }
+
+    /// @dev Tokens left in the block's budget (`fresh` / no attempt yet this block: the whole budget at `rT`).
+    function _budgetLeft(address token, uint256 rT, bool fresh) internal view returns (uint256) {
+        Window memory w = windowOf[token];
+        if (fresh || w.blockNumber != block.number) return (rT * CHUNK_MAX_BPS) / 10_000;
+        uint256 cap = (uint256(refOf[token].refT) * CHUNK_MAX_BPS) / 10_000;
+        return w.used >= cap ? 0 : cap - w.used;
+    }
+
+    /// @dev Whether the price now (quote per token) is more than MAX_PRICE_DROP_BPS below the reference.
+    function _belowRef(uint256 rT, uint256 rQ, Ref memory ref) internal pure returns (bool) {
+        if (ref.refT == 0 || rT == 0) return false;
+        return rQ * uint256(ref.refT) * 10_000 < uint256(ref.refQ) * rT * (10_000 - MAX_PRICE_DROP_BPS);
     }
 
     /// @notice Retry a holders' conversion the vault refused. Anyone; reverts while it still refuses.

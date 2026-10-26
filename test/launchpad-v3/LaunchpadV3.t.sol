@@ -323,6 +323,8 @@ contract LaunchpadV3Test is Test {
         uint256 platformTokens = handler.accruedPlatformTax(t);
         uint256 totalTokens = handler.accruedTax(t);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        // next block: the sell above moved the price far below this block's reference (audit 5: no chunk sells there)
+        vm.roll(vm.getBlockNumber() + 1);
         vm.prank(keeper);
         uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         uint256 platformQuote = (quoteOut * platformTokens) / totalTokens;
@@ -365,6 +367,11 @@ contract LaunchpadV3Test is Test {
         _graduate(t);
         address holder = address(uint160(0xB0000)); // first graduating buyer
         assertGt(divVault.shares(t, holder), 0);
+        // audit 5 C-F5: only a contract can be excluded (say the buyer was a locker contract)
+        vm.prank(owner);
+        vm.expectRevert(SharedDividendVault.NotAContract.selector);
+        divVault.setExcluded(holder, true);
+        vm.etch(holder, hex"00");
         vm.prank(owner);
         divVault.setExcluded(holder, true);
         handler.syncShares(t, holder, address(0));

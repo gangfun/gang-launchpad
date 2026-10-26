@@ -610,7 +610,8 @@ contract FairMintTest is Test {
         _fill(t);
         uint256 sharesAtTax = vault.totalShares(t); // every baseline share is held at both taxes below
         _buy(t, buyer, 3 ether);
-        // minter 0's sell first sells the buy tax (swap-back); its own tax is credited before its share falls
+        // minter 0's sell first sells the buy tax (swap-back); audit 5 C-F7: its share is synced down before its own
+        // sell's tax is credited, so that tax goes over sharesAtTax - 20 shares
         _sell(t, _minter(0), 20 * TPS);
         uint256 taxTokens = handler.accruedTax(t);
         assertGt(taxTokens, 0);
@@ -618,6 +619,7 @@ contract FairMintTest is Test {
 
         uint256 vaultBefore = wbnb.balanceOf(address(vault));
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
+        vm.roll(vm.getBlockNumber() + 1); // the sell moved the price below this block's reference
         vm.prank(owner);
         uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         uint256 toHolders = wbnb.balanceOf(address(vault)) - vaultBefore;
@@ -625,9 +627,11 @@ contract FairMintTest is Test {
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, quoteOut - toHolders);
         assertEq(vault.unsoldUnits(t), 0);
 
-        // minter 5 held 100 of the 10,000 baseline shares when both taxes were paid
-        uint256 expected = (wbnb.balanceOf(address(vault)) * (100 * TPS)) / sharesAtTax;
-        assertApproxEqAbs(vault.pending(t, _minter(5)), expected, 1e6);
+        // minter 5 held 100 shares when both taxes were paid: over 10,000 shares for the buy tax, 9,980 for the sell's
+        uint256 inVault = wbnb.balanceOf(address(vault));
+        uint256 p5 = vault.pending(t, _minter(5));
+        assertGe(p5 + 1e6, (inVault * (100 * TPS)) / sharesAtTax);
+        assertLe(p5, (inVault * (100 * TPS)) / (sharesAtTax - 20 * TPS));
         vm.prank(_minter(5));
         vault.claim(t);
     }
@@ -713,6 +717,7 @@ contract FairMintTest is Test {
         uint256 earned = vault.pending(t, m);
         assertGt(earned, 0);
 
+        vm.etch(m, hex"00"); // audit 5 C-F5: only a contract can be excluded (say m is a locker)
         vm.prank(owner);
         vault.setExcluded(m, true);
         handler.syncShares(t, m, address(0));
@@ -735,10 +740,12 @@ contract FairMintTest is Test {
         _fill(t);
         for (uint256 i = 0; i < 100; i++) {
             address m = _minter(i);
+            vm.etch(m, hex"00"); // only contracts can be excluded (audit 5 C-F5)
             vm.prank(owner);
             vault.setExcluded(m, true);
             handler.syncShares(t, m, address(0));
         }
+        vm.etch(dev, hex"00");
         vm.prank(owner);
         vault.setExcluded(dev, true);
         handler.syncShares(t, dev, address(0));

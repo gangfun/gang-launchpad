@@ -168,14 +168,14 @@ contract V3SwapBackForkTest is Test {
         console.log("v3 sell: naive quote / previewSell (bps of naive)", naive, (quoted * 10_000) / naive);
         console.log("gas: router sell with a swap-back chunk", gasWithChunk);
 
-        // once per block: a second sell in the same block sells no chunk
+        // one budget per block: the first sell's chunk took all of it, so a second sell in the same block sells none
         uint256 accrued1 = handler.accruedTax(t);
         uint256 amount2 = IERC20(t).balanceOf(seller) / 4;
         _swap(seller, t, WBNB, amount2);
         assertEq(handler.accruedTax(t), accrued1 + (amount2 * SELL_TAX) / 10_000, "no second chunk this block");
 
         // a 1-wei transfer to the pair (no tax on it) triggers nothing, next block included
-        vm.roll(block.number + 1);
+        vm.roll(vm.getBlockNumber() + 1);
         uint256 accrued2 = handler.accruedTax(t);
         vm.prank(seller);
         IERC20(t).transfer(pair, 1);
@@ -186,7 +186,8 @@ contract V3SwapBackForkTest is Test {
         vm.prank(t);
         handler.swapBack(t, type(uint128).max);
         (uint256 rTb, uint256 rQb) = _reserves(t, pair);
-        assertLe(rTb - rTa, (rTa * 50) / 10_000, "<= 0.5% of the token side");
+        // the 1 wei sent above sat unsynced in the pair: dust is absorbed by the chunk now (audit 5 B-F2)
+        assertLe(rTb - rTa - 1, (rTa * 50) / 10_000, "<= 0.5% of the token side");
         assertGe(rQb * rTa * 1000, rQa * rTb * 989, "price moves <= ~1.1%");
         assertGt(rQ0, 0);
     }
@@ -195,7 +196,7 @@ contract V3SwapBackForkTest is Test {
     function test_fork_v3_swapBack_runsAtTheEstimatedGas() public forkOnly {
         (address t, address pair) = _launched();
         _backlog(t, 10);
-        vm.roll(block.number + 1);
+        vm.roll(vm.getBlockNumber() + 1);
         address seller = address(uint160(0xA11CE001));
         uint256 amount = IERC20(t).balanceOf(seller) / 2;
         (, uint256 chunk) = handler.previewSell(t, amount);

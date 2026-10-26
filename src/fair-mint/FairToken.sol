@@ -8,7 +8,8 @@ import {TokenURI} from "../launchpad-v3/TokenURI.sol";
 
 /// @title FairToken (打新发射)
 /// @notice Fixed-supply token minted entirely to FairMintPad. Locked until launch: only the pad moves tokens, and
-///         it can pull a minter's tokens back for withdraw / refund. Launch unlocks forever and disables reclaim.
+///         it can pull a minter's tokens back when they sell shares back (withdraw). Launch unlocks forever and
+///         disables reclaim.
 ///         After launch: 1% tax on pair buys / sells → HolderRewardHandler; every transfer syncs reward shares.
 /// @dev The tax is accrued in the handler; before a sell's tokens move, the handler sells one small chunk of it
 ///      (`swapBack`, ≤ 0.5% of the pair's token side) in a gas-capped try, so it can never fail the sell.
@@ -78,7 +79,7 @@ contract FairToken is ERC20, TokenURI {
         emit Unlocked();
     }
 
-    /// @notice Pre-launch only: pull `amount` from `from` back to the pad (withdraw / failed-sale refund).
+    /// @notice Pre-launch only: pull `amount` from `from` back to the pad (a sell-back, `withdraw`).
     function reclaim(address from, uint256 amount) external onlyLaunchpad {
         if (!locked) revert NotLocked();
         _transfer(from, launchpad, amount);

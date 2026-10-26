@@ -8,6 +8,7 @@ import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {GangRouterTest} from "../router/GangRouter.t.sol";
 
 /// @notice LaunchpadV3 and 打新 on one SharedDividendVault, one SharedMigrator, one TokenDeployer (GangRouterTest's
@@ -160,11 +161,12 @@ contract SharedInfraTest is GangRouterTest {
         address b = _fairSale(); // FairMintPad.VaultFloorTooHigh reads only its own floor
         assertEq(v3Vault.minimumShareBalanceFor(b), fair.MIN_SHARE_BALANCE());
 
-        address a = _v3Token(5000);
-        vm.prank(agent2);
-        router.v3BuyBNB{value: 0.1 ether}(a, 0, block.timestamp);
-        uint256 bal = IERC20(a).balanceOf(agent2);
-        assertLt(bal, 100_000_000 ether);
-        assertEq(v3Vault.shares(a, agent2), 0, "below the V3 floor: no share");
+        // audit 5 C-F4: a V3 floor raised above TAXED_MIN_SHARE refuses new dividend tokens (as 打新 does) instead of
+        // creating one whose holders all sit below the floor
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.VaultFloorTooHigh.selector);
+        v3.create("Tax", "TAX", "", "", address(0), address(0), _tax(5000));
+        address plain = _v3Token(0); // no dividend: the floor plays no part
+        assertTrue(plain != address(0));
     }
 }

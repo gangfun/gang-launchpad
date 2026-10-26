@@ -6,16 +6,19 @@ import {VmSafe} from "forge-std/Vm.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
 import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 
-/// @title SharedPlatform — the five contracts LaunchpadV3 and 打新 share: QuoteRegistry, PlatformFeeBucket,
+/// @title SharedPlatform — the five contracts LaunchpadV3 and 打新 share: QuoteRegistry, SharedPlatformFeeBucket,
 ///        SharedDividendVault, SharedMigrator, TokenDeployer
 /// @notice Never the live V2 ones: their owner is an EOA that could freeze user exits (every curve trade, 打新
 ///         withdraw and launch calls the bucket) and decide which quotes the new pads take (2026-10-26 internal audit).
-///         The first deploy creates both; the second reuses them via QUOTE_REGISTRY / PLATFORM_BUCKET while the
-///         deployer still owns them (Ownable2Step: ownership stays with the deployer until the multisig accepts).
+///         The first deploy creates all five; the second reuses them — all five env vars or none (internal audit 5
+///         C-F1: two of five quietly deployed a second vault / migrator / deployer and split the cores) — plus
+///         PEER_CORE (the first core), checked to be wired on the same vault, migrator and deployer. Reuse works while
+///         the deployer still owns them (Ownable2Step: ownership stays with the deployer until the multisig accepts).
 ///         On mainnet the new bucket pays the same fee vault and buyback burner as the V2 bucket, read on-chain.
 abstract contract SharedPlatform is Script {
     uint256 internal constant TESTNET_QUOTE_PER_15_BNB = 15 ether;
@@ -25,12 +28,15 @@ abstract contract SharedPlatform is Script {
     error OwnerRequired();
     error NotDeployerOwned(string what);
     error WiringCheck(string what);
+    error PartialShared();
+    error PendingOwnerMismatch(address target);
 
     /// @param v2Bucket mainnet: the live V2 bucket, source of feeVault / burner; ignored on testnet
     function _platform(bool mainnet, address deployer, address keeper, address v2Bucket)
         internal
         returns (address registry, address bucket)
     {
+        _requireAllOrNoShared();
         registry = vm.envOr("QUOTE_REGISTRY", address(0));
         if (registry == address(0)) {
             registry = address(new QuoteRegistry(deployer));
@@ -41,7 +47,8 @@ abstract contract SharedPlatform is Script {
         bucket = vm.envOr("PLATFORM_BUCKET", address(0));
         if (bucket == address(0)) {
             address feeVault = vm.envOr("FEE_VAULT", mainnet ? PlatformFeeBucket(v2Bucket).feeVault() : deployer);
-            PlatformFeeBucket b = new PlatformFeeBucket(deployer, feeVault);
+            // no collectPlatformSmart (C-F2): the keeper can only buy back along the burner's fixed path
+            SharedPlatformFeeBucket b = new SharedPlatformFeeBucket(deployer, feeVault);
             if (mainnet) b.setBurner(address(PlatformFeeBucket(v2Bucket).burner()));
             b.setKeeper(keeper);
             bucket = address(b);
@@ -72,6 +79,18 @@ abstract contract SharedPlatform is Script {
         tokenDeployer = vm.envOr("TOKEN_DEPLOYER", address(0));
         if (tokenDeployer == address(0)) tokenDeployer = address(new TokenDeployer(deployer));
         else if (Ownable2Step(tokenDeployer).owner() != deployer) revert NotDeployerOwned("TOKEN_DEPLOYER");
+    }
+
+    /// @dev QUOTE_REGISTRY, PLATFORM_BUCKET, DIVIDEND_VAULT, MIGRATOR, TOKEN_DEPLOYER: all set (reuse) or none.
+    function _requireAllOrNoShared() internal view {
+        uint256 n;
+        if (vm.envOr("QUOTE_REGISTRY", address(0)) != address(0)) n++;
+        if (vm.envOr("PLATFORM_BUCKET", address(0)) != address(0)) n++;
+        if (vm.envOr("DIVIDEND_VAULT", address(0)) != address(0)) n++;
+        if (vm.envOr("MIGRATOR", address(0)) != address(0)) n++;
+        if (vm.envOr("TOKEN_DEPLOYER", address(0)) != address(0)) n++;
+        if (n != 0 && n != 5) revert PartialShared();
+        if (n == 5 && vm.envOr("PEER_CORE", address(0)) == address(0)) revert WiringCheck("PEER_CORE");
     }
 
     /// @notice List `core` on the shared vault (its own share floor; `operators` bound to it), migrator and deployer.
@@ -118,6 +137,19 @@ abstract contract SharedPlatform is Script {
         if (!v.excluded(vault)) revert WiringCheck("vault excludes itself");
         if (!SharedMigrator(migrator).launchpads(core)) revert WiringCheck("migrator launchpad");
         if (!TokenDeployer(tokenDeployer).launchpads(core)) revert WiringCheck("deployer launchpad");
+        // reuse (C-F1): the first core must sit on the very same vault, migrator and deployer
+        address peer = vm.envOr("PEER_CORE", address(0));
+        if (peer != address(0)) {
+            if (!v.launchpads(peer) || v.operatorFor(peer) == address(0)) revert WiringCheck("peer core on vault");
+            if (!SharedMigrator(migrator).launchpads(peer)) revert WiringCheck("peer core on migrator");
+            if (!TokenDeployer(tokenDeployer).launchpads(peer)) revert WiringCheck("peer core on deployer");
+        }
+    }
+
+    /// @dev C-F8: every contract is either owned by `owner` or has it pending (nothing left for another address).
+    function _checkOwner(address owner, address target) internal view {
+        Ownable2Step o = Ownable2Step(target);
+        if (o.owner() != owner && o.pendingOwner() != owner) revert WiringCheck("owner / pendingOwner");
     }
 
     function _logShared(address vault, address migrator, address tokenDeployer) internal pure {
@@ -144,13 +176,28 @@ abstract contract SharedPlatform is Script {
     function _handOver(address owner, address deployer, address target) internal {
         if (owner == deployer) return;
         Ownable2Step o = Ownable2Step(target);
-        if (o.owner() == deployer && o.pendingOwner() != owner) o.transferOwnership(owner);
+        // C-F8: a second run naming another OWNER must not overwrite the first run's pending owner
+        address pending = o.pendingOwner();
+        if (pending != address(0) && pending != owner) revert PendingOwnerMismatch(target);
+        if (o.owner() == deployer && pending != owner) o.transferOwnership(owner);
     }
 
-    function _checkBucket(address bucket, address keeper, address a, address b) internal view {
-        PlatformFeeBucket pb = PlatformFeeBucket(bucket);
+    /// @dev C-F8: operators, keeper, and the fee legs' destinations (mainnet: the V2 bucket's burner and fee vault
+    ///      unless BURNER / FEE_VAULT say otherwise).
+    function _checkBucket(bool mainnet, address v2Bucket, address bucket, address keeper, address a, address b)
+        internal
+        view
+    {
+        SharedPlatformFeeBucket pb = SharedPlatformFeeBucket(bucket);
         if (!pb.operators(a) || !pb.operators(b)) revert WiringCheck("bucket operators");
         if (pb.keeper() != keeper) revert WiringCheck("bucket keeper");
+        if (pb.feeVault() == address(0)) revert WiringCheck("bucket feeVault");
+        if (mainnet) {
+            address burner = vm.envOr("BURNER", address(PlatformFeeBucket(v2Bucket).burner()));
+            address feeVault = vm.envOr("FEE_VAULT", PlatformFeeBucket(v2Bucket).feeVault());
+            if (address(pb.burner()) != burner || burner == address(0)) revert WiringCheck("bucket burner");
+            if (pb.feeVault() != feeVault) revert WiringCheck("bucket feeVault");
+        }
     }
 
     function _logPlatform(address registry, address bucket) internal pure {

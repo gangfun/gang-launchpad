@@ -37,6 +37,9 @@ contract DeployGangRouter is Script {
         // a wrong env value would deploy a router that cannot unwrap / settle against that core
         if (v3 != address(0) && IRouterListing(v3).wbnb() != wbnb) revert WrongCore("V3_PAD wbnb");
         if (fair != address(0) && IRouterListing(fair).wbnb() != wbnb) revert WrongCore("FAIR_PAD wbnb");
+        // internal audit 5 C-F8: swapped V3_PAD / FAIR_PAD would deploy and list a router that can't trade either
+        if (v3 != address(0) && !_has(v3, "TAXED_MIN_SHARE()")) revert WrongCore("V3_PAD is not LaunchpadV3");
+        if (fair != address(0) && !_has(fair, "TOTAL_SHARES()")) revert WrongCore("FAIR_PAD is not FairMintPad");
 
         vm.startBroadcast(pk);
         router = new GangRouter(v3, fair, wbnb);
@@ -53,6 +56,12 @@ contract DeployGangRouter is Script {
             if (fairListed) require(IRouterListing(fair).routers(address(router)), "fair listing");
             else console.log("PENDING fair owner: setRouter(GANG_ROUTER, true) on", fair);
         }
+    }
+
+    /// @dev Whether `target` answers the view `sig` (a getter only that core type has).
+    function _has(address target, string memory sig) internal view returns (bool) {
+        (bool ok, bytes memory ret) = target.staticcall(abi.encodeWithSignature(sig));
+        return ok && ret.length == 32;
     }
 
     function _list(address core, address router, address deployer) internal returns (bool) {

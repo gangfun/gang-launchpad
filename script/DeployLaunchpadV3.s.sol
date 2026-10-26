@@ -6,7 +6,7 @@ import {SharedPlatform} from "./SharedPlatform.sol";
 import {LaunchpadV3MainnetRefs as M, LaunchpadV3TestnetRefs as T} from "../config/LaunchpadV3DeployRefs.sol";
 import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
-import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxHandlerV3} from "../src/launchpad-v3/TaxHandlerV3.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
@@ -118,7 +118,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
 
         vm.stopBroadcast();
 
-        _check(s, keeper);
+        _check(s, keeper, owner, mainnet);
         _log(s, owner, deployer);
     }
 
@@ -128,7 +128,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         ops[0] = s.handler;
     }
 
-    function _check(Stack memory s, address keeper) internal view {
+    function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
         TaxHandlerV3 handler = TaxHandlerV3(s.handler);
         LaunchpadV3 pad = LaunchpadV3(s.pad);
         _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
@@ -144,7 +144,9 @@ contract DeployLaunchpadV3 is SharedPlatform {
         if (s.recipient != address(0) && !handler.isListed(s.recipient)) {
             revert WiringCheck("recipient listed");
         }
-        _checkBucket(s.bucket, keeper, s.pad, s.handler);
+        _checkBucket(mainnet, M.V2_PLATFORM_BUCKET, s.bucket, keeper, s.pad, s.handler);
+        address[7] memory owned = [s.vault, s.migrator, s.tokenDeployer, s.handler, s.pad, s.quoteRegistry, s.bucket];
+        for (uint256 i = 0; i < owned.length; i++) _checkOwner(owner, owned[i]);
         if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }

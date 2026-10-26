@@ -10,8 +10,9 @@ import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
-/// @notice 打新 pool tax after launch: sold in chunks (before taxed sells, once per block, ≤ 25% of the sell; keeper
-///         otherwise); the holders' half credited to the eligible minters of the moment each tax is paid.
+/// @notice 打新 pool tax after launch: sold in chunks (before taxed sells, ≤ 25% of the sell; keeper otherwise) within
+///         one budget per token per block; the holders' half credited to the eligible minters of the moment each tax
+///         is paid.
 contract FairSwapBackTest is FairMintTest {
     function _launched() internal returns (address t, MockPair pair) {
         t = _create();
@@ -43,15 +44,20 @@ contract FairSwapBackTest is FairMintTest {
         assertGt(wbnb.balanceOf(address(vault)) - vault0, 0, "holders' half of the chunk in quote");
     }
 
-    function test_swapBack_oncePerBlock_andUntaxedDustIgnored() public {
+    /// @dev Audit 5 B-F1: sells in one block share one budget (by tokens sold); dust that pays no tax triggers nothing.
+    function test_swapBack_blockBudget_andUntaxedDustIgnored() public {
         (address t, MockPair pair) = _launched();
         _buyBacklog(t, 10);
+        (uint256 rT0,) = _reserves(t, pair);
+        uint256 budget = (rT0 * 50) / 10_000;
+        uint256 accrued0 = handler.accruedTax(t);
         _sell(t, _minter(3), 10 * TPS);
+        _sell(t, _minter(4), 10 * TPS); // same block: whatever is left of the budget
+        uint256 sold = accrued0 + (20 * TPS) / 100 - handler.accruedTax(t);
+        assertLe(sold, budget, "never more than one budget a block");
+        assertEq(sold, (10 * TPS) / 4 * 2 < budget ? (10 * TPS) / 4 * 2 : budget, "each a quarter, capped by the budget");
+        vm.roll(vm.getBlockNumber() + 1);
         uint256 accrued = handler.accruedTax(t);
-        _sell(t, _minter(4), 10 * TPS); // same block
-        assertEq(handler.accruedTax(t), accrued + (10 * TPS) / 100, "no second chunk this block");
-        vm.roll(block.number + 1);
-        accrued = handler.accruedTax(t);
         vm.prank(_minter(4));
         IERC20(t).transfer(address(pair), 99); // 1% of 99 wei = 0: untaxed
         assertEq(handler.accruedTax(t), accrued, "dust triggers nothing");
@@ -102,6 +108,7 @@ contract FairSwapBackTest is FairMintTest {
         _sell(t, m, IERC20(t).balanceOf(m)); // out for good; its share drops to 0
         assertEq(vault.shares(t, m), 0);
         while (handler.accruedTax(t) > 0) {
+            vm.roll(vm.getBlockNumber() + 1);
             vm.prank(owner);
             handler.process(t, type(uint256).max, 1);
         }
@@ -133,7 +140,8 @@ contract FairSwapBackTest is FairMintTest {
         handler.process(t, type(uint256).max, 1);
         assertGt(handler.pendingHolderUnits(t), 0);
         vm.clearMockedCalls();
-        // the next chunk converts the waiting units with its own
+        // the next chunk (next block: one budget a block) converts the waiting units with its own
+        vm.roll(vm.getBlockNumber() + 1);
         vm.prank(owner);
         handler.process(t, type(uint256).max, 1);
         assertEq(handler.pendingHolderUnits(t), 0);

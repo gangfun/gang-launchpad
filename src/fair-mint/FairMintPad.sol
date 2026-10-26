@@ -11,7 +11,7 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
 import {SharedDividendVault} from "../common/SharedDividendVault.sol";
-import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
 import {SharedMigrator} from "../common/SharedMigrator.sol";
 import {TokenDeployer} from "../common/TokenDeployer.sol";
@@ -584,7 +584,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         return address(agentIdRegistry);
     }
 
-    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder rewards to 0 in DividendVault), priced like
+    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder rewards to 0 in the shared vault), priced like
     ///      LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_toQuote).
     ///      2026-10-27 product decision: keep V2's reference-pool pricing (users are used to it), accepting internal
     ///      audit R2-1 again: a Pancake V2 pair (reserves) or a V3 pool without TWAP history is read at spot.
