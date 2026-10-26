@@ -7,14 +7,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {ITaxHandlerV3} from "../../src/launchpad-v3/interfaces/ITaxHandlerV3.sol";
@@ -42,11 +43,12 @@ contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
 ///         0.5%-of-volume platform part, dividend share, recipient pushes, owed + release, TaxPaid events, G-01.
 contract LaunchpadV3Test is Test {
     QuoteRegistry internal quoteRegistry;
-    DividendVault internal divVault;
+    SharedDividendVault internal divVault;
+    TokenDeployer internal tokenDeployer;
     PlatformFeeBucket internal bucket;
     TaxHandlerV3 internal handler;
     LaunchpadV3 internal pad;
-    MigratorV2 internal migrator;
+    SharedMigrator internal migrator;
     MockPairFactory internal pairFactory;
     MockSPCXB internal quoteTok;
     MockSPCXB internal wbnb;
@@ -73,7 +75,8 @@ contract LaunchpadV3Test is Test {
         agents = new MockAgentId();
 
         quoteRegistry = new QuoteRegistry(owner);
-        divVault = new DividendVault(owner);
+        divVault = new SharedDividendVault(owner);
+        tokenDeployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
         handler = new TaxHandlerV3(owner, address(divVault), address(bucket));
         pad = new LaunchpadV3(
@@ -82,16 +85,18 @@ contract LaunchpadV3Test is Test {
             address(divVault),
             address(bucket),
             address(handler),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        migrator = new MigratorV2(address(pairFactory), address(pad));
+        migrator = new SharedMigrator(owner, address(pairFactory));
 
         vm.startPrank(owner);
         quoteRegistry.setQuote(address(quoteTok), true, 15 ether);
-        divVault.setLaunchpad(address(pad));
-        divVault.setOperator(address(handler), true);
+        divVault.setLaunchpad(address(pad), true);
+        divVault.setOperator(address(handler), address(pad));
+        migrator.addLaunchpad(address(pad));
+        tokenDeployer.setLaunchpad(address(pad), true);
         bucket.setLaunchpad(address(pad));
         bucket.setOperator(address(handler), true);
         handler.setLaunchpad(address(pad));

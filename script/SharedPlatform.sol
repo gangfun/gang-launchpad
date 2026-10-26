@@ -6,8 +6,12 @@ import {VmSafe} from "forge-std/Vm.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
 import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
+import {SharedMigrator} from "../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 
-/// @title SharedPlatform — QuoteRegistry + PlatformFeeBucket shared by LaunchpadV3 and 打新
+/// @title SharedPlatform — the five contracts LaunchpadV3 and 打新 share: QuoteRegistry, PlatformFeeBucket,
+///        SharedDividendVault, SharedMigrator, TokenDeployer
 /// @notice Never the live V2 ones: their owner is an EOA that could freeze user exits (every curve trade, 打新
 ///         withdraw and launch calls the bucket) and decide which quotes the new pads take (2026-10-26 internal audit).
 ///         The first deploy creates both; the second reuses them via QUOTE_REGISTRY / PLATFORM_BUCKET while the
@@ -46,8 +50,78 @@ abstract contract SharedPlatform is Script {
         }
     }
 
-    /// @dev Listed quotes: WBNB is implicit; anything else must be enabled here WITH a fixed rate (quote units per
-    ///      15 BNB; the pads refuse a rate of 0, i.e. pricing from a creator-picked pool) and have 18 decimals.
+    /// @notice Shared dividend vault, migrator and token deployer: deployed by the first script, reused by the second via
+    ///         DIVIDEND_VAULT / MIGRATOR / TOKEN_DEPLOYER while the deployer still owns them.
+    function _shared(address deployer, address factory)
+        internal
+        returns (address vault, address migrator, address tokenDeployer)
+    {
+        vault = vm.envOr("DIVIDEND_VAULT", address(0));
+        if (vault == address(0)) vault = address(new SharedDividendVault(deployer));
+        else if (Ownable2Step(vault).owner() != deployer) revert NotDeployerOwned("DIVIDEND_VAULT");
+
+        migrator = vm.envOr("MIGRATOR", address(0));
+        if (migrator == address(0)) {
+            migrator = address(new SharedMigrator(deployer, factory));
+        } else if (Ownable2Step(migrator).owner() != deployer) {
+            revert NotDeployerOwned("MIGRATOR");
+        } else if (address(SharedMigrator(migrator).factory()) != factory) {
+            revert WiringCheck("MIGRATOR factory");
+        }
+
+        tokenDeployer = vm.envOr("TOKEN_DEPLOYER", address(0));
+        if (tokenDeployer == address(0)) tokenDeployer = address(new TokenDeployer(deployer));
+        else if (Ownable2Step(tokenDeployer).owner() != deployer) revert NotDeployerOwned("TOKEN_DEPLOYER");
+    }
+
+    /// @notice List `core` on the shared vault (its own share floor; `operators` bound to it), migrator and deployer.
+    ///         The migrator is tax-exempt and can never claim: a bag sent there would earn dividends that stay stuck.
+    function _wireCore(
+        address vault,
+        address migrator,
+        address tokenDeployer,
+        address core,
+        uint256 minShare,
+        address[] memory operators
+    ) internal {
+        SharedDividendVault v = SharedDividendVault(vault);
+        v.setLaunchpad(core, true);
+        v.setMinimumShareBalance(core, minShare);
+        for (uint256 i = 0; i < operators.length; i++) {
+            v.setOperator(operators[i], core);
+        }
+        if (!v.excluded(migrator)) v.setExcluded(migrator, true);
+        SharedMigrator(migrator).addLaunchpad(core);
+        TokenDeployer(tokenDeployer).setLaunchpad(core, true);
+    }
+
+    function _checkCore(
+        address vault,
+        address migrator,
+        address tokenDeployer,
+        address core,
+        uint256 minShare,
+        address[] memory operators
+    ) internal view {
+        SharedDividendVault v = SharedDividendVault(vault);
+        if (!v.launchpads(core)) revert WiringCheck("vault launchpad");
+        if (v.minimumShareBalanceOf(core) != minShare) revert WiringCheck("vault floor");
+        for (uint256 i = 0; i < operators.length; i++) {
+            if (v.operatorOf(operators[i]) != core) revert WiringCheck("vault operator");
+        }
+        if (!v.excluded(migrator)) revert WiringCheck("vault excludes migrator");
+        if (!SharedMigrator(migrator).launchpads(core)) revert WiringCheck("migrator launchpad");
+        if (!TokenDeployer(tokenDeployer).launchpads(core)) revert WiringCheck("deployer launchpad");
+    }
+
+    function _logShared(address vault, address migrator, address tokenDeployer) internal pure {
+        console.log("DIVIDEND_VAULT", vault);
+        console.log("MIGRATOR", migrator);
+        console.log("TOKEN_DEPLOYER", tokenDeployer);
+    }
+
+    /// @dev A fixed rate for `quote` (quote units per 15 BNB). The pads take any 18-decimal quote and price an unlisted
+    ///      one from the creator's reference pool, as LaunchpadV2 does; a listed rate replaces that pool price.
     ///      Mainnet USDT: USDT_PER_15_BNB, set by the multisig and kept current as BNB moves.
     function _listQuote(address registry, address quote, uint256 graduationQuoteAmount) internal {
         QuoteRegistry reg = QuoteRegistry(registry);

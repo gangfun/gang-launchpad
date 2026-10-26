@@ -6,14 +6,15 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
+import {FairToken} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
@@ -36,11 +37,12 @@ contract FeeOnTransferQuote is ERC20("FoT", "FOT") {
 /// @notice FairMintPad + FairToken + HolderRewardHandler on mocks. No broadcast.
 contract FairMintTest is Test {
     QuoteRegistry internal registry;
-    DividendVault internal vault;
+    SharedDividendVault internal vault;
     PlatformFeeBucket internal bucket;
     HolderRewardHandler internal handler;
     FairMintPad internal pad;
-    MigratorV2 internal migrator;
+    SharedMigrator internal migrator;
+    TokenDeployer internal tokenDeployer;
     MockPairFactory internal factory;
     MockSPCXB internal wbnb;
     MockAgentId internal agents;
@@ -60,25 +62,27 @@ contract FairMintTest is Test {
         factory = new MockPairFactory();
         agents = new MockAgentId();
         registry = new QuoteRegistry(owner);
-        vault = new DividendVault(owner);
+        vault = new SharedDividendVault(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
         handler = new HolderRewardHandler(owner, address(vault), address(bucket));
-        FairTokenDeployer deployer = new FairTokenDeployer();
+        tokenDeployer = new TokenDeployer(owner);
         pad = new FairMintPad(
             owner,
             address(registry),
             address(vault),
             address(bucket),
             address(handler),
-            address(deployer),
+            address(tokenDeployer),
             address(wbnb),
             address(factory)
         );
-        migrator = new MigratorV2(address(factory), address(pad));
+        migrator = new SharedMigrator(owner, address(factory));
 
         vm.startPrank(owner);
-        vault.setLaunchpad(address(pad));
-        vault.setOperator(address(handler), true);
+        vault.setLaunchpad(address(pad), true);
+        vault.setOperator(address(handler), address(pad));
+        migrator.addLaunchpad(address(pad));
+        tokenDeployer.setLaunchpad(address(pad), true);
         bucket.setLaunchpad(address(pad));
         bucket.setOperator(address(handler), true);
         pad.setMigrator(address(migrator));
@@ -172,7 +176,7 @@ contract FairMintTest is Test {
         assertEq(bucket.accruedQuote(address(wbnb)), SHARE_PRICE / 100, "mint fee to the platform at once");
         (,,,, uint256 last,) = _sale(t);
         assertEq(last, block.timestamp, "the creator's mint counts as activity");
-        assertEq(vault.minimumShareBalance(), 10_000 ether);
+        assertEq(vault.minimumShareBalanceOf(address(pad)), 10_000 ether);
     }
 
     function test_create_rejectsOutOfBounds() public {
@@ -224,7 +228,7 @@ contract FairMintTest is Test {
 
     function test_create_rejectsHighVaultFloor() public {
         vm.prank(owner);
-        vault.setMinimumShareBalance(1_000_000 ether);
+        vault.setMinimumShareBalance(address(pad), 1_000_000 ether);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.VaultFloorTooHigh.selector);
         pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
@@ -676,7 +680,7 @@ contract FairMintTest is Test {
         address t = _create();
         _fill(t);
         vm.prank(owner);
-        vault.setOperator(address(handler), false);
+        vault.setOperator(address(handler), address(0));
         address m = _minter(0);
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);
@@ -684,7 +688,7 @@ contract FairMintTest is Test {
         assertEq(vault.shares(t, m), 100 * TPS, "zeroing failed while the vault refused");
 
         vm.prank(owner);
-        vault.setOperator(address(handler), true);
+        vault.setOperator(address(handler), address(pad));
         handler.syncShares(t, m, address(0));
         assertEq(vault.shares(t, m), 0, "retried once the vault accepts again");
     }

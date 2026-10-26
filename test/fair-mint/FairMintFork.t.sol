@@ -5,13 +5,14 @@ import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {IV3FactoryLite, IV3PoolLite} from "../../src/launchpad-v2/PoolCheck.sol";
 import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
+import {FairToken} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 
 contract ForkAgent {
@@ -54,11 +55,11 @@ contract FairMintForkTest is Test {
     address buyer = makeAddr("buyer");
 
     QuoteRegistry reg;
-    DividendVault vault;
+    SharedDividendVault vault;
     PlatformFeeBucket bucket;
     HolderRewardHandler handler;
     FairMintPad pad;
-    MigratorV2 mig;
+    SharedMigrator mig;
     ForkAgent agent;
     address bridge;
 
@@ -74,7 +75,8 @@ contract FairMintForkTest is Test {
 
         vm.startPrank(owner);
         reg = new QuoteRegistry(owner);
-        vault = new DividendVault(owner);
+        vault = new SharedDividendVault(owner);
+        TokenDeployer deployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
         handler = new HolderRewardHandler(owner, address(vault), address(bucket));
         agent = new ForkAgent();
@@ -84,15 +86,17 @@ contract FairMintForkTest is Test {
             address(vault),
             address(bucket),
             address(handler),
-            address(new FairTokenDeployer()),
+            address(deployer),
             WBNB,
             V2_FACTORY
         );
-        mig = new MigratorV2(V2_FACTORY, address(pad));
+        mig = new SharedMigrator(owner, V2_FACTORY);
 
-        vault.setMinimumShareBalance(10_000 ether);
-        vault.setLaunchpad(address(pad));
-        vault.setOperator(address(handler), true);
+        vault.setLaunchpad(address(pad), true);
+        vault.setMinimumShareBalance(address(pad), 10_000 ether);
+        vault.setOperator(address(handler), address(pad));
+        mig.addLaunchpad(address(pad));
+        deployer.setLaunchpad(address(pad), true);
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
         handler.setPad(address(pad));

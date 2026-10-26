@@ -114,13 +114,3 @@ contract FairToken is ERC20, TokenURI {
         return true;
     }
 }
-
-/// @notice Holds FairToken's creation code so FairMintPad stays under EIP-170.
-contract FairTokenDeployer {
-    function deploy(string calldata name, string calldata symbol, address taxHandler, string calldata uri)
-        external
-        returns (address)
-    {
-        return address(new FairToken(name, symbol, msg.sender, taxHandler, uri));
-    }
-}

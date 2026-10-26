@@ -5,7 +5,7 @@ import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "./SharedDividendVault.sol";
 import {IUniswapV2PairLite} from "../launchpad-v2/interfaces/IUniswapV2PairLite.sol";
 import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
 
@@ -31,7 +31,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     uint256 public constant DEX_FEE_NUM = 9975;
     uint256 public constant DEX_FEE_DEN = 10000;
 
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
 
     IPancakeRouter02 public dexRouter;
     address public keeper;
@@ -56,7 +56,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
 
     constructor(address owner_, address dividendVault_) Ownable(owner_) {
         if (dividendVault_ == address(0)) revert ZeroAddress();
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
     }
 
     /// @notice 0 = sell straight into the token's pair.

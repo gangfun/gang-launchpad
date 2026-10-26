@@ -6,16 +6,16 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {LaunchpadV2} from "../../src/launchpad-v2/LaunchpadV2.sol";
 import {PostGradTaxHandler} from "../../src/launchpad-v2/PostGradTaxHandler.sol";
 import {IV3FactoryLite} from "../../src/launchpad-v2/PoolCheck.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 
 contract RefForkAgent {
@@ -73,36 +73,44 @@ contract QuoteRefPoolForkTest is Test {
         v2.setV3Factory(V3_FACTORY);
         v2.setBridgePool(USDT, bridge);
 
-        // V3 core
-        DividendVault div = new DividendVault(owner);
+        // one vault / migrator / deployer / bucket for both cores, as deployed
+        SharedDividendVault div = new SharedDividendVault(owner);
+        SharedMigrator mig = new SharedMigrator(owner, V2_FACTORY);
+        TokenDeployer deployer = new TokenDeployer(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, owner);
+
+        // V3 core
         TaxHandlerV3 handler = new TaxHandlerV3(owner, address(div), address(bucket));
         v3 = new LaunchpadV3(
-            owner, address(reg), address(div), address(bucket), address(handler), address(new TaxTokenDeployerV3()), WBNB,
-            V2_FACTORY
+            owner, address(reg), address(div), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );
-        div.setLaunchpad(address(v3));
-        bucket.setLaunchpad(address(v3));
-        div.setOperator(address(handler), true);
+        div.setLaunchpad(address(v3), true);
+        div.setMinimumShareBalance(address(v3), 10_000 ether);
+        div.setOperator(address(handler), address(v3));
+        mig.addLaunchpad(address(v3));
+        deployer.setLaunchpad(address(v3), true);
+        bucket.setOperator(address(v3), true);
         bucket.setOperator(address(handler), true);
         handler.setLaunchpad(address(v3));
-        v3.setMigrator(address(new MigratorV2(V2_FACTORY, address(v3))));
+        v3.setMigrator(address(mig));
         v3.setAgentGate(true, address(agent));
         v3.setV3Factory(V3_FACTORY);
         v3.setBridgePool(USDT, bridge);
 
         // 打新 core
-        DividendVault fv = new DividendVault(owner);
-        PlatformFeeBucket fb = new PlatformFeeBucket(owner, owner);
-        HolderRewardHandler fh = new HolderRewardHandler(owner, address(fv), address(fb));
+        HolderRewardHandler fh = new HolderRewardHandler(owner, address(div), address(bucket));
         fair = new FairMintPad(
-            owner, address(reg), address(fv), address(fb), address(fh), address(new FairTokenDeployer()), WBNB, V2_FACTORY
+            owner, address(reg), address(div), address(bucket), address(fh), address(deployer), WBNB, V2_FACTORY
         );
-        fv.setMinimumShareBalance(10_000 ether);
-        fv.setLaunchpad(address(fair));
-        fb.setOperator(address(fair), true);
+        div.setLaunchpad(address(fair), true);
+        div.setMinimumShareBalance(address(fair), 10_000 ether);
+        div.setOperator(address(fh), address(fair));
+        mig.addLaunchpad(address(fair));
+        deployer.setLaunchpad(address(fair), true);
+        bucket.setOperator(address(fair), true);
+        bucket.setOperator(address(fh), true);
         fh.setPad(address(fair));
-        fair.setMigrator(address(new MigratorV2(V2_FACTORY, address(fair))));
+        fair.setMigrator(address(mig));
         fair.setAgentGate(true, address(agent));
         fair.setV3Factory(V3_FACTORY);
         fair.setBridgePool(USDT, bridge);

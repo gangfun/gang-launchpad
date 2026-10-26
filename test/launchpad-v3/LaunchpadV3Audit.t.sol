@@ -4,11 +4,10 @@ pragma solidity 0.8.28;
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
@@ -83,16 +82,18 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
             address(divVault),
             address(bucket),
             address(handler),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
         vm.prank(owner);
         vm.expectRevert(LaunchpadV3.WrongMigrator.selector);
-        fresh.setMigrator(address(migrator)); // bound to `pad`
-        MigratorV2 own = new MigratorV2(address(pairFactory), address(fresh));
-        vm.prank(owner);
-        fresh.setMigrator(address(own));
+        fresh.setMigrator(address(migrator)); // the shared migrator does not list `fresh` yet
+        vm.startPrank(owner);
+        migrator.addLaunchpad(address(fresh));
+        fresh.setMigrator(address(migrator));
+        vm.stopPrank();
+        assertEq(address(fresh.migrator()), address(migrator), "listed: one migrator serves both pads");
     }
 
     /// @dev Low: a seller used to earn its pro-rata part of its own sell tax (tax split before its share shrank).
@@ -130,8 +131,8 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
     /// @dev Anyone can deploy a TaxLaunchTokenV3 bound to themselves with our handler and a 1 bps rate (its "platform
     ///      part" would be 50× its tax). Only route-registered tokens may accrue: the fake one's taxed transfer reverts.
     function test_audit_unregisteredTokenCannotAccrue() public {
-        TaxTokenDeployerV3 d = new TaxTokenDeployerV3();
-        TaxLaunchTokenV3 fake = TaxLaunchTokenV3(d.deploy("Fake", "FAKE", 1, 1, address(handler), ""));
+        // the token contract itself is permissionless to deploy (TokenDeployer only lists our cores)
+        TaxLaunchTokenV3 fake = new TaxLaunchTokenV3("Fake", "FAKE", 1, 1, address(this), address(handler), "");
         address fakePair = makeAddr("fakePair");
         fake.unlock(makeAddr("fakeMigrator"));
         fake.setPair(fakePair);
