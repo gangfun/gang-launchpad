@@ -9,6 +9,7 @@ import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
@@ -268,7 +269,7 @@ contract FairMintTest is Test {
         pad.previewCreate(address(q), address(0), 15 ether);
 
         address thin = _seedPair(address(q), address(wbnb), 2 ether, 0.5 ether); // < 1 BNB of WBNB
-        vm.expectRevert();
+        vm.expectRevert(PoolCheck.ThinReferencePool.selector);
         pad.previewCreate(address(q), thin, 15 ether);
     }
 
