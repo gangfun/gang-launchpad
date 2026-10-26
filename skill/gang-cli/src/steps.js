@@ -144,6 +144,69 @@ export const VAULT_ABI = parseAbi([
 ])
 
 /**
+ * The pool-tax handler of a graduated V3 / launched 打新 token (TaxHandlerV3 / HolderRewardHandler, PostGradHandlerBase).
+ * The tax is held in the token and sold in chunks: each token has one budget per block, at most 0.5% of the pair's token
+ * side as it stood at the block's first chunk, shared by the chunk a taxed sell triggers (≤ 25% of that sell) and the
+ * keeper; no chunk sells more than 2% below that block-start price.
+ */
+export const POOL_HANDLER_ABI = parseAbi([
+  'function previewSellNextBlock(address token, uint256 amountIn) view returns (uint256 quoteOut, uint256 chunk)',
+  'function previewSell(address token, uint256 amountIn) view returns (uint256 quoteOut, uint256 chunk)',
+  'function accruedTax(address token) view returns (uint256)',
+  'function maxChunk(address token) view returns (uint256)',
+  'function windowOf(address token) view returns (uint64 blockNumber, uint96 used)',
+  'function CHUNK_MAX_BPS() view returns (uint256)',
+  'function MAX_PRICE_DROP_BPS() view returns (uint256)',
+])
+
+/**
+ * What selling `amountIn` of `token` into its pool pays (after the sell tax, the chunk it triggers sold first), for the
+ * seller's amountOutMin: `previewSellNextBlock` — the tx lands in a later block, with a fresh chunk budget — and
+ * `previewSell` (this block) on handlers from before it. null when neither answers.
+ */
+export async function poolSellQuote(ctx, handler, token, amountIn) {
+  for (const fn of ['previewSellNextBlock', 'previewSell']) {
+    try {
+      const [out, chunk] = await ctx.read(handler, POOL_HANDLER_ABI, fn, [token, amountIn])
+      return { out, chunk, quotedWith: fn }
+    } catch { /* older handler / RPC: try the next */ }
+  }
+  return null
+}
+
+/**
+ * The swap-back state of a graduated token: tax held and not sold yet, the per-block budget (0.5% of the pool's token
+ * side now) and what is left of it in the latest block (a new block starts a fresh one). Handlers from before the
+ * per-block budget (one chunk per block) have no windowOf: `budget: 'one chunk per block (older handler)'`.
+ */
+export async function swapBackState(ctx, handler, token, reserveToken) {
+  const [unsold, left, win, chunkBps, dropBps] = await Promise.all([
+    ctx.read(handler, POOL_HANDLER_ABI, 'accruedTax', [token]).catch(() => null),
+    ctx.read(handler, POOL_HANDLER_ABI, 'maxChunk', [token]).catch(() => null),
+    ctx.read(handler, POOL_HANDLER_ABI, 'windowOf', [token]).catch(() => null),
+    ctx.read(handler, POOL_HANDLER_ABI, 'CHUNK_MAX_BPS').catch(() => 50n),
+    ctx.read(handler, POOL_HANDLER_ABI, 'MAX_PRICE_DROP_BPS').catch(() => null),
+  ])
+  if (unsold == null) return null
+  const base = { unsoldTaxTokens: formatUnits(unsold, 18) }
+  if (!win) return { ...base, budget: 'one chunk per block (older handler)' }
+  return {
+    ...base,
+    budgetPerBlockTokens: formatUnits((reserveToken * chunkBps) / 10_000n, 18),
+    leftInLatestBlockTokens: left == null ? null : formatUnits(left, 18),
+    lastChunkBlock: Number(win[0]) || null,
+    ...(dropBps != null && { pausesBelowBlockStartPct: Number(dropBps) / 100 }),
+    note: `per block, at most ${Number(chunkBps) / 100}% of the pool's token side of the held tax is sold in total (sells' chunks and the keeper together); `
+      + `no chunk sells when the price is more than ${dropBps != null ? Number(dropBps) / 100 : 2}% below where the block started. A new block starts a fresh budget.`,
+  }
+}
+
+/** Hint for selling a graduated / launched token on PancakeSwap with a pool quote `q` (poolSellQuote) as amountOutMin. */
+export const POOL_SELL_HINT = 'sell on PancakeSwap with swapExactTokensForTokensSupportingFeeOnTransferTokens (the token takes its sell tax in the transfer) and minOut as amountOutMin; '
+  + 'the quote includes the small chunk of tax the handler sells right before a sell and assumes the tx lands in a new block (previewSellNextBlock). '
+  + 'Let the wallet estimate gas, or give at least 750k: a sell that triggers a chunk uses about 660k (about 330k without), and too little gas reverts with SwapBackOutOfGas'
+
+/**
  * `me`'s dividend / holder reward on a V3 or 打新 token from the shared vault: `pending` = settled quote, claimable now; `pendingUnits` = tax
  * already credited to `me` when it was paid (in tax tokens) whose batch is not sold yet — it becomes claimable quote
  * once sold, and is valued here at `priceRaw` (quote wei per token) as an estimate only. Vaults from before the

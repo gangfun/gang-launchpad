@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -49,6 +49,7 @@ const PAD_ABI = parseAbi([
   'error NoBridgePool()', 'error BridgeNotWbnb()', 'error BadTaxConfig(string reason)',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error NotContract()',
   'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()', 'error V3FactoryNotSet()', 'error GradAmtZero()',
+  'error VaultFloorTooHigh()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)',
   'event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)',
   'event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)',
@@ -95,6 +96,8 @@ const HINTS = {
   BridgeNotWbnb: 'the bridge pool for this --ref-pool is misconfigured; pick a pool against WBNB',
   GradAmtZero: 'the quote token is priced so high that the target rounds to 0',
   RouterNeedsGate: 'the router path is off while the Agent gate is off; re-run with --use-wbnb to buy directly',
+  // not a create flag: the shared dividend vault's holding floor for this pad was raised above what V3 allows (10,000 tokens)
+  VaultFloorTooHigh: 'the platform\'s dividend vault requires a larger holding than V3 dividends allow (10,000 tokens), so a dividend token can\'t be created right now; --dividend 0 still works, or ask gang to fix the vault setting',
 }
 
 export function v3Ctx(testnet) {
@@ -160,10 +163,12 @@ export async function curveOf(ctx, token) {
   const owed = await ctx.read(router, TAX_ROUTER_ABI, 'owedOf', [token])
   // graduation zeroes realQuote (it went into the pool): a graduated token is priced from the pair reserves
   let price = ((virtualQuote + realQuote) * 10n ** 18n) / (VIRTUAL_TOKEN - sold)
+  let reserveTokenRaw = 0n
   if (graduated && pair !== zeroAddress) {
     const [[r0, r1], t0] = await Promise.all([ctx.read(pair, PAIR_ABI, 'getReserves'), ctx.read(pair, PAIR_ABI, 'token0')])
     const [rT, rQ] = t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
     price = rT > 0n ? (rQ * 10n ** 18n) / rT : 0n
+    reserveTokenRaw = rT
   }
   return {
     token, creator, quote, quoteSymbol: await symbolOf(ctx, quote), taxHandler: handler, router, registry,
@@ -173,7 +178,7 @@ export async function curveOf(ctx, token) {
     toGraduation: await units(ctx, quote, remaining),
     progressPct: graduated ? 100 : gradAmt > 0n ? Number((realQuote * 10_000n) / gradAmt) / 100 : 0,
     priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve', priceRaw: price,
-    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed,
+    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed, reserveTokenRaw,
   }
 }
 
@@ -243,8 +248,10 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
-    const { owedRaw: _raw, priceRaw: _p, ...pub } = c
-    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub })
+    const { owedRaw: _raw, priceRaw: _p, reserveTokenRaw: rT, ...pub } = c
+    // in the pool the tax is held as tokens and sold in small chunks under a per-block budget
+    const swapBack = c.graduated && c.pair ? await swapBackState(ctx, c.taxHandler, token, rT) : null
+    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub, ...(swapBack && { swapBack }) })
   }
 
   if (sub === 'status') {
@@ -254,9 +261,12 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const me = walletFor(ctx, opt('from'))
     const [vault, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
     const { claimableRaw: _r, ...dividend } = c.dividendPct > 0 ? await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw) : {}
+    // graduated: what selling the whole balance into the pool pays now (sell tax and the chunk sold first included)
+    const q = c.graduated && c.pair && bal > 0n ? await poolSellQuote(ctx, c.taxHandler, token, bal) : null
     return out({
       success: true, chainId: Number(ctx.chainId), wallet: me, token, quote: c.quoteSymbol, graduated: c.graduated,
       balance: formatUnits(bal, 18), dividendPct: c.dividendPct,
+      ...(q && { poolSellAll: { expectOut: await units(ctx, c.quote, q.out), quotedWith: q.quotedWith } }),
       ...(c.dividendPct > 0 ? { dividend } : { note: 'this token pays no dividend (dividend 0%)' }),
     })
   }
@@ -380,14 +390,27 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
-    if (c.graduated) return fail('token already graduated; sell on PancakeSwap', { pair: c.pair })
     const me = walletFor(ctx, opt('from'))
     const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
+    if (c.graduated && bal === 0n) return fail('token already graduated; sell on PancakeSwap', { pair: c.pair })
     if (bal === 0n) fail('no balance to sell')
     if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
     const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
     if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
     const slippage = parseSlippage(fail, opt('slippage', '1'))
+    if (c.graduated) {
+      // no pool sell from this CLI yet: quote it (with the tax chunk sold first, as of the next block) for amountOutMin
+      const q = c.pair ? await poolSellQuote(ctx, c.taxHandler, token, amount) : null
+      return fail('token already graduated; sell on PancakeSwap', {
+        pair: c.pair, ...(q && {
+          poolQuote: {
+            amount: formatUnits(amount, 18), expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)),
+            quote: c.quoteSymbol, sellTaxPct: c.sellTaxPct, quotedWith: q.quotedWith,
+          },
+          hint: POOL_SELL_HINT,
+        }),
+      })
+    }
     const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])

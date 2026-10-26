@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
-import { defaultRefPool, dividendOf, fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { defaultRefPool, dividendOf, fundingStep as fund, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -73,11 +73,16 @@ const ERC20_ABI = parseAbi([
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
 const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)'])
 
+/** A launched sale's pool reserves as [token side, quote side] ([0, 0] before launch). */
+async function poolReserves(ctx, token, pair) {
+  if (!pair) return [0n, 0n]
+  const [[r0, r1], t0] = await Promise.all([ctx.read(pair, PAIR_ABI, 'getReserves'), ctx.read(pair, PAIR_ABI, 'token0')])
+  return t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
+}
+
 /** Pool price of a launched sale's token, in quote wei per token (0 before launch / an empty pool). */
 async function poolPriceRaw(ctx, token, pair) {
-  if (!pair) return 0n
-  const [[r0, r1], t0] = await Promise.all([ctx.read(pair, PAIR_ABI, 'getReserves'), ctx.read(pair, PAIR_ABI, 'token0')])
-  const [rT, rQ] = t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
+  const [rT, rQ] = await poolReserves(ctx, token, pair)
   return rT > 0n ? (rQ * 10n ** 18n) / rT : 0n
 }
 
@@ -105,6 +110,8 @@ const HINTS = {
   QuoteNotInPool: '--ref-pool does not contain the --quote token',
   ThinReferencePool: '--ref-pool is too shallow; pick the deepest pool for this quote',
   RouterNeedsGate: 'this sale has no Agent gate, so the router path is off; re-run with --use-wbnb to mint directly',
+  // not a create flag: the shared dividend vault's holding floor for this pad was raised above what 打新 allows
+  VaultFloorTooHigh: 'the platform\'s dividend vault requires a larger holding than fair-mint rewards allow, so no sale can be created right now; ask gang to fix the vault setting',
 }
 
 export function fairCtx(testnet) {
@@ -194,10 +201,13 @@ async function positionOf(ctx, token, me, sale) {
     ctx.read(vault, VAULT_ABI, 'totalShares', [token]),
     ctx.read(token, ERC20_ABI, 'balanceOf', [me]),
   ])
+  // what selling the whole balance into the pool pays (the 1% tax and the chunk sold first included, as of the next block)
+  const q = sale.pair && bal > 0n ? await poolSellQuote(ctx, handler, token, bal) : null
   const line = (baseline * BigInt(Math.round(sale.holdPct * 100))) / 10_000n
   return {
     ...pos,
     balance: formatUnits(bal, 18),
+    ...(q && { poolSellAll: { expectOut: await units(ctx, sale.quote, q.out), quotedWith: q.quotedWith } }),
     reward: out ? 'out' : 'earning',
     holdLineTokens: formatUnits(line, 18),
     sellableBeforeOut: !out && bal > line ? formatUnits(bal - line, 18) : '0',
@@ -246,7 +256,13 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const sale = await saleOf(ctx, token)
     if (!sale) return fail('not a fair-mint sale on this pad', { token, chainId: ctx.chainId })
     const { sharePriceRaw: _raw, exitFeeBps: _exit, ...pub } = sale
-    if (sub === 'info') return out({ success: true, chainId: Number(ctx.chainId), ...pub })
+    if (sub === 'info') {
+      // after launch the 1% tax is held as tokens and sold in small chunks under a per-block budget
+      const swapBack = sale.launched && sale.pair
+        ? await swapBackState(ctx, await ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), token, (await poolReserves(ctx, token, sale.pair))[0])
+        : null
+      return out({ success: true, chainId: Number(ctx.chainId), ...pub, ...(swapBack && { swapBack }) })
+    }
     const me = walletFor(ctx, opt('from'))
     return out({ success: true, chainId: Number(ctx.chainId), wallet: me, sale: pub, position: await positionOf(ctx, token, me, sale) })
   }
@@ -350,7 +366,11 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const token = tokenArg(opt, fail)
     const sale = await saleOf(ctx, token)
     if (!sale) return fail('not a fair-mint sale on this pad', { token })
-    if (sale.status !== 'minting') return fail(`sale is ${sale.status}: withdraw only while minting`)
+    if (sale.status !== 'minting') {
+      return fail(`sale is ${sale.status}: withdraw only while minting`, sale.launched ? {
+        pair: sale.pair, hint: `it launched: \`gang fair status --token ${token}${testnet ? ' --testnet' : ''}\` shows poolSellAll (what selling the balance into the pool pays); ${POOL_SELL_HINT}`,
+      } : {})
+    }
     const me = walletFor(ctx, opt('from'))
     const held = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
     if (!held) return fail('this wallet has no shares in this sale')

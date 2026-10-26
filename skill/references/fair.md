@@ -47,10 +47,15 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   (at least this many more wallets are needed to fill, given the cap).
 - **Locked until launch**: minted tokens sit in the wallet but can't be transferred or traded before launch.
 - **After launch**: every buy / sell on the official pool pays 1%. Half goes to **holder rewards**, half to the platform
-  (80% GANG buyback / 20% vault). The reward half is credited to the eligible minters of the moment the tax is paid; the
-  tax is sold in small chunks right before taxed sells into the pool (once per block, ≤ 25% of that sell, ≤ 0.5% of the
-  pool's token side), or by the keeper, and paid in the quote. A sell fills a little below a plain `getAmountsOut` quote
-  (about half its own price impact more); `previewSell(token, amount)` on the handler gives the exact amount.
+  (80% GANG buyback / 20% vault). The reward half is credited to the eligible minters of the moment the tax is paid —
+  never to the seller for its own sell's tax (its share is cut to what it holds after the sell first). The tax is sold in
+  small chunks right before taxed sells into the pool (≤ 25% of that sell), or by the keeper, and paid in the quote; all
+  chunks of a token in one block share one budget of ≤ 0.5% of the pool's token side (as at the block's first chunk), and
+  none sells while the price is more than 2% below where the block started. A sell fills a little below a plain
+  `getAmountsOut` quote (about half its own price impact more); `previewSellNextBlock(token, amount)` on the handler gives
+  the amount as of the next block — use it for `amountOutMin` (`previewSell` is this block's). `gang fair status` shows
+  it for the whole balance as `position.poolSellAll`, `gang fair info` the chunk state as `swapBack`. A sell that triggers
+  a chunk uses about 660k gas (about 330k without).
 - **Holder reward**: only wallets that minted. Weight = current balance, capped at what the wallet minted.
   **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
   Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards credited
@@ -70,6 +75,11 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - `status.position` after launch: `reward` (`earning` / `out`), `balance`, `holdLineTokens`, `sellableBeforeOut`
   (how much can be sold and still earn), `poolSharePct`, `pendingReward`. **Before any sell or transfer of a fair-mint
   token, check `sellableBeforeOut` and warn the user if the trade goes past it** — it ends the reward for good.
+  `poolSellAll.expectOut` is what selling the whole balance into the pool pays (1% tax and the chunk sold first included);
+  the CLI builds no pool sell — sell on PancakeSwap with `swapExactTokensForTokensSupportingFeeOnTransferTokens`.
+- `info.swapBack` after launch: `unsoldTaxTokens`, `budgetPerBlockTokens` (0.5% of the pool's token side),
+  `leftInLatestBlockTokens` (a new block starts a fresh budget), `lastChunkBlock`. Older testnet handlers answer
+  `budget: 'one chunk per block (older handler)'`.
 - **WBNB sales**: `gang fair mint` pays native BNB through GangRouter in one tx (`via: 'router'`, `payBnb` = cost + mint
   fee); the shares are still this wallet's, and withdraw / claim stay direct. `--use-wbnb` pays from WBNB instead.
 - Other quotes (and `--use-wbnb`, and `create`) may return a setup step first: `step: 'wrap-bnb'` (WBNB short: wraps BNB)
