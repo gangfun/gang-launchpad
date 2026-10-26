@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, defaultRefPool, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -39,6 +39,7 @@ const PAD_ABI = parseAbi([
   'function graduationRemaining(address token) view returns (uint256)',
   'function graduationAmountOf(address quote, address refPool) view returns (uint256)',
   'function taxHandler() view returns (address)',
+  'function dividendVault() view returns (address)',
   'function router() view returns (address)',
   'function recipientRegistry() view returns (address)',
   'function PROTOCOL_FEE_BPS() view returns (uint256)',
@@ -171,7 +172,7 @@ export async function curveOf(ctx, token) {
     raised: await units(ctx, quote, graduated ? gradAmt : realQuote), graduationAt: await units(ctx, quote, gradAmt),
     toGraduation: await units(ctx, quote, remaining),
     progressPct: graduated ? 100 : gradAmt > 0n ? Number((realQuote * 10_000n) / gradAmt) / 100 : 0,
-    priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve',
+    priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve', priceRaw: price,
     owedToRecipient: await units(ctx, quote, owed), owedRaw: owed,
   }
 }
@@ -195,8 +196,8 @@ const addrArg = (opt, fail, name, what) => {
 const parseSlippage = (fail, raw) => parseNum(fail, 'slippage', raw, 0, 50)
 const minOf = (x, slippagePct) => (x * BigInt(Math.round((100 - slippagePct) * 100))) / 10_000n
 
-const SUBS = ['list', 'info', 'create', 'buy', 'sell', 'income', 'release', 'tx']
-const USAGE = 'usage: gang v3 <list|info|create|buy|sell|income|release|tx> [--testnet] — see gang help'
+const SUBS = ['list', 'info', 'status', 'create', 'buy', 'sell', 'claim', 'income', 'release', 'tx']
+const USAGE = 'usage: gang v3 <list|info|status|create|buy|sell|claim|income|release|tx> [--testnet] — see gang help'
 
 /**
  * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta } from index.js
@@ -242,8 +243,44 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
-    const { owedRaw: _raw, ...pub } = c
+    const { owedRaw: _raw, priceRaw: _p, ...pub } = c
     return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub })
+  }
+
+  if (sub === 'status') {
+    const token = addrArg(opt, fail, 'token', 'a V3 token address')
+    const c = await curveOf(ctx, token)
+    if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
+    const me = walletFor(ctx, opt('from'))
+    const [vault, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
+    const { claimableRaw: _r, ...dividend } = c.dividendPct > 0 ? await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw) : {}
+    return out({
+      success: true, chainId: Number(ctx.chainId), wallet: me, token, quote: c.quoteSymbol, graduated: c.graduated,
+      balance: formatUnits(bal, 18), dividendPct: c.dividendPct,
+      ...(c.dividendPct > 0 ? { dividend } : { note: 'this token pays no dividend (dividend 0%)' }),
+    })
+  }
+
+  if (sub === 'claim') {
+    const token = addrArg(opt, fail, 'token', 'a V3 token address')
+    const c = await curveOf(ctx, token)
+    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!(c.dividendPct > 0)) return fail('this token pays no dividend (dividend 0%)', { token })
+    const me = walletFor(ctx, opt('from'))
+    const vault = await ctx.read(ctx.pad, PAD_ABI, 'dividendVault')
+    const d = await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw)
+    if (d.claimableRaw === 0n) {
+      return fail('nothing to claim yet', {
+        ...(d.creditedUnsoldTokens && Number(d.creditedUnsoldTokens) > 0 && { creditedUnsoldEstimate: d.creditedUnsoldEstimate, note: d.note }),
+        hint: `gang v3 status --token ${token}${testnet ? ' --testnet' : ''}`,
+      })
+    }
+    const sim = await simulate(ctx, me, vault, VAULT_ABI, 'claim', [token])
+    if (sim.failed) return out({ success: false, step: 'claim', ...sim.failed })
+    return out(step(ctx, { from: me, to: vault, data: encodeFunctionData({ abi: VAULT_ABI, functionName: 'claim', args: [token] }) }, {
+      step: 'claim', chainId: Number(ctx.chainId), token, amount: d.claimable, quote: c.quoteSymbol,
+      ...(d.creditedUnsoldEstimate && Number(d.creditedUnsoldTokens) > 0 && { stillCreditedUnsold: d.creditedUnsoldEstimate }),
+    }, rawOnly, summarize))
   }
 
   if (sub === 'create') {
@@ -383,7 +420,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
     const events = []
     for (const log of r.logs) {
-      for (const abi of [PAD_ABI, TAX_ROUTER_ABI]) {
+      for (const abi of [PAD_ABI, TAX_ROUTER_ABI, VAULT_ABI]) {
         try {
           const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
           events.push({ event: ev.eventName, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })

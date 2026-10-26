@@ -132,3 +132,34 @@ const DEFAULT_REF_POOLS = {
   56: { '0x55d398326f99059ff775485246999027b3197955': '0x172fcD41E0913e95784454622d1c3724f546f849' },
 }
 export const defaultRefPool = (chainId, quote) => DEFAULT_REF_POOLS[Number(chainId)]?.[String(quote || '').toLowerCase()] || null
+
+/** The shared dividend vault (V3 and 打新). */
+export const VAULT_ABI = parseAbi([
+  'function pending(address token, address user) view returns (uint256)',
+  'function pendingUnits(address token, address user) view returns (uint256)',
+  'function shares(address token, address user) view returns (uint256)',
+  'function claim(address token) returns (uint256)',
+  'error NothingToClaim()', 'error UnknownToken()',
+  'event DividendClaimed(address indexed token, address indexed user, uint256 amount)',
+])
+
+/**
+ * `me`'s dividend / holder reward on a V3 or 打新 token from the shared vault: `pending` = settled quote, claimable now; `pendingUnits` = tax
+ * already credited to `me` when it was paid (in tax tokens) whose batch is not sold yet — it becomes claimable quote
+ * once sold, and is valued here at `priceRaw` (quote wei per token) as an estimate only. Vaults from before the
+ * tax-time crediting have no pendingUnits: those report null.
+ */
+export async function dividendOf(ctx, vault, token, me, quote, priceRaw) {
+  const [pending, share, unitsRaw] = await Promise.all([
+    ctx.read(vault, VAULT_ABI, 'pending', [token, me]),
+    ctx.read(vault, VAULT_ABI, 'shares', [token, me]),
+    ctx.read(vault, VAULT_ABI, 'pendingUnits', [token, me]).catch(() => null),
+  ])
+  return {
+    claimable: await units(ctx, quote, pending), claimableRaw: pending,
+    dividendShare: formatUnits(share, 18),
+    creditedUnsoldTokens: unitsRaw == null ? null : formatUnits(unitsRaw, 18),
+    creditedUnsoldEstimate: unitsRaw == null || !priceRaw ? null : await units(ctx, quote, (unitsRaw * priceRaw) / 10n ** 18n),
+    ...(unitsRaw > 0n && { note: 'creditedUnsold: tax credited to you when it was paid, claimable once that batch is sold (estimate at the current price)' }),
+  }
+}

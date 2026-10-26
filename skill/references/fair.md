@@ -55,6 +55,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
   Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards credited
   before going out (taxes paid while the wallet was in) stay claimable, even if they are sold after it went out.
+  `gang fair status` shows `pendingReward` (claimable now) and `creditedUnsoldEstimate` (credited when the tax was paid,
+  claimable once that tax is sold; valued at the pool price, an estimate). `gang fair claim` takes only the claimable part.
 
 - **Logo**: same as `gang create` — `--logo ./file.png` is uploaded to gang.fun; a `--logo-uri` on another host is copied
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.

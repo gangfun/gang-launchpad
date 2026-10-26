@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
-import { defaultRefPool, fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { defaultRefPool, dividendOf, fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -71,6 +71,15 @@ const ERC20_ABI = parseAbi([
   'function symbol() view returns (string)',
 ])
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
+const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)'])
+
+/** Pool price of a launched sale's token, in quote wei per token (0 before launch / an empty pool). */
+async function poolPriceRaw(ctx, token, pair) {
+  if (!pair) return 0n
+  const [[r0, r1], t0] = await Promise.all([ctx.read(pair, PAIR_ABI, 'getReserves'), ctx.read(pair, PAIR_ABI, 'token0')])
+  const [rT, rQ] = t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
+  return rT > 0n ? (rQ * 10n ** 18n) / rT : 0n
+}
 
 const STATUS = ['none', 'minting', 'launched']
 // what to tell the agent for each pad error
@@ -178,10 +187,10 @@ async function positionOf(ctx, token, me, sale) {
   }
   if (!sale.launched || !shares) return pos
   const [handler, vault] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), ctx.read(ctx.pad, PAD_ABI, 'dividendVault')])
-  const [out, weight, pending, total, bal] = await Promise.all([
+  const [out, weight, reward, total, bal] = await Promise.all([
     ctx.read(handler, HANDLER_ABI, 'isOut', [token, me]),
     ctx.read(handler, HANDLER_ABI, 'eligibleShare', [token, me]),
-    ctx.read(vault, VAULT_ABI, 'pending', [token, me]),
+    poolPriceRaw(ctx, token, sale.pair).then((p) => dividendOf(ctx, vault, token, me, sale.quote, p)),
     ctx.read(vault, VAULT_ABI, 'totalShares', [token]),
     ctx.read(token, ERC20_ABI, 'balanceOf', [me]),
   ])
@@ -193,8 +202,10 @@ async function positionOf(ctx, token, me, sale) {
     holdLineTokens: formatUnits(line, 18),
     sellableBeforeOut: !out && bal > line ? formatUnits(bal - line, 18) : '0',
     poolSharePct: total > 0n ? Number((weight * 1_000_000n) / total) / 10_000 : 0,
-    pendingReward: await units(ctx, sale.quote, pending),
-    ...(out && { note: 'out for good: fell below the hold line once; buying back does not restore it' }),
+    pendingReward: reward.claimable,
+    // tax credited to me when it was paid, claimable once its batch is sold (null on vaults without tax-time crediting)
+    creditedUnsoldTokens: reward.creditedUnsoldTokens, creditedUnsoldEstimate: reward.creditedUnsoldEstimate,
+    ...(out ? { note: 'out for good: fell below the hold line once; buying back does not restore it' } : reward.note && { note: reward.note }),
   }
 }
 
@@ -368,11 +379,18 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!sale) return fail('not a fair-mint sale on this pad', { token })
     const me = walletFor(ctx, opt('from'))
     const vault = await ctx.read(ctx.pad, PAD_ABI, 'dividendVault')
-    const pending = await ctx.read(vault, VAULT_ABI, 'pending', [token, me])
-    if (pending === 0n) return fail('nothing to claim yet', { hint: `gang fair status --token ${token}${testnet ? ' --testnet' : ''}` })
+    const r = await dividendOf(ctx, vault, token, me, sale.quote, await poolPriceRaw(ctx, token, sale.pair))
+    const unsold = r.creditedUnsoldTokens && Number(r.creditedUnsoldTokens) > 0
+    if (r.claimableRaw === 0n) {
+      return fail('nothing to claim yet', {
+        ...(unsold && { creditedUnsoldEstimate: r.creditedUnsoldEstimate, note: r.note }),
+        hint: `gang fair status --token ${token}${testnet ? ' --testnet' : ''}`,
+      })
+    }
     const data = encodeFunctionData({ abi: VAULT_ABI, functionName: 'claim', args: [token] })
     return out(step(ctx, { from: me, to: vault, data }, {
-      step: 'claim', chainId: Number(ctx.chainId), token, amount: await units(ctx, sale.quote, pending), quote: sale.quoteSymbol,
+      step: 'claim', chainId: Number(ctx.chainId), token, amount: r.claimable, quote: sale.quoteSymbol,
+      ...(unsold && { stillCreditedUnsold: r.creditedUnsoldEstimate }),
     }, rawOnly, summarize))
   }
 
