@@ -12,6 +12,7 @@ import {
 import { NOTE_TX, MIN_FOLLOW_USD, REASONS, noteLink, checkFollow, amountUsd, localTime } from './follow.js'
 import { rememberPreview, previewFor } from './previews.js'
 import { UA, checkUpdate } from './version.js'
+import { runFair } from './fair.js'
 
 const args = process.argv.slice(2)
 const cmd = args[0]
@@ -134,6 +135,20 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          LaunchpadV2 ONLY (${ADDR.v2}); Soft/U/S create refused
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
+  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1]
+                 [--shares 1] [--logo <file> | --logo-uri URL]
+                                         打新 (fair mint): one price per share, the last share launches on PancakeSwap at that
+                                         price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
+                                         wallet, 1–72h, hold line 30–80%, mint / withdraw fee 1–5% each (e.g. --mint-fee 1 --exit-fee 2).
+                                         Wraps / approves first when needed (re-run after each)
+  gang fair mint --token <addr> --shares <n> [--min-shares <n>]      + the sale's mint fee, refunded if the sale fails
+  gang fair withdraw --token <addr> (--shares <n> | --all)           before fill / deadline: principal − the sale's exit fee
+  gang fair refund --token <addr>        after a deadline without a fill: principal + mint fee
+  gang fair status --token <addr>        my shares; after launch: reward on / out, how much I can sell and stay in, to claim
+  gang fair claim --token <addr>         claim the holder reward
+  gang fair info --token <addr> | gang fair list [--status minting|launched|failed|all] | gang fair tx --hash <0x..>
+                                         fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
+                                         instead of a baw preview, --from <addr> reads / builds for that wallet
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -154,7 +169,7 @@ update: { current, latest, cmd, skill } (npm is asked at most once a day in the 
 off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_LAUNCHPAD (default V2 ${ADDR.v2}), GANG_RPC_URL, GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes),
-GANG_UPDATE_CHECK, GANG_UPDATE_URL`
+GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
@@ -364,11 +379,13 @@ async function buy(token, bnb, note, followTx, checked = null) {
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'token', 'quote', 'buy', 'follow', 'sell',
-  'upload-logo', 'create', 'execute', 'tx'])
+  'upload-logo', 'create', 'execute', 'tx', 'fair'])
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
   switch (cmd) {
+    case 'fair':
+      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
     case 'preflight': {
       const issues = []
       const status = bawStatus()
