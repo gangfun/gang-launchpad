@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai
 - 链：BSC 测试网（chainId 97），PancakeSwap V2 测试网工厂 / 路由
-- 代码：`feat/v3-tax-recipient`（`script/DeployLaunchpadV3.s.sol`、`script/LaunchpadV3TestnetE2E.s.sol`）
+- 代码：`feat/v3-tax-recipient`，合约为提交 53e536d；脚本 `script/DeployLaunchpadV3.s.sol`、`script/LaunchpadV3TestnetE2E.s.sol`
 - 部署 / owner / keeper：`0xCa8e63434072B40d3dFE6f5e7Fd885F93A3200b6`
 - 规格：`docs/SPEC-V3-TAX-RECIPIENT-2026-10-26.md`
 
@@ -25,6 +25,8 @@
 | 演示金库（已加白名单；没人持有私钥，余额只会因收税增长） | [`0xe22eEE60677911Ef25a359285Fb09786AC728c77`](https://testnet.bscscan.com/address/0xe22eEE60677911Ef25a359285Fb09786AC728c77) |
 
 QuoteRegistry 里两个测试报价币的覆盖值都是 15 枚 / 15 BNB，所以毕业线 ≈ 15 枚测试币。
+
+测试网的 PlatformFeeBucket 只接了 pad 和 router 作为 operator，没有设 keeper / burner（测试网没有 GANG 回购），平台抽成只累计、不做回购；V3 税收流程不受影响。
 
 ## 整轮记录
 
@@ -64,12 +66,19 @@ MIN_PROCESS_QUOTE=0.0001
 
 ## 花费
 
+全部按 0.1 gwei 计。
+
 | 项 | tBNB |
 |---|---|
-| 部署（25 笔，1,325 万 gas） | 0.0013 |
-| 整轮（417 笔） | 0.0075 预付给 80 个买家（各自付 gas）+ 部署者自己的约 0.0007 |
-| keeper（2 笔） | < 0.0001 |
-| 合计（部署钱包余额 0.027647 → 0.018185） | 0.0095 |
+| 部署（25 笔，1,325 万 gas） | 0.001325 |
+| 整轮：部署钱包自己的交易 | 0.000606 |
+| 整轮：80 个买家各自的交易（从预付里扣） | 0.003587 |
+| keeper（2 笔，31.6 万 gas） | 0.000032 |
+| 回收（`sweep()`，80 笔转账，从预付里扣） | 0.000168 |
+| 留在买家钱包的零头（每个 2× 转账费减去实际花掉的 1×） | 0.000168 |
+| 合计（部署钱包余额 0.027647 → 0.021762） | 0.005885 |
+
+预付 0.0075 里买家只烧掉了一半左右（毕业前最后 5 个各拿 10 倍，只有触发毕业那一笔真正用到），其余 0.003577 由 `sweep()` 收回。
 
 ## 复跑
 
@@ -81,6 +90,11 @@ DEPLOYER_PRIVATE_KEY=… forge script script/DeployLaunchpadV3.s.sol --rpc-url h
 DEPLOYER_PRIVATE_KEY=… PAD=<V3_LAUNCHPAD> BLACKLIST_QUOTE=<BLACKLIST_QUOTE> \
   forge script script/LaunchpadV3TestnetE2E.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com \
   --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
+# 整轮跑完后单独一次：把买家没烧完的 gas 钱收回部署钱包（读链上余额；不能和整轮放在同一次，模拟不扣 gas 会高估余额）
+DEPLOYER_PRIVATE_KEY=… forge script script/LaunchpadV3TestnetE2E.s.sol --sig "sweep()" \
+  --rpc-url https://bsc-testnet-rpc.publicnode.com --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
 ```
+
+换 gas 价格时同时设 `GAS_PRICE_WEI`（默认 0.1 gwei），买家预付和回收预留都按它算。
 
 踩坑同打新测试网（`docs/TESTNET-FAIR-MINT-2026-10-26.md`）：显式给 gas 价格；长脚本用 publicnode，不用官方 data-seed 节点；新部署钱包要先有测试网 Agent ID（整轮脚本会自己 `register()`）。

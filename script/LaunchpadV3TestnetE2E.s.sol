@@ -27,11 +27,16 @@ interface ITestnetAgentId {
 /// @dev TESTNET ONLY. Resumable: TOKEN_A / TOKEN_B skip their create; minters that already hold A are skipped; the
 ///      fill stops once A graduates. Minter keys derive from DEPLOYER_PRIVATE_KEY (recoverable, worthless off testnet).
 ///      Env: DEPLOYER_PRIVATE_KEY, PAD, BLACKLIST_QUOTE; optional TEST_QUOTE, RECIPIENT, TOKEN_A, TOKEN_B,
-///      GAS_PER_MINTER (wei). Router deadlines are a day out (fixed at simulation time; broadcasting takes minutes).
+///      GAS_PRICE_WEI (default 0.1 gwei — pass the same value as --with-gas-price; minter prefunds are sized from it),
+///      GAS_PER_MINTER (wei, overrides the sized prefund). Router deadlines are a day out (fixed at simulation time;
+///      broadcasting takes minutes). Afterwards run `--sig "sweep()"` as its own script to return what the minters did
+///      not burn: it has to be a separate run, since a simulation does not charge gas and would overstate their balances.
 contract LaunchpadV3TestnetE2E is Script {
     uint256 internal constant SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
     uint256 internal constant MAX_MINTERS = 120;
-    address internal constant TESTNET_DEMO_TREASURY = address(uint160(uint256(keccak256("gang-v3-testnet-treasury"))));
+    /// @dev register + mint + approve + capped buy take ~370k gas; the buy that graduates (pair + LP) ~2.45M
+    uint256 internal constant MINTER_GAS = 600_000;
+    uint256 internal constant NEAR_END_FACTOR = 10;
 
     error WrongChain(uint256 chainId);
     error Check(string what);
@@ -50,7 +55,7 @@ contract LaunchpadV3TestnetE2E is Script {
         pad = LaunchpadV3(vm.envAddress("PAD"));
         quote = MockSPCXB(vm.envOr("TEST_QUOTE", T.TEST_QUOTE));
         blq = TestnetBlacklistQuote(vm.envAddress("BLACKLIST_QUOTE"));
-        treasury = vm.envOr("RECIPIENT", TESTNET_DEMO_TREASURY);
+        treasury = vm.envOr("RECIPIENT", T.DEMO_TREASURY);
         TaxRouterV3 router = TaxRouterV3(address(pad.router()));
 
         // create / curve trades are Agent-only: a fresh deployer registers a testnet Agent ID first
@@ -72,7 +77,7 @@ contract LaunchpadV3TestnetE2E is Script {
         console.log("token B", b, "owed", router.owedOf(b));
 
         // ---- A: fill the curve with agents (1% cap each) until it graduates
-        _graduate(a, vm.envOr("GAS_PER_MINTER", uint256(0.00006 ether)));
+        _graduate(a, vm.envOr("GAS_PER_MINTER", MINTER_GAS * _gasPrice()));
         address pair = TaxLaunchTokenV3(a).pair();
         console.log("pair", pair);
 
@@ -136,7 +141,7 @@ contract LaunchpadV3TestnetE2E is Script {
             // the buy that graduates also builds the pair: the last few get more gas
             bool nearEnd = pad.graduationRemaining(a) < 3 ether;
             vm.startBroadcast(deployerPk);
-            payable(m).transfer(nearEnd ? gasPerMinter * 10 : gasPerMinter);
+            payable(m).transfer(nearEnd ? gasPerMinter * NEAR_END_FACTOR : gasPerMinter);
             vm.stopBroadcast();
             vm.startBroadcast(pk);
             if (ITestnetAgentId(address(pad.agentIdRegistry())).balanceOf(m) == 0) {
@@ -148,6 +153,31 @@ contract LaunchpadV3TestnetE2E is Script {
             vm.stopBroadcast();
         }
         if (!_graduated(a)) revert Check("not graduated");
+    }
+
+    /// @notice Return each minter's leftover gas money to the deployer (one plain transfer per minter, read from chain).
+    function sweep() external {
+        if (block.chainid != 97) revert WrongChain(block.chainid);
+        deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        deployer = vm.addr(deployerPk);
+        uint256 fee = 21_000 * _gasPrice();
+        uint256 total;
+        for (uint256 i = 0; i < MAX_MINTERS; i++) {
+            uint256 pk = _minterKey(i);
+            address m = vm.addr(pk);
+            // 2x fee: whatever the transfer does not burn stays behind as dust
+            if (m.balance <= 2 * fee) continue;
+            uint256 amount = m.balance - 2 * fee;
+            vm.startBroadcast(pk);
+            payable(deployer).transfer(amount);
+            vm.stopBroadcast();
+            total += amount;
+        }
+        console.log("swept", total);
+    }
+
+    function _gasPrice() internal view returns (uint256) {
+        return vm.envOr("GAS_PRICE_WEI", uint256(0.1 gwei));
     }
 
     function _graduated(address a) internal view returns (bool g) {
