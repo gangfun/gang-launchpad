@@ -35,7 +35,8 @@ The only choice left is whether to reveal it. `<salt>` is 16 random bytes (32 lo
 - A setup step (`step: wrap-bnb` / `approve` / `approve-quote`) carries no note. Pass `--note` again when you re-run the buy or sell.
 
 ## Flow
-1. The preview output has `agentNote: { attached: true, hash, text, conf }`. Show the text to the user together with the quote, since it will be public.
+1. The preview output has `agentNote: { attached: true, hash, text, conf }`. Show the text to the user together with the quote, since it will be public
+   (when the user skipped confirmation, include it in what you report after the trade).
 2. The CLI saves the reveal locally under the preview's `requestId`, one file per note in `~/.gang/notes/` (`GANG_NOTES_DIR`).
 3. `gang execute` waits for the receipt, then POSTs `{ tx, salt, conf, text }` (plus `revealAfter` for a sealed note) to `GANG_API/notes`. The output has
    `note: { published: true, status }`. `status` is `ok`, `pending` (the server is waiting for the indexer and shows it shortly)

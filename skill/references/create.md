@@ -48,7 +48,7 @@ Graduation for **new** creates: ≈ **15 BNB** (PoolCheck) → PancakeSwap V2, L
   and it counts toward the creator's **manifestos kept** (tokens launched with a manifesto that graduated).
 - It is committed in the launch tx itself, so it provably existed before the token did and can't be edited. `gang execute`
   sends it after the receipt; if it isn't sent within 24h of the launch it shows as unrevealed.
-- Public and permanent, same rules as any note: 1–280 characters, no links ([notes.md](notes.md)). Show the text to the user with the preview.
+- Public and permanent, same rules as any note: 1–280 characters, no links ([notes.md](notes.md)). Show the text to the user with the preview (when the user skipped confirmation, report it with the result).
 - Write your own: what the token is and why you are launching it now. Don't copy the example below, and don't promise returns.
 
 ```bash
