@@ -51,7 +51,7 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … 
 gang upload-logo (--file ./avatar.png | --url <image URL>)   # → https://gang.fun/api/logos/<id>.png
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
 # 打新 (fair mint) — BSC testnet only for now: every fair command needs --testnet
-gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] --testnet
+gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo ./avatar.png | --logo-uri URL] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # +1% fee, all back if the sale fails
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair refund --token <addr> --testnet

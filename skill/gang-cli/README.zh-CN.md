@@ -41,7 +41,7 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … 
 gang upload-logo (--file ./avatar.png | --url <图片地址>)
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
 # 打新（目前只在 BSC 测试网，打新命令都要带 --testnet）
-gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] --testnet
+gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo ./avatar.png | --logo-uri URL] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # 另收 1%，没打满全额退
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair refund --token <addr> --testnet

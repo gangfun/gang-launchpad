@@ -135,7 +135,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          LaunchpadV2 ONLY (${ADDR.v2}); Soft/U/S create refused
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
-  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo-uri URL]
+  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo <file> | --logo-uri URL]
                                          打新 (fair mint): one price per share, the last share launches on PancakeSwap at that
                                          price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
                                          wallet, 1–72h, hold line 30–80%. Wraps / approves first when needed (re-run after each)
@@ -167,7 +167,7 @@ update: { current, latest, cmd, skill } (npm is asked at most once a day in the 
 off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_LAUNCHPAD (default V2 ${ADDR.v2}), GANG_RPC_URL, GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes),
-GANG_UPDATE_CHECK, GANG_UPDATE_URL`
+GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
@@ -383,7 +383,7 @@ async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
   switch (cmd) {
     case 'fair':
-      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview })
+      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
     case 'preflight': {
       const issues = []
       const status = bawStatus()

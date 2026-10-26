@@ -11,7 +11,7 @@ the other half plus every share's principal goes into a PancakeSwap V2 pool when
 gang fair list [--status minting|launched|failed|all]       # sales on gang.fun (needs the server to run fair mint)
 gang fair info --token <addr> --testnet                      # one sale from the chain
 gang fair status --token <addr> --testnet                    # my shares; after launch my reward state
-gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo-uri URL] --testnet
+gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--shares 1] [--logo ./avatar.png | --logo-uri URL] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair refund --token <addr> --testnet
@@ -38,6 +38,12 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
   Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards earned before
   going out stay claimable.
+
+- **Logo**: same as `gang create` — `--logo ./file.png` is uploaded to gang.fun; a `--logo-uri` on another host is copied
+  to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.
+- **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
+  Tell the user why in words instead.
+- Env: `GANG_FAIR_TESTNET_PAD` / `GANG_FAIR_TESTNET_RPC_URL` override the testnet deployment; `GANG_FAIR_PAD` is for mainnet.
 
 ## Reading results
 

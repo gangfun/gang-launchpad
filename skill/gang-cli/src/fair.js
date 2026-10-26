@@ -11,13 +11,13 @@ import { UA } from './version.js'
  */
 export const FAIR_NETS = {
   mainnet: {
-    chainId: '56', chain: bsc, pad: process.env.GANG_FAIR_PAD || null,
+    chainId: '56', chain: bsc, pad: process.env.GANG_FAIR_PAD || null, // no mainnet pad yet
     rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
     wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_PAD || '0x2f45c4814A540B0F6E9A25497DEc7B8C6CAA8963',
-    rpc: process.env.GANG_FAIR_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x2f45c4814A540B0F6E9A25497DEc7B8C6CAA8963',
+    rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
 }
@@ -161,7 +161,8 @@ function step(ctx, { from, to, data, value = 0n }, extra, rawOnly, summarize) {
     return { success: true, ...extra, tx: { chainId: Number(ctx.chainId), from, to, data, value: value.toString() } }
   }
   const p = bawPreview({ from, to, value, data, chainId: ctx.chainId })
-  if (!p.success && /chain|network|unsupported/i.test(JSON.stringify(p.error || ''))) {
+  // only an error about the chain itself: a generic network failure is not a reason to fall back to --calldata
+  if (!p.success && new RegExp(`binanceChainId|unsupported chain|chain not supported|\\b${ctx.chainId}\\b`, 'i').test(JSON.stringify(p.error || ''))) {
     return {
       success: false, ...extra, error: p.error,
       hint: `the Agentic Wallet may not sign on chain ${ctx.chainId}: re-run with --calldata to get the raw tx`,
@@ -247,8 +248,10 @@ async function positionOf(ctx, token, me, sale) {
 const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'refund', 'claim', 'tx']
 const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|refund|claim|tx> [--testnet] — see gang help'
 
-export async function runFair(sub, { opt, flag, out, fail, summarize }) {
+export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
+  // agent notes are matched to curve trades / creates on the server; fair-mint txs are not indexed there yet
+  if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang fair yet: the server cannot match them to a fair-mint tx; leave them out')
   const testnet = flag('testnet')
   const rawOnly = flag('calldata')
   if (sub === 'list') {
@@ -302,11 +305,14 @@ export async function runFair(sub, { opt, flag, out, fail, summarize }) {
     const me = walletFor(ctx, opt('from'))
     const pre = await fundingStep(ctx, me, quote, need, sym, rawOnly, summarize)
     if (pre) return out(pre)
-    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, opt('logo-uri', ''), quote, refPool, cfg, BigInt(devShares)] })
+    // logoURI is permanent on-chain: same handling as `gang create` (--logo file upload, other hosts copied to gang.fun).
+    // Done after the setup steps so a wrap / approve round does not upload the image twice.
+    const logo = await resolveLogo()
+    const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logo.logoURI, quote, refPool, cfg, BigInt(devShares)] })
     const dry = await dryRun(ctx, me, ctx.pad, data)
     if (dry) return out({ success: false, step: 'create', ...dry })
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'create', chainId: Number(ctx.chainId), name, symbol, quote: sym || quote,
+      step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }), quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
       capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, devShares,
       devCost: await units(ctx, quote, need),
