@@ -12,9 +12,7 @@ import {PostGradTaxHandler} from "../../src/launchpad-v2/PostGradTaxHandler.sol"
 import {IV3FactoryLite} from "../../src/launchpad-v2/PoolCheck.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
@@ -78,15 +76,16 @@ contract QuoteRefPoolForkTest is Test {
         // V3 core
         DividendVault div = new DividendVault(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, owner);
-        TaxRouterV3 router = new TaxRouterV3(owner, address(div), address(bucket));
+        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(div), address(bucket));
         v3 = new LaunchpadV3(
-            owner, address(reg), address(div), address(bucket),
-            address(new PostGradTaxHandlerV3(owner, address(div), address(router))), address(router),
-            address(new RecipientRegistry(owner)), address(new TaxTokenDeployerV3()), WBNB, V2_FACTORY
+            owner, address(reg), address(div), address(bucket), address(handler), address(new TaxTokenDeployerV3()), WBNB,
+            V2_FACTORY
         );
         div.setLaunchpad(address(v3));
         bucket.setLaunchpad(address(v3));
-        router.setLaunchpad(address(v3));
+        div.setOperator(address(handler), true);
+        bucket.setOperator(address(handler), true);
+        handler.setLaunchpad(address(v3));
         v3.setMigrator(address(new MigratorV2(V2_FACTORY, address(v3))));
         v3.setAgentGate(true, address(agent));
         v3.setV3Factory(V3_FACTORY);
