@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @title TokenURI — the token's metadata URI, fixed at creation
-/// @notice Set once from the `logoURI` the creator passed to the pad's `create` (the same string the pad keeps in
-///         `logoURIOf` and emits in `Created`); there is no setter. `contractURI()` is ERC-7572; `metaURI()` returns
-///         the same value.
+/// @title TokenURI — the token's metadata JSON URI, fixed at creation
+/// @notice Set once from the `metaURI` the creator passed to the pad's `create`: a JSON document (name, symbol,
+///         description, image, links) that the CLI builds and uploads. There is no setter. `contractURI()` is ERC-7572;
+///         `metaURI()` returns the same value. The logo alone stays in the pad (`logoURIOf`, `Created`).
 abstract contract TokenURI {
     string private _uri;
 

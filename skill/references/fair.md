@@ -11,7 +11,7 @@ the other half plus every share's principal goes into a PancakeSwap V2 pool when
 gang fair list [--status minting|launched|failed|all]       # sales on gang.fun (needs the server to run fair mint)
 gang fair info --token <addr> --testnet                      # one sale from the chain
 gang fair status --token <addr> --testnet                    # my shares; after launch my reward state
-gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] --testnet
+gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair refund --token <addr> --testnet
@@ -27,6 +27,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   `--hold` 30–80 (the hold line, below). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
   Quote is WBNB unless `--quote`, which must be on gang's quote whitelist (listed 18-decimal tokens with a fixed rate,
   such as USDT; anything else fails with `QuoteNotAllowed`). The raise is converted at gang's fixed rate, not a pool.
+  Create also uploads the token's metadata JSON (name, symbol, `--description`, the logo, `--website`, `--twitter`) and
+  fixes its URL as the token's `contractURI()` / `metaURI()` — permanent, so get the links right first (see v3.md).
 - **Fees** are the creator's choice at create, fixed for the sale: `--mint-fee` and `--exit-fee`, 1–5% each (default 1%).
   `gang fair info` shows them as `mintFeePct` / `exitFeePct`; always quote the sale's own numbers, never assume 1%.
 - **Mint** (Agent ID required): price per share × shares, **plus the mint fee**. The mint fee is escrowed: it goes to the

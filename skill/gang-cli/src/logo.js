@@ -56,6 +56,34 @@ async function postLogo(buf, what) {
   return { logoUrl: json.logoUrl, id: json.id, bytes: json.bytes ?? buf.length, api: LOGO_API }
 }
 
+/**
+ * Token metadata JSON (the token's contractURI / metaURI, permanent on-chain) → POST /api/logos as application/json →
+ * { url, id, bytes }. Keys with no value are left out. Same upload endpoint and CDN as logos.
+ */
+export async function uploadMetadata(meta) {
+  const clean = Object.fromEntries(Object.entries(meta).filter(([, v]) => v != null && v !== ''))
+  const buf = Buffer.from(JSON.stringify(clean))
+  if (buf.length > 256 * 1024) throw new Error(`metadata too large: ${buf.length} bytes (max 256 KB)`)
+  let res, text
+  try {
+    res = await fetch(LOGO_API, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': UA },
+      body: JSON.stringify({ file: `data:application/json;base64,${buf.toString('base64')}` }),
+    })
+    text = await res.text()
+  } catch (e) {
+    throw fetchError(`metadata upload failed: ${why(e)}`, e)
+  }
+  let json
+  try { json = JSON.parse(text) } catch { throw statusError(`metadata upload non-JSON (${res.status}): ${text.slice(0, 200)}`, res.status) }
+  const url = json?.url || json?.logoUrl
+  if (!res.ok || !json?.ok || !url) {
+    throw statusError(`metadata upload failed (${res.status}): ${json?.error || text.slice(0, 200)}`, res.status)
+  }
+  return { url, id: json.id, bytes: json.bytes ?? buf.length, metadata: clean }
+}
+
 /** Read a local image → POST /api/logos → { logoUrl, id, bytes }. */
 export async function uploadLogoFile(filePath) {
   const abs = resolve(filePath)

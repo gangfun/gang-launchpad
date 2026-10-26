@@ -230,6 +230,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         string calldata name,
         string calldata symbol,
         string calldata logoURI,
+        string calldata metaURI,
         address quote,
         address refPool,
         TaxConfig calldata tax
@@ -245,9 +246,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
-            token = address(new LaunchTokenV3(name, symbol, logoURI));
+            token = address(new LaunchTokenV3(name, symbol, metaURI));
         } else {
-            token = _createTaxed(name, symbol, logoURI, quote, tax);
+            token = _createTaxed(name, symbol, metaURI, quote, tax);
         }
 
         _writeCurve(token, quote, lockedGrad, tax, refUsed);

@@ -9,13 +9,15 @@ import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
 /// @notice The pad's power over V3 tokens is fixed and one-shot; tokens carry the creator's metadata URI.
 contract TokenAdminV3Test is LaunchpadV3Test {
-    string internal constant URI = "ipfs://bafy-meta";
+    string internal constant LOGO = "ipfs://bafy-logo";
+    string internal constant URI = "ipfs://bafy-meta.json";
 
     function _createWithUri(uint16 buyBps) internal returns (address token) {
         vm.prank(agent);
         token = pad.create(
             "Meta",
             "META",
+            LOGO,
             URI,
             address(quoteTok),
             address(0),
@@ -30,7 +32,7 @@ contract TokenAdminV3Test is LaunchpadV3Test {
             address t = i == 0 ? taxed : untaxed;
             assertEq(TokenURI(t).contractURI(), URI, "contractURI");
             assertEq(TokenURI(t).metaURI(), URI, "metaURI");
-            assertEq(pad.logoURIOf(t), URI, "pad keeps the same string");
+            assertEq(pad.logoURIOf(t), LOGO, "pad keeps the logo, not the metadata");
         }
     }
 

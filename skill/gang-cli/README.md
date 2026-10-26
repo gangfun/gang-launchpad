@@ -54,14 +54,14 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … 
 gang upload-logo (--file ./avatar.png | --url <image URL>)   # → https://gang.fun/api/logos/<id>.png
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
 # 打新 (fair mint) — BSC testnet only for now: every fair command needs --testnet
-gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] --testnet
+gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–5%), all back if the sale fails
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair refund --token <addr> --testnet
 gang fair status --token <addr> --testnet                      # shares; after launch: reward on / out, sellable, to claim
 gang fair claim --token <addr> --testnet
 # LaunchpadV3 tax token (own buy / sell tax 1–5%, paid to a whitelisted recipient in the quote) — BSC testnet only for now
-gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] --testnet
+gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee and the buy tax
 gang v3 sell --token <addr> (--amount <tokens> | --all) --testnet
 gang v3 info --token <addr> --testnet                           # tax setting, recipient, what is still owed to it

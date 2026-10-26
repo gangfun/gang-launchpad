@@ -134,13 +134,13 @@ contract LaunchpadV3Test is Test {
 
     function _create(ILaunchpadV3.TaxConfig memory t) internal returns (address token) {
         vm.prank(agent);
-        token = pad.create("Tax", "TAX", "", address(quoteTok), address(0), t);
+        token = pad.create("Tax", "TAX", "", "", address(quoteTok), address(0), t);
     }
 
     function _expectBad(ILaunchpadV3.TaxConfig memory t, string memory reason) internal {
         vm.prank(agent);
         vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, reason));
-        pad.create("X", "X", "", address(quoteTok), address(0), t);
+        pad.create("X", "X", "", "", address(quoteTok), address(0), t);
     }
 
     function _graduated(address token) internal view returns (bool g) {
@@ -277,7 +277,7 @@ contract LaunchpadV3Test is Test {
         bq.setBlocked(treasury, true);
 
         vm.prank(agent);
-        address t = pad.create("B", "B", "", address(bq), address(0), _tax(200, 200, 0, treasury));
+        address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(200, 200, 0, treasury));
         uint256 owedAmt = (0.01 ether * 150) / BPS;
         vm.expectEmit(true, true, true, true, address(router));
         emit TaxOwed(t, treasury, address(bq), owedAmt);

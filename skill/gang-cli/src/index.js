@@ -4,7 +4,7 @@ import {
   calldata, decodeTx, parseEther, fmt, fmtTok, resolvePad, assertCreateTarget, preflightCreate, isAddress, zeroAddress, client,
 } from './chain.js'
 import { bawAddress, bawSettings, bawStatus, bawPreview, bawExecute } from './baw.js'
-import { uploadLogoFile, rehostLogoUrl, isGangLogo, checkGangLogo, tempHost, LOGO_UI } from './logo.js'
+import { uploadLogoFile, uploadMetadata, rehostLogoUrl, isGangLogo, checkGangLogo, tempHost, LOGO_UI } from './logo.js'
 import { API, fetchMarket, rank, watch, parseDuration } from './discover.js'
 import {
   makeNote, withNote, queueNote, findByRequestId, findByHashes, hashesIn, publishNote, hasQueued, followSuffix, readFollowRef,
@@ -185,11 +185,13 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
   gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1]
-                 [--shares 1] [--logo <file> | --logo-uri URL]
+                 [--shares 1] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle] [--description <text>]
                                          打新 (fair mint): one price per share, the last share launches on PancakeSwap at that
                                          price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
                                          wallet, 1–72h, hold line 30–80%, mint / withdraw fee 1–5% each (e.g. --mint-fee 1 --exit-fee 2).
                                          Wraps / approves first when needed (re-run after each)
+                                         --website / --twitter / --description and the logo go into the token's metadata JSON
+                                         (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
   gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
                                          + the sale's mint fee, refunded if the sale fails; WBNB sales pay native BNB
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
@@ -201,7 +203,10 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
-               [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL]
+               [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle]
+               [--description <text>]
+                                         --website / --twitter / --description and the logo go into the token's metadata JSON
+                                         (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
                                          LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
                                          0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
                                          --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
@@ -374,6 +379,26 @@ async function resolveLogoUri() {
 }
 
 /**
+ * `gang v3 create` / `gang fair create`: --website / --twitter / --description and the logo go into the token's metadata
+ * JSON, uploaded to gang.fun; its URL is the token's contractURI() / metaURI(), fixed on-chain at create.
+ */
+async function resolveMetaUri({ name, symbol, logoURI }) {
+  const links = parseLinks()
+  const description = opt('description')
+  if (flag('description') && (description == null || description.startsWith('--'))) {
+    fail('--description needs text right after it (leave the flag out for none)')
+  }
+  if (description && description.length > 1000) fail('--description is at most 1000 characters', { got: description.length })
+  const meta = { name, symbol, description: description?.trim(), image: logoURI, external_link: links?.website, twitter: links?.twitter }
+  try {
+    const up = await uploadMetadata(meta)
+    return { metaURI: up.url, metadata: up.metadata }
+  } catch (e) {
+    return fail(e.message, retryHint(e))
+  }
+}
+
+/**
  * buy --token/--bnb with the already parsed --note, and an optional follow ref (from `--follow`, or `gang follow` with
  * its check already done).
  */
@@ -450,14 +475,19 @@ const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
+  // V2 `gang create` writes the links into the create tx; `gang v3 create` / `gang fair create` into the token metadata
+  const tokenCreate = cmd === 'create' || ((cmd === 'v3' || cmd === 'fair') && args[1] === 'create')
   for (const name of LINK_FLAGS) {
-    if (cmd !== 'create' && flag(name)) fail(`--${name} only applies to \`gang create\` (the link is written into the create tx)`)
+    if (!tokenCreate && flag(name)) fail(`--${name} only applies when creating a token (\`gang create\`, \`gang v3 create\`, \`gang fair create\`)`)
+  }
+  if (flag('description') && !(tokenCreate && cmd !== 'create')) {
+    fail('--description only applies to `gang v3 create` / `gang fair create` (it goes into the token metadata)')
   }
   switch (cmd) {
     case 'fair':
-      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
+      return runFair(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, resolveMeta: resolveMetaUri })
     case 'v3':
-      return runV3(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri })
+      return runV3(args[1], { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, resolveMeta: resolveMetaUri })
     case 'preflight': {
       const issues = []
       const status = bawStatus()

@@ -26,7 +26,7 @@ export const FAIR_NETS = {
 }
 
 const PAD_ABI = parseAbi([
-  'function create(string name, string symbol, string logoURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
+  'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint32 duration, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
   'function withdraw(address token, uint256 shares) returns (uint256)',
   'function refund(address token) returns (uint256)',
@@ -184,7 +184,7 @@ async function positionOf(ctx, token, me, sale) {
 const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'refund', 'claim', 'tx']
 const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|refund|claim|tx> [--testnet] — see gang help'
 
-export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo }) {
+export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to curve trades / creates on the server; fair-mint txs are not indexed there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang fair yet: the server cannot match them to a fair-mint tx; leave them out')
@@ -248,15 +248,18 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (pre) return out(pre)
     // logoURI is permanent on-chain: same handling as `gang create` (--logo file upload, other hosts copied to gang.fun).
     // Done after the setup steps so a wrap / approve round does not upload the image twice.
-    const createData = (logoURI) =>
-      encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, quote, refPool, cfg, BigInt(devShares)] })
-    // the logo string never decides a revert: dry-run without it, so a create that would fail uploads nothing
-    const dry = await dryRun(ctx, me, ctx.pad, createData(''))
+    const createData = (logoURI, metaURI) => encodeFunctionData({
+      abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, cfg, BigInt(devShares)],
+    })
+    // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
+    const dry = await dryRun(ctx, me, ctx.pad, createData('', ''))
     if (dry) return out({ success: false, step: 'create', ...dry })
     const logo = await resolveLogo()
-    const data = createData(logo.logoURI)
+    const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
+    const data = createData(logo.logoURI, meta.metaURI)
     return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }), quote: sym || quote,
+      step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
+      metaURI: meta.metaURI, metadata: meta.metadata, quote: sym || quote,
       raise: await units(ctx, quote, raiseQuote), sharePrice: await units(ctx, quote, sharePrice),
       capShares: cfg.capBps * 2, minWallets: Math.ceil(10_000 / (cfg.capBps * 2)), hours, holdPct, mintFeePct, exitFeePct, devShares,
       devCost: await units(ctx, quote, need),

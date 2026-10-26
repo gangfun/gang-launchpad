@@ -28,7 +28,7 @@ export const V3_NETS = {
 
 const TAX = '(uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)'
 const PAD_ABI = parseAbi([
-  `function create(string name, string symbol, string logoURI, address quote, address refPool, ${TAX} tax) returns (address)`,
+  `function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, ${TAX} tax) returns (address)`,
   'function buy(address token, uint256 quoteIn, uint256 minTokensOut) returns (uint256)',
   'function sell(address token, uint256 tokensIn, uint256 minQuoteOut) returns (uint256)',
   `function checkTaxConfig(${TAX} tax) view returns (bool ok, string reason)`,
@@ -170,7 +170,7 @@ const USAGE = 'usage: gang v3 <list|info|create|buy|sell|income|release|tx> [--t
  * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo } from index.js
  * (summarize = summarizePreview, so previews look like every other command's).
  */
-export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo }) {
+export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   // agent notes are matched to the server's V2 / Soft trades; V3 txs are not matched there yet
   if (flag('note') || flag('follow')) return fail('--note / --follow are not supported on gang v3 yet: the server cannot match them to a V3 tx; leave them out')
@@ -231,11 +231,13 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     if (!ok) fail(`tax setting refused: ${reason}`, { hint: HINTS.BadTaxConfig, tax: { buyTax, sellTax, dividend, recipient } })
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
-    const createData = (logoURI) => encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, quote, refPool, tax] })
-    // the logo string never decides a revert: dry-run without it, so a create that would fail uploads nothing
-    const dry = await simulate(ctx, me, ctx.pad, PAD_ABI, 'create', [name, symbol, '', quote, refPool, tax])
+    const createData = (logoURI, metaURI) =>
+      encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, tax] })
+    // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
+    const dry = await simulate(ctx, me, ctx.pad, PAD_ABI, 'create', [name, symbol, '', '', quote, refPool, tax])
     if (dry.failed) return out({ success: false, step: 'create', ...dry.failed })
     const logo = await resolveLogo()
+    const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
     let label = null
     if (recipient !== zeroAddress) {
       const reg = await ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry')
@@ -243,8 +245,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     }
     const rest = 100 - dividend
     const fees = await feesOf(ctx)
-    return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI) }, {
+    return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI, meta.metaURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
+      metaURI: meta.metaURI, metadata: meta.metadata,
       quote: (await symbolOf(ctx, quote)) || quote, buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
       split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`

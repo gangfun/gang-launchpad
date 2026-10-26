@@ -33,10 +33,14 @@ interface ILaunchpadV3 {
         address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient
     );
 
+    /// @param logoURI Logo image URI: kept in `logoURIOf` and emitted in `Created` (what the site shows).
+    /// @param metaURI Metadata JSON URI (name, symbol, description, image, links): the token's `contractURI()` /
+    ///                `metaURI()`, fixed for good. Not checked on-chain; the CLI builds and uploads it.
     function create(
         string calldata name,
         string calldata symbol,
         string calldata logoURI,
+        string calldata metaURI,
         address quote,
         address refPool,
         TaxConfig calldata tax

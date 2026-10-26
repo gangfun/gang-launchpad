@@ -35,21 +35,21 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         MockSPCXB unlisted = new MockSPCXB();
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
+        pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
 
         // listed without a fixed rate: would be priced from a creator-picked pool at spot (flash-movable) — refused
         vm.prank(owner);
         quoteRegistry.setQuote(address(unlisted), true, 0);
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
+        pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
 
         SixDecimalQuoteV3 six = new SixDecimalQuoteV3();
         vm.prank(owner);
         quoteRegistry.setQuote(address(six), true, 9_000e6);
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
-        pad.create("S", "S", "", address(six), address(0), _tax(200, 200, 0, treasury));
+        pad.create("S", "S", "", "", address(six), address(0), _tax(200, 200, 0, treasury));
     }
 
     /// @dev Low: a migrator bound to another pad would make every graduation revert, and setMigrator is one-shot.

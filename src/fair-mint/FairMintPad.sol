@@ -258,14 +258,18 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- create
-    /// @param quote     WBNB (address(0)) or a QuoteRegistry-enabled 18-decimal ERC20. Fee-on-transfer quotes are also
-    ///                  rejected at mint.
+    /// @param logoURI   Logo image URI: kept in `logoURIOf` and emitted in `Created` (what the site shows).
+    /// @param metaURI   Metadata JSON URI (name, symbol, description, image, links): the token's `contractURI()` /
+    ///                  `metaURI()`, fixed for good. Not checked on-chain; the CLI builds and uploads it.
+    /// @param quote     WBNB (address(0)) or a QuoteRegistry-enabled 18-decimal ERC20 with a fixed rate. Fee-on-transfer
+    ///                  quotes are also rejected at mint.
     /// @param refPool   Pancake V2 pair / V3 pool pricing `quote`; ignored for WBNB or a QuoteRegistry override.
     /// @param devShares Shares the creator mints in the same call (≥ 1); needs quote approval beforehand.
     function create(
         string calldata name,
         string calldata symbol,
         string calldata logoURI,
+        string calldata metaURI,
         address quote,
         address refPool,
         MintConfig calldata cfg,
@@ -284,7 +288,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
 
-        token = tokenDeployer.deploy(name, symbol, taxHandler, logoURI);
+        token = tokenDeployer.deploy(name, symbol, taxHandler, metaURI);
         dividendVault.ensureMinimumShareBalance(MIN_SHARE_BALANCE);
         dividendVault.registerToken(token, quote);
 

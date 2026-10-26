@@ -131,7 +131,7 @@ contract FairMintForkTest is Test {
         (, uint256 price) = pad.previewCreate(quote, refPool, 15 ether);
         _prep(dev, quote, price * 2);
         vm.prank(dev);
-        token = pad.create("Fair Fork", "FFORK", "", quote, refPool, _cfg(), 1);
+        token = pad.create("Fair Fork", "FFORK", "", "", quote, refPool, _cfg(), 1);
     }
 
     /// @return lastMintGas gas of the mint that fills the sale (includes createPair + addLiquidity)

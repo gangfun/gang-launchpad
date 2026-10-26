@@ -7,10 +7,10 @@ import {FairMintTest} from "./FairMint.t.sol";
 /// @notice The pad's power over 打新 tokens is fixed and one-shot; tokens carry the creator's metadata URI.
 contract FairTokenAdminTest is FairMintTest {
     function test_uri_fromCreate() public {
-        address t = _create(); // logoURI "ipfs://logo"
-        assertEq(FairToken(t).contractURI(), "ipfs://logo");
-        assertEq(FairToken(t).metaURI(), "ipfs://logo");
-        assertEq(pad.logoURIOf(t), "ipfs://logo");
+        address t = _create(); // logoURI "ipfs://logo", metaURI "ipfs://meta.json"
+        assertEq(FairToken(t).contractURI(), "ipfs://meta.json");
+        assertEq(FairToken(t).metaURI(), "ipfs://meta.json");
+        assertEq(pad.logoURIOf(t), "ipfs://logo", "pad keeps the logo, not the metadata");
     }
 
     function test_handlerFixedAtCreate_noAdminLeftAfterLaunch() public {
