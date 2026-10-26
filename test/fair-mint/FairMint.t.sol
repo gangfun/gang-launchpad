@@ -188,7 +188,13 @@ contract FairMintTest is Test {
         c.duration = 73 hours;
         _expectBadConfig(c, 1, "duration must be 1-72 hours");
         c = _cfg();
+        c.duration = 1 hours - 1;
+        _expectBadConfig(c, 1, "duration must be 1-72 hours");
+        c = _cfg();
         c.holdBps = 8001;
+        _expectBadConfig(c, 1, "holdBps must be 3000-8000");
+        c = _cfg();
+        c.holdBps = 2999;
         _expectBadConfig(c, 1, "holdBps must be 3000-8000");
         _expectBadConfig(_cfg(), 0, "devShares must be 1..cap");
         _expectBadConfig(_cfg(), 101, "devShares must be 1..cap");
@@ -221,6 +227,56 @@ contract FairMintTest is Test {
         (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(usd), address(0), 30 ether);
         assertEq(raiseQuote, 18_000 ether);
         assertEq(price, 1.8 ether);
+    }
+
+    /// @dev Non-registry quote priced by a V2 pair against WBNB: 300 Q : 150 WBNB → 1 BNB = 2 Q.
+    function test_create_refPoolAgainstWbnb() public {
+        MockSPCXB q = new MockSPCXB();
+        address ref = _seedPair(address(q), address(wbnb), 300 ether, 150 ether);
+        (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(q), ref, 15 ether);
+        assertEq(raiseQuote, 30 ether);
+        assertEq(price, 30 ether / 10_000);
+
+        q.mintUnlimited(dev, 1 ether);
+        vm.startPrank(dev);
+        q.approve(address(pad), type(uint256).max);
+        address t = pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
+        vm.stopPrank();
+        (,,, uint256 sharePrice,,) = _sale(t);
+        assertEq(sharePrice, price);
+    }
+
+    /// @dev Quote priced against USDT, bridged to BNB: 20,000 Q : 10,000 USDT, 600 USDT : 1 WBNB → 1 BNB = 1,200 Q.
+    function test_create_refPoolViaBridge() public {
+        MockSPCXB q = new MockSPCXB();
+        MockSPCXB usdt = new MockSPCXB();
+        address ref = _seedPair(address(q), address(usdt), 20_000 ether, 10_000 ether);
+        address bridge = _seedPair(address(usdt), address(wbnb), 6_000 ether, 10 ether);
+
+        vm.expectRevert(FairMintPad.NoBridgePool.selector);
+        pad.previewCreate(address(q), ref, 15 ether);
+
+        vm.prank(owner);
+        pad.setBridgePool(address(usdt), bridge);
+        (uint256 raiseQuote,) = pad.previewCreate(address(q), ref, 15 ether);
+        assertEq(raiseQuote, 18_000 ether);
+    }
+
+    function test_create_refPoolRequiredAndDepthFloor() public {
+        MockSPCXB q = new MockSPCXB();
+        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        pad.previewCreate(address(q), address(0), 15 ether);
+
+        address thin = _seedPair(address(q), address(wbnb), 2 ether, 0.5 ether); // < 1 BNB of WBNB
+        vm.expectRevert();
+        pad.previewCreate(address(q), thin, 15 ether);
+    }
+
+    function _seedPair(address a, address b, uint256 amtA, uint256 amtB) internal returns (address pair) {
+        pair = factory.createPair(a, b);
+        MockSPCXB(a).mintUnlimited(pair, amtA);
+        MockSPCXB(b).mintUnlimited(pair, amtB);
+        MockPair(pair).mint(address(0xdead));
     }
 
     // ---------------------------------------------------------------- mint
@@ -385,6 +441,24 @@ contract FairMintTest is Test {
         assertEq(bucket.accruedQuote(address(wbnb)), 15 ether / 100, "1% of the raise");
     }
 
+    /// @dev Someone creates the pair early and donates quote: launch still works, the donation just raises the price.
+    function test_launch_withPreCreatedPair() public {
+        address t = _create();
+        address early = factory.createPair(t, address(wbnb));
+        wbnb.mintUnlimited(early, 1 ether);
+
+        vm.prank(dev);
+        vm.expectRevert(FairToken.TransfersLocked.selector);
+        IERC20(t).transfer(early, TPS); // no way to seed the token side
+
+        _fill(t);
+        (,,,,, address pair) = _sale(t);
+        assertEq(pair, early);
+        (uint256 rT, uint256 rQ) = _reserves(t, MockPair(pair));
+        assertEq(rT, 500_000_000 ether);
+        assertEq(rQ, 16 ether, "15 BNB raise + 1 BNB donation");
+    }
+
     function test_reclaimDeadAfterLaunch() public {
         address t = _create();
         _fill(t);
@@ -514,6 +588,12 @@ contract FairMintTest is Test {
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);
         assertTrue(handler.isOut(t, m));
+        assertEq(vault.shares(t, m), 100 * TPS, "zeroing failed while the vault refused");
+
+        vm.prank(owner);
+        vault.setOperator(address(handler), true);
+        handler.syncShares(t, m, address(0));
+        assertEq(vault.shares(t, m), 0, "retried once the vault accepts again");
     }
 
     function test_handlerPadIsOneShot() public {

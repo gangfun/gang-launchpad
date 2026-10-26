@@ -158,17 +158,20 @@ contract HolderRewardHandler is IPostGradTaxHandler, Ownable2Step, ReentrancyGua
     }
 
     function _sync(address token, address user) internal {
-        if (user == address(0) || isOut[token][user]) return;
+        if (user == address(0)) return;
         uint256 base = pad.baselineOf(token, user);
         if (base == 0) return; // pair / handler / post-launch buyers: never had a share
-        uint256 bal = IERC20(token).balanceOf(user);
         uint256 share;
-        if (bal * BPS < base * pad.holdBpsOf(token)) {
-            isOut[token][user] = true;
-            emit Disqualified(token, user, bal, base);
-        } else {
-            share = bal < base ? bal : base;
+        if (!isOut[token][user]) {
+            uint256 bal = IERC20(token).balanceOf(user);
+            if (bal * BPS < base * pad.holdBpsOf(token)) {
+                isOut[token][user] = true;
+                emit Disqualified(token, user, bal, base);
+            } else {
+                share = bal < base ? bal : base;
+            }
         }
+        // Out users keep target 0 here, so a zeroing that failed earlier is retried on every later sync.
         // Runs inside token transfers: a vault-side failure (e.g. operator revoked) must not freeze trading.
         if (dividendVault.shares(token, user) != share) {
             try dividendVault.setShare(token, user, share) {} catch {}

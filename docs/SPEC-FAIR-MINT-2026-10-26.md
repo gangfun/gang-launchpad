@@ -126,7 +126,8 @@ dev 设好募集额、单地址上限和截止时间，所有人按**同一个�
 | 8 | 差一点没打满就全退 | 第一版接受。可选的后续改法：截止时达到 dev 设的最低比例也发射，池子只放已打出的同等数量，没打出的销毁，开盘价仍等于打新价 |
 | 9 | 开盘市值比 V2 低 | 同样 15 BNB：V2 池子 2 亿枚 → 开盘 FDV 75 BNB；打新池子 5 亿枚 → FDV 30 BNB。池子深度相对市值更厚、价格更稳，但排行榜上的市值会显得小 |
 | 10 | 有人另建交易对（如本币 / USDT）绕开税 | 沿用 V2 的已知限制：税只对官方池子收，奖励池规模取决于官方池子成交量 |
-| 11 | 刷失败币 | 失败全额退、创建不收费，刷币零成本。可要求创建时 dev 至少打 1 份 |
+| 11 | 刷失败币 | 失败全额退、创建不收费，刷币零成本。已要求创建时 dev 至少打 1 份 |
+| 12 | 参考池现价可被同一笔交易拉偏 | 非白名单报价币用 V2 池子（或观测不够的 V3 池子）定价时按现价换算，dev 可借闪电贷让锁定的募集额超出 5–50 BNB 范围。沿用 V2 毕业额的同一做法，不改合约：dev 自己也按锁定价打，打新的人看到的是报价币价格；索引服务按实时价格换算募集额，偏离范围的币在页面上标出 |
 
 ---
 
@@ -198,7 +199,7 @@ else:                                         share = min(balance, base)
 ```
 
 - 打新阶段份额由发射台在 `mint` / `withdraw` 时直接写（发射前没有转账，也就不需要 handler 同步）；发射那一刻不需要遍历地址。
-- 写分红合约失败（如 operator 被撤）时吞掉错误：份额可能暂时不准，但不能卡住代币转账。
+- 写分红合约失败（如 operator 被撤）时吞掉错误：份额可能暂时不准，但不能卡住代币转账。已出局地址每次同步都把份额重写为 0，所以失败过的清零会在恢复后自动补上。
 
 ### 5.4 事件（索引服务据此改）
 
@@ -216,7 +217,7 @@ else:                                         share = min(balance, base)
 
 1. **没有任何管理员函数能动托管资金**：没有 flush、没有紧急提取。钱只有四个出口：撤出、失败退款、发射进池子、手续费进 bucket。
 2. **规则创建时快照**：单地址上限、准入开关、截止时间、出局线都存进该币自己的配置。V2 的 `setWalletCapEnabled` / `setAgentGate` 这类全局开关不能影响打新中的币，最好不提供 `setWalletCapEnabled`。
-3. `setMigrator` / `setPairFactory` 只能设一次（V2 已是一次性）；发射时钱和币只能去这个 migrator。
+3. `setMigrator` 只能设一次（V2 已是一次性），`pairFactory` 构造时固定；发射时钱和币只能去这个 migrator。
 4. FairToken 的「发射台收回」只在发射前有效，发射后永久失效，且只能收回该地址打到的数量。
 5. 撤出、退款全部由用户自己领，不遍历地址；`nonReentrant`。
 6. 报价币只接受白名单里的标准 ERC-20，不支持转账扣费的币（退款要求精确记账）。
@@ -229,7 +230,7 @@ else:                                         share = min(balance, base)
 | `src/fair-mint/FairMintPad.sol` | 打新发射台：create / mint / withdraw / refund / 打满发射；规则按币快照；15.4 KB（via-ir） |
 | `src/fair-mint/FairToken.sol` | 代币（发射前锁转账、发射台可收回；发射后池子买卖 1% 税）+ `FairTokenDeployer` |
 | `src/fair-mint/HolderRewardHandler.sol` | 发射后 1% 税：keeper 换币后 50% 给合格持有人 / 50% 平台；出局判断；分红合约出错不卡转账 |
-| `test/fair-mint/FairMint.t.sol` | 24 个用例：上下限、打新上限与截断、撤出、失败退款、发射价格、奖励权重 / 出局 / 上限、分账、权限 |
+| `test/fair-mint/FairMint.t.sol` | 28 个用例：上下限、参考池 / 桥接池换算、打新上限与截断、撤出、失败退款、发射价格、池子被提前建好、奖励权重 / 出局 / 上限、分账、权限、分红合约出错后的补救 |
 
 - 复用 V2 原样：DividendVault、PlatformFeeBucket、MigratorV2、PoolCheck、QuoteRegistry。
 - 打满那一笔（含建池）在 mock 池子上约 100 万 gas；真实 Pancake 建池更高，待 fork 测试实测。
@@ -247,7 +248,7 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 - PlatformFeeBucket：FairMintPad、HolderRewardHandler 设为 operator。
 - DividendVault：`setLaunchpad(FairMintPad)`；HolderRewardHandler 设为 operator；池子、handler、migrator、0xdead 排除。
 - HolderRewardHandler：`setPad(FairMintPad)`（一次性）、`setKeeper`、`setRouter`。
-- FairMintPad：`setMigrator`、`setPairFactory`（均一次性）、Agent ID 注册表、bridge 池（非 BNB 报价币用）。
+- FairMintPad：`setMigrator`（一次性；pairFactory 已在构造时传入）、Agent ID 注册表、bridge 池（非 BNB 报价币用）。
 - 每个币：创建时发射台 `dividendVault.registerToken(token, quote)`；发射时 `setPair`、`setTaxHandler(HolderRewardHandler)`、migrator 免税。
 
 ### 6.3 从现有代码复用
@@ -280,7 +281,7 @@ QuoteRegistry（复用）→ DividendVault（**新部署**，最低份额 10,000
 
 | 端 | 内容 |
 |---|---|
-| gangfun-server | 索引 §5.4 事件；币状态（打新中 / 已发射 / 失败）、进度、参与地址数、倒计时；每地址基准 / 是否出局 / 可领奖励 |
+| gangfun-server | 索引 §5.4 事件；币状态（打新中 / 已发射 / 失败）、进度、参与地址数、倒计时；每地址基准 / 是否出局 / 可领奖励；募集额按实时价格换算成 BNB，超出 5–50 BNB 的标出（§3 #12） |
 | gang.fun | 打新页（进度条、每份价格、我的份数、撤出、失败退款）；代币页「持有奖励」：合格 / 已出局、当前权重、可领；风险提示（转钱包、加池子会出局） |
 | CLI / skill | `gang create --raise 15 --cap 0.5 --hours 24`、`gang mint <token> <份数>`、`gang withdraw`、`gang refund`、`gang rewards`；preflight 显示费用与出局线 |
 | 审计 | 发射台 + FairToken + handler，主网前外部审计 |
