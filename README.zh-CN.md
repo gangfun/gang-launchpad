@@ -114,6 +114,8 @@ gang buy  --token 0x… --bnb 0.05    # 可能先 approve-quote
 gang execute --request-id …
 gang sell --token 0x… --all
 gang execute --request-id …
+
+gang follow 0x<附言 tx> --bnb 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
 ```
 
 硬规则：**预览 → 用户确认 → execute**。存量 Soft/U/S 仅买卖/claim，**禁止新 create**。
