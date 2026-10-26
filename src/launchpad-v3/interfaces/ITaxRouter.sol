@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+/// @dev Platform's part of every taxed V3 trade (curve and pool) as a share of the trade's volume, out of the tax.
+///      The one definition LaunchpadV3 and PostGradTaxHandlerV3 both use.
+uint256 constant V3_PLATFORM_TAX_BPS = 50;
+
 /// @notice Single place where every V3 tax payment (bonding or post-grad) is split:
 ///         platform share (fixed 0.5% of trade volume, computed by the payer) → dividends → tax recipient.
 interface ITaxRouter {
