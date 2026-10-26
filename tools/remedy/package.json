@@ -1,0 +1,7 @@
+{
+  "name": "gang-v2-tax-remedy-tools",
+  "private": true,
+  "type": "module",
+  "description": "Off-chain attribution + Merkle claims for the V2 tax backlog remedy (read-only)",
+  "dependencies": { "viem": "^2.0.0" }
+}
