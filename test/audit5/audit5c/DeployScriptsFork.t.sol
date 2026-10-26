@@ -23,6 +23,8 @@ interface IWBNBd {
 
 /// @notice Internal audit 5 C-F1 / C-F8 (regressions): both deploy scripts simulated in-process on a BSC mainnet fork
 ///         (no broadcast).
+///         The scripts read their config through `vm.setEnv`, which is process-wide, so tests in this file stomp each
+///         other when forge runs them in parallel: run it with `--threads 1`.
 contract DeployScriptsForkTest is Test {
     address constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address constant AGENT = 0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F;
