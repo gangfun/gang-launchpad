@@ -13,6 +13,21 @@ const ERC20_ABI = parseAbi([
 ])
 const WBNB_ABI = parseAbi(['function deposit() payable'])
 
+/**
+ * GangRouter (gang-launchpad src/router): stateless entry in front of both cores. With native BNB it wraps, calls the
+ * core for the caller and returns any refund as BNB — no wrap / approve round for WBNB-quoted tokens and sales.
+ */
+export const ROUTER_ABI = parseAbi([
+  'function v3BuyBNB(address token, uint256 minTokensOut, uint256 deadline) payable returns (uint256)',
+  'function fairMintBNB(address token, uint256 shares, uint256 minShares, uint256 deadline) payable returns (uint256)',
+  'error Expired()', 'error NotDeployed()', 'error UnknownToken()', 'error NotWbnbQuote()', 'error NotEnoughValue()',
+  'error OnlyWbnb()', 'error BnbTransferFailed()',
+])
+/** Router deadline: half an hour, for a preview that is executed a few minutes later. */
+export const routerDeadline = () => BigInt(Math.floor(Date.now() / 1000) + 1800)
+/** The router path applies: a router on this chain, a WBNB quote, and no --use-wbnb. */
+export const viaRouter = (ctx, quote, flag) => !!ctx.router && quote.toLowerCase() === ctx.wbnb.toLowerCase() && !flag('use-wbnb')
+
 /** Token decimals, read once per ctx (18 when the token does not say). */
 export async function decimalsOf(ctx, token) {
   ctx.decimals ??= new Map()

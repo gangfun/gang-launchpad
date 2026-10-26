@@ -45,15 +45,18 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.
 - **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
   Tell the user why in words instead.
-- Env: `GANG_FAIR_TESTNET_PAD` / `GANG_FAIR_TESTNET_RPC_URL` override the testnet deployment; `GANG_FAIR_PAD` is for mainnet.
+- Env: `GANG_FAIR_TESTNET_PAD` / `GANG_FAIR_TESTNET_RPC_URL` override the testnet deployment; `GANG_FAIR_PAD` is for mainnet;
+  `GANG_ROUTER_TESTNET` / `GANG_ROUTER` the router.
 
 ## Reading results
 
 - `status.position` after launch: `reward` (`earning` / `out`), `balance`, `holdLineTokens`, `sellableBeforeOut`
   (how much can be sold and still earn), `poolSharePct`, `pendingReward`. **Before any sell or transfer of a fair-mint
   token, check `sellableBeforeOut` and warn the user if the trade goes past it** — it ends the reward for good.
-- A write command may return a setup step first: `step: 'wrap-bnb'` (WBNB quote short: wraps BNB) or
-  `step: 'approve-quote'`. Execute it, then **run the same command again** for the real step.
+- **WBNB sales**: `gang fair mint` pays native BNB through GangRouter in one tx (`via: 'router'`, `payBnb` = cost + mint
+  fee); the shares are still this wallet's, and refund / withdraw / claim stay direct. `--use-wbnb` pays from WBNB instead.
+- Other quotes (and `--use-wbnb`, and `create`) may return a setup step first: `step: 'wrap-bnb'` (WBNB short: wraps BNB)
+  or `step: 'approve-quote'`. Execute it, then **run the same command again** for the real step.
 - `success: false` with `error` + `hint` is the pad's own reason (e.g. `WalletCapReached`, `NotMinting`, `BadConfig`).
   Fix the flags; don't retry the same ones. `--cap` / `--hours` / … outside the bounds fail before any chain call.
 - A preview error that mentions the chain means the Agentic Wallet may not sign on BSC testnet: `--calldata` prints the

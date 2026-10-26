@@ -1,7 +1,7 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
-import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, step, units } from './steps.js'
+import { fundingStep as fund, parseIntIn, parseNum, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, units, viaRouter } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 
@@ -15,9 +15,11 @@ export const FAIR_NETS = {
     chainId: '56', chain: bsc, pad: process.env.GANG_FAIR_PAD || null, // no mainnet pad yet
     rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
     wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
+    router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x6B0ECAAe1Cf9A733ab98F2ad90A4d48c9a7790A3',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0x4D26D94D52b7439FCb5777a7E36990e10d8105F8',
+    router: process.env.GANG_ROUTER_TESTNET || '0x499F9a4417A0d547628bd75cd51C6663D69a2C81',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -102,7 +104,7 @@ export function walletFor(ctx, from) {
 }
 
 /** Revert name (+ BadConfig reason) of a failed eth_call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI], HINTS)
+const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI], HINTS)
 
 /** Dry-run `data` from `from`; null when it would pass. */
 async function dryRun(ctx, from, to, data, value = 0n) {
@@ -272,17 +274,27 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (accepted === 0n) return fail('no shares available to this wallet (cap reached or sold out)', { capShares: sale.capShares })
     const minShares = flag('min-shares') ? parseIntIn(fail, 'min-shares', opt('min-shares'), 1, Number(accepted)) : Number(accepted)
     const need = cost + fee
+    const fills = sale.sold + Number(accepted) === 10_000
+    const extra = {
+      step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
+      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
+      soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
+    }
+    // WBNB sale: pay native BNB through the router in one tx (it wraps; the position is still this wallet's)
+    if (viaRouter(ctx, sale.quote, flag)) {
+      const native = await ctx.client.getBalance({ address: me })
+      if (native < need) return fail('not enough BNB for this mint', { haveBnb: formatUnits(native, 18), needBnb: formatUnits(need, 18), hint: 'add --use-wbnb to pay from WBNB instead' })
+      const data = encodeFunctionData({ abi: ROUTER_ABI, functionName: 'fairMintBNB', args: [token, accepted, BigInt(minShares), routerDeadline()] })
+      const dry = await dryRun(ctx, me, ctx.router, data, need)
+      if (dry) return out({ success: false, step: 'mint', via: 'router', ...dry })
+      return out(step(ctx, { from: me, to: ctx.router, data, value: need }, { ...extra, via: 'router', payBnb: formatUnits(need, 18) }, rawOnly, summarize))
+    }
     const pre = await fundingStep(ctx, me, sale.quote, need, sale.quoteSymbol, rawOnly, summarize)
     if (pre) return out(pre)
     const data = encodeFunctionData({ abi: PAD_ABI, functionName: 'mint', args: [token, accepted, BigInt(minShares)] })
     const dry = await dryRun(ctx, me, ctx.pad, data)
     if (dry) return out({ success: false, step: 'mint', ...dry })
-    const fills = sale.sold + Number(accepted) === 10_000
-    return out(step(ctx, { from: me, to: ctx.pad, data }, {
-      step: 'mint', chainId: Number(ctx.chainId), token, shares: Number(accepted), ...(Number(accepted) < want && { truncatedFrom: want }),
-      cost: await units(ctx, sale.quote, cost), fee: await units(ctx, sale.quote, fee), feePct: sale.mintFeePct, quote: sale.quoteSymbol,
-      soldAfter: sale.sold + Number(accepted), ...(fills && { launches: 'this mint fills the sale and launches the token (higher gas)' }),
-    }, rawOnly, summarize))
+    return out(step(ctx, { from: me, to: ctx.pad, data }, extra, rawOnly, summarize))
   }
 
   if (sub === 'withdraw') {

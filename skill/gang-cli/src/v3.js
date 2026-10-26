@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, step, units } from './steps.js'
+import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -16,9 +16,11 @@ export const V3_NETS = {
     chainId: '56', chain: bsc, pad: process.env.GANG_V3_PAD || null, // no mainnet pad before the audit
     rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
     wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
+    router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0xFFE9a823FbA62d0a77d4f8bB83965299b5664395',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x3184c8E2E5049693f09D8Eb8EB6b06A5D46ee541',
+    router: process.env.GANG_ROUTER_TESTNET || '0x499F9a4417A0d547628bd75cd51C6663D69a2C81',
     rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -50,7 +52,7 @@ const PAD_ABI = parseAbi([
   'event Sell(address indexed token, address indexed seller, uint256 tokensIn, uint256 protocolFee, uint256 tax, uint256 quoteOut, uint256 realQuote)',
   'event Graduated(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)',
 ])
-const ROUTER_ABI = parseAbi([
+const TAX_ROUTER_ABI = parseAbi([
   'function owedOf(address token) view returns (uint256)',
   'function release(address token) returns (uint256)',
   'error NothingOwed()',
@@ -94,12 +96,12 @@ const pct = (bps) => Number(bps) / 100
 const VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667n
 
 /** Revert name (+ BadTaxConfig reason) of a failed call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI], HINTS)
+const revertOf = (e) => revertIn(e, [PAD_ABI, TAX_ROUTER_ABI, GANG_ROUTER_ABI], HINTS)
 
 /** eth_call `data` from `from`: { result } when it passes, { failed } with the revert (or RPC error) otherwise. */
-async function simulate(ctx, from, to, abi, functionName, args) {
+async function simulate(ctx, from, to, abi, functionName, args, value = 0n) {
   try {
-    const { result } = await ctx.client.simulateContract({ account: from, address: to, abi, functionName, args })
+    const { result } = await ctx.client.simulateContract({ account: from, address: to, abi, functionName, args, value })
     return { result }
   } catch (e) {
     const r = revertOf(e)
@@ -120,7 +122,7 @@ export async function curveOf(ctx, token) {
   const recipient = tax[3] === zeroAddress ? null : tax[3]
   let label = null
   if (recipient) { try { label = (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* unlisted */ } }
-  const owed = await ctx.read(router, ROUTER_ABI, 'owedOf', [token])
+  const owed = await ctx.read(router, TAX_ROUTER_ABI, 'owedOf', [token])
   // graduation zeroes realQuote (it went into the pool): a graduated token is priced from the pair reserves
   let price = ((virtualQuote + realQuote) * 10n ** 18n) / (VIRTUAL_TOKEN - sold)
   if (graduated && pair !== zeroAddress) {
@@ -261,14 +263,30 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
     const quoteIn = parseUnits(raw, await decimalsOf(ctx, c.quote))
     const slippage = parseSlippage(fail, opt('slippage', '1'))
+    const extra = (tokensOut, minOut) => ({
+      step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(tokensOut, 18),
+      minTokensOut: formatUnits(minOut, 18), buyTaxPct: c.buyTaxPct,
+    })
+    // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet, refunds come back as BNB)
+    if (viaRouter(ctx, c.quote, flag)) {
+      const native = await ctx.client.getBalance({ address: me })
+      if (native < quoteIn) fail('not enough BNB for this buy', { haveBnb: formatUnits(native, 18), needBnb: raw, hint: 'add --use-wbnb to pay from WBNB instead' })
+      const sim = await simulate(ctx, me, ctx.router, GANG_ROUTER_ABI, 'v3BuyBNB', [token, 0n, routerDeadline()], quoteIn)
+      if (sim.failed) return out({ success: false, step: 'buy', via: 'router', ...sim.failed })
+      const minOut = minOf(sim.result, slippage)
+      const data = encodeFunctionData({ abi: GANG_ROUTER_ABI, functionName: 'v3BuyBNB', args: [token, minOut, routerDeadline()] })
+      return out(step(ctx, { from: me, to: ctx.router, data, value: quoteIn }, {
+        ...extra(sim.result, minOut), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
+        note: 'paid in BNB through GangRouter; spend includes the curve fee and the buy tax; at the 1% wallet cap the excess comes back as BNB',
+      }, rawOnly, summarize))
+    }
     const pre = await fundingStep(ctx, me, c.quote, quoteIn, c.quoteSymbol, 'approve-quote', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'buy', [token, quoteIn, 0n])
     if (sim.failed) return out({ success: false, step: 'buy', ...sim.failed })
     const minOut = minOf(sim.result, slippage)
     return out(step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'buy', args: [token, quoteIn, minOut] }) }, {
-      step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(sim.result, 18),
-      minTokensOut: formatUnits(minOut, 18), buyTaxPct: c.buyTaxPct, curveFeePct: (await feesOf(ctx)).curveFeePct,
+      ...extra(sim.result, minOut), curveFeePct: (await feesOf(ctx)).curveFeePct,
       note: 'spend includes the curve fee and the buy tax; at the 1% wallet cap the excess is refunded',
     }, rawOnly, summarize))
   }
@@ -303,9 +321,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
     if (c.owedRaw === 0n) return fail('nothing owed: every tax payment reached the recipient', { recipient: c.recipient })
     const me = walletFor(ctx, opt('from'))
-    const sim = await simulate(ctx, me, c.router, ROUTER_ABI, 'release', [token])
+    const sim = await simulate(ctx, me, c.router, TAX_ROUTER_ABI, 'release', [token])
     if (sim.failed) return out({ success: false, step: 'release', ...sim.failed, hint: 'the recipient may still refuse transfers of this quote; try again later' })
-    return out(step(ctx, { from: me, to: c.router, data: encodeFunctionData({ abi: ROUTER_ABI, functionName: 'release', args: [token] }) }, {
+    return out(step(ctx, { from: me, to: c.router, data: encodeFunctionData({ abi: TAX_ROUTER_ABI, functionName: 'release', args: [token] }) }, {
       step: 'release', chainId: Number(ctx.chainId), token, recipient: c.recipient, recipientLabel: c.recipientLabel,
       amount: c.owedToRecipient, quote: c.quoteSymbol, note: 'anyone may release; the quote goes to the recipient, not to the caller',
     }, rawOnly, summarize))
@@ -317,7 +335,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo 
     const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
     const events = []
     for (const log of r.logs) {
-      for (const abi of [PAD_ABI, ROUTER_ABI]) {
+      for (const abi of [PAD_ABI, TAX_ROUTER_ABI]) {
         try {
           const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
           events.push({ event: ev.eventName, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })

@@ -190,7 +190,9 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
                                          wallet, 1–72h, hold line 30–80%, mint / withdraw fee 1–5% each (e.g. --mint-fee 1 --exit-fee 2).
                                          Wraps / approves first when needed (re-run after each)
-  gang fair mint --token <addr> --shares <n> [--min-shares <n>]      + the sale's mint fee, refunded if the sale fails
+  gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
+                                         + the sale's mint fee, refunded if the sale fails; WBNB sales pay native BNB
+                                         through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
   gang fair withdraw --token <addr> (--shares <n> | --all)           before fill / deadline: principal − the sale's exit fee
   gang fair refund --token <addr>        after a deadline without a fill: principal + mint fee
   gang fair status --token <addr>        my shares; after launch: reward on / out, how much I can sell and stay in, to claim
@@ -203,7 +205,8 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
                                          0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
                                          --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
-  gang v3 buy --token <addr> --amount <quote> [--slippage 1]   amount includes the 1% fee and the buy tax
+  gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
+                                         amount includes the 1% fee and the buy tax; WBNB-quoted: native BNB via GangRouter
   gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
   gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it
   gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
@@ -232,7 +235,8 @@ off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_LAUNCHPAD (default V2 ${ADDR.v2}), GANG_RPC_URL, GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes),
 GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed),
-GANG_V3_TESTNET_PAD / GANG_V3_TESTNET_RPC_URL (gang v3 --testnet), GANG_V3_PAD (mainnet, once deployed)`
+GANG_V3_TESTNET_PAD / GANG_V3_TESTNET_RPC_URL (gang v3 --testnet), GANG_V3_PAD (mainnet, once deployed),
+GANG_ROUTER_TESTNET / GANG_ROUTER (GangRouter for BNB buys / mints; unset on mainnet = pay from WBNB)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
