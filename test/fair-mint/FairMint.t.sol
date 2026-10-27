@@ -15,7 +15,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that burns 1% on every transfer.
@@ -34,12 +34,12 @@ contract FeeOnTransferQuote is ERC20("FoT", "FOT") {
     }
 }
 
-/// @notice FairMintPad + FairToken + HolderRewardHandler on mocks. No broadcast.
+/// @notice FairMintPad + FairToken + GangTaxHandler on mocks. No broadcast.
 contract FairMintTest is Test {
     QuoteRegistry internal registry;
     SharedDividendVault internal vault;
     PlatformFeeBucket internal bucket;
-    HolderRewardHandler internal handler;
+    GangTaxHandler internal handler;
     FairMintPad internal pad;
     SharedMigrator internal migrator;
     TokenDeployer internal tokenDeployer;
@@ -64,7 +64,7 @@ contract FairMintTest is Test {
         registry = new QuoteRegistry(owner);
         vault = new SharedDividendVault(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
+        handler = new GangTaxHandler(owner, address(vault), address(bucket), address(0));
         tokenDeployer = new TokenDeployer(owner);
         pad = new FairMintPad(
             owner,
@@ -87,7 +87,7 @@ contract FairMintTest is Test {
         bucket.setOperator(address(handler), true);
         pad.setMigrator(address(migrator));
         pad.setAgentGate(true, address(agents));
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(owner);
         vm.stopPrank();
 
@@ -766,7 +766,7 @@ contract FairMintTest is Test {
 
     function test_handlerPadIsOneShot() public {
         vm.prank(owner);
-        vm.expectRevert(HolderRewardHandler.PadAlreadySet.selector);
-        handler.setPad(stranger);
+        vm.expectRevert(GangTaxHandler.LaunchpadAlreadySet.selector);
+        handler.setLaunchpad(stranger);
     }
 }

@@ -2,15 +2,14 @@
 pragma solidity 0.8.28;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IPostGradTaxHandler} from "../launchpad-v2/interfaces/IPostGradTaxHandler.sol";
-import {ISwapBack} from "../common/interfaces/ISwapBack.sol";
+import {IGangTaxHandler} from "../gang/interfaces/IGangTaxHandler.sol";
 import {TokenURI} from "../launchpad-v3/TokenURI.sol";
 
 /// @title FairToken (打新发射)
 /// @notice Fixed-supply token minted entirely to FairMintPad. Locked until launch: only the pad moves tokens, and
 ///         it can pull a minter's tokens back when they sell shares back (withdraw). Launch unlocks forever and
 ///         disables reclaim.
-///         After launch: 1% tax on pair buys / sells → HolderRewardHandler; every transfer syncs reward shares.
+///         After launch: 1% tax on pair buys / sells → GangTaxHandler; every transfer syncs reward shares.
 /// @dev The tax is accrued in the handler; before a sell's tokens move, the handler sells one small chunk of it
 ///      (`swapBack`, ≤ 0.5% of the pair's token side) in a gas-capped try, so it can never fail the sell (except a
 ///      sell paid in from a flash swap's callback, which is refused: `SellDuringFlashSwap`).
@@ -110,7 +109,7 @@ contract FairToken is ERC20, TokenURI {
             // tax-excluded, so its own chunk into the pair never comes back here)
             if (to == pair && tax > 0) {
                 uint256 g = gasleft();
-                try ISwapBack(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
+                try IGangTaxHandler(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
                 catch (bytes memory reason) {
                     // a flash-swap sell, refused by the handler: passed on (it would skip the chunk for free)
                     if (bytes4(reason) == SellDuringFlashSwap.selector) revert SellDuringFlashSwap();
@@ -122,14 +121,14 @@ contract FairToken is ERC20, TokenURI {
             super._update(from, to, net);
             if (tax > 0) {
                 super._update(from, taxHandler, tax);
-                IPostGradTaxHandler(taxHandler).notifyTax(address(this), from, to, tax);
+                IGangTaxHandler(taxHandler).notifyTax(address(this), from, to, tax, TAX_BPS);
             }
             emit OuterTax(from, to, tax, net);
         } else {
             super._update(from, to, value);
         }
         // before launch the pad writes reward shares itself
-        if (pair != address(0)) IPostGradTaxHandler(taxHandler).syncShares(address(this), from, to);
+        if (pair != address(0)) IGangTaxHandler(taxHandler).syncShares(address(this), from, to);
     }
 
     function _shouldTax(address from, address to) internal view returns (bool) {

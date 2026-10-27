@@ -9,7 +9,7 @@ import {SharedDividendVault} from "../../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
 import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {ILaunchpadV3} from "../../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
@@ -87,7 +87,7 @@ contract SwapBackAudit5bTest is Test {
     address dev = makeAddr("dev");
 
     SharedDividendVault vault;
-    TaxHandlerV3 handler;
+    GangTaxHandler handler;
     LaunchpadV3 pad;
     Agent5b agent;
     PlatformFeeBucket bucket;
@@ -109,7 +109,7 @@ contract SwapBackAudit5bTest is Test {
         SharedMigrator mig = new SharedMigrator(owner, V2_FACTORY);
         TokenDeployer deployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, owner);
-        handler = new TaxHandlerV3(owner, address(vault), address(bucket), V2_ROUTER);
+        handler = new GangTaxHandler(owner, address(vault), address(bucket), V2_ROUTER);
         pad = new LaunchpadV3(
             owner, address(reg), address(vault), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );
@@ -416,7 +416,7 @@ contract SwapBackAudit5bTest is Test {
         uint256 n;
         for (; n < 200; n++) {
             vm.prank(keeper);
-            (bool ok,) = address(handler).call(abi.encodeCall(TaxHandlerV3.process, (t, type(uint256).max, 1)));
+            (bool ok,) = address(handler).call(abi.encodeCall(GangTaxHandler.process, (t, type(uint256).max, 1)));
             if (!ok) break;
         }
         assertEq(n, 0, "below the block's reference price / budget spent: the keeper sells nothing more");

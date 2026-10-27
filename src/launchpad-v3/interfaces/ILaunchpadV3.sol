@@ -3,10 +3,11 @@ pragma solidity 0.8.28;
 
 /// @notice LaunchpadV3 surface. Curve / Agent gate / 1% wallet cap / ≈15 BNB graduation are unchanged from V2; the
 ///         `bool taxed` switch becomes a TaxConfig with its own buy / sell tax and a platform-listed tax recipient.
+///         The tax applies only on the Pancake pool after graduation; curve trades pay just the 1% protocol fee.
 interface ILaunchpadV3 {
-    /// @param buyTaxBps   Tax on buys, curve and pool. 0 together with sellTaxBps = untaxed (all fields zero);
-    ///                    otherwise 100–500. Fixed for the token's life.
-    /// @param sellTaxBps  Tax on sells, curve and pool, same bounds.
+    /// @param buyTaxBps   Tax on pool buys after graduation (none on the curve). 0 together with sellTaxBps = untaxed
+    ///                    (all fields zero); otherwise 100–500. Fixed for the token's life.
+    /// @param sellTaxBps  Tax on pool sells after graduation (none on the curve), same bounds.
     /// @param dividendBps Share of each tax after the platform's 0.5% of volume that goes to holder dividends
     ///                    (0–10_000). The rest goes to `recipient`.
     /// @param recipient   TaxHandlerV3-listed address paid in quote (e.g. a project vault). Fixed for the token's

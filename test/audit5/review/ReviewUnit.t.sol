@@ -5,8 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {SharedDividendVault} from "../../../src/common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket} from "../../../src/common/SharedPlatformFeeBucket.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
-import {HolderRewardHandler} from "../../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../../src/gang/GangTaxHandler.sol";
 
 /// @notice Review of the audit 5 fixes (§18): the keeper's set-once flag and the EIP-7702 wallet check, without a fork.
 contract ReviewUnitTest is Test {
@@ -16,14 +15,14 @@ contract ReviewUnitTest is Test {
 
     SharedDividendVault vault;
     SharedPlatformFeeBucket bucket;
-    TaxHandlerV3 v3Handler;
-    HolderRewardHandler fairHandler;
+    GangTaxHandler v3Handler;
+    GangTaxHandler fairHandler;
 
     function setUp() public {
         vault = new SharedDividendVault(owner);
         bucket = new SharedPlatformFeeBucket(owner, makeAddr("feeVault"));
-        v3Handler = new TaxHandlerV3(owner, address(vault), address(bucket), address(0));
-        fairHandler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
+        v3Handler = new GangTaxHandler(owner, address(vault), address(bucket), address(0));
+        fairHandler = new GangTaxHandler(owner, address(vault), address(bucket), address(0));
     }
 
     // ------------------------------------------------------------------ keeper: set once, then only the delay

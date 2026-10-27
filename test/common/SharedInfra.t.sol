@@ -7,8 +7,10 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {GangRouterTest} from "../router/GangRouter.t.sol";
 
 /// @notice LaunchpadV3 and 打新 on one SharedDividendVault, one SharedMigrator, one TokenDeployer (GangRouterTest's
@@ -22,6 +24,20 @@ contract SharedInfraTest is GangRouterTest {
             router.v3BuyBNB{value: 1 ether}(token, 0, block.timestamp);
         }
         assertTrue(_v3Graduated(token), "V3 graduated");
+    }
+
+    /// @dev `who` sells `amount` of a graduated V3 token straight into its (mock) pair: the pool sell tax applies.
+    function _poolSellV3(address token, address who, uint256 amount) internal {
+        MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
+        vm.prank(who);
+        IERC20(token).transfer(address(pair), amount);
+        (uint112 r0, uint112 r1,) = pair.getReserves();
+        bool t0 = pair.token0() == token;
+        (uint256 rT, uint256 rQ) = t0 ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+        uint256 inAmt = IERC20(token).balanceOf(address(pair)) - rT;
+        uint256 out = (inAmt * rQ) / (rT + inAmt) / 2;
+        if (t0) pair.swap(0, out, who, "");
+        else pair.swap(out, 0, who, "");
     }
 
     function _launchFair(address token) internal {
@@ -51,15 +67,17 @@ contract SharedInfraTest is GangRouterTest {
         vm.prank(agent2);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
         vm.prank(agent);
-        router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp); // curve tax → dividends for agent2
-        assertGt(v3Vault.pending(a, agent2), 0, "V3 holder earns");
-        assertEq(v3Vault.accRewardPerShare(b), 0, "nothing reached the fair token");
+        router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp); // §19: no curve tax, so no curve dividend
+        assertGt(v3Vault.shares(a, agent2), 0, "V3 holder's share written on the curve");
+        assertEq(v3Vault.pending(a, agent2), 0, "V3 holders earn only from the pool tax");
+        assertEq(v3Vault.unsoldUnits(b), 0, "nothing reached the fair token");
 
         _launchFair(b);
         _graduateV3(a);
         (,,,,,,,,,,, address pairB,,) = fair.sales(b);
         assertTrue(pairB != address(0), "fair launched through the shared migrator");
-        assertEq(v3Vault.accRewardPerShare(b), 0, "fair rewards only come from its own pool tax");
+        assertEq(v3Vault.unsoldUnits(a), 0, "no V3 pool tax yet: nothing credited to V3 holders");
+        assertEq(v3Vault.pending(a, agent2), 0, "V3 holders earn only from the pool tax");
         assertEq(v3Vault.minimumShareBalanceFor(a), 10_000 ether);
         assertEq(v3Vault.minimumShareBalanceFor(b), fair.MIN_SHARE_BALANCE());
     }
@@ -75,7 +93,7 @@ contract SharedInfraTest is GangRouterTest {
         address fairHandler = fair.taxHandler();
         address v3Handler = address(v3.taxHandler());
 
-        (bool ok,) = fairHandler.call(abi.encodeCall(HolderRewardHandler.syncShares, (a, agent2, address(0))));
+        (bool ok,) = fairHandler.call(abi.encodeCall(GangTaxHandler.syncShares, (a, agent2, address(0))));
         ok; // reverts or no-ops; either way the V3 share stands
         assertEq(v3Vault.shares(a, agent2), shareA, "fair handler left the V3 share alone");
 
@@ -87,7 +105,10 @@ contract SharedInfraTest is GangRouterTest {
         v3Vault.setShare(a, agent2, 0);
         vm.prank(fairHandler);
         vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
-        v3Vault.depositReward(a, 1);
+        v3Vault.accrueDividendUnits(a, 1);
+        vm.prank(fairHandler);
+        vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
+        v3Vault.convertDividend(a, 1, 0);
         vm.prank(v3Handler);
         vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
         v3Vault.setShare(b, agent, 0);
@@ -141,11 +162,18 @@ contract SharedInfraTest is GangRouterTest {
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
         v3.create("New", "NEW", "", "", address(0), address(0), _tax(5000));
 
-        uint256 before = v3Vault.pending(a, agent2);
         vm.prank(agent);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
         assertGt(v3Vault.shares(a, agent), 0, "existing token: shares still written");
-        assertGt(v3Vault.pending(a, agent2), before, "existing token: dividends still paid");
+        // dividends come from the pool tax (§19: none on the curve): graduate, sell into the pool, sell the tax
+        _graduateV3(a);
+        _poolSellV3(a, address(uint160(0xE0000)), IERC20(a).balanceOf(address(uint160(0xE0000))));
+        assertGt(v3Vault.pendingUnits(a, agent2), 0, "existing token: pool tax credited");
+        vm.roll(vm.getBlockNumber() + 1);
+        GangTaxHandler handler = v3.taxHandler();
+        vm.prank(owner);
+        handler.process(a, type(uint256).max, 1);
+        assertGt(v3Vault.pending(a, agent2), 0, "existing token: dividends still paid");
         vm.prank(agent2);
         uint256 got = v3Vault.claim(a);
         assertGt(got, 0, "claims never depend on the core");

@@ -10,7 +10,7 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 
@@ -42,7 +42,7 @@ contract V3SwapBackForkTest is Test {
     address dev = makeAddr("dev");
 
     SharedDividendVault vault;
-    TaxHandlerV3 handler;
+    GangTaxHandler handler;
     LaunchpadV3 pad;
     V3ForkAgent agent;
 
@@ -62,7 +62,7 @@ contract V3SwapBackForkTest is Test {
         SharedMigrator mig = new SharedMigrator(owner, V2_FACTORY);
         TokenDeployer deployer = new TokenDeployer(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, owner);
-        handler = new TaxHandlerV3(owner, address(vault), address(bucket), V2_ROUTER);
+        handler = new GangTaxHandler(owner, address(vault), address(bucket), V2_ROUTER);
         pad = new LaunchpadV3(
             owner, address(reg), address(vault), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );

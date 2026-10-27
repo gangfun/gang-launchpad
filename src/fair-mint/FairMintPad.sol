@@ -17,6 +17,8 @@ import {SharedMigrator} from "../common/SharedMigrator.sol";
 import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {FairToken} from "./FairToken.sol";
+import {IGangTaxHandler} from "../gang/interfaces/IGangTaxHandler.sol";
+import {IGangPadView} from "../gang/interfaces/IGangPadView.sol";
 
 /// @title FairMintPad (打新发射 · 铭文式打进度)
 /// @notice No bonding curve: half the supply is sold in 10,000 equal shares at one fixed price, both ways — mint buys
@@ -31,7 +33,7 @@ import {FairToken} from "./FairToken.sol";
 /// @dev Spec: docs/SPEC-FAIR-MINT-2026-10-26.md. NO mainnet broadcast.
 ///      Each sale snapshots its rules at create (cap, gate, fees, hold line): owner setters only affect new sales.
 ///      Escrowed principal has no admin exit — only withdraw and launch move it.
-contract FairMintPad is Ownable2Step, ReentrancyGuard {
+contract FairMintPad is IGangPadView, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
@@ -292,6 +294,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         token = tokenDeployer.deployFair(name, symbol, taxHandler, metaURI);
         dividendVault.ensureMinimumShareBalance(MIN_SHARE_BALANCE);
         dividendVault.registerToken(token, quote);
+        IGangTaxHandler(taxHandler).register(token, quote, address(0), 5000, 2);
 
         Sale storage s = sales[token];
         s.creator = msg.sender;
@@ -457,6 +460,11 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
 
     function holdBpsOf(address token) external view returns (uint16) {
         return sales[token].holdBps;
+    }
+
+    /// @notice IGangPadView: every token of this pad is a Fair (2) token.
+    function kindOf(address token) external view returns (uint8) {
+        return sales[token].creator == address(0) ? 0 : 2;
     }
 
     function isAgent(address account) external view returns (bool) {
