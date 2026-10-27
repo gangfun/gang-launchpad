@@ -14,9 +14,7 @@ import { bsc, bscTestnet } from 'viem/chains'
  *            GANG_TESTNET_RPC_URL (aliases GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL)
  */
 
-// TODO(set 8): fill in the merged pad and its GangRouter once testnet set 8 is broadcast (docs/TESTNET-SET8-2026-10-27.md).
-// While `pad` is empty the CLI keeps using set 7 below (separate pads), so testnet keeps working until then.
-export const TESTNET_SET8 = { pad: '', router: '' }
+export const TESTNET_SET8 = { pad: '0x4f7391D69cbf62891Ba8db929c323cd2609b94e7', router: '0xaeC638b258521ba2C39ADd5dAA3038F2c95C5747' }
 // TODO(mainnet): fill in after the mainnet broadcast; until then mainnet needs GANG_PAD (and GANG_ROUTER for BNB buys).
 export const MAINNET_GANG = { pad: '', router: '' }
 // 旧部署兼容，第 8 套填好后可删: testnet set 7 (before the merge: one pad per kind, one router for both).
