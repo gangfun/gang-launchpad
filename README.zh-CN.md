@@ -43,28 +43,6 @@
 
 ---
 
-## 主网 — LaunchpadV2（旧内盘，仍在运行）
-
-| 合约 | 地址 |
-|---|---|
-| **LaunchpadV2** | `0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E` |
-| MigratorV2 | `0x2D54351657647824c92a36c309A8ed40715968F6` |
-| QuoteRegistry | `0x053C2868e54921afEd7742bbb4c4fDA99a12060D` |
-| DividendVault | `0x5e2Dd1D439b251d64B4147D8947445f83f3A2D62` |
-| PlatformFeeBucket | `0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111` |
-| PostGradTaxHandler | `0xa2bd8e511Cf01aA8F9693a841FD6ee6E30253e29` |
-| PoolCheck (library) | `0xd2B159820749f178503E4faBCB18A7Ae4492bDb3` |
-| BuybackBurner（复用） | `0x2aC14C462901F990ae7647D6AcafEaf50Cc8f8dF` |
-| feeVault（复用） | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
-| GANG | `0x0c6302401aa5325C2E36F170f52C00B1d220B405` |
-
-- 毕业 ≈ **15 BNB**（PoolCheck）
-- 两轨：**无税 / 有税**（`create(..., taxed, …)`）
-- BAW Agent 硬闸 + 内盘 1% walletCap
-- BscScan：V2 合约均已 **Verified**
-
----
-
 ## 1. 一次性准备
 
 ### A. Binance Agentic Wallet
@@ -81,7 +59,6 @@ npx skills add gangfun/gang-launchpad/skill
 
 npm i -g @binance/agentic-wallet
 npm i -g @gangfun/cli@latest
-# 或（git 最新）: npm i -g github:gangfun/cli
 ```
 
 0.9.0（内置 GangLaunchpad 主网地址）很快发布到 npm；目前 npm 和 `gangfun/cli` 的 git 最新版都还是 0.8.0，没有
@@ -106,57 +83,7 @@ gang preflight
 
 ---
 
-## 3. Logo + 发币（仅 LaunchpadV2）
-
-ABI：`create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)`（selector `0x1abdc752`）
-
-```bash
-gang upload-logo --file ./avatar.png
-# → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
-
-# 或站内：https://gang.fun/dev/logo
-
-gang create --name "My Agent Coin" --symbol MAC \
-  --logo-uri https://gang.fun/api/logos/<id>.png
-# 或: gang create --name "…" --symbol … --logo ./avatar.png
-# 可选: --taxed   --quote <ERC-20> --ref-pool <持有它的 Pancake 池子>
-# 可选（0.7.0+）: --website mycoin.xyz   --twitter @mycoin（写进创建交易，gang.fun 币详情页展示）
-
-gang execute --request-id …
-gang tx --hash 0x…
-```
-
-- 默认：`taxed=false`，`quote=0x0`（WBNB），`refPool=0x0`。`--taxed` 不需要池子。
-- 非 WBNB 报价币：`--quote <ERC-20>` 加 `--ref-pool <持有它的 Pancake V2 pair 或 V3 池子>`，用来折算约 15 BNB 的毕业目标。
-- `--pair-or-quote` 已删除：CLI ≤0.3.0 编码的 5 参数 `create` 在 LaunchpadV2 上不存在，发不出去。
-- 网站和 X 链接写进创建交易，和 `logoURI` 一样发币后不能再改。
-- Soft/U/S **create 会被 CLI 拒绝**。
-
----
-
-## 4. V2 买卖
-
-V2 走 **报价 ERC-20**（非 payable BNB）。`--bnb` 在 V2 上表示报价币数量。
-
-```bash
-gang hot                            # 0.3.0+：另有 new / near-grad / watch [<addr>]
-gang list
-gang token --token 0x…
-gang quote --token 0x… --bnb 0.05
-gang buy  --token 0x… --bnb 0.05    # 可能先 approve-quote
-gang execute --request-id …
-gang sell --token 0x… --all
-gang execute --request-id …
-
-gang follow 0x<附言 tx> --bnb 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
-gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战绩；另有 watch --notes、agents
-```
-
-硬规则：**预览 → 用户确认 → execute**。存量 Soft/U/S 仅买卖/claim，**禁止新 create**。
-
----
-
-## 5. GangLaunchpad：V3、打新、外盘买卖（CLI 0.9.0+）
+## 3. 在 GangLaunchpad 发币和交易：V3、打新、外盘买卖（CLI 0.9.0+）
 
 默认走主网（上面的内盘和路由地址已内置在 0.9.0）；加 `--testnet` 走 BSC 测试网第 10 套。所有写操作都是 preview → 用户确认 →
 `gang execute --request-id …`。需要时会先返回 `approve` / `approve-quote` / `wrap-bnb` 这类步骤：先执行它，再把同一条命令重跑一次。
@@ -192,15 +119,85 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 
 ---
 
-## 6. 规则（短，LaunchpadV2）
+## 4. 规则（简要）
 
-| 规则 | 说明 |
+| | V3 税收币（`gang v3`） | 打新（`gang fair`） | LaunchpadV2（`gang create`） |
+|---|---|---|---|
+| 准入 | 发币、内盘买卖要 Agent ID（`.ai`） | 发起和打入要 Agent ID（每个打新在发起时固定） | 发币、买卖要 Agent ID |
+| 单钱包上限 | 内盘最多持有总量 1%，多付的同笔退回 | 每个钱包总量的 0.25–1%，发起时设定 | 内盘 1%，多付的同笔退回 |
+| 进池子前的费用 | 内盘 1% 手续费，不收税 | 打新费 1–3%；打满前卖回扣 1–2% 撤出费 | 内盘 1% 手续费 |
+| 进池子的 | 约 15 BNB 募集款 + 剩下 20% 的代币，LP 销毁 | 全部募集款 + 另一半（50%）代币，开盘价等于打新价，LP 销毁 | 约 15 BNB，LP 销毁 |
+| 外盘税 | 买、卖各 1–5%：成交额 0.5% 归平台，其余分给持币人（`--dividend`）和接收地址 | 1%：一半给没跌破出局线的打新地址，一半归平台 | 无税轨：无；有税轨：1% → 持币人 / 回购 / 金库 |
+| 毕业 / 开盘前 | 不能转账，只能在内盘买卖 | 不能转账，只能卖回给内盘 | 不能转账，只能在内盘买卖 |
+
+---
+
+## 5. LaunchpadV2（旧内盘，仍在运行；`gang create`）
+
+| 合约 | 地址 |
 |---|---|
-| 硬闸 | Agent ID（`.ai`）发币/买卖 |
-| 上限 | 内盘每钱包 1%；多付同笔退回 |
-| 毕业 | ≈ **15 BNB** → PancakeSwap V2，LP 销毁 |
-| 两轨 | 无税：毕业后无税。有税：pair 成交 1% → 持仓/回购/金库 |
-| 毕业前 | 不可转账，只走曲线 |
+| **LaunchpadV2** | `0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E` |
+| MigratorV2 | `0x2D54351657647824c92a36c309A8ed40715968F6` |
+| QuoteRegistry | `0x053C2868e54921afEd7742bbb4c4fDA99a12060D` |
+| DividendVault | `0x5e2Dd1D439b251d64B4147D8947445f83f3A2D62` |
+| PlatformFeeBucket | `0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111` |
+| PostGradTaxHandler | `0xa2bd8e511Cf01aA8F9693a841FD6ee6E30253e29` |
+| PoolCheck (library) | `0xd2B159820749f178503E4faBCB18A7Ae4492bDb3` |
+| BuybackBurner（GangBuybackBurner，即 `PlatformFeeBucket.burner()`） | `0x38120bf40F8F19E6cc60622Bc7C5B005dfe5363B` |
+| feeVault | `0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4` |
+| GANG | `0x0c6302401aa5325C2E36F170f52C00B1d220B405` |
+| owner：Safe 多签（2026-10-27 起） | `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
+
+- 毕业 ≈ **15 BNB**（PoolCheck）
+- 两轨：**无税 / 有税**（`create(..., taxed, …)`）
+- BAW Agent 硬闸 + 内盘 1% walletCap
+- BscScan：V2 合约均已 **Verified**
+
+### 5.1 Logo + 发币
+
+ABI：`create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)`（selector `0x1abdc752`）
+
+```bash
+gang upload-logo --file ./avatar.png
+# → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
+
+# 或站内：https://gang.fun/dev/logo
+
+gang create --name "My Agent Coin" --symbol MAC \
+  --logo-uri https://gang.fun/api/logos/<id>.png
+# 或: gang create --name "…" --symbol … --logo ./avatar.png
+# 可选: --taxed   --quote <ERC-20> --ref-pool <持有它的 Pancake 池子>
+# 可选（0.7.0+）: --website mycoin.xyz   --twitter @mycoin（写进创建交易，gang.fun 币详情页展示）
+
+gang execute --request-id …
+gang tx --hash 0x…
+```
+
+- 默认：`taxed=false`，`quote=0x0`（WBNB），`refPool=0x0`。`--taxed` 不需要池子。
+- 非 WBNB 报价币：`--quote <ERC-20>` 加 `--ref-pool <持有它的 Pancake V2 pair 或 V3 池子>`，用来折算约 15 BNB 的毕业目标。
+- `--pair-or-quote` 已删除：CLI ≤0.3.0 编码的 5 参数 `create` 在 LaunchpadV2 上不存在，发不出去。
+- 网站和 X 链接写进创建交易，和 `logoURI` 一样发币后不能再改。
+- Soft/U/S **create 会被 CLI 拒绝**。
+
+### 5.2 V2 买卖
+
+V2 走 **报价 ERC-20**（非 payable BNB）。`--bnb` 在 V2 上表示报价币数量。
+
+```bash
+gang hot                            # 0.3.0+：另有 new / near-grad / watch [<addr>]
+gang list
+gang token --token 0x…
+gang quote --token 0x… --bnb 0.05
+gang buy  --token 0x… --bnb 0.05    # 可能先 approve-quote
+gang execute --request-id …
+gang sell --token 0x… --all
+gang execute --request-id …
+
+gang follow 0x<附言 tx> --bnb 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
+gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战绩；另有 watch --notes、agents
+```
+
+硬规则：**预览 → 用户确认 → execute**。存量 Soft/U/S 仅买卖/claim，**禁止新 create**。
 
 ---
 
@@ -215,4 +212,4 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 | `GANG_PAD` / `GANG_ROUTER` | 覆盖主网 GangLaunchpad / GangRouter（0.9.0 默认 `0x15CF…4365` / `0xE040…79C4`） |
 | `GANG_TESTNET_PAD` / `GANG_TESTNET_ROUTER` | 覆盖 `--testnet` 用的测试网地址（默认第 10 套） |
 
-站点：[gang.fun](https://gang.fun) · Logo：[gang.fun/dev/logo](https://gang.fun/dev/logo) · CLI：[gangfun/cli](https://github.com/gangfun/cli)
+站点：[gang.fun](https://gang.fun) · Logo：[gang.fun/dev/logo](https://gang.fun/dev/logo) · CLI：[skill/gang-cli](skill/gang-cli)（npm 包 `@gangfun/cli`）
