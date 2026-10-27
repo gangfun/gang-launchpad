@@ -11,6 +11,10 @@ import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {CurveLogic} from "../../src/gang/CurveLogic.sol";
 import {FairLogic} from "../../src/gang/FairLogic.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
+import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
+import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @notice Interface freeze for the merge (merge plan §7.3, §10.2: written before the merged code). The downstream
 ///         (indexer, keeper, CLI, GangRouter) keeps working with zero changes only if every event keeps its topic0,
@@ -1279,6 +1283,50 @@ contract MergeGuardsTest is GangFixture {
         // one token bytecode for all three kinds (same code; only immutables differ)
         assertEq(tV.code.length, tU.code.length);
         assertEq(tV.code.length, tF.code.length);
+    }
+
+    /// @notice Reverts raised inside the delegatecalled code (PoolCheck via PadCommon, OZ SafeCast / SafeERC20 in the
+    ///         libraries) are declared on the pad too, so they are in its ABI and decode on explorers, with the
+    ///         selectors of the originals.
+    function test_merge_libraryErrorsInPadAbi() public view {
+        string memory abiPart = vm.split(_art(PAD_ART), '"bytecode":')[0];
+        assertTrue(vm.contains(abiPart, '{"type":"error","name":"ThinReferencePool","inputs":[]}'), "ThinReferencePool");
+        assertTrue(vm.contains(abiPart, '{"type":"error","name":"GradAmtZero","inputs":[]}'), "GradAmtZero");
+        assertTrue(
+            vm.contains(
+                abiPart,
+                '{"type":"error","name":"SafeCastOverflowedUintDowncast","inputs":[{"name":"bits","type":"uint8","internalType":"uint8"},{"name":"value","type":"uint256","internalType":"uint256"}]}'
+            ),
+            "SafeCastOverflowedUintDowncast"
+        );
+        assertTrue(
+            vm.contains(
+                abiPart,
+                '{"type":"error","name":"SafeERC20FailedOperation","inputs":[{"name":"token","type":"address","internalType":"address"}]}'
+            ),
+            "SafeERC20FailedOperation"
+        );
+        assertEq(IGangLaunchpad.ThinReferencePool.selector, PoolCheck.ThinReferencePool.selector);
+        assertEq(IGangLaunchpad.GradAmtZero.selector, PoolCheck.GradAmtZero.selector);
+        assertEq(
+            IGangLaunchpad.SafeCastOverflowedUintDowncast.selector, SafeCast.SafeCastOverflowedUintDowncast.selector
+        );
+        assertEq(IGangLaunchpad.SafeERC20FailedOperation.selector, SafeERC20.SafeERC20FailedOperation.selector);
+    }
+
+    /// @notice The pad needs a pair factory at construction (ZeroAddress, as the old FairMintPad).
+    function test_merge_constructorNeedsPairFactory() public {
+        vm.expectRevert(IGangLaunchpad.ZeroAddress.selector);
+        new GangLaunchpad(
+            owner,
+            address(quoteRegistry),
+            address(divVault),
+            address(bucket),
+            address(handler),
+            address(tokenDeployer),
+            address(wbnb),
+            address(0)
+        );
     }
 
     /// @notice One core, one share floor (§5.3): the V3 and the 打新 constants are the same number, the vault's floor

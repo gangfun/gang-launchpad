@@ -215,4 +215,11 @@ interface IGangLaunchpad {
     error BadAmount();
     error PriceTooSmall();
     error OutOfGas();
+    // Raised inside the libraries the pad delegatecalls (PoolCheck via PadCommon, OZ SafeCast / SafeERC20 in
+    // CurveLogic / FairLogic / PadCommon). Declared here so they are in the pad's ABI and decode on explorers;
+    // same signatures as the originals, so the selectors are the same.
+    error ThinReferencePool();
+    error GradAmtZero();
+    error SafeCastOverflowedUintDowncast(uint8 bits, uint256 value);
+    error SafeERC20FailedOperation(address token);
 }

@@ -120,6 +120,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
                 || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
+                || pairFactory_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
         dividendVault = SharedDividendVault(dividendVault_);
