@@ -184,22 +184,28 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --website / --twitter (optional) go into the create tx, shown on gang.fun; permanent
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
-  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hours 24] [--hold 50] [--mint-fee 1] [--exit-fee 1]
-                 [--shares 1] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle] [--description <text>]
-                                         打新 (fair mint): one price per share, the last share launches on PancakeSwap at that
-                                         price; unfilled at the deadline → full refund. raise 5–50 BNB, cap 0.1–0.5% of supply per
-                                         wallet, 1–72h, hold line 30–80%, mint / withdraw fee 1–5% each (e.g. --mint-fee 1 --exit-fee 2).
+  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1]
+                 [--shares 1] [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL]
+                 [--twitter @handle] [--description <text>]
+                                         打新 (fair mint): one price per share both ways, the last share launches on PancakeSwap at
+                                         that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–0.5% of
+                                         supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
                                          Wraps / approves first when needed (re-run after each)
+                                         --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
+                                         pool holding it, which prices the raise (as gang create; mainnet USDT defaults to the USDT/WBNB pool)
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
   gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--use-wbnb]
-                                         + the sale's mint fee, refunded if the sale fails; WBNB sales pay native BNB
+                                         + the sale's mint fee (the platform's, not returned); WBNB sales pay native BNB
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
-  gang fair withdraw --token <addr> (--shares <n> | --all)           before fill / deadline: principal − the sale's exit fee
-  gang fair refund --token <addr>        after a deadline without a fill: principal + mint fee
-  gang fair status --token <addr>        my shares; after launch: reward on / out, how much I can sell and stay in, to claim
+  gang fair withdraw --token <addr> (--shares <n> | --all)           sell back before it fills: mint price − exit fee (none once stale)
+  gang fair status --token <addr> [--slippage 1]
+                                         my shares; after launch: reward on / out, how much I can sell and stay in, to claim
+                                         (claimable now + reward credited when tax was paid, not sold yet), poolSellAll
+                                         (what selling my balance into the pool pays, as of the next block: expectOut /
+                                         minOut for amountOutMin; also for a wallet that only bought in the pool)
   gang fair claim --token <addr>         claim the holder reward
-  gang fair info --token <addr> | gang fair list [--status minting|launched|failed|all] | gang fair tx --hash <0x..>
+  gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
                                          fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
@@ -210,10 +216,21 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
                                          0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
                                          --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
+                                         --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
+                                         pool holding it, which prices the 15 BNB graduation target (as gang create), unless
+                                         gang set a fixed rate. The output shows graduationAt
   gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
                                          amount includes the 1% fee and the buy tax; WBNB-quoted: native BNB via GangRouter
   gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
-  gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it
+                                         on the curve; graduated: no tx, a pool quote (expectOut / minOut for amountOutMin;
+                                         --amount needs no wallet)
+  gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it; graduated: swapBack
+                                         (tax not sold yet, the per-block chunk budget, what the latest block has left of it
+                                         and the next chunk)
+  gang v3 status --token <addr> [--slippage 1]
+                                         my balance and dividend: claimable now + tax credited to me, not sold yet (estimate);
+                                         graduated: poolSellAll (expectOut / minOut for amountOutMin)
+  gang v3 claim --token <addr>           claim my dividend (the quote token)
   gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
   gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>
                                          v3 commands need --testnet for now (BSC testnet); --calldata / --from as in gang fair

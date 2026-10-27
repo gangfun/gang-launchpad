@@ -5,19 +5,19 @@ import {Test, console2} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
+import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
+import {FairToken} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
@@ -37,12 +37,11 @@ contract CoreSystem is Test {
     PlatformFeeBucket public bucket;
 
     LaunchpadV3 public v3;
-    DividendVault public v3Vault;
-    TaxRouterV3 public taxRouter;
-    PostGradTaxHandlerV3 public v3Handler;
+    SharedDividendVault public v3Vault;
+    TaxHandlerV3 public v3Handler;
 
     FairMintPad public fair;
-    DividendVault public fairVault;
+    SharedDividendVault public fairVault;
     HolderRewardHandler public fairHandler;
 
     GangRouter public router;
@@ -60,65 +59,64 @@ contract CoreSystem is Test {
         registry = new QuoteRegistry(owner);
         bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
 
-        v3Vault = new DividendVault(owner);
-        taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
-        RecipientRegistry recipients = new RecipientRegistry(owner);
-        v3Handler = new PostGradTaxHandlerV3(owner, address(v3Vault), address(taxRouter));
+        // one vault / migrator / deployer for both cores, as deployed (v3Vault and fairVault are the same contract)
+        v3Vault = new SharedDividendVault(owner);
+        fairVault = v3Vault;
+        SharedMigrator mig = new SharedMigrator(owner, address(pairFactory));
+        TokenDeployer deployer = new TokenDeployer(owner);
+        v3Handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner,
             address(registry),
             address(v3Vault),
             address(bucket),
             address(v3Handler),
-            address(taxRouter),
-            address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(deployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 v3Mig = new MigratorV2(address(pairFactory), address(v3));
 
-        fairVault = new DividendVault(owner);
-        fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket));
+        fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket), address(0));
         fair = new FairMintPad(
             owner,
             address(registry),
             address(fairVault),
             address(bucket),
             address(fairHandler),
-            address(new FairTokenDeployer()),
+            address(deployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 fairMig = new MigratorV2(address(pairFactory), address(fair));
         router = new GangRouter(address(v3), address(fair), address(wbnb));
 
         vm.startPrank(owner);
         registry.setQuote(address(quoteTok), true, 15 ether);
         registry.setQuote(address(blq), true, 15 ether);
         bucket.setOperator(address(v3), true);
-        bucket.setOperator(address(taxRouter), true);
+        bucket.setOperator(address(v3Handler), true);
         bucket.setOperator(address(fair), true);
         bucket.setOperator(address(fairHandler), true);
-        v3Vault.setMinimumShareBalance(10_000 ether);
-        v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
-        v3Vault.setOperator(address(v3Handler), true);
-        taxRouter.setLaunchpad(address(v3));
-        taxRouter.setSource(address(v3Handler), true);
+        v3Vault.setLaunchpad(address(v3), true);
+        v3Vault.setMinimumShareBalance(address(v3), 10_000 ether);
+        v3Vault.setOperator(address(v3Handler), address(v3));
+        mig.addLaunchpad(address(v3));
+        deployer.setLaunchpad(address(v3), true);
+        v3Handler.setLaunchpad(address(v3));
         v3Handler.setKeeper(keeper);
-        recipients.list(treasury, "partner treasury");
+        v3Handler.list(treasury, "partner treasury");
         v3.setAgentGate(true, address(agents));
         v3.setRouter(address(router), true);
-        v3.setMigrator(address(v3Mig));
-        fairVault.setMinimumShareBalance(10_000 ether);
-        fairVault.setLaunchpad(address(fair));
-        fairVault.setOperator(address(fairHandler), true);
+        v3.setMigrator(address(mig));
+        fairVault.setLaunchpad(address(fair), true);
+        fairVault.setMinimumShareBalance(address(fair), 10_000 ether);
+        fairVault.setOperator(address(fairHandler), address(fair));
+        mig.addLaunchpad(address(fair));
+        deployer.setLaunchpad(address(fair), true);
         fairHandler.setPad(address(fair));
         fairHandler.setKeeper(keeper);
         fair.setAgentGate(true, address(agents));
         fair.setRouter(address(router), true);
-        fair.setMigrator(address(fairMig));
+        fair.setMigrator(address(mig));
         vm.stopPrank();
     }
 }
@@ -142,7 +140,7 @@ contract CoreHandler is CoreSystem {
     uint256 public calls;
     uint256 public v3Graduations;
     uint256 public fairLaunches;
-    uint256 public fairFailures;
+    uint256 public staleExits; // withdraws with the exit fee waived (no mint for 7 days)
     uint256 public owedEvents;
     uint256 public blqTokens;
     uint256 public blockedSet;
@@ -225,8 +223,8 @@ contract CoreHandler is CoreSystem {
         (, quote,,,,, graduated,,,, pair,) = v3.curves(t);
     }
 
-    function _saleState(address t) internal view returns (address quote, bool launched, bool failed, address pair) {
-        (,,,, quote,, launched, failed,,,,,, pair,) = fair.sales(t);
+    function _saleState(address t) internal view returns (address quote, bool launched, address pair) {
+        (,,,, quote,, launched,,,,, pair,,) = fair.sales(t);
     }
 
     function _pairSwapOut(MockPair pair, address token, bool tokenOut, uint256 out, address to) internal {
@@ -373,7 +371,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (v3Tokens.length == 0) return;
         address t = _v3(seed);
-        try v3Handler.process(t, 1) {} catch {}
+        try v3Handler.process(t, type(uint256).max, 1) {} catch {}
         _afterV3(t);
     }
 
@@ -394,7 +392,7 @@ contract CoreHandler is CoreSystem {
     function v3Release(uint256 seed) external {
         calls++;
         if (v3Tokens.length == 0) return;
-        try taxRouter.release(_v3(seed)) {} catch {}
+        try v3Handler.release(_v3(seed)) {} catch {}
     }
 
     function _afterV3(address t) internal {
@@ -403,24 +401,21 @@ contract CoreHandler is CoreSystem {
             v3Graduations++;
             _track(pair);
         }
-        if (taxRouter.owedOf(t) > 0) owedEvents++;
+        if (v3Handler.owedOf(t) > 0) owedEvents++;
     }
 
     // ================================================================ 打新 actions
-    function fairCreate(uint256 seed, uint256 raise, uint16 capBps, uint32 duration, uint16 holdBps, uint16 fees)
-        external
-    {
+    function fairCreate(uint256 seed, uint256 raise, uint16 capBps, uint16 holdBps, uint16 fees) external {
         calls++;
         if (sales.length >= 4) return;
         address creator = _actor(seed);
         address q = _pick(seed, 6, 2) == 0 ? address(wbnb) : address(quoteTok);
         FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
             raiseBnb: bound(raise, 5 ether, 50 ether),
-            capBps: uint16(bound(capBps, 10, 50)),
-            duration: uint32(bound(duration, 1 hours, 72 hours)),
+            capBps: uint16(bound(capBps, 25, 50)),
             holdBps: uint16(bound(holdBps, 3_000, 8_000)),
-            mintFeeBps: uint16(bound(fees, 100, 500)),
-            exitFeeBps: uint16(bound(fees >> 4, 100, 500))
+            mintFeeBps: uint16(bound(fees, 100, 300)),
+            exitFeeBps: uint16(bound(fees >> 4, 100, 200))
         });
         vm.prank(creator);
         address t = fair.create("F", "F", "", "", q, address(0), cfg, 1);
@@ -433,7 +428,7 @@ contract CoreHandler is CoreSystem {
         address t = _sale(seed);
         address who = _actor(seed + 1);
         shares = bound(shares, 1, 120);
-        (address q,,,) = _saleState(t);
+        (address q,,) = _saleState(t);
         vm.prank(who);
         if (!viaRouter) {
             try fair.mint(t, shares, 1) {} catch {}
@@ -450,19 +445,13 @@ contract CoreHandler is CoreSystem {
         if (sales.length == 0) return;
         address t = _sale(seed);
         address who = _actor(seed + 1);
-        (uint16 held,) = fair.positions(t, who);
+        uint16 held = fair.positions(t, who);
         if (held == 0) return;
+        bool stale = fair.exitFeeBpsOf(t) == 0;
         vm.prank(who);
-        try fair.withdraw(t, bound(shares, 1, held)) {} catch {}
-    }
-
-    function fairRefund(uint256 seed) external {
-        calls++;
-        if (sales.length == 0) return;
-        address t = _sale(seed);
-        vm.prank(_actor(seed + 1));
-        try fair.refund(t) {} catch {}
-        _afterSale(t);
+        try fair.withdraw(t, bound(shares, 1, held), 0) {
+            if (stale) staleExits++;
+        } catch {}
     }
 
     /// @dev Fresh agents mint up to the cap until the sale fills (and launches in that same tx).
@@ -470,13 +459,13 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (, bool launched, bool failed,) = _saleState(t);
-        if (launched || failed || fair.status(t) != FairMintPad.Status.Minting) return;
+        (, bool launched,) = _saleState(t);
+        if (launched || fair.status(t) != FairMintPad.Status.Minting) return;
         for (uint256 i = 0; i < 600 && !launched; i++) {
             address w = _newAgent();
             vm.prank(w);
             try fair.mint(t, 500, 1) {} catch {}
-            (, launched,,) = _saleState(t);
+            (, launched,) = _saleState(t);
         }
         _afterSale(t);
     }
@@ -485,7 +474,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (address q, bool launched,, address pair) = _saleState(t);
+        (address q, bool launched, address pair) = _saleState(t);
         if (!launched) return;
         address who = _actor(seed + 1);
         if (isBuy) _poolBuy(t, q, pair, who, bound(amount, 1e15, 2 ether));
@@ -497,7 +486,7 @@ contract CoreHandler is CoreSystem {
         calls++;
         if (sales.length == 0) return;
         address t = _sale(seed);
-        (, bool launched,,) = _saleState(t);
+        (, bool launched,) = _saleState(t);
         if (!launched) return;
         address from = _actor(seed + 1);
         address to = _actor(seed + 2);
@@ -510,7 +499,8 @@ contract CoreHandler is CoreSystem {
     function fairProcess(uint256 seed) external {
         calls++;
         if (sales.length == 0) return;
-        try fairHandler.process(_sale(seed), 1) {} catch {}
+        address t = _sale(seed);
+        try fairHandler.process(t, type(uint256).max, 1) {} catch {}
     }
 
     function fairClaim(uint256 seed) external {
@@ -522,16 +512,16 @@ contract CoreHandler is CoreSystem {
 
     function warp(uint256 dt) external {
         calls++;
-        vm.warp(block.timestamp + bound(dt, 1 minutes, 30 hours));
+        // up to 8 days: long enough for a sale to go stale (no mint for 7 days → no exit fee)
+        vm.warp(block.timestamp + bound(dt, 1 minutes, 8 days));
     }
 
     function _afterSale(address t) internal {
-        (, bool launched, bool failed, address pair) = _saleState(t);
+        (, bool launched, address pair) = _saleState(t);
         if (launched && !isHolder[pair]) {
             fairLaunches++;
             _track(pair);
         }
-        if (failed) fairFailures++;
     }
 
     function _recordOut(address t) internal {
@@ -567,19 +557,19 @@ contract CoreInvariantsTest is Test {
         sel[10] = CoreHandler.fairCreate.selector;
         sel[11] = CoreHandler.fairMint.selector;
         sel[12] = CoreHandler.fairWithdraw.selector;
-        sel[13] = CoreHandler.fairRefund.selector;
+        sel[13] = CoreHandler.fairWithdraw.selector;
         sel[14] = CoreHandler.fairFill.selector;
         sel[15] = CoreHandler.fairPoolTrade.selector;
         sel[16] = CoreHandler.fairTransfer.selector;
         sel[17] = CoreHandler.fairProcess.selector;
         sel[18] = CoreHandler.fairClaim.selector;
         sel[19] = CoreHandler.warp.selector;
-        // weights: trades, the blacklist toggle, time and refunds come up more often so owed tax and failed sales
+        // weights: trades, the blacklist toggle, time and withdraws come up more often so owed tax and stale exits
         // are reached in most runs
         sel[20] = CoreHandler.v3Buy.selector;
         sel[21] = CoreHandler.blockRecipient.selector;
         sel[22] = CoreHandler.warp.selector;
-        sel[23] = CoreHandler.fairRefund.selector;
+        sel[23] = CoreHandler.fairWithdraw.selector;
         sel[24] = CoreHandler.fairMint.selector;
         sel[25] = CoreHandler.v3Release.selector;
         sel[26] = CoreHandler.v3Create.selector;
@@ -591,7 +581,8 @@ contract CoreInvariantsTest is Test {
     }
 
     // ---------------------------------------------------------------- 打新 (§5 #1–#4, #6)
-    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of (principal of live positions + escrow).
+    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of the principal of live positions, plus exit
+    ///      fees the bucket refused (mint fees go to the platform at mint: nothing else is escrowed).
     function invariant_fairEscrowExact() public view {
         FairMintPad fair = h.fair();
         address[3] memory qs = _quotes();
@@ -599,38 +590,32 @@ contract CoreInvariantsTest is Test {
             uint256 owed;
             for (uint256 i = 0; i < h.saleCount(); i++) {
                 address t = h.sales(i);
-                (,,,, address q,, bool launched,,,,, uint128 price, uint128 escrow,,) = fair.sales(t);
+                (,,,, address q,, bool launched,,,, uint128 price,,,) = fair.sales(t);
                 if (q != qs[k] || launched) continue;
-                owed += escrow;
                 for (uint256 j = 0; j < h.holderCount(); j++) {
-                    (uint16 shares,) = fair.positions(t, h.holders(j));
+                    uint16 shares = fair.positions(t, h.holders(j));
                     owed += uint256(shares) * price;
                 }
             }
-            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal + escrow");
+            owed += fair.owedFee(qs[k]);
+            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal + owed fees");
         }
     }
 
-    /// @dev #2 / #3 / #4: positions add up, caps hold, tokens are where the shares say, launched XOR failed.
+    /// @dev #2 / #3: positions add up, caps hold, tokens are where the shares say.
     function invariant_fairPositionsAndTokens() public view {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,, uint16 cap,,, uint16 sold, bool launched, bool failed,,,,, uint128 escrow,,) = fair.sales(t);
-            assertFalse(launched && failed, "launched xor failed");
+            (,, uint16 cap,,, uint16 sold, bool launched,,,,,,,) = fair.sales(t);
             assertLe(sold, 10_000, "sold <= 10,000");
             uint256 sumShares;
-            uint256 sumFee;
             for (uint256 j = 0; j < h.holderCount(); j++) {
-                (uint16 s, uint128 f) = fair.positions(t, h.holders(j));
+                uint16 s = fair.positions(t, h.holders(j));
                 assertLe(s, cap, "shares <= cap");
                 sumShares += s;
-                sumFee += f;
             }
-            // after launch the escrow is paid to the platform; positions keep their historical feePaid
-            if (!launched) assertEq(sumFee, escrow, "escrow == sum feePaid");
-            else assertEq(escrow, 0, "no escrow after launch");
-            if (!failed) assertEq(sumShares, sold, "sold == sum shares");
+            assertEq(sumShares, sold, "sold == sum shares");
             uint256 padTokens = IERC20(t).balanceOf(address(fair));
             if (launched) assertEq(padTokens, 0, "pad holds no token after launch");
             else assertEq(padTokens, 1_000_000_000 ether - sumShares * 50_000 ether, "pad holds the unminted supply");
@@ -642,7 +627,7 @@ contract CoreInvariantsTest is Test {
         FairMintPad fair = h.fair();
         for (uint256 i = 0; i < h.saleCount(); i++) {
             address t = h.sales(i);
-            (,,,,,, bool launched,,,,,,,,) = fair.sales(t);
+            (,,,,,, bool launched,,,,,,,) = fair.sales(t);
             if (!launched) continue;
             for (uint256 j = 0; j < h.holderCount(); j++) {
                 address u = h.holders(j);
@@ -674,9 +659,10 @@ contract CoreInvariantsTest is Test {
         }
     }
 
-    /// @dev #9: per quote, TaxRouterV3 holds at least everything it owes.
+    /// @dev #9: per quote, TaxHandlerV3 holds at least everything it owes, and its running total (what `process`
+    ///      keeps back from a sale) is exactly Σ owedOf.
     function invariant_v3OwedBacked() public view {
-        TaxRouterV3 r = h.taxRouter();
+        TaxHandlerV3 r = h.v3Handler();
         address[3] memory qs = _quotes();
         for (uint256 k = 0; k < 3; k++) {
             uint256 owed;
@@ -685,7 +671,8 @@ contract CoreInvariantsTest is Test {
                 (address q,,) = r.routeOf(t);
                 if (q == qs[k]) owed += r.owedOf(t);
             }
-            assertGe(IERC20(qs[k]).balanceOf(address(r)), owed, "router quote >= owed");
+            assertGe(IERC20(qs[k]).balanceOf(address(r)), owed, "handler quote >= owed");
+            assertEq(r.owedTotalOf(qs[k]), owed, "owedTotalOf == sum of owedOf");
         }
     }
 
@@ -712,7 +699,61 @@ contract CoreInvariantsTest is Test {
         }
     }
 
-    function _pendingSum(DividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
+    /// @dev #12 (tax-time dividends): the vault (shared by both cores) holds every holder's claimable quote plus the
+    ///      quote of batches still being sold; each handler holds at least its accrued tax, the holders' unsold units
+    ///      are part of it, and the units credited to holders never exceed them.
+    function invariant_taxTimeDividendsBacked() public view {
+        SharedDividendVault vault = h.v3Vault();
+        assertEq(address(vault), address(h.fairVault()), "one shared vault");
+        address[3] memory qs = _quotes();
+        for (uint256 k = 0; k < 3; k++) {
+            uint256 owed = _pendingSum(vault, qs[k], true) + _pendingSum(vault, qs[k], false);
+            owed += _sellingQuote(vault, qs[k], true) + _sellingQuote(vault, qs[k], false);
+            assertGe(IERC20(qs[k]).balanceOf(address(vault)), owed, "vault >= claimable + selling batches");
+        }
+        for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+            _checkUnits(vault, h.v3Tokens(i), address(h.v3Handler()), h.v3Handler().accruedTax(h.v3Tokens(i)));
+        }
+        for (uint256 i = 0; i < h.saleCount(); i++) {
+            _checkUnits(vault, h.sales(i), address(h.fairHandler()), h.fairHandler().accruedTax(h.sales(i)));
+        }
+    }
+
+    function _sellingQuote(SharedDividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
+        uint256 n = isV3 ? h.v3TokenCount() : h.saleCount();
+        for (uint256 i = 0; i < n; i++) {
+            address t = isV3 ? h.v3Tokens(i) : h.sales(i);
+            if (vault.quoteOf(t) != quote) continue;
+            (, uint64 selling,) = vault.pipeOf(t);
+            if (selling == 0) continue;
+            (,, uint256 q,,) = vault.batchOf(t, selling);
+            sum += q;
+        }
+    }
+
+    function _checkUnits(SharedDividendVault vault, address t, address handler, uint256 accrued) internal view {
+        uint256 unsold = vault.unsoldUnits(t) - PostGradHandlerBase(handler).pendingHolderUnits(t);
+        assertGe(accrued, unsold, "holders' unsold units are part of the accrued tax");
+        assertGe(IERC20(t).balanceOf(handler), accrued, "handler holds its accrued tax");
+        // holders' units wait for their batch to settle: at most the units of the unsettled batches
+        (uint64 open, uint64 selling,) = vault.pipeOf(t);
+        uint256 unsettled;
+        if (selling != 0) {
+            (uint128 su,,,,) = vault.batchOf(t, selling);
+            unsettled += su;
+        }
+        if (open != 0) {
+            (uint128 ou,,,,) = vault.batchOf(t, open);
+            unsettled += ou;
+        }
+        uint256 credited;
+        for (uint256 j = 0; j < h.holderCount(); j++) {
+            credited += vault.pendingUnits(t, h.holders(j));
+        }
+        assertLe(credited, unsettled, "units credited <= units of the unsettled batches");
+    }
+
+    function _pendingSum(SharedDividendVault vault, address quote, bool isV3) internal view returns (uint256 sum) {
         uint256 n = isV3 ? h.v3TokenCount() : h.saleCount();
         for (uint256 i = 0; i < n; i++) {
             address t = isV3 ? h.v3Tokens(i) : h.sales(i);
@@ -736,6 +777,6 @@ contract CoreInvariantsTest is Test {
     function afterInvariant() external view {
         console2.log("calls / v3 tokens / graduations / owed seen", h.calls(), h.v3TokenCount(), h.v3Graduations());
         console2.log("  owed events / sales / launches / failures", h.owedEvents(), h.saleCount(), h.fairLaunches());
-        console2.log("  fair failures / blq tokens / blocked set", h.fairFailures(), h.blqTokens(), h.blockedSet());
+        console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
     }
 }

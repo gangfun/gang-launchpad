@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {ITaxRouter} from "../../src/launchpad-v3/interfaces/ITaxRouter.sol";
+import {ITaxHandlerV3} from "../../src/launchpad-v3/interfaces/ITaxHandlerV3.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that refuses transfers to blacklisted addresses (USDT-style), to make a recipient push fail.
@@ -43,13 +43,12 @@ contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
 ///         0.5%-of-volume platform part, dividend share, recipient pushes, owed + release, TaxPaid events, G-01.
 contract LaunchpadV3Test is Test {
     QuoteRegistry internal quoteRegistry;
-    DividendVault internal divVault;
+    SharedDividendVault internal divVault;
+    TokenDeployer internal tokenDeployer;
     PlatformFeeBucket internal bucket;
-    TaxRouterV3 internal router;
-    RecipientRegistry internal recipients;
-    PostGradTaxHandlerV3 internal handler;
+    TaxHandlerV3 internal handler;
     LaunchpadV3 internal pad;
-    MigratorV2 internal migrator;
+    SharedMigrator internal migrator;
     MockPairFactory internal pairFactory;
     MockSPCXB internal quoteTok;
     MockSPCXB internal wbnb;
@@ -76,36 +75,33 @@ contract LaunchpadV3Test is Test {
         agents = new MockAgentId();
 
         quoteRegistry = new QuoteRegistry(owner);
-        divVault = new DividendVault(owner);
+        divVault = new SharedDividendVault(owner);
+        tokenDeployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        router = new TaxRouterV3(owner, address(divVault), address(bucket));
-        recipients = new RecipientRegistry(owner);
-        handler = new PostGradTaxHandlerV3(owner, address(divVault), address(router));
+        handler = new TaxHandlerV3(owner, address(divVault), address(bucket), address(0));
         pad = new LaunchpadV3(
             owner,
             address(quoteRegistry),
             address(divVault),
             address(bucket),
             address(handler),
-            address(router),
-            address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        migrator = new MigratorV2(address(pairFactory), address(pad));
+        migrator = new SharedMigrator(owner, address(pairFactory));
 
         vm.startPrank(owner);
         quoteRegistry.setQuote(address(quoteTok), true, 15 ether);
-        divVault.setLaunchpad(address(pad));
-        divVault.setOperator(address(router), true);
-        divVault.setOperator(address(handler), true);
+        divVault.setLaunchpad(address(pad), true);
+        divVault.setOperator(address(handler), address(pad));
+        migrator.addLaunchpad(address(pad));
+        tokenDeployer.setLaunchpad(address(pad), true);
         bucket.setLaunchpad(address(pad));
-        bucket.setOperator(address(router), true);
-        router.setLaunchpad(address(pad));
-        router.setSource(address(handler), true);
+        bucket.setOperator(address(handler), true);
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(keeper);
-        recipients.list(treasury, "partner treasury");
+        handler.list(treasury, "partner treasury");
         pad.setMigrator(address(migrator));
         pad.setAgentGate(true, address(agents));
         vm.stopPrank();
@@ -210,7 +206,7 @@ contract LaunchpadV3Test is Test {
     function test_delistedRecipient_onlyBlocksNewTokens() public {
         address t = _create(_tax(200, 200, 0, treasury));
         vm.prank(owner);
-        recipients.delist(treasury);
+        handler.delist(treasury);
         _expectBad(_tax(200, 200, 0, treasury), "recipient not listed");
 
         uint256 before = quoteTok.balanceOf(treasury);
@@ -224,7 +220,7 @@ contract LaunchpadV3Test is Test {
     function test_bondingBuy_split_platformHalfPercent_restToRecipient() public {
         address t = _create(_tax(200, 200, 0, treasury));
         uint256 gross = 0.01 ether;
-        vm.expectEmit(true, true, true, true, address(router));
+        vm.expectEmit(true, true, true, true, address(handler));
         emit TaxPaid(t, treasury, address(quoteTok), (gross * 150) / BPS);
         vm.prank(agent);
         pad.buy(t, gross, 0);
@@ -279,27 +275,27 @@ contract LaunchpadV3Test is Test {
         vm.prank(agent);
         address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(200, 200, 0, treasury));
         uint256 owedAmt = (0.01 ether * 150) / BPS;
-        vm.expectEmit(true, true, true, true, address(router));
+        vm.expectEmit(true, true, true, true, address(handler));
         emit TaxOwed(t, treasury, address(bq), owedAmt);
         vm.prank(agent);
         pad.buy(t, 0.01 ether, 0); // does not revert
-        assertEq(router.owedOf(t), owedAmt);
+        assertEq(handler.owedOf(t), owedAmt);
 
         vm.prank(stranger);
         vm.expectRevert(bytes("blacklisted"));
-        router.release(t); // still blocked: stays owed
-        assertEq(router.owedOf(t), owedAmt);
+        handler.release(t); // still blocked: stays owed
+        assertEq(handler.owedOf(t), owedAmt);
 
         bq.setBlocked(treasury, false);
-        vm.expectEmit(true, true, true, true, address(router));
+        vm.expectEmit(true, true, true, true, address(handler));
         emit TaxPaid(t, treasury, address(bq), owedAmt);
         vm.prank(stranger);
-        router.release(t);
-        assertEq(router.owedOf(t), 0);
+        handler.release(t);
+        assertEq(handler.owedOf(t), 0);
         assertEq(bq.balanceOf(treasury), owedAmt);
 
-        vm.expectRevert(TaxRouterV3.NothingOwed.selector);
-        router.release(t);
+        vm.expectRevert(TaxHandlerV3.NothingOwed.selector);
+        handler.release(t);
     }
 
     // ---------------------------------------------------------------- 2 / 3 / 4: pool tax, keeper sells to quote
@@ -314,16 +310,23 @@ contract LaunchpadV3Test is Test {
         uint256 buyTax = handler.accruedTax(t);
         assertEq(handler.accruedPlatformTax(t), buyTax / 2, "buy: 0.5 of 1%");
         uint256 sold = IERC20(t).balanceOf(stranger) / 2;
+        uint256 bucket0 = bucket.accruedQuote(address(quoteTok));
         _poolSell(t, stranger, sold);
-        uint256 sellTax = handler.accruedTax(t) - buyTax;
-        assertEq(sellTax, (sold * 300) / BPS);
-        assertEq(handler.accruedPlatformTax(t), buyTax / 2 + (sellTax * 50) / 300, "sell: 0.5 of 3%");
+        // the sell first sold the buy tax (swap-back, well under the 0.5% chunk cap): only its own tax is left
+        uint256 sellTax = handler.accruedTax(t);
+        assertEq(sellTax, (sold * 300) / BPS, "the buy tax was sold before this sell");
+        assertEq(handler.accruedPlatformTax(t), (sellTax * 50) / 300, "sell: 0.5 of 3%");
+        assertGt(bucket.accruedQuote(address(quoteTok)) - bucket0, 0, "buy tax: platform part paid in quote");
+        assertGt(quoteTok.balanceOf(treasury) - recBefore, 0, "buy tax: rest to the recipient, in quote");
+        recBefore = quoteTok.balanceOf(treasury);
 
         uint256 platformTokens = handler.accruedPlatformTax(t);
         uint256 totalTokens = handler.accruedTax(t);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        // next block: the sell above moved the price far below this block's reference (audit 5: no chunk sells there)
+        vm.roll(vm.getBlockNumber() + 1);
         vm.prank(keeper);
-        uint256 quoteOut = handler.process(t, 1);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         uint256 platformQuote = (quoteOut * platformTokens) / totalTokens;
         assertEq(bucket.accruedQuote(address(quoteTok)) - bucketBefore, platformQuote);
         assertEq(quoteTok.balanceOf(treasury) - recBefore, quoteOut - platformQuote, "rest to recipient, in quote");
@@ -364,6 +367,11 @@ contract LaunchpadV3Test is Test {
         _graduate(t);
         address holder = address(uint160(0xB0000)); // first graduating buyer
         assertGt(divVault.shares(t, holder), 0);
+        // audit 5 C-F5: only a contract can be excluded (say the buyer was a locker contract)
+        vm.prank(owner);
+        vm.expectRevert(SharedDividendVault.NotAContract.selector);
+        divVault.setExcluded(holder, true);
+        vm.etch(holder, hex"00");
         vm.prank(owner);
         divVault.setExcluded(holder, true);
         handler.syncShares(t, holder, address(0));
@@ -399,41 +407,39 @@ contract LaunchpadV3Test is Test {
     function test_router_accessControl() public {
         address t = _create(_tax(200, 200, 0, treasury));
 
-        vm.expectRevert(TaxRouterV3.OnlyLaunchpad.selector);
-        router.register(address(0xBEEF), address(quoteTok), treasury, 0);
+        vm.expectRevert(TaxHandlerV3.OnlyLaunchpad.selector);
+        handler.register(address(0xBEEF), address(quoteTok), treasury, 0);
 
         vm.prank(address(pad));
-        vm.expectRevert(TaxRouterV3.AlreadyRegistered.selector);
-        router.register(t, address(quoteTok), treasury, 0);
+        vm.expectRevert(TaxHandlerV3.AlreadyRegistered.selector);
+        handler.register(t, address(quoteTok), treasury, 0);
 
         vm.prank(address(pad));
-        vm.expectRevert(TaxRouterV3.BadDividendBps.selector);
-        router.register(address(0xBEEF), address(quoteTok), address(0), 5_000);
+        vm.expectRevert(TaxHandlerV3.BadDividendBps.selector);
+        handler.register(address(0xBEEF), address(quoteTok), address(0), 5_000);
 
         vm.prank(stranger);
-        vm.expectRevert(TaxRouterV3.OnlySource.selector);
-        router.distribute(t, 1 ether, 0, ITaxRouter.Phase.Bonding);
+        vm.expectRevert(TaxHandlerV3.OnlyLaunchpad.selector);
+        handler.distribute(t, 1 ether, 0, ITaxHandlerV3.Phase.Bonding);
 
         vm.prank(address(pad));
-        vm.expectRevert(TaxRouterV3.BadPlatformAmount.selector);
-        router.distribute(t, 1, 2, ITaxRouter.Phase.Bonding);
+        vm.expectRevert(TaxHandlerV3.BadPlatformAmount.selector);
+        handler.distribute(t, 1, 2, ITaxHandlerV3.Phase.Bonding);
 
         vm.prank(address(pad));
-        vm.expectRevert(TaxRouterV3.UnknownToken.selector);
-        router.distribute(address(0xBEEF), 1, 0, ITaxRouter.Phase.Bonding);
+        vm.expectRevert(TaxHandlerV3.UnknownToken.selector);
+        handler.distribute(address(0xBEEF), 1, 0, ITaxHandlerV3.Phase.Bonding);
 
         vm.startPrank(stranger);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        router.setSource(stranger, true);
-        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        router.setLaunchpad(stranger);
+        handler.setLaunchpad(stranger);
         vm.stopPrank();
 
         vm.prank(owner);
-        vm.expectRevert(TaxRouterV3.LaunchpadAlreadySet.selector);
-        router.setLaunchpad(stranger);
+        vm.expectRevert(TaxHandlerV3.LaunchpadAlreadySet.selector);
+        handler.setLaunchpad(stranger);
 
-        (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = router.previewSplit(t, 200, 50);
+        (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = handler.previewSplit(t, 200, 50);
         assertEq(toPlatform, 50);
         assertEq(toDividend, 0);
         assertEq(toRecipient, 150);
@@ -442,33 +448,33 @@ contract LaunchpadV3Test is Test {
     function test_recipientRegistry_accessControl() public {
         vm.startPrank(stranger);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        recipients.list(stranger, "me");
+        handler.list(stranger, "me");
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
-        recipients.delist(treasury);
+        handler.delist(treasury);
         vm.stopPrank();
 
         vm.startPrank(owner);
-        vm.expectRevert(RecipientRegistry.AlreadyListed.selector);
-        recipients.list(treasury, "again");
-        vm.expectRevert(RecipientRegistry.ZeroAddress.selector);
-        recipients.list(address(0), "zero");
-        vm.expectRevert(RecipientRegistry.NotListed.selector);
-        recipients.delist(stranger);
-        recipients.delist(treasury);
-        recipients.list(treasury, "relisted");
+        vm.expectRevert(TaxHandlerV3.AlreadyListed.selector);
+        handler.list(treasury, "again");
+        vm.expectRevert(PostGradHandlerBase.ZeroAddress.selector);
+        handler.list(address(0), "zero");
+        vm.expectRevert(TaxHandlerV3.NotListed.selector);
+        handler.delist(stranger);
+        handler.delist(treasury);
+        handler.list(treasury, "relisted");
         vm.stopPrank();
-        assertEq(recipients.recipients().length, 1, "relisting does not duplicate");
-        assertTrue(recipients.isListed(treasury));
+        assertEq(handler.recipients().length, 1, "relisting does not duplicate");
+        assertTrue(handler.isListed(treasury));
     }
 
     function test_handler_onlyTokenAndKeeper() public {
         address t = _create(_tax(200, 200, 0, treasury));
         vm.prank(stranger);
-        vm.expectRevert(PostGradTaxHandlerV3.OnlyToken.selector);
+        vm.expectRevert(PostGradHandlerBase.OnlyToken.selector);
         handler.notifyTax(t, stranger, stranger, 1, 200);
         vm.prank(stranger);
-        vm.expectRevert(PostGradTaxHandlerV3.OnlyKeeperOrOwner.selector);
-        handler.process(t, 1);
+        vm.expectRevert(PostGradHandlerBase.OnlyKeeperOrOwner.selector);
+        handler.process(t, type(uint256).max, 1);
     }
 }
 

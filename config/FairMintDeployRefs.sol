@@ -17,6 +17,8 @@ library FairMintMainnetRefs {
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address internal constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     address internal constant USDT_WBNB_V3 = 0x36696169C63e42cd08ce11f5deeBbCeBae652050;
+    /// @dev USDT/WBNB Pancake V3 0.01%: the deepest pool, counter WBNB (no bridge) — the refPool for a USDT quote
+    address internal constant USDT_REF_POOL = 0x172fcD41E0913e95784454622d1c3724f546f849;
     address internal constant PANCAKE_V2_FACTORY = 0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73;
     address internal constant PANCAKE_V2_ROUTER = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
     address internal constant PANCAKE_V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
@@ -27,6 +29,8 @@ library FairMintTestnetRefs {
     address internal constant WBNB = 0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd;
     address internal constant PANCAKE_V2_FACTORY = 0x6725F303b657a9451d8BA641348b6761A6CC7a17;
     address internal constant PANCAKE_V2_ROUTER = 0xD99D1c33F9fC3444f8101754aBC46c52416550D1;
+    /// @dev Same address as mainnet (PancakeSwap V3 deploys deterministically); checked on chain 2026-10-27.
+    address internal constant PANCAKE_V3_FACTORY = 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865;
     /// @notice From the first 打新 testnet deployment (docs/TESTNET-FAIR-MINT-2026-10-26.md); later stacks reuse them so
     ///         wallets registered once work everywhere (LaunchpadV3 testnet uses the same two).
     address internal constant AGENT_ID_REGISTRY = 0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a;

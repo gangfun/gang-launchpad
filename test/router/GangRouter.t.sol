@@ -5,26 +5,23 @@ import {Test} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
-import {TaxRouterV3} from "../../src/launchpad-v3/TaxRouterV3.sol";
-import {RecipientRegistry} from "../../src/launchpad-v3/RecipientRegistry.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
 
 /// @notice GangRouter in front of both cores: BNB in / refunds out, the trader (not the router) gets tokens, shares,
-///         dividend weight, gate and cap; only listed routers may buy / mint for someone; sells / withdraw / refund /
+///         dividend weight, gate and cap; only listed routers may buy / mint for someone; sells / withdraw /
 ///         claim have no router entry at all.
 contract GangRouterTest is Test {
     MockWBNB internal wbnb;
@@ -33,7 +30,9 @@ contract GangRouterTest is Test {
     MockPairFactory internal pairFactory;
 
     LaunchpadV3 internal v3;
-    DividendVault internal v3Vault;
+    SharedDividendVault internal v3Vault;
+    SharedMigrator internal sharedMig;
+    TokenDeployer internal tokenDeployer;
     FairMintPad internal fair;
     GangRouter internal router;
 
@@ -60,6 +59,10 @@ contract GangRouterTest is Test {
         quoteTok = new MockSPCXB();
         agents = new MockAgentId();
         pairFactory = new MockPairFactory();
+        // one vault / migrator / deployer for both cores, as deployed
+        v3Vault = new SharedDividendVault(owner);
+        sharedMig = new SharedMigrator(owner, address(pairFactory));
+        tokenDeployer = new TokenDeployer(owner);
         _deployV3();
         _deployFair();
         router = new GangRouter(address(v3), address(fair), address(wbnb));
@@ -75,34 +78,29 @@ contract GangRouterTest is Test {
 
     function _deployV3() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
-        v3Vault = new DividendVault(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
-        TaxRouterV3 taxRouter = new TaxRouterV3(owner, address(v3Vault), address(bucket));
-        RecipientRegistry recipients = new RecipientRegistry(owner);
-        PostGradTaxHandlerV3 handler = new PostGradTaxHandlerV3(owner, address(v3Vault), address(taxRouter));
+        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner,
             address(reg),
             address(v3Vault),
             address(bucket),
             address(handler),
-            address(taxRouter),
-            address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 mig = new MigratorV2(address(pairFactory), address(v3));
+        SharedMigrator mig = sharedMig;
         vm.startPrank(owner);
         reg.setQuote(address(quoteTok), true, 15 ether);
-        v3Vault.setLaunchpad(address(v3));
-        v3Vault.setOperator(address(taxRouter), true);
-        v3Vault.setOperator(address(handler), true);
+        v3Vault.setLaunchpad(address(v3), true);
+        v3Vault.setOperator(address(handler), address(v3));
+        mig.addLaunchpad(address(v3));
+        tokenDeployer.setLaunchpad(address(v3), true);
         bucket.setLaunchpad(address(v3));
-        bucket.setOperator(address(taxRouter), true);
-        taxRouter.setLaunchpad(address(v3));
-        taxRouter.setSource(address(handler), true);
-        recipients.list(treasury, "partner treasury");
+        bucket.setOperator(address(handler), true);
+        handler.setLaunchpad(address(v3));
+        handler.list(treasury, "partner treasury");
         v3.setMigrator(address(mig));
         v3.setAgentGate(true, address(agents));
         vm.stopPrank();
@@ -110,23 +108,25 @@ contract GangRouterTest is Test {
 
     function _deployFair() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
-        DividendVault vault = new DividendVault(owner);
+        SharedDividendVault vault = v3Vault;
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault2"));
-        HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket));
+        HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
         fair = new FairMintPad(
             owner,
             address(reg),
             address(vault),
             address(bucket),
             address(handler),
-            address(new FairTokenDeployer()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
-        MigratorV2 mig = new MigratorV2(address(pairFactory), address(fair));
+        SharedMigrator mig = sharedMig;
         vm.startPrank(owner);
-        vault.setLaunchpad(address(fair));
-        vault.setOperator(address(handler), true);
+        vault.setLaunchpad(address(fair), true);
+        vault.setOperator(address(handler), address(fair));
+        mig.addLaunchpad(address(fair));
+        tokenDeployer.setLaunchpad(address(fair), true);
         bucket.setLaunchpad(address(fair));
         bucket.setOperator(address(handler), true);
         fair.setMigrator(address(mig));
@@ -162,9 +162,8 @@ contract GangRouterTest is Test {
     }
 
     function _fairSale() internal returns (address token) {
-        FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
-        });
+        FairMintPad.MintConfig memory cfg =
+            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200});
         vm.prank(agent);
         token = fair.create("Fair", "FAIR", "", "", address(0), address(0), cfg, 1);
     }
@@ -334,7 +333,7 @@ contract GangRouterTest is Test {
     }
 
     /// @dev Same for 打新: a listed router can mint for a trader with its own quote, and nothing else. The trader's
-    ///      position (withdraw / refund) and reward (claim) stay msg.sender-only.
+    ///      position (withdraw) and reward (claim) stay msg.sender-only.
     function test_fair_listedRouterOnlySpendsItsOwnQuote() public {
         address token = _fairSale();
         vm.prank(agent2);
@@ -350,21 +349,21 @@ contract GangRouterTest is Test {
         uint256 quoteBefore = wbnb.balanceOf(agent2);
         vm.prank(rogue);
         fair.mintFor(agent2, token, 10, 10);
-        (uint16 shares,) = fair.positions(token, agent2);
+        uint16 shares = fair.positions(token, agent2);
         assertEq(shares, 30, "gift of 10 shares");
         assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader paid nothing");
 
         bytes[3] memory calls = [
             abi.encodeWithSignature("withdrawFor(address,address,uint256)", agent2, token, 30),
             abi.encodeWithSignature("refundFor(address,address)", agent2, token),
-            abi.encodeWithSignature("withdraw(address,uint256)", token, 30) // the rogue's own position (none)
+            abi.encodeWithSignature("withdraw(address,uint256,uint256)", token, 30, 0) // the rogue's own position (none)
         ];
         for (uint256 i = 0; i < calls.length; i++) {
             vm.prank(rogue);
             (bool ok,) = address(fair).call(calls[i]);
             assertFalse(ok, "no spend-for-someone entry");
         }
-        (shares,) = fair.positions(token, agent2);
+        shares = fair.positions(token, agent2);
         assertEq(shares, 30, "trader's position untouched");
         assertEq(wbnb.balanceOf(agent2), quoteBefore, "trader's quote untouched");
     }
@@ -395,10 +394,9 @@ contract GangRouterTest is Test {
         uint256 accepted = router.fairMintBNB{value: 1 ether}(token, 40, 40, block.timestamp);
         assertEq(accepted, 40);
         assertEq(bal - agent2.balance, cost + fee, "exactly cost + mint fee, rest refunded");
-        (uint16 shares, uint128 feePaid) = fair.positions(token, agent2);
+        uint16 shares = fair.positions(token, agent2);
         assertEq(shares, 40);
-        assertEq(feePaid, fee);
-        (uint16 routerShares,) = fair.positions(token, address(router));
+        uint16 routerShares = fair.positions(token, address(router));
         assertEq(routerShares, 0);
         assertEq(IERC20(token).balanceOf(agent2), 40 * fair.TOKENS_PER_SHARE());
         _assertRouterEmpty();
@@ -433,17 +431,18 @@ contract GangRouterTest is Test {
         fair.mintFor(agent2, token, 10, 1);
     }
 
-    /// @dev A mint made through the router refunds to the trader after a failed sale, principal + fee in full.
-    function test_fair_refundGoesToTheTrader() public {
+    /// @dev A mint made through the router sells back to the trader (never the router): once stale, at full principal.
+    function test_fair_withdrawGoesToTheTrader() public {
         address token = _fairSale();
-        (, uint256 cost, uint256 fee) = fair.previewMint(token, agent2, 30);
+        (, uint256 cost,) = fair.previewMint(token, agent2, 30);
         vm.prank(agent2);
         router.fairMintBNB{value: 1 ether}(token, 30, 30, block.timestamp);
-        vm.warp(block.timestamp + 25 hours);
+        vm.warp(block.timestamp + 7 days);
         uint256 before = wbnb.balanceOf(agent2);
         vm.prank(agent2);
-        fair.refund(token);
-        assertEq(wbnb.balanceOf(agent2) - before, cost + fee);
+        fair.withdraw(token, 30, 0);
+        assertEq(wbnb.balanceOf(agent2) - before, cost, "stale: principal back, no exit fee");
+        assertEq(wbnb.balanceOf(address(router)), 0);
     }
 
     function test_fair_fillsAndLaunchesThroughRouter() public {
@@ -453,10 +452,10 @@ contract GangRouterTest is Test {
             _agent(m);
             vm.prank(m);
             router.fairMintBNB{value: 1 ether}(token, 100, 1, block.timestamp);
-            (,,,,,, bool launched,,,,,,,,) = fair.sales(token);
+            (,,,,,, bool launched,,,,,,,) = fair.sales(token);
             if (launched) break;
         }
-        (,,,,,, bool done,,,,,,, address pair,) = fair.sales(token);
+        (,,,,,, bool done,,,,, address pair,,) = fair.sales(token);
         assertTrue(done, "launched");
         assertTrue(pair != address(0));
         _assertRouterEmpty();

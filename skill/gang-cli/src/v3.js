@@ -1,6 +1,6 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
-import { decimalsOf, fundingStep as fund, parseAmount, parseNum, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
@@ -19,8 +19,8 @@ export const V3_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x4B6a0E82E7357719D6204E5d6197Ef2C71E08dc4',
-    router: process.env.GANG_ROUTER_TESTNET || '0x5627EeA369eEa6e4Cf50E67DabF1DF0ae75B13a5',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x771b6dAA5240e3Cc0F0819535E8200774AFedEED',
+    router: process.env.GANG_ROUTER_TESTNET || '0x9dBb3D25Ff5c8107814fBD96A88D6eD015dfA279',
     rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
@@ -37,6 +37,9 @@ const PAD_ABI = parseAbi([
   'function isAgent(address account) view returns (bool)',
   'function walletRoom(address token, address buyer) view returns (uint256)',
   'function graduationRemaining(address token) view returns (uint256)',
+  'function graduationAmountOf(address quote, address refPool) view returns (uint256)',
+  'function taxHandler() view returns (address)',
+  'function dividendVault() view returns (address)',
   'function router() view returns (address)',
   'function recipientRegistry() view returns (address)',
   'function PROTOCOL_FEE_BPS() view returns (uint256)',
@@ -45,7 +48,8 @@ const PAD_ABI = parseAbi([
   'error MigratorNotSet()', 'error ZeroAddress()', 'error NotAgent()', 'error WalletCapReached()', 'error RefPoolRequired()',
   'error NoBridgePool()', 'error BridgeNotWbnb()', 'error BadTaxConfig(string reason)',
   'error PoolNotFactory()', 'error QuoteNotInPool()', 'error PoolNoLiquidity()', 'error ThinReferencePool()', 'error NotContract()',
-  'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()',
+  'error UnknownPoolType()', 'error QuoteNotAllowed()', 'error RouterNeedsGate()', 'error V3FactoryNotSet()', 'error GradAmtZero()',
+  'error VaultFloorTooHigh()',
   'event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)',
   'event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)',
   'event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)',
@@ -82,8 +86,18 @@ const HINTS = {
   ThinReferencePool: '--ref-pool is too shallow; pick the deepest pool for this quote',
   GradAmtTooSmall: 'the quote token is priced so high that the graduation amount rounds below the minimum',
   NothingOwed: 'the router owes this token\'s recipient nothing',
-  QuoteNotAllowed: '--quote is not on gang\'s quote whitelist (WBNB, or a listed 18-decimal token with a fixed rate, such as USDT); leave it out to use WBNB',
+  QuoteNotAllowed: '--quote must be WBNB or an 18-decimal ERC-20 token (leave it out to use WBNB)',
+  PoolNotFactory: '--ref-pool is not a PancakeSwap V2 pair / V3 pool',
+  NotContract: '--ref-pool is not a contract',
+  UnknownPoolType: '--ref-pool is not a PancakeSwap V2 pair / V3 pool',
+  PoolNoLiquidity: '--ref-pool has no liquidity',
+  V3FactoryNotSet: 'V3 pools are not enabled on this pad yet; use a Pancake V2 pair as --ref-pool',
+  NoBridgePool: '--ref-pool pairs the quote with a token that has no bridge to WBNB here; pick a pool against WBNB (or USDT on mainnet)',
+  BridgeNotWbnb: 'the bridge pool for this --ref-pool is misconfigured; pick a pool against WBNB',
+  GradAmtZero: 'the quote token is priced so high that the target rounds to 0',
   RouterNeedsGate: 'the router path is off while the Agent gate is off; re-run with --use-wbnb to buy directly',
+  // not a create flag: the shared dividend vault's holding floor for this pad was raised above what V3 allows (10,000 tokens)
+  VaultFloorTooHigh: 'the platform\'s dividend vault requires a larger holding than V3 dividends allow (10,000 tokens), so a dividend token can\'t be created right now; --dividend 0 still works, or ask gang to fix the vault setting',
 }
 
 export function v3Ctx(testnet) {
@@ -111,36 +125,60 @@ async function simulate(ctx, from, to, abi, functionName, args, value = 0n) {
   }
 }
 
+/**
+ * Where the tax split / owed pushes (router) and the recipient whitelist (registry) live: one TaxHandlerV3 since the
+ * contract merge, so both are taxHandler(). 旧部署兼容，第 6 套上线后可删: older pads keep them on router() /
+ * recipientRegistry() (TaxRouterV3 / RecipientRegistry).
+ */
+async function taxContracts(ctx) {
+  if (!ctx._tax) {
+    ctx._tax = (async () => {
+      const handler = await ctx.read(ctx.pad, PAD_ABI, 'taxHandler')
+      const [router, registry] = await Promise.all(['router', 'recipientRegistry']
+        .map((fn) => ctx.read(ctx.pad, PAD_ABI, fn).catch(() => handler)))
+      return { handler, router, registry }
+    })()
+  }
+  return ctx._tax
+}
+
+/** The whitelist label of a recipient; null when unlisted or the whitelist keeps no entries() (labels only in events). */
+async function labelOf(ctx, registry, recipient) {
+  try { return (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { return null }
+}
+
 /** A token's curve and tax as the pad stores them, plus the recipient's whitelist label. null when not a V3 token. */
 export async function curveOf(ctx, token) {
   const c = await ctx.read(ctx.pad, PAD_ABI, 'curves', [token])
   const [creator, quote, realQuote, sold, gradAmt, virtualQuote, graduated, buyTaxBps, sellTaxBps, dividendBps, pair] = c
   if (creator === zeroAddress) return null
-  // the recipient is not in curves(): it lives on the router's route, read back through taxConfigOf
-  const [router, registry, remaining, tax] = await Promise.all([
-    ctx.read(ctx.pad, PAD_ABI, 'router'), ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry'),
+  // the recipient is not in curves(): it lives on the tax handler's route, read back through taxConfigOf
+  const [{ handler, router, registry }, remaining, tax] = await Promise.all([
+    taxContracts(ctx),
     ctx.read(ctx.pad, PAD_ABI, 'graduationRemaining', [token]), ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]),
   ])
   const recipient = tax[3] === zeroAddress ? null : tax[3]
   let label = null
-  if (recipient) { try { label = (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* unlisted */ } }
+  if (recipient) label = await labelOf(ctx, registry, recipient)
   const owed = await ctx.read(router, TAX_ROUTER_ABI, 'owedOf', [token])
   // graduation zeroes realQuote (it went into the pool): a graduated token is priced from the pair reserves
   let price = ((virtualQuote + realQuote) * 10n ** 18n) / (VIRTUAL_TOKEN - sold)
+  let reserveTokenRaw = 0n
   if (graduated && pair !== zeroAddress) {
     const [[r0, r1], t0] = await Promise.all([ctx.read(pair, PAIR_ABI, 'getReserves'), ctx.read(pair, PAIR_ABI, 'token0')])
     const [rT, rQ] = t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
     price = rT > 0n ? (rQ * 10n ** 18n) / rT : 0n
+    reserveTokenRaw = rT
   }
   return {
-    token, creator, quote, quoteSymbol: await symbolOf(ctx, quote), router, registry,
+    token, creator, quote, quoteSymbol: await symbolOf(ctx, quote), taxHandler: handler, router, registry,
     graduated, pair: pair === zeroAddress ? null : pair,
     buyTaxPct: pct(buyTaxBps), sellTaxPct: pct(sellTaxBps), dividendPct: pct(dividendBps), recipient, recipientLabel: label,
     raised: await units(ctx, quote, graduated ? gradAmt : realQuote), graduationAt: await units(ctx, quote, gradAmt),
     toGraduation: await units(ctx, quote, remaining),
     progressPct: graduated ? 100 : gradAmt > 0n ? Number((realQuote * 10_000n) / gradAmt) / 100 : 0,
-    priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve',
-    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed,
+    priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve', priceRaw: price,
+    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed, reserveTokenRaw,
   }
 }
 
@@ -163,8 +201,8 @@ const addrArg = (opt, fail, name, what) => {
 const parseSlippage = (fail, raw) => parseNum(fail, 'slippage', raw, 0, 50)
 const minOf = (x, slippagePct) => (x * BigInt(Math.round((100 - slippagePct) * 100))) / 10_000n
 
-const SUBS = ['list', 'info', 'create', 'buy', 'sell', 'income', 'release', 'tx']
-const USAGE = 'usage: gang v3 <list|info|create|buy|sell|income|release|tx> [--testnet] — see gang help'
+const SUBS = ['list', 'info', 'status', 'create', 'buy', 'sell', 'claim', 'income', 'release', 'tx']
+const USAGE = 'usage: gang v3 <list|info|status|create|buy|sell|claim|income|release|tx> [--testnet] — see gang help'
 
 /**
  * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta } from index.js
@@ -199,7 +237,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     return out({ success: true, status, items: (r.items || []).map((x) => ({
       token: x.address, symbol: x.symbol, buyTaxPct: pct(x.buyTaxBps), sellTaxPct: pct(x.sellTaxBps), dividendPct: pct(x.dividendBps),
       recipient: x.recipient, recipientLabel: x.recipientLabel, quote: x.quoteSymbol, progressPct: x.progressPct, graduated: x.graduated,
-      chainId: x.chainId, link: `https://gang.fun/v3/${x.address}`,
+      chainId: x.chainId, link: `https://gang.fun/token/${x.address}`,
     })) })
   }
 
@@ -210,8 +248,55 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
-    const { owedRaw: _raw, ...pub } = c
-    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub })
+    const { owedRaw: _raw, priceRaw: _p, reserveTokenRaw: rT, ...pub } = c
+    // in the pool the tax is held as tokens and sold in small chunks under a per-block budget
+    const swapBack = c.graduated && c.pair ? await swapBackState(ctx, c.taxHandler, token, rT) : null
+    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub, ...(swapBack && { swapBack }) })
+  }
+
+  if (sub === 'status') {
+    const token = addrArg(opt, fail, 'token', 'a V3 token address')
+    const c = await curveOf(ctx, token)
+    if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
+    const slippage = parseSlippage(fail, opt('slippage', '1'))
+    const me = walletFor(ctx, opt('from'))
+    const [vault, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
+    const { claimableRaw: _r, ...dividend } = c.dividendPct > 0 ? await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw) : {}
+    // graduated: what selling the whole balance into the pool pays now (sell tax and the chunk sold first included)
+    const q = c.graduated && c.pair && bal > 0n ? await poolSellQuote(ctx, c.taxHandler, token, bal) : null
+    return out({
+      success: true, chainId: Number(ctx.chainId), wallet: me, token, quote: c.quoteSymbol, graduated: c.graduated,
+      balance: formatUnits(bal, 18), dividendPct: c.dividendPct,
+      ...(q && {
+        poolSellAll: {
+          expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)), slippagePct: slippage,
+          quotedWith: q.quotedWith, hint: POOL_SELL_HINT,
+        },
+      }),
+      ...(c.dividendPct > 0 ? { dividend } : { note: 'this token pays no dividend (dividend 0%)' }),
+    })
+  }
+
+  if (sub === 'claim') {
+    const token = addrArg(opt, fail, 'token', 'a V3 token address')
+    const c = await curveOf(ctx, token)
+    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!(c.dividendPct > 0)) return fail('this token pays no dividend (dividend 0%)', { token })
+    const me = walletFor(ctx, opt('from'))
+    const vault = await ctx.read(ctx.pad, PAD_ABI, 'dividendVault')
+    const d = await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw)
+    if (d.claimableRaw === 0n) {
+      return fail('nothing to claim yet', {
+        ...(d.creditedUnsoldTokens && Number(d.creditedUnsoldTokens) > 0 && { creditedUnsoldEstimate: d.creditedUnsoldEstimate, note: d.note }),
+        hint: `gang v3 status --token ${token}${testnet ? ' --testnet' : ''}`,
+      })
+    }
+    const sim = await simulate(ctx, me, vault, VAULT_ABI, 'claim', [token])
+    if (sim.failed) return out({ success: false, step: 'claim', ...sim.failed })
+    return out(step(ctx, { from: me, to: vault, data: encodeFunctionData({ abi: VAULT_ABI, functionName: 'claim', args: [token] }) }, {
+      step: 'claim', chainId: Number(ctx.chainId), token, amount: d.claimable, quote: c.quoteSymbol,
+      ...(d.creditedUnsoldEstimate && Number(d.creditedUnsoldTokens) > 0 && { stillCreditedUnsold: d.creditedUnsoldEstimate }),
+    }, rawOnly, summarize))
   }
 
   if (sub === 'create') {
@@ -225,13 +310,18 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     // everything to holders needs no recipient; otherwise the recipient gets the rest and must be whitelisted
     const recipient = dividend === 100 && !flag('recipient') ? zeroAddress : addrArg(opt, fail, 'recipient', 'a whitelisted tax recipient')
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
-    const refPool = flag('ref-pool') ? opt('ref-pool') : zeroAddress
+    const refPool = flag('ref-pool') ? opt('ref-pool') : (defaultRefPool(ctx.chainId, quote) ?? zeroAddress)
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
     const tax = { buyTaxBps: Math.round(buyTax * 100), sellTaxBps: Math.round(sellTax * 100), dividendBps: Math.round(dividend * 100), recipient }
     const [ok, reason] = await ctx.read(ctx.pad, PAD_ABI, 'checkTaxConfig', [tax])
     if (!ok) fail(`tax setting refused: ${reason}`, { hint: HINTS.BadTaxConfig, tax: { buyTax, sellTax, dividend, recipient } })
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
+    // like LaunchpadV2: WBNB → 15 BNB; a fixed rate in QuoteRegistry; else --ref-pool prices the target
+    let gradAmt
+    try { gradAmt = await ctx.read(ctx.pad, PAD_ABI, 'graduationAmountOf', [quote, refPool]) } catch (e) {
+      return fail('cannot price the graduation target in this quote', revertOf(e) || { detail: e.shortMessage || e.message })
+    }
     const createData = (logoURI, metaURI) =>
       encodeFunctionData({ abi: PAD_ABI, functionName: 'create', args: [name, symbol, logoURI, metaURI, quote, refPool, tax] })
     // the logo / metadata strings never decide a revert: dry-run without them, so a create that would fail uploads nothing
@@ -241,15 +331,16 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const meta = await resolveMeta({ name, symbol, logoURI: logo.logoURI })
     let label = null
     if (recipient !== zeroAddress) {
-      const reg = await ctx.read(ctx.pad, PAD_ABI, 'recipientRegistry')
-      try { label = (await ctx.read(reg, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { /* checked above */ }
+      label = await labelOf(ctx, (await taxContracts(ctx)).registry, recipient)
     }
     const rest = 100 - dividend
     const fees = await feesOf(ctx)
     return out(step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI, meta.metaURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata,
-      quote: (await symbolOf(ctx, quote)) || quote, buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
+      quote: (await symbolOf(ctx, quote)) || quote, graduationAt: await units(ctx, quote, gradAmt),
+      ...(refPool !== zeroAddress && quote.toLowerCase() !== String(ctx.wbnb).toLowerCase() && { refPool }),
+      buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
       split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
         + (dividend > 0 ? '; while no holder has 10,000+ tokens (e.g. the first buys), the holders\' part goes to the recipient too' : ''),
@@ -305,14 +396,37 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
-    if (c.graduated) return fail('token already graduated; sell on PancakeSwap', { pair: c.pair })
+    if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
+    const slippage = parseSlippage(fail, opt('slippage', '1'))
+    if (c.graduated) {
+      // no pool sell from this CLI yet: quote it (with the tax chunk sold first, as of the next block) for amountOutMin.
+      // --amount needs no wallet (none configured, or an empty one, still gets the quote); --all needs the balance.
+      let me = null, bal = null
+      try { me = walletFor(ctx, opt('from')); bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me]) } catch { /* no wallet */ }
+      if (flag('all') && !bal) {
+        return fail('token already graduated; sell on PancakeSwap', {
+          pair: c.pair, ...(bal === 0n ? { balance: '0' } : { hint: '--all needs a wallet (or --from <addr>) whose balance can be read; pass --amount <tokens> for a quote without one' }),
+        })
+      }
+      const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
+      const q = c.pair ? await poolSellQuote(ctx, c.taxHandler, token, amount) : null
+      return fail('token already graduated; sell on PancakeSwap', {
+        pair: c.pair, ...(q && {
+          poolQuote: {
+            amount: formatUnits(amount, 18), expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)),
+            slippagePct: slippage, quote: c.quoteSymbol, sellTaxPct: c.sellTaxPct, quotedWith: q.quotedWith,
+          },
+          ...(bal != null && amount > bal && { warning: 'amount is more than this wallet holds', balance: formatUnits(bal, 18) }),
+          hint: POOL_SELL_HINT,
+        }),
+        ...(!q && c.pair && { note: 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
+      })
+    }
     const me = walletFor(ctx, opt('from'))
     const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
     if (bal === 0n) fail('no balance to sell')
-    if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
     const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
     if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
-    const slippage = parseSlippage(fail, opt('slippage', '1'))
     const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])
@@ -345,7 +459,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
     const events = []
     for (const log of r.logs) {
-      for (const abi of [PAD_ABI, TAX_ROUTER_ABI]) {
+      for (const abi of [PAD_ABI, TAX_ROUTER_ABI, VAULT_ABI]) {
         try {
           const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
           events.push({ event: ev.eventName, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })

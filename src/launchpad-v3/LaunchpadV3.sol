@@ -11,21 +11,21 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LaunchTokenV3} from "./LaunchTokenV3.sol";
 import {QuoteRegistry} from "../launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../launchpad-v2/DividendVault.sol";
-import {PlatformFeeBucket} from "../launchpad-v2/PlatformFeeBucket.sol";
+import {SharedDividendVault} from "../common/SharedDividendVault.sol";
+import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
-import {MigratorV2} from "../launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../common/SharedMigrator.sol";
+import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "./TaxLaunchTokenV3.sol";
-import {TaxRouterV3} from "./TaxRouterV3.sol";
-import {RecipientRegistry} from "./RecipientRegistry.sol";
+import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
+import {TaxHandlerV3} from "./TaxHandlerV3.sol";
 import {ILaunchpadV3} from "./interfaces/ILaunchpadV3.sol";
-import {ITaxRouter, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxRouter.sol";
+import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol";
 
 /// @title LaunchpadV3 (tax recipient)
 /// @notice V2 curve / BAW gate / walletCap 1% / ≈15 BNB graduation, unchanged. The `bool taxed` switch becomes a
 ///         TaxConfig: a buy tax and a sell tax (1%–5% each, immutable, charged on the curve and on the pool), a holder
-///         dividend share, and a platform-listed tax recipient. Every tax payment is split by TaxRouterV3: 0.5% of
+///         dividend share, and a platform-listed tax recipient. Every tax payment is split by TaxHandlerV3: 0.5% of
 ///         the trade's volume to the platform, then the dividend share, the rest to the recipient in quote.
 ///         Bonding protocol fee (1% → PlatformFeeBucket) is unchanged and charged on top of the tax.
 /// @dev Spec: docs/SPEC-V3-TAX-RECIPIENT-2026-10-26.md. NO mainnet broadcast from this branch.
@@ -67,12 +67,11 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     }
 
     QuoteRegistry public immutable quoteRegistry;
-    DividendVault public immutable dividendVault;
+    SharedDividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
-    address public immutable taxHandler;
-    TaxRouterV3 public immutable router;
-    RecipientRegistry public immutable recipientRegistry;
-    TaxTokenDeployerV3 public immutable taxTokenDeployer;
+    /// @notice Recipient whitelist, each token's route and split, the bonding tax and the pool tax after graduation.
+    TaxHandlerV3 public immutable taxHandler;
+    TokenDeployer public immutable tokenDeployer;
     address public immutable wbnb;
     address public pairFactory;
     address public v3Factory;
@@ -138,8 +137,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     error BadTaxConfig(string reason);
     error OnlyRouter();
     error QuoteNotAllowed();
+    error FeeOnTransferQuote();
     error WrongMigrator();
     error RouterNeedsGate();
+    error VaultFloorTooHigh();
 
     constructor(
         address owner_,
@@ -147,24 +148,19 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address dividendVault_,
         address platformBucket_,
         address taxHandler_,
-        address router_,
-        address recipientRegistry_,
-        address taxTokenDeployer_,
+        address tokenDeployer_,
         address wbnb_,
         address pairFactory_
     ) Ownable(owner_) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
-                || taxHandler_ == address(0) || router_ == address(0) || recipientRegistry_ == address(0)
-                || taxTokenDeployer_ == address(0) || wbnb_ == address(0)
+                || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
-        dividendVault = DividendVault(dividendVault_);
+        dividendVault = SharedDividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
-        taxHandler = taxHandler_;
-        router = TaxRouterV3(router_);
-        recipientRegistry = RecipientRegistry(recipientRegistry_);
-        taxTokenDeployer = TaxTokenDeployerV3(taxTokenDeployer_);
+        taxHandler = TaxHandlerV3(taxHandler_);
+        tokenDeployer = TokenDeployer(tokenDeployer_);
         wbnb = wbnb_;
         pairFactory = pairFactory_;
     }
@@ -172,8 +168,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     function setMigrator(address migrator_) external onlyOwner {
         if (address(migrator) != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
-        // one-shot: a migrator bound to another pad would make every graduation revert forever
-        if (MigratorV2(migrator_).launchpad() != address(this)) revert WrongMigrator();
+        // one-shot: a migrator that does not list this core would make every graduation revert forever
+        if (!SharedMigrator(migrator_).launchpads(address(this))) revert WrongMigrator();
         migrator = IMigratorV2(migrator_);
         emit MigratorSet(migrator_);
     }
@@ -246,7 +242,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
-            token = address(new LaunchTokenV3(name, symbol, metaURI));
+            token = tokenDeployer.deployPlain(name, symbol, metaURI);
         } else {
             token = _createTaxed(name, symbol, metaURI, quote, tax);
         }
@@ -266,12 +262,15 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         address quote,
         TaxConfig calldata tax
     ) internal returns (address token) {
-        token = taxTokenDeployer.deploy(name, symbol, tax.buyTaxBps, tax.sellTaxBps, taxHandler, uri);
+        token = tokenDeployer.deployTax(name, symbol, tax.buyTaxBps, tax.sellTaxBps, address(taxHandler), uri);
         if (tax.dividendBps > 0) {
+            // internal audit 5 C-F4 (as FairMintPad): a floor the vault owner raised above TAXED_MIN_SHARE would leave
+            // the new token with no shareholders and send the holders' part of its tax elsewhere
+            if (dividendVault.minimumShareBalanceOf(address(this)) > TAXED_MIN_SHARE) revert VaultFloorTooHigh();
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);
         }
-        router.register(token, quote, tax.recipient, tax.dividendBps);
+        taxHandler.register(token, quote, tax.recipient, tax.dividendBps);
     }
 
     /// @inheritdoc ILaunchpadV3
@@ -287,7 +286,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)
     {
         Curve storage c = curves[token];
-        (, recipient,) = router.routeOf(token);
+        (, recipient,) = taxHandler.routeOf(token);
         return (c.buyTaxBps, c.sellTaxBps, c.dividendBps, recipient);
     }
 
@@ -308,7 +307,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
             if (tax.dividendBps != BPS) return "no recipient: dividendBps must be 10000";
             return "";
         }
-        if (!recipientRegistry.isListed(tax.recipient)) return "recipient not listed";
+        if (!taxHandler.isListed(tax.recipient)) return "recipient not listed";
         return "";
     }
 
@@ -358,7 +357,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         tokensOut = v.tokensOut;
         if (tokensOut < minTokensOut) revert Slippage();
 
-        tokensOut = _execBuy(c, token, trader, quoteIn, minTokensOut, v);
+        tokensOut = _execBuy(c, token, trader, quoteIn, v);
     }
 
     function _prepBuy(Curve storage c, address token, address trader, uint256 quoteIn)
@@ -413,16 +412,12 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         v.refundGross = quoteIn - spentGross;
     }
 
-    function _execBuy(
-        Curve storage c,
-        address token,
-        address trader,
-        uint256 quoteIn,
-        uint256 minTokensOut,
-        BuyVars memory v
-    ) internal returns (uint256 tokensOut) {
+    function _execBuy(Curve storage c, address token, address trader, uint256 quoteIn, BuyVars memory v)
+        internal
+        returns (uint256 tokensOut)
+    {
         address quoteAddr = c.quote;
-        v = _pullQuoteAndPrep(c, token, trader, quoteAddr, quoteIn, minTokensOut, v);
+        _pullExact(quoteAddr, quoteIn);
 
         c.realQuote += v.net.toUint128();
         c.sold += v.tokensOut.toUint128();
@@ -437,25 +432,14 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         tokensOut = v.tokensOut;
     }
 
-    function _pullQuoteAndPrep(
-        Curve storage c,
-        address token,
-        address trader,
-        address quoteAddr,
-        uint256 quoteIn,
-        uint256 minTokensOut,
-        BuyVars memory v
-    ) internal returns (BuyVars memory) {
+    /// @dev Audit 4 (A-F1 / B-F2 / C-F1/F2): a fee-on-transfer quote can't graduate (the migrator forwards the
+    ///      nominal amount) and under-funds the shared vault / bucket for every token on that quote: refused on the
+    ///      first pull (as FairMintPad._pullExact).
+    function _pullExact(address quoteAddr, uint256 amount) internal {
         IERC20 quote = IERC20(quoteAddr);
         uint256 beforeBal = quote.balanceOf(address(this));
-        quote.safeTransferFrom(msg.sender, address(this), quoteIn);
-        uint256 received = quote.balanceOf(address(this)) - beforeBal;
-        if (received == 0) revert ZeroAmount();
-        if (received != quoteIn) {
-            v = _prepBuy(c, token, trader, received);
-            if (v.tokensOut < minTokensOut) revert Slippage();
-        }
-        return v;
+        quote.safeTransferFrom(msg.sender, address(this), amount);
+        if (quote.balanceOf(address(this)) - beforeBal != amount) revert FeeOnTransferQuote();
     }
 
     /// @dev A buy's tax is distributed BEFORE the buyer's share grows: it rewards holders as of before this trade
@@ -475,8 +459,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         bool dividends = c.dividendBps > 0;
         if (dividends && shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (tax > 0) {
-            quote.forceApprove(address(router), tax);
-            router.distribute(token, tax, platformTax, ITaxRouter.Phase.Bonding);
+            quote.forceApprove(address(taxHandler), tax);
+            taxHandler.distribute(token, tax, platformTax, ITaxHandlerV3.Phase.Bonding);
         }
         if (dividends && !shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (protocolFee > 0) {
@@ -521,13 +505,20 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         return agentIdRegistry.balanceOf(account) > 0;
     }
 
-    /// @dev WBNB, or a QuoteRegistry-enabled 18-decimal quote WITH a fixed rate (graduationAmount > 0): no
-    ///      fee-on-transfer / hook / low-decimal quotes (6 decimals would round holder dividends to 0 in DividendVault),
-    ///      and no pricing from a creator-picked reference pool, whose spot price one flash swap can move by 1000×
-    ///      within the create tx (2026-10-26 internal audit round 2). The multisig keeps the rate current.
+    /// @dev WBNB, or any 18-decimal ERC-20 (6 decimals would round holder dividends to 0 in the shared vault), priced
+    ///      like LaunchpadV2: a QuoteRegistry fixed rate when set, else the creator's reference pool (_lockGradAmt).
+    ///      2026-10-27 product decision: keep V2's reference-pool pricing (users are used to it), accepting internal
+    ///      audit R2-1 again: a Pancake V2 pair (reserves) or a V3 pool without TWAP history is read at spot.
+    ///      A fee-on-transfer quote is refused at its first pull (FeeOnTransferQuote, audit 4).
     function _requireQuote(address quote) internal view {
         if (quote == wbnb) return;
-        if (quoteRegistry.graduationAmount(quote) == 0 || IERC20Metadata(quote).decimals() != 18) {
+        // low-level: a high-level call to an address without code reverts outside any try/catch
+        (bool ok, bytes memory ret) = quote.staticcall(abi.encodeWithSelector(IERC20Metadata.decimals.selector));
+        if (!ok || ret.length < 32 || abi.decode(ret, (uint256)) != 18) revert QuoteNotAllowed();
+        // audit 4 (C-F3 / C-F4 / B-F1 / A-F2): never a token of this platform — a locked sibling pulled as a quote moves
+        // past its wallet cap and lock; a dividend token held by the vault / bucket / a new pair earns rewards no one
+        // can claim. TokenDeployer records every token of both cores; the vault also knows registered ones.
+        if (tokenDeployer.isLaunchToken(quote) || dividendVault.launchpadOf(quote) != address(0)) {
             revert QuoteNotAllowed();
         }
     }

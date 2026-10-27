@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
+import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3, TaxTokenDeployerV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {PostGradTaxHandlerV3} from "../../src/launchpad-v3/PostGradTaxHandlerV3.sol";
+import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
 contract SixDecimalQuoteV3 is ERC20("Six", "SIX") {
@@ -31,18 +32,12 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         pad.buyFor(makeAddr("pair"), t, 0.01 ether, 0);
     }
 
-    /// @dev A-3 / R2-1: only WBNB or a listed 18-decimal quote with a fixed rate.
-    function test_audit_quoteWhitelist() public {
+    /// @dev Quote rules (2026-10-27, V2 pricing kept): WBNB or any 18-decimal ERC-20; no fixed rate → a reference pool is
+    ///      required. A-3: low decimals and non-tokens are refused even with a fixed rate.
+    function test_audit_quoteRules() public {
         MockSPCXB unlisted = new MockSPCXB();
         vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
-        pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
-
-        // listed without a fixed rate: would be priced from a creator-picked pool at spot (flash-movable) — refused
-        vm.prank(owner);
-        quoteRegistry.setQuote(address(unlisted), true, 0);
-        vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        vm.expectRevert(LaunchpadV3.RefPoolRequired.selector);
         pad.create("Q", "Q", "", "", address(unlisted), address(0), _tax(200, 200, 0, treasury));
 
         SixDecimalQuoteV3 six = new SixDecimalQuoteV3();
@@ -51,6 +46,32 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.prank(agent);
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
         pad.create("S", "S", "", "", address(six), address(0), _tax(200, 200, 0, treasury));
+
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        pad.create("E", "E", "", "", makeAddr("notAToken"), address(0), _tax(200, 200, 0, treasury));
+    }
+
+    /// @dev An unlisted 18-decimal quote is priced like LaunchpadV2 from the creator's pool (300 Q : 150 WBNB → 15 BNB =
+    ///      30 Q); a QuoteRegistry fixed rate wins over the pool and needs none.
+    function test_create_refPoolPricesUnlistedQuote() public {
+        MockSPCXB q = new MockSPCXB();
+        address ref = pairFactory.createPair(address(q), address(wbnb));
+        q.mintUnlimited(ref, 300 ether);
+        wbnb.mintUnlimited(ref, 150 ether);
+        MockPair(ref).mint(address(0xdead));
+
+        assertEq(pad.graduationAmountOf(address(q), ref), 30 ether);
+        vm.prank(agent);
+        address t = pad.create("Q", "Q", "", "", address(q), ref, _tax(200, 200, 0, treasury));
+        assertEq(pad.gradAmtOf(t), 30 ether, "unlisted quote priced from its pool");
+
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(q), true, 60 ether);
+        assertEq(pad.graduationAmountOf(address(q), ref), 60 ether);
+        vm.prank(agent);
+        t = pad.create("Q2", "Q2", "", "", address(q), address(0), _tax(200, 200, 0, treasury));
+        assertEq(pad.gradAmtOf(t), 60 ether, "fixed rate wins");
     }
 
     /// @dev Low: a migrator bound to another pad would make every graduation revert, and setMigrator is one-shot.
@@ -61,18 +82,18 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
             address(divVault),
             address(bucket),
             address(handler),
-            address(router),
-            address(recipients),
-            address(new TaxTokenDeployerV3()),
+            address(tokenDeployer),
             address(wbnb),
             address(pairFactory)
         );
         vm.prank(owner);
         vm.expectRevert(LaunchpadV3.WrongMigrator.selector);
-        fresh.setMigrator(address(migrator)); // bound to `pad`
-        MigratorV2 own = new MigratorV2(address(pairFactory), address(fresh));
-        vm.prank(owner);
-        fresh.setMigrator(address(own));
+        fresh.setMigrator(address(migrator)); // the shared migrator does not list `fresh` yet
+        vm.startPrank(owner);
+        migrator.addLaunchpad(address(fresh));
+        fresh.setMigrator(address(migrator));
+        vm.stopPrank();
+        assertEq(address(fresh.migrator()), address(migrator), "listed: one migrator serves both pads");
     }
 
     /// @dev Low: a seller used to earn its pro-rata part of its own sell tax (tax split before its share shrank).
@@ -110,15 +131,15 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
     /// @dev Anyone can deploy a TaxLaunchTokenV3 bound to themselves with our handler and a 1 bps rate (its "platform
     ///      part" would be 50× its tax). Only route-registered tokens may accrue: the fake one's taxed transfer reverts.
     function test_audit_unregisteredTokenCannotAccrue() public {
-        TaxTokenDeployerV3 d = new TaxTokenDeployerV3();
-        TaxLaunchTokenV3 fake = TaxLaunchTokenV3(d.deploy("Fake", "FAKE", 1, 1, address(handler), ""));
+        // the token contract itself is permissionless to deploy (TokenDeployer only lists our cores)
+        TaxLaunchTokenV3 fake = new TaxLaunchTokenV3("Fake", "FAKE", 1, 1, address(this), address(handler), "");
         address fakePair = makeAddr("fakePair");
         fake.unlock(makeAddr("fakeMigrator"));
         fake.setPair(fakePair);
         address user = makeAddr("fakeUser");
         fake.transfer(user, 1_000_000 ether); // from the "launchpad" (this test): untaxed
         vm.prank(user);
-        vm.expectRevert(PostGradTaxHandlerV3.UnknownToken.selector);
+        vm.expectRevert(TaxHandlerV3.UnknownToken.selector);
         fake.transfer(fakePair, 100_000 ether); // a taxed sell into the fake pair → notifyTax refuses
         assertEq(handler.accruedTax(address(fake)), 0);
         assertEq(handler.accruedPlatformTax(address(fake)), 0);
@@ -137,14 +158,17 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.mockCall(t, abi.encodeWithSignature("pair()"), abi.encode(other));
 
         vm.prank(keeper);
-        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
-        handler.process(t, 1); // pair path
+        vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
+        handler.process(t, type(uint256).max, 1); // pair path
 
-        vm.prank(owner);
-        handler.setDexRouter(makeAddr("dexRouter"));
+        vm.startPrank(owner);
+        handler.proposeDexRouter(makeAddr("dexRouter"));
+        vm.warp(vm.getBlockTimestamp() + handler.DEX_ROUTER_DELAY());
+        handler.acceptDexRouter();
+        vm.stopPrank();
         vm.prank(keeper);
-        vm.expectRevert(PostGradTaxHandlerV3.PairQuoteMismatch.selector);
-        handler.process(t, 1); // router path: refused before any approve / swap
+        vm.expectRevert(PostGradHandlerBase.PairQuoteMismatch.selector);
+        handler.process(t, type(uint256).max, 1); // router path: refused before any approve / swap
 
         vm.clearMockedCalls();
         assertGt(handler.accruedTax(t), 0, "nothing consumed");
@@ -157,9 +181,58 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         _poolSell(t, address(uint160(0xB0000)), 1_000_000 ether);
         uint256 before = quoteTok.balanceOf(treasury);
         vm.prank(keeper);
-        uint256 out = handler.process(t, 1);
+        uint256 out = handler.process(t, type(uint256).max, 1);
         assertGt(out, 0);
         assertGt(quoteTok.balanceOf(treasury), before, "recipient paid in the quote");
         assertEq(handler.accruedTax(t), 0);
+    }
+
+    /// @dev Merge (TaxRouterV3 + PostGradTaxHandlerV3 → TaxHandlerV3): owed recipient quote now sits in the same
+    ///      contract as the pool tax it sells. When that quote is itself a token the handler taxes (X), `process(X)`
+    ///      must leave the owed X alone (owedTotalOf), so `release` still pays it in full.
+    ///      Audit 4: a launch token can no longer be a quote at all; the create checks are mocked away here so the
+    ///      owedTotalOf guard (defence in depth) stays covered.
+    function test_merge_owedQuoteNeverSoldByProcess() public {
+        address x = _create(_tax(100, 300, 0, treasury));
+        _graduate(x);
+        _poolBuy(x, agent, 5 ether); // agent holds X; the handler accrues X pool tax
+        uint256 accruedX = handler.accruedTax(x);
+        assertGt(accruedX, 0);
+
+        vm.prank(owner);
+        quoteRegistry.setQuote(x, true, 15 ether); // X becomes a listed 18-decimal quote
+        vm.prank(agent);
+        vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
+        pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
+
+        vm.mockCall(
+            address(pad.tokenDeployer()), abi.encodeWithSignature("isLaunchToken(address)", x), abi.encode(false)
+        );
+        vm.mockCall(address(divVault), abi.encodeWithSignature("launchpadOf(address)", x), abi.encode(address(0)));
+        vm.prank(agent);
+        address y = pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
+        vm.clearMockedCalls();
+        vm.prank(agent);
+        IERC20(x).approve(address(pad), type(uint256).max);
+
+        // the recipient cannot take X right now: Y's curve tax is booked as owed, held here in X
+        vm.mockCallRevert(x, abi.encodeWithSelector(IERC20.transfer.selector, treasury), "");
+        vm.prank(agent);
+        pad.buy(y, 0.5 ether, 0);
+        vm.clearMockedCalls();
+        uint256 owed = handler.owedOf(y);
+        assertGt(owed, 0, "owed in X");
+        assertEq(handler.owedTotalOf(x), owed);
+        assertEq(IERC20(x).balanceOf(address(handler)), accruedX + owed, "pool tax and owed side by side");
+
+        vm.prank(keeper);
+        handler.process(x, type(uint256).max, 1);
+        assertEq(handler.accruedTax(x), 0);
+        assertEq(IERC20(x).balanceOf(address(handler)), owed, "only the pool tax was sold");
+
+        uint256 before = IERC20(x).balanceOf(treasury);
+        assertEq(handler.release(y), owed);
+        assertEq(IERC20(x).balanceOf(treasury) - before, owed);
+        assertEq(handler.owedTotalOf(x), 0);
     }
 }

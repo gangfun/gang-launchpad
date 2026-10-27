@@ -4,7 +4,7 @@ pragma solidity 0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FairMintTestnetRefs as T} from "../config/FairMintDeployRefs.sol";
-import {DividendVault} from "../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
@@ -65,12 +65,14 @@ contract FairMintTestnetE2E is Script {
         address[] memory path = new address[](2);
         path[0] = token;
         path[1] = address(quote);
-        uint256 quoted = IPancakeRouter02(T.PANCAKE_V2_ROUTER).getAmountsOut(handler.accruedTax(token), path)[1];
+        // the buys' tax was already sold by minter 0's sell (swap-back); the keeper sells one chunk of what is left
+        uint256 chunk = handler.maxChunk(token);
+        uint256 quoted = IPancakeRouter02(T.PANCAKE_V2_ROUTER).getAmountsOut(chunk, path)[1];
         vm.startBroadcast(deployerPk);
-        uint256 out = handler.process(token, (quoted * 99) / 100);
+        uint256 out = handler.process(token, chunk, (quoted * 99) / 100);
         vm.stopBroadcast();
 
-        DividendVault vault = DividendVault(address(pad.dividendVault()));
+        SharedDividendVault vault = pad.dividendVault();
         address m5 = _minterAddr(5);
         uint256 pend = vault.pending(token, m5);
         if (pend == 0) revert Check("no reward for minter 5");
@@ -92,9 +94,8 @@ contract FairMintTestnetE2E is Script {
         if (agentId.balanceOf(deployer) == 0) agentId.register();
         quote.mint(deployer, 10 ether);
         quote.approve(address(pad), type(uint256).max);
-        FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
-        });
+        FairMintPad.MintConfig memory cfg =
+            FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
         token = pad.create("Fair Testnet", "FAIRT", "", "", address(quote), address(0), cfg, 1);
         for (uint256 i = 0; i < MINTERS; i++) {
             // the filling mint also builds the pair: give the last minter 10x gas
