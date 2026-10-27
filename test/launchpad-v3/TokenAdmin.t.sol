@@ -93,6 +93,7 @@ contract TokenAdminV3Test is LaunchpadV3Test {
         (bool ok,) = t.call(abi.encodeWithSignature("burn(uint256)", 1));
         assertFalse(ok, "no burn");
         vm.stopPrank();
+        assertEq(tok.pair(), address(0), "untaxed: never a pair");
         // and it trades freely, without ever touching the handler
         address holder = address(uint160(0xB0000));
         uint256 bal = IERC20(t).balanceOf(holder);

@@ -10,8 +10,7 @@ import {SharedPlatformFeeBucket} from "../../src/common/SharedPlatformFeeBucket.
 import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IGangPadView} from "../../src/gang/interfaces/IGangPadView.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
-import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 
 contract KindQuote is ERC20("Quote", "Q") {
@@ -34,8 +33,8 @@ contract HandlerKindIsolationTest is Test, IGangPadView {
     SharedPlatformFeeBucket bucket;
     GangTaxHandler handler;
     KindQuote quote;
-    TaxLaunchTokenV3 curve;
-    FairToken fair;
+    GangToken curve;
+    GangToken fair;
     MockPair curvePair;
     MockPair fairPair;
 
@@ -72,8 +71,8 @@ contract HandlerKindIsolationTest is Test, IGangPadView {
         bucket.setOperator(address(handler), true);
 
         // Curve: 3% / 3%, all of the non-platform tax to holders. Fair: 1% / 1%, half to holders.
-        curve = new TaxLaunchTokenV3("Curve", "CRV", "", address(this), address(handler), 300, 300, false);
-        fair = new FairToken("Fair", "FAIR", "", address(this), address(handler), 100, 100, true);
+        curve = new GangToken("Curve", "CRV", "", address(this), address(handler), 300, 300, false);
+        fair = new GangToken("Fair", "FAIR", "", address(this), address(handler), 100, 100, true);
         vault.registerToken(address(curve), address(quote));
         vault.registerToken(address(fair), address(quote));
         handler.register(address(curve), address(quote), address(0), 10_000, 1);

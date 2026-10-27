@@ -235,6 +235,9 @@ contract LaunchpadV3Test is Test {
 
         address u = _create(_tax(0, 0, 0, address(0)));
         assertEq(LaunchTokenV3(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = LaunchTokenV3");
+        assertEq(LaunchTokenV3(u).buyTaxBps() + LaunchTokenV3(u).sellTaxBps(), 0, "0 / 0");
+        assertEq(LaunchTokenV3(u).taxHandler(), address(0), "no handler");
+        assertFalse(LaunchTokenV3(u).reclaimable());
         _create(_tax(100, 500, 10_000, address(0))); // holder-dividend only, no recipient
     }
 

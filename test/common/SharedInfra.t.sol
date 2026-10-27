@@ -105,6 +105,10 @@ contract SharedInfraTest is GangRouterTest {
         tokenDeployer.deploy("X", "X", "", stranger, 100, 100, true);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
         tokenDeployer.deploy("X", "X", "", stranger, 0, 0, false);
+        vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
+        tokenDeployer.deploy("X", "X", "", stranger, 100, 100, false);
+        vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
+        tokenDeployer.deploy("X", "X", "", address(0), 0, 0, false);
         vm.expectRevert(SharedMigrator.OnlyLaunchpad.selector);
         sharedMig.migrate(b, address(wbnb), 1, 1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
@@ -121,6 +125,36 @@ contract SharedInfraTest is GangRouterTest {
         vm.prank(owner);
         vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
         v3Vault.setOperator(stranger, stranger);
+    }
+
+    /// @dev Kept from the two-core test_shared_handlerCannotTouchOtherCoresToken (feat/merge-handler added the
+    ///      accrueDividendUnits / convertDividend legs): with one pad and one handler, nobody but the handler writes
+    ///      the vault for either kind, and permissionless syncShares never zeroes a V3 holder's share.
+    function test_shared_nobodyButTheHandlerWritesTheVault() public {
+        address a = _v3Token(5000);
+        address b = _fairSale();
+        vm.prank(agent2);
+        router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
+        uint256 shareA = v3Vault.shares(a, agent2);
+        assertGt(shareA, 0);
+        address h = address(v3.taxHandler());
+        (bool ok,) = h.call(abi.encodeCall(TaxHandlerV3.syncShares, (a, agent2, address(0))));
+        ok; // reverts or re-writes the same balance; either way the V3 share stands
+        assertEq(v3Vault.shares(a, agent2), shareA, "syncShares left the V3 share alone");
+
+        address stranger = makeAddr("strangerHandler");
+        address[2] memory toks = [a, b];
+        for (uint256 i; i < 2; i++) {
+            vm.startPrank(stranger);
+            vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
+            v3Vault.setShare(toks[i], agent2, 0);
+            vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
+            v3Vault.accrueDividendUnits(toks[i], 1);
+            vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
+            v3Vault.convertDividend(toks[i], 1, 0);
+            vm.stopPrank();
+        }
+        assertEq(v3Vault.shares(a, agent2), shareA, "V3 share untouched");
     }
 
     /// @dev Delisting the pad stops new tokens of both kinds; its existing tokens keep trading and earning.
