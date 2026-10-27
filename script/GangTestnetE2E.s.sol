@@ -40,7 +40,8 @@ interface IGangTokenPair {
 ///      already on chain. SKIP_V3=true / SKIP_FAIR=true / SKIP_B=true / SKIP_W=true run only the rest.
 ///      Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, BLACKLIST_QUOTE (unless SKIP_B); optional GANG_ROUTER (for W), TEST_QUOTE,
 ///      RECIPIENT, GAS_PRICE_WEI (default 0.1 gwei — pass the same value as --with-gas-price; minter prefunds are sized
-///      from it), GAS_PER_MINTER (wei, overrides the sized prefund). Deadlines are a day out (fixed at simulation time;
+///      from it), GAS_PER_MINTER (wei, overrides the sized prefund). Broadcast with --slow: the keeper steps assume the
+///      trades before them are already mined (the simulation rolls one block before each `process`). Deadlines are a day out (fixed at simulation time;
 ///      the ~1,000 broadcasts take a while). Afterwards run `--sig "sweep()"` as its own script to return what the
 ///      minters did not burn: it must be a separate run, since a simulation does not charge gas.
 ///      Needs ≈ 0.15 tBNB at 0.1 gwei (most of it prefunds the 180 minters; `sweep` brings the rest back).
@@ -168,6 +169,9 @@ contract GangTestnetE2E is Script {
 
     /// @dev Keeper sells one chunk with a 1% slippage bound (skipped when nothing is sellable this block).
     function _keeperChunk(address t, address q) internal returns (uint256 out) {
+        // with --slow the keeper's tx lands in a later block than the trades above: a fresh per-block budget and
+        // reference price (in one simulated block it would hit ZeroAmount / PriceBelowReference)
+        _nextBlock();
         uint256 chunk = handler.maxChunk(t);
         if (chunk == 0) {
             console.log("keeper: nothing to process this block", t);
@@ -329,7 +333,7 @@ contract GangTestnetE2E is Script {
             if (m.balance <= 2 * fee) continue;
             uint256 amount = m.balance - 2 * fee;
             vm.startBroadcast(pk);
-            payable(deployer).transfer(amount);
+            _send(deployer, amount);
             vm.stopBroadcast();
             total += amount;
         }
@@ -348,8 +352,14 @@ contract GangTestnetE2E is Script {
     function _prefund(address m, uint256 amount) internal {
         if (m.balance >= amount) return;
         vm.startBroadcast(deployerPk);
-        payable(m).transfer(amount - m.balance);
+        _send(m, amount - m.balance);
         vm.stopBroadcast();
+    }
+
+    /// @dev A plain value call (not `transfer`: a 7702-delegated deployer wallet needs more than 2,300 gas).
+    function _send(address to, uint256 amount) internal {
+        (bool ok,) = payable(to).call{value: amount}("");
+        if (!ok) revert Check("BNB transfer");
     }
 
     /// @dev Testnet faucet mint (MockSPCXB caps each address at 1,000; the blacklist quote has no cap). Call inside
@@ -369,6 +379,12 @@ contract GangTestnetE2E is Script {
         IERC20(tokenIn).approve(T.PANCAKE_V2_ROUTER, amountIn);
         IPancakeRouter02(T.PANCAKE_V2_ROUTER)
             .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, to, block.timestamp + 1 days);
+    }
+
+    /// @dev Simulation only: model the next block (the broadcast runs with --slow, one receipt at a time).
+    function _nextBlock() internal {
+        vm.roll(block.number + 1);
+        vm.warp(block.timestamp + 3);
     }
 
     function _gasPrice() internal view returns (uint256) {

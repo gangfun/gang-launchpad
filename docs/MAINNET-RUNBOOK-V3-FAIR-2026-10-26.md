@@ -15,7 +15,7 @@
 | 1 | 多签地址（BSC 上的 Safe，2/3 或 3/5，签名人分开保管） | 你 | `OWNER` |
 | 2 | 合作方主网金库地址 + 名称；确认它能收报价币（合约不拒收 ERC-20、USDT 没拉黑它） | 合作方 | §3 `TaxHandlerV3.list` |
 | 3 | 合作方用的报价币（WBNB 或 USDT）。USDT 不用设换算额：发币时用 USDT/WBNB 池子换算（§1） | 合作方 | 发币参数 |
-| 4 | 部署钱包：一个新热钱包，备 ≥ 0.03 BNB（`DeployGang` 一个脚本约 37 笔、约 2,200 万 gas，按 0.1 gwei 估约 0.0022 BNB，留余量） | 你 | `DEPLOYER_PRIVATE_KEY` |
+| 4 | 部署钱包：一个新热钱包，备 ≥ 0.03 BNB（`DeployGang` 一个脚本 35 笔、约 2,850 万 gas，按 0.1 gwei 估约 0.003 BNB，留余量） | 你 | `DEPLOYER_PRIVATE_KEY` |
 | 5 | 一个**能查历史日志**的 BSC RPC（keeper 首次从部署区块开始扫事件；`bsc-dataseed` 直接拒绝 `eth_getLogs`，publicnode 只留几小时） | 你 | `LOGS_RPC` / 索引 RPC |
 | 6 | 运维 Telegram 群的 chat id（报警用，**不是**公开频道 `TG_CHANNEL_ID`） | 你 | `ALERT_TG_CHAT_ID` |
 | 7 | keeper 钱包 `0xB6f1…cFc7` 里 ≥ 0.1 BNB（健康检查低于 0.05 报警） | 你 | keeper |
@@ -66,7 +66,7 @@ forge script script/DeployGang.s.sol --rpc-url $R $L
 GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadcast --slow $L $G
 ```
 
-脚本做的事（一次运行，约 37 笔交易，按 0.05 gwei 估约 0.0012 BNB，留 0.03 BNB 余量）：
+脚本做的事（一次运行，主网 35 笔交易、约 2,850 万 gas，按 0.1 gwei 约 0.003 BNB；2026-10-27 用合并后的真实合约在主网 fork 上 dry-run 实测）：
 
 | 步骤 | 内容 |
 |---|---|
@@ -95,7 +95,7 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 
 **外部库 `CurveLogic` / `FairLogic`**：
 - 不用手动部署、不用传 `--libraries`：forge script 发现未链接的库会先部署再链接。Foundry 1.8.6 实测（主网和测试网 dry-run）：两个库是广播的**前两笔**交易，类型是 `CREATE2`，经确定性部署合约 `0x4e59b44847b379578588920cA78FbF26c0B4956C`（BSC 主网和测试网上都有）部署，盐为 0，所以地址只取决于库的字节码；`run-latest.json` 顶层的 `libraries` 字段列出它们的地址。
-- `CurveLogic` / `FairLogic` 内部再按地址链接 PoolCheck：主网用 `$L` 链接线上 `0xd2B1…bDb3`；测试网不传 `$L`，forge 把 PoolCheck 也按同样方式部署。
+- `CurveLogic` / `FairLogic` 内部再按地址链接 PoolCheck：主网用 `$L` 链接线上 `0xd2B1…bDb3`（dry-run 的 `libraries` 字段里能看到这三个地址）；测试网不传 `$L`，forge 把 PoolCheck 也按同样方式部署（测试网 dry-run：前三笔是 PoolCheck、CurveLogic、FairLogic 的 CREATE2）。
 - 如果同一份库字节码已经在这个地址上（例如上一次广播中途失败、库已上链），重跑时把它们也写进 `--libraries`：`--libraries src/gang/CurveLogic.sol:CurveLogic:<地址> --libraries src/gang/FairLogic.sol:FairLogic:<地址>`（地址见上次的 `run-latest.json`）。广播中途断了优先用 `--resume` 续发，不要重跑。
 - 验证合约源码时（`--verify`）两个库会一起验证；不验证也不影响使用。
 
@@ -115,8 +115,10 @@ T=https://data-seed-prebsc-1-s1.bnbchain.org:8545
 forge script script/DeployGang.s.sol --rpc-url $T --broadcast --slow --with-gas-price 100000000
 # 整轮：V3（测试报价币有税币内盘买卖 → 80 个 Agent 打满毕业 → 外盘买卖顺带换块 → keeper process；WBNB 币经路由买；
 #       黑名单报价币欠款 → release）+ 打新（100 个地址打满发射 → 外盘买入 → 有人卖到出局线以下 → keeper process → 领取）
+#   必须 --slow --skip-simulation：keeper 的 process 要在前面的成交上链之后的区块里执行（同一区块里会因
+#   每区块额度 / 参考价回滚），forge 默认的上链前模拟把所有交易放在同一个区块里，会误报失败
 GANG_PAD=<GANG_PAD> GANG_ROUTER=<GANG_ROUTER> BLACKLIST_QUOTE=<BLACKLIST_QUOTE> GAS_PRICE_WEI=100000000 \
-  forge script script/GangTestnetE2E.s.sol --rpc-url $T --broadcast --slow --with-gas-price 100000000
+  forge script script/GangTestnetE2E.s.sol --rpc-url $T --broadcast --slow --skip-simulation --with-gas-price 100000000
 #   断点续跑：TOKEN_A / TOKEN_B / TOKEN_W / TOKEN_F 填上次日志里的币地址；SKIP_V3 / SKIP_FAIR / SKIP_B / SKIP_W=true 跳过整段
 # 收回 minter 剩下的 gas 钱（必须单独跑）
 forge script script/GangTestnetE2E.s.sol --sig "sweep()" --rpc-url $T --broadcast --slow --with-gas-price 100000000

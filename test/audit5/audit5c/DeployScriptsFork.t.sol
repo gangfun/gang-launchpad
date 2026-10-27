@@ -196,7 +196,7 @@ contract DeployScriptsForkTest is Test {
         _breaks(s.pad, abi.encodeCall(IGangPad.setWalletCapEnabled, (false)), "wallet cap");
         _breaks(s.pad, abi.encodeCall(IGangPad.setV3Factory, (x)), "pad.v3Factory");
         _breaks(s.pad, abi.encodeCall(IGangPad.setTwapWindow, (60)), "pad.twapWindow");
-        _breaks(s.pad, abi.encodeCall(IGangPad.setBridgePool, (M.USDT, x)), "pad.bridgePool USDT");
+        _breaks(s.pad, abi.encodeCall(IGangPad.setBridgePool, (M.USDT, address(0))), "pad.bridgePool USDT");
         _breaks(s.pad, abi.encodeCall(IGangPad.setPairFactory, (x)), "pad.pairFactory");
         // handler
         _breaks(s.handler, abi.encodeCall(IGangTaxHandlerOps.proposeDexRouter, (x)), "handler.dexRouter");
