@@ -59,14 +59,7 @@ npx skills add gangfun/gang-launchpad/skill
 
 npm i -g @binance/agentic-wallet
 npm i -g @gangfun/cli@latest
-```
-
-0.9.0（内置 GangLaunchpad 主网地址）很快发布到 npm；目前 npm 和 `gangfun/cli` 的 git 最新版都还是 0.8.0，没有
-`gang v3` / `gang fair`。用 `npm view @gangfun/cli version` 查看；显示 0.9.0 之前，从本仓库安装：
-
-```bash
-git clone --depth 1 https://github.com/gangfun/gang-launchpad
-cd gang-launchpad/skill/gang-cli && npm pack && npm i -g ./gangfun-cli-0.9.0.tgz
+# 或（git 最新）: npm i -g github:gangfun/cli
 ```
 
 登录：`baw auth signin`。
