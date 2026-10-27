@@ -65,8 +65,8 @@ contract GangRouterTest is Test {
         sharedMig = new SharedMigrator(owner, address(pairFactory));
         tokenDeployer = new TokenDeployer(owner);
         _deployPad();
-        // one pad for both kinds: GangRouter's two cores are the same address
-        router = new GangRouter(address(v3), address(fair), address(wbnb));
+        // one pad for both kinds
+        router = new GangRouter(address(v3), address(wbnb));
         vm.prank(owner);
         v3.setRouter(address(router), true);
 
@@ -345,10 +345,33 @@ contract GangRouterTest is Test {
         vm.expectRevert(GangRouter.UnknownToken.selector);
         router.v3BuyBNB{value: 0.1 ether}(makeAddr("nope"), 0, block.timestamp);
 
-        GangRouter onlyFair = new GangRouter(address(0), address(fair), address(wbnb));
-        vm.prank(agent2);
+        // no pad / no WBNB: the router cannot be deployed at all
         vm.expectRevert(GangRouter.NotDeployed.selector);
-        onlyFair.v3BuyBNB{value: 0.1 ether}(makeAddr("nope"), 0, block.timestamp);
+        new GangRouter(address(0), address(wbnb));
+        vm.expectRevert(GangRouter.NotDeployed.selector);
+        new GangRouter(address(v3), address(0));
+
+        // both old core getters are the one pad
+        assertEq(address(router.pad()), address(v3), "pad");
+        assertEq(address(router.v3()), address(v3), "v3() = the pad");
+        assertEq(address(router.fair()), address(v3), "fair() = the pad");
+        assertEq(router.wbnb(), address(wbnb), "wbnb");
+    }
+
+    /// @dev Same pad, other kind: a 打新 token has no curve, a V3 token has no sale.
+    function test_otherKindIsUnknown() public {
+        address v3Token = _v3Token(0);
+        address sale = _fairSale();
+        vm.startPrank(agent2);
+        vm.expectRevert(GangRouter.UnknownToken.selector);
+        router.v3BuyBNB{value: 0.1 ether}(sale, 0, block.timestamp);
+        vm.expectRevert(GangRouter.UnknownToken.selector);
+        router.v3Buy(sale, 0.1 ether, 0, block.timestamp);
+        vm.expectRevert(GangRouter.UnknownToken.selector);
+        router.fairMintBNB{value: 1 ether}(v3Token, 10, 1, block.timestamp);
+        vm.expectRevert(GangRouter.UnknownToken.selector);
+        router.fairMint(v3Token, 10, 1, block.timestamp);
+        vm.stopPrank();
     }
 
     function test_rejectsStrayBnb() public {
