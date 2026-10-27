@@ -17,7 +17,7 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 | 模块 | 一句话 |
 |---|---|
 | 打新 FairMintPad | 没有价格曲线：所有人按同一价格一份一份打，打满 10,000 份就把 50% 代币和全部募集款加进 Pancake 池子开盘；没有截止时间和退款，打满前随时按同一价格卖回（扣撤出费，sale 7 天没有进展时免）。开盘后每笔池子交易收 1% 税，一半分给「打新时进来、而且一直没卖到出局线以下」的地址，一半给平台。 |
-| LaunchpadV3 | 在 V2 曲线（Agent 专属、单地址 1% 上限、约 15 BNB 毕业）的基础上，发币时可设买 / 卖税（各 1%–5%）和一个白名单里的税收接收地址（合作方金库）。平台从税里固定拿成交额的 0.5%，剩下按设定比例分给持币人和接收地址，接收地址收报价币。 |
+| LaunchpadV3 | 在 V2 曲线（Agent 专属、单地址 1% 上限、约 15 BNB 毕业）的基础上，发币时可设买 / 卖税（各 1%–5%）和一个白名单里的税收接收地址（合作方金库）。税只在毕业后的池子里收（§19：内盘和 V2 一样只收 1% 手续费，不收税）；平台从税里固定拿成交额的 0.5%，剩下按设定比例分给持币人和接收地址，接收地址收报价币。 |
 | GangRouter | 无状态、无 owner 的入口：把原生 BNB 换成 WBNB 后替调用者在两个核心上买入 / 打新，多付的部分退回。 |
 
 两个核心共用五个合约（QuoteRegistry、PlatformFeeBucket、SharedDividendVault、SharedMigrator、TokenDeployer）。毕业 / 发射后的池子税：每笔卖出顺带把攒下的税卖掉一小块、当场分配，没有卖单时 keeper 分块补位；持有人的分红在交税那一刻就按当时的份额记账（§16）。
@@ -88,9 +88,8 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 ### 3.2 LaunchpadV3
 
 ```
-内盘买入：quoteIn → 1% 平台手续费 + 买入税 → 剩余进曲线
-          税（TaxHandlerV3.distribute）：平台 = 成交额 × 0.5%；剩余 × dividendBps → 分红合约（没有合格持有人时并入接收地址）；其余 → 接收地址
-内盘卖出：同上，按卖出税率
+内盘买入：quoteIn → 1% 平台手续费（→ PlatformFeeBucket）→ 剩余 99% 进曲线；不收税（§19），有分红的币同步买家份额
+内盘卖出：曲线付出 quoteOut → 1% 平台手续费 → 其余给卖家；不收税，有分红的币同步卖家份额
 毕业：剩余代币 + realQuote → SharedMigrator → Pancake V2，LP → 0xdead；代币开始在池子买卖时收税
 外盘：税（代币）→ TaxHandlerV3，按每笔方向记平台部分；分红部分交税当场按当时份额记成税币单位
       卖出时 swapBack 卖一块 / 没有卖单时 keeper process(token, amount, minQuoteOut) 分块卖
@@ -102,7 +101,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 - 接收地址必须在 TaxHandlerV3 的白名单里；下架只影响之后新发的币。
 - 无税币等同 V2 无税轨（只收 1% 内盘手续费）。
 - 报价币规则与打新相同（§3.1）；毕业额按固定换算额或参考池在创建时锁定。V3 核心第一次拉报价币时按到账校验，转账扣费的报价币直接 `FeeOnTransferQuote`。
-- 内盘买入先分账、再更新买家份额（奖励的是交易前的持有人）；卖出先更新卖家份额、再分账（卖家拿不回自己的卖出税）。外盘同样按交易前的份额记账。
+- 内盘不收税（§19），只按成交后的余额写份额，毕业后外盘交税时按这些份额记账。外盘按交易前的份额记账：卖家拿不回自己的卖出税，买家分不到自己的买入税。
 - 分红合约拒收、bucket 拒收时外盘那一块照常卖出：持有人那份留在 handler（`pendingHolderUnits` / `pendingHolderQuote`），平台那份记 `owedPlatformOf`，任何人 `flushHolders` / `flushPlatform` 补上。
 
 ### 3.3 GangRouter
@@ -134,7 +133,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 | LaunchpadV3 | `setMigrator`（一次性，迁移合约须把本核心列入）、`setPairFactory`（只用于创建时的参考池定价）、`setRouter`、`setAgentGate`、`setWalletCapEnabled`、`setV3Factory`、`setTwapWindow`、`setBridgePool` | — | 白名单路由：`buyFor`（只在准入开启时） | create、buy、sell |
 | TaxLaunchTokenV3 / LaunchTokenV3 | — | — | 只有发射台：`unlock(migrator)`（一次）、`setPair`（有税币，解锁后一次）；之后没有任何管理函数 | 转账（毕业后）、`contractURI` / `metaURI` |
 | TaxHandlerV3 | `setLaunchpad`（一次性）、`list` / `delist`（接收地址白名单）、keeper 与换币路由时间锁（同上）；可代替 keeper 调 `process` | `process(token, amount, minQuoteOut)` | 发射台：`register`（每个币一次）、`distribute`（只能付钱进来）；代币：`notifyTax`、`swapBack` | `release`、`syncShares`、`flushHolders`、`flushPlatform` |
-| SharedDividendVault | `setLaunchpad(core, bool)`（移除只停新登记）、`setOperator(account, core)`（每个核心、每个地址只能绑定一次，不能解绑 / 更换）、`setExcluded`、`setMinimumShareBalance`（只影响之后登记的币） | — | 登记它的核心 / 绑定到该核心的 operator：`registerToken`（每个币一次）、`setShare`、`depositReward`、`accrueDividendUnits`、`convertDividend` | `claim`、`claimFor` |
+| SharedDividendVault | `setLaunchpad(core, bool)`（移除只停新登记）、`setOperator(account, core)`（每个核心、每个地址只能绑定一次，不能解绑 / 更换）、`setExcluded`、`setMinimumShareBalance`（只影响之后登记的币） | — | 登记它的核心 / 绑定到该核心的 operator：`registerToken`（每个币一次）、`setShare`、`accrueDividendUnits`、`convertDividend` | `claim`、`claimFor` |
 | SharedMigrator | `addLaunchpad`（只加不减） | — | 名单里的核心：`migrate` | — |
 | TokenDeployer | `setLaunchpad(core, bool)` | — | 名单里的核心：`deployPlain` / `deployTax` / `deployFair` | `isLaunchToken` 查询 |
 | SharedPlatformFeeBucket（共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`（合约一生只能调一次，之后 48 小时时间锁）、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（固定路径：80% 回购销毁 / 20% 金库；没有 `collectPlatformSmart`） | operator：`notifyAccrual`（按到账额记账） | — |
@@ -172,7 +171,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 LaunchpadV3：
 
 7. 对每个报价币：`balanceOf(pad) ≥ Σ_未毕业 realQuote`。
-8. 每笔内盘交易：平台部分 = 成交额 × 0.5%（税率不对称时也一样），平台 + 分红 + 接收地址 = 税，没有多收或少分。
+8. 每笔内盘交易（§19）：只收成交额的 1% 进 PlatformFeeBucket，接收地址、分红合约、TaxHandlerV3 都收不到任何报价币（税率多少都一样）。外盘每笔税：平台部分 = 成交额 × 0.5%（税率不对称时也一样），平台 + 分红 + 接收地址 = 税。
 9. TaxHandlerV3：对每个报价币 `balanceOf(handler) ≥ owedTotalOf[quote]`，`owedTotalOf == Σ owedOf`；`release` 只付该币自己的欠款；`process` 卖的数量 ≤ 余额 − 欠款。
 10. 税率、分红比例、接收地址在创建后不能被任何人改。
 
@@ -202,7 +201,7 @@ GangRouter：
 | K-7 | **转账钩子里写分红份额失败**：两个 handler 都带保护：分红合约真正拒绝时吞掉错误、发 `ShareWriteFailed`、不卡转账；调用方把 gas 卡到让这次调用耗尽时 revert（§10 A-5）。恢复后旧份额继续累计，直到有人为该地址 `syncShares`（keeper 处理）。分红合约的 operator 每个核心只能绑定一次、不能解绑，所以「owner 撤掉 operator 冻结 V3 转账」的路径已不存在。 |
 | K-8 | **G-01 的剩余窗口**：owner 在分红合约排除一个地址后，在该地址下次转账前它仍会按旧份额累计。运维规定：排除操作必须和 `handler.syncShares(token, user, 0)` 放在同一批交易里。 |
 | K-9 | **PlatformFeeBucket 的应急出口**（V2 审计 G-03）：owner 申请后 7 天可把卡住的报价币整笔转到金库，绕过 80/20 拆分。原样复用，知悉。 |
-| K-10 | **V3 的分红部分在没有合格持有人时并入接收地址**；打新发射后的分红部分在没有合格持有人时并入平台。两者不同是因为 V3 里剩余的税本来就归接收地址。 |
+| K-10 | **V3 的分红部分在没有合格持有人时并入接收地址**（只在外盘，内盘不收税，§19）；打新发射后的分红部分在没有合格持有人时并入平台。两者不同是因为 V3 里剩余的税本来就归接收地址。 |
 | K-11 | **路由不提供 sweep**：误转进 GangRouter 的代币 / 报价币会永远留在那里。 |
 | K-12 | **报价币不设白名单**：任意 18 位 ERC-20 都能做报价币；转账扣费的（入口与扣款时校验）和本平台发射的币（`isLaunchToken` / 已登记分红）被拒。会暂停、会拉黑、负 rebase 的报价币仍能进来：发行方暂停或拉黑核心 / handler / 分红合约 / bucket 时，用这个报价币的币可能无法交易、毕业或领取，打新本金可能取不出来。影响限于用这个报价币的币；网站和 CLI 只主推 WBNB / USDT。已毕业的 V2 发射币仍能做报价币（分红走 V2 的分红合约，影响很小）。 |
 | K-13 | **非官方池子也会累计 V3 分红份额**（迁移合约、分红合约、bucket 已排除）：只有官方池子被设为 0。别人另建的交易对持有代币就有份额，任何人都能用 `claimFor` 把分红推进去。运维：发现这类池子后，owner 在分红合约排除它，并在同一批交易里 `handler.syncShares(token, pool, 0)`。打新不受影响：非打新地址的基准为 0。 |
@@ -272,7 +271,7 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 4. **任意报价币**：会回调、会暂停 / 拉黑、负 rebase、`decimals` 会变的报价币对核心、handler、分红合约、bucket、迁移合约的影响；参考池换算（K-1 已接受的部分之外）。
 5. **FairMintPad 的记账**：多个 sale 共用同一个报价币时的隔离（§5 #1，含 `owedFee`）；卖回取整；7 天计时边界和 `markSold`；`minPayout`。
 6. **最后一笔打满即发射**：`_mint` 里在同一笔交易中调用 `_launch` → SharedMigrator → Pancake。有没有办法让发射失败从而卡住 sale，或者在建池时重入。
-7. **LaunchpadV3 的费用计算**：`_prepBuy` / `_applyFees` / `_recomputeFee` 在单地址上限或毕业截断时重新算费用和退款，平台部分按成交额。
+7. **LaunchpadV3 的费用计算**：`_prepBuy` / `_applyFee` / `_recomputeFee` 在单地址上限或毕业截断时重新算 1% 手续费和退款（§19 起内盘没有税）。
 8. **TaxHandlerV3 的欠款与待卖的税**：`owedOf` / `owedTotalOf` / `release` 的隔离；报价币本身是被收税的币时 `process` 不会卖掉欠款；接收地址是会回调的合约时的重入。
 9. **GangRouter 与 `buyFor` / `mintFor` 的身份**：门槛、上限、分红权重、事件里的买家都用 `trader`，付款和退款用 `msg.sender`。
 

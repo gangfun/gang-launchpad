@@ -1,6 +1,7 @@
 # 主网上线手册 · LaunchpadV3 税收币 + 打新 + GangRouter
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写（写于上线前，上线当天照着做，做完在每一步后面记下交易哈希和地址）
+- **2026-10-27 下午：V3 内盘不收税（§19，审计说明 §19）**。部署的是含这项改动的合约（分支 `feat/v3-no-curve-tax`，合入 `main` 后以 `main` 为准）；部署步骤、接线、参数都不变。
 - 代码：gang-launchpad，合约冻结在审计说明 §18 的修复提交（方案 A 合并 + 第四轮内部审计修复 + 外盘税卖出时自动小额换 + 按税产生时记账 + 第五轮内部审计修复及其 review；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §15–§18）。合入 `main` 后以 `main` 为准
 - 服务端 / keeper：gangfun-server，`keeper/` 以分支 `feat/keeper-ops` 为准（合入 `main` 后以 `main` 为准）
 - 链：BSC 主网（chainId 56）
@@ -204,7 +205,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - [ ] `/v3/config`、`/fair/config`、`/burn`、`/health?strict=1` 都正常（§4）
 
 **第一批真实交易后**：
-- [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件、接收地址收到第一笔 `TaxPaid`
+- [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件；内盘买卖只扣 1%（`Buy` / `Sell` 里 `tax` = 0，接收地址这时收不到钱，§19）；毕业后第一笔外盘税卖出后接收地址收到第一笔 `TaxPaid`
 - [ ] 一个打新 sale 跑通：打新、卖回（到手 = 打新价 × 份数 − 撤出费，与 `previewWithdraw` 一致）、打满发射、池子开盘价等于打新价
 - [ ] 经 GangRouter 用 BNB 买和打新各一笔，结束后路由余额为 0
 - [ ] 毕业 / 发射后第一笔池子卖出：日志里有 `TaxChunkSold(…, swapBack = true)`，卖家实际到手与 `previewSell` 一致；持有人 `pendingUnits` 在交税时增加、这批卖完后转成可领 `pending`
