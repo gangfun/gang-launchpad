@@ -8,11 +8,11 @@ import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {FairMintPad} from "../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../src/gang/GangTaxHandler.sol";
 import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 
 /// @title DeployFairMint — 打新发射 stack on BSC testnet (97) or mainnet (56)
-/// @notice New: HolderRewardHandler, FairMintPad, and — unless QUOTE_REGISTRY / PLATFORM_BUCKET / DIVIDEND_VAULT /
+/// @notice New: GangTaxHandler, FairMintPad, and — unless QUOTE_REGISTRY / PLATFORM_BUCKET / DIVIDEND_VAULT /
 ///         MIGRATOR / TOKEN_DEPLOYER name the ones DeployLaunchpadV3 made — the five contracts shared with LaunchpadV3
 ///         (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Quotes: mainnet USDT has no fixed
 ///         rate — a create prices it from USDT_REF_POOL (Pancake V3 USDT/WBNB 0.01%); testnet lists the mock quote at a
@@ -73,7 +73,7 @@ contract DeployFairMint is SharedPlatform {
         }
 
         (s.vault, s.migrator, s.tokenDeployer) = _shared(deployer, factory);
-        HolderRewardHandler handler = new HolderRewardHandler(deployer, s.vault, s.bucket, router);
+        GangTaxHandler handler = new GangTaxHandler(deployer, s.vault, s.bucket, router);
         FairMintPad pad = new FairMintPad(
             deployer, s.quoteRegistry, s.vault, s.bucket, address(handler), s.tokenDeployer, wbnb, factory
         );
@@ -81,7 +81,7 @@ contract DeployFairMint is SharedPlatform {
 
         _wireCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
 
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(keeper);
 
         PlatformFeeBucket(s.bucket).setOperator(address(pad), true);
@@ -115,13 +115,13 @@ contract DeployFairMint is SharedPlatform {
     }
 
     function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
-        HolderRewardHandler handler = HolderRewardHandler(s.handler);
+        GangTaxHandler handler = GangTaxHandler(s.handler);
         FairMintPad pad = FairMintPad(s.pad);
         _checkCore(s.quoteRegistry, s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (address(pad.dividendVault()) != s.vault || address(pad.tokenDeployer()) != s.tokenDeployer) {
             revert WiringCheck("pad vault / deployer");
         }
-        if (address(handler.pad()) != s.pad) revert WiringCheck("handler.pad");
+        if (address(handler.launchpad()) != s.pad) revert WiringCheck("handler.pad");
         if (handler.keeper() != keeper) revert WiringCheck("handler.keeper");
         if (address(pad.migrator()) != s.migrator) revert WiringCheck("pad.migrator");
         if (address(pad.agentIdRegistry()) != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");

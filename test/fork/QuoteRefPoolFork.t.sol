@@ -14,10 +14,9 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 
 interface IV3PoolSlot0 {
     function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint32, bool);
@@ -92,7 +91,7 @@ contract QuoteRefPoolForkTest is Test {
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, owner);
 
         // V3 core
-        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(div), address(bucket), address(0));
+        GangTaxHandler handler = new GangTaxHandler(owner, address(div), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner, address(reg), address(div), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );
@@ -110,7 +109,7 @@ contract QuoteRefPoolForkTest is Test {
         v3.setBridgePool(USDT, bridge);
 
         // 打新 core
-        HolderRewardHandler fh = new HolderRewardHandler(owner, address(div), address(bucket), address(0));
+        GangTaxHandler fh = new GangTaxHandler(owner, address(div), address(bucket), address(0));
         fair = new FairMintPad(
             owner, address(reg), address(div), address(bucket), address(fh), address(deployer), WBNB, V2_FACTORY
         );
@@ -121,7 +120,7 @@ contract QuoteRefPoolForkTest is Test {
         deployer.setLaunchpad(address(fair), true);
         bucket.setOperator(address(fair), true);
         bucket.setOperator(address(fh), true);
-        fh.setPad(address(fair));
+        fh.setLaunchpad(address(fair));
         fair.setMigrator(address(mig));
         fair.setAgentGate(true, address(agent));
         fair.setV3Factory(V3_FACTORY);

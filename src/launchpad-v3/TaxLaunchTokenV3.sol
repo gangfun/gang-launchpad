@@ -2,14 +2,14 @@
 pragma solidity 0.8.28;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
+import {IGangTaxHandler} from "../gang/interfaces/IGangTaxHandler.sol";
 import {TokenURI} from "./TokenURI.sol";
 
 /// @title TaxLaunchTokenV3 (LaunchpadV3 taxed track)
 /// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
 ///         are chosen at create, one for buys and one for sells (immutable for the token's life).
-/// @dev Bonding-phase tax is taken by LaunchpadV3 on quote, never here.
-///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → TaxHandlerV3 (accrued there).
+/// @dev No tax during bonding (the curve charges only LaunchpadV3's 1% protocol fee, in quote).
+///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → GangTaxHandler (accrued there).
 ///      Before a sell's tokens move, the handler sells one small chunk of the accrued tax (`swapBack`, ≤ 0.5% of the
 ///      pair's token side) — in a gas-capped try, so it can never fail the sell (except a sell paid in from a flash
 ///      swap's callback, which is refused: `SellDuringFlashSwap`); a buy can't (the pair is locked).
@@ -117,7 +117,7 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
             super._update(from, to, net);
             if (tax > 0) {
                 super._update(from, taxHandler, tax);
-                IPostGradTaxHandlerV3(taxHandler).notifyTax(address(this), from, to, tax, rate);
+                IGangTaxHandler(taxHandler).notifyTax(address(this), from, to, tax, rate);
             }
             emit OuterTax(from, to, tax, net);
             _syncDividendShares(from, to);
@@ -132,7 +132,7 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
     ///      swallowed, except a flash-swap sell, which it refuses (`SellDuringFlashSwap`) and this passes on.
     function _swapBack(uint256 value) internal {
         uint256 g = gasleft();
-        try IPostGradTaxHandlerV3(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
+        try IGangTaxHandler(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
         catch (bytes memory reason) {
             if (bytes4(reason) == SellDuringFlashSwap.selector) revert SellDuringFlashSwap();
             if (g - g / 64 < SWAP_BACK_GAS && gasleft() <= g / 63) revert SwapBackOutOfGas();
@@ -143,7 +143,7 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
     function _syncDividendShares(address from, address to) internal {
         if (pair == address(0)) return; // before graduation the pad writes shares itself
         if (from == address(0) && to == address(0)) return;
-        IPostGradTaxHandlerV3(taxHandler).syncShares(address(this), from, to);
+        IGangTaxHandler(taxHandler).syncShares(address(this), from, to);
     }
 
     function _shouldTax(address from, address to) internal view returns (bool) {

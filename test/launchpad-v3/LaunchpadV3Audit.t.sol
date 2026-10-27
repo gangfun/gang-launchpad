@@ -8,7 +8,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
 contract SixDecimalQuoteV3 is ERC20("Six", "SIX") {
@@ -101,7 +101,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
     function test_audit_sellerEarnsNothingOfOwnSellTax() public {
         address t = _create(_tax(500, 500, 10_000, address(0)));
         vm.prank(agent);
-        pad.buy(t, 1 ether, 0); // first buy: no holders yet → dividend leg to the platform
+        pad.buy(t, 1 ether, 0);
         uint256 bal = IERC20(t).balanceOf(agent);
         vm.startPrank(agent);
         IERC20(t).approve(address(pad), bal);
@@ -111,8 +111,8 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         assertEq(divVault.pending(t, agent), 0, "no rebate of its own sell tax");
     }
 
-    /// @dev The other holders still earn the seller's sell tax.
-    function test_audit_sellTaxStillPaysOtherHolders() public {
+    /// @dev §19: a curve sell pays no tax, so no holder earns from it (the pool keeps C-F7: audit5 tests).
+    function test_audit_curveSellPaysNoHolder() public {
         address t = _create(_tax(500, 500, 10_000, address(0)));
         vm.prank(agent);
         pad.buy(t, 0.1 ether, 0);
@@ -124,7 +124,8 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         IERC20(t).approve(address(pad), bal);
         pad.sell(t, bal, 0);
         vm.stopPrank();
-        assertGt(divVault.pending(t, agent), before, "agent earns agent2's sell tax");
+        assertEq(divVault.pending(t, agent), before, "no curve sell tax to earn");
+        assertEq(before, 0, "nor from the curve buys");
         assertEq(divVault.shares(t, agent2), 0);
     }
 
@@ -139,7 +140,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         address user = makeAddr("fakeUser");
         fake.transfer(user, 1_000_000 ether); // from the "launchpad" (this test): untaxed
         vm.prank(user);
-        vm.expectRevert(TaxHandlerV3.UnknownToken.selector);
+        vm.expectRevert(GangTaxHandler.UnknownToken.selector);
         fake.transfer(fakePair, 100_000 ether); // a taxed sell into the fake pair → notifyTax refuses
         assertEq(handler.accruedTax(address(fake)), 0);
         assertEq(handler.accruedPlatformTax(address(fake)), 0);
@@ -187,7 +188,7 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         assertEq(handler.accruedTax(t), 0);
     }
 
-    /// @dev Merge (TaxRouterV3 + PostGradTaxHandlerV3 → TaxHandlerV3): owed recipient quote now sits in the same
+    /// @dev Merge (TaxRouterV3 + PostGradTaxHandlerV3 → GangTaxHandler): owed recipient quote now sits in the same
     ///      contract as the pool tax it sells. When that quote is itself a token the handler taxes (X), `process(X)`
     ///      must leave the owed X alone (owedTotalOf), so `release` still pays it in full.
     ///      Audit 4: a launch token can no longer be a quote at all; the create checks are mocked away here so the
@@ -212,13 +213,23 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.prank(agent);
         address y = pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
         vm.clearMockedCalls();
-        vm.prank(agent);
+        // §19: Y's curve charges no tax, so Y graduates first (one buyer, cap off) and its pool tax makes the debt
+        vm.prank(owner);
+        pad.setWalletCapEnabled(false);
+        vm.startPrank(agent);
         IERC20(x).approve(address(pad), type(uint256).max);
+        pad.buy(y, 20 ether, 0);
+        vm.stopPrank();
+        assertTrue(_graduated(y), "Y graduated");
+        assertEq(handler.owedOf(y), 0, "no curve tax: nothing owed yet");
+        _poolSell(y, agent, IERC20(y).balanceOf(agent) / 2);
+        assertGt(handler.accruedTax(y), 0, "Y pool tax accrued");
 
-        // the recipient cannot take X right now: Y's curve tax is booked as owed, held here in X
+        // the recipient cannot take X right now: Y's pool tax, sold for X, is booked as owed, held here in X
+        vm.roll(vm.getBlockNumber() + 1);
         vm.mockCallRevert(x, abi.encodeWithSelector(IERC20.transfer.selector, treasury), "");
-        vm.prank(agent);
-        pad.buy(y, 0.5 ether, 0);
+        vm.prank(keeper);
+        handler.process(y, type(uint256).max, 1);
         vm.clearMockedCalls();
         uint256 owed = handler.owedOf(y);
         assertGt(owed, 0, "owed in X");

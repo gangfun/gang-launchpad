@@ -7,7 +7,7 @@ import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 import {SkimMockPair} from "../mocks/SkimMockPair.sol";
@@ -253,7 +253,7 @@ contract SwapBackTest is LaunchpadV3Test {
         (address t,) = _dividendToken();
         _buyBacklog(t, 3);
         uint256 accrued = handler.accruedTax(t);
-        vm.mockCallRevert(address(handler), abi.encodeWithSelector(TaxHandlerV3.swapBack.selector), "boom");
+        vm.mockCallRevert(address(handler), abi.encodeWithSelector(GangTaxHandler.swapBack.selector), "boom");
         address seller = address(uint160(0xC0000));
         uint256 sold = IERC20(t).balanceOf(seller) / 2;
         uint256 got0 = quoteTok.balanceOf(seller);
@@ -422,9 +422,6 @@ contract SwapBackTest is LaunchpadV3Test {
         );
         vm.mockCallRevert(
             address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
-        );
-        vm.mockCallRevert(
-            address(divVault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused"
         );
         address a = address(uint160(0xB0000));
         vm.expectEmit(true, true, false, false, address(handler));

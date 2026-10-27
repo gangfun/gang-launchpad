@@ -12,10 +12,9 @@ import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
@@ -79,7 +78,7 @@ contract GangRouterTest is Test {
     function _deployV3() internal {
         QuoteRegistry reg = new QuoteRegistry(owner);
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault"));
-        TaxHandlerV3 handler = new TaxHandlerV3(owner, address(v3Vault), address(bucket), address(0));
+        GangTaxHandler handler = new GangTaxHandler(owner, address(v3Vault), address(bucket), address(0));
         v3 = new LaunchpadV3(
             owner,
             address(reg),
@@ -110,7 +109,7 @@ contract GangRouterTest is Test {
         QuoteRegistry reg = new QuoteRegistry(owner);
         SharedDividendVault vault = v3Vault;
         PlatformFeeBucket bucket = new PlatformFeeBucket(owner, makeAddr("feeVault2"));
-        HolderRewardHandler handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
+        GangTaxHandler handler = new GangTaxHandler(owner, address(vault), address(bucket), address(0));
         fair = new FairMintPad(
             owner,
             address(reg),
@@ -131,7 +130,7 @@ contract GangRouterTest is Test {
         bucket.setOperator(address(handler), true);
         fair.setMigrator(address(mig));
         fair.setAgentGate(true, address(agents));
-        handler.setPad(address(fair));
+        handler.setLaunchpad(address(fair));
         handler.setKeeper(owner);
         vm.stopPrank();
     }

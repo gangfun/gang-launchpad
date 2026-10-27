@@ -10,7 +10,7 @@ import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {FairMintPad} from "../src/fair-mint/FairMintPad.sol";
 import {FairToken} from "../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../src/gang/GangTaxHandler.sol";
 import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 
 /// @title FairMintTestnetE2E — one full sale on BSC testnet with the stack from DeployFairMint
@@ -51,7 +51,7 @@ contract FairMintTestnetE2E is Script {
         console.log("pair", pair);
 
         // 3. trading: deployer buys, minter 0 sells 55% (out), keeper processes, minter 5 claims
-        HolderRewardHandler handler = HolderRewardHandler(pad.taxHandler());
+        GangTaxHandler handler = GangTaxHandler(pad.taxHandler());
         address m0 = _minterAddr(0);
         vm.startBroadcast(deployerPk);
         _swap(address(quote), token, 3 ether, deployer);

@@ -8,8 +8,7 @@ import {SharedPlatform} from "../../../script/SharedPlatform.sol";
 import {QuoteRegistry} from "../../../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedPlatformFeeBucket} from "../../../src/common/SharedPlatformFeeBucket.sol";
 import {PlatformFeeBucket} from "../../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
-import {HolderRewardHandler} from "../../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3MainnetRefs as M} from "../../../config/LaunchpadV3DeployRefs.sol";
 
 /// @notice Review of the audit 5 fixes (AUDIT-BRIEF §18), deploy scripts on a BSC mainnet fork (no broadcast): the
@@ -82,10 +81,10 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
         assertEq(address(pb.burner()), address(PlatformFeeBucket(M.V2_PLATFORM_BUCKET).burner()));
         assertEq(pb.feeVault(), PlatformFeeBucket(M.V2_PLATFORM_BUCKET).feeVault());
         assertTrue(pb.keeperSet());
-        assertTrue(TaxHandlerV3(a.handler).keeperSet());
+        assertTrue(GangTaxHandler(a.handler).keeperSet());
         _reuse(a);
         DeployFairMint.Stack memory b = new DeployFairMint().run();
         _clear();
-        assertTrue(HolderRewardHandler(b.handler).keeperSet());
+        assertTrue(GangTaxHandler(b.handler).keeperSet());
     }
 }

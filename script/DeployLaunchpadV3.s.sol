@@ -8,11 +8,11 @@ import {QuoteRegistry} from "../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../src/gang/GangTaxHandler.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 
 /// @title DeployLaunchpadV3 — LaunchpadV3 (tax recipient) on BSC testnet (97) or mainnet (56)
-/// @notice New: TaxHandlerV3 (recipients, split, pool tax), LaunchpadV3, and — unless QUOTE_REGISTRY /
+/// @notice New: GangTaxHandler (recipients, split, pool tax), LaunchpadV3, and — unless QUOTE_REGISTRY /
 ///         PLATFORM_BUCKET / DIVIDEND_VAULT / MIGRATOR / TOKEN_DEPLOYER name the ones DeployFairMint made — the five
 ///         contracts shared with 打新 (see SharedPlatform; never the V2 ones). This core's vault floor is 10k. Quotes:
 ///         mainnet USDT has no fixed rate — a create prices it from USDT_REF_POOL (Pancake V3 USDT/WBNB 0.01%); testnet
@@ -23,7 +23,7 @@ import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQ
 ///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
 ///      accept), optional KEEPER, FEE_VAULT, BURNER, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
 ///      TOKEN_DEPLOYER + PEER_CORE (reuse), RECIPIENT + RECIPIENT_LABEL
-///      (listed in TaxHandlerV3; testnet default: a fixed demo treasury address).
+///      (listed in GangTaxHandler; testnet default: a fixed demo treasury address).
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 contract DeployLaunchpadV3 is SharedPlatform {
@@ -78,7 +78,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
 
         (s.vault, s.migrator, s.tokenDeployer) = _shared(deployer, factory);
         SharedDividendVault vault = SharedDividendVault(s.vault);
-        TaxHandlerV3 handler = new TaxHandlerV3(deployer, address(vault), s.bucket, dexRouter);
+        GangTaxHandler handler = new GangTaxHandler(deployer, address(vault), s.bucket, dexRouter);
         LaunchpadV3 pad = new LaunchpadV3(
             deployer, s.quoteRegistry, address(vault), s.bucket, address(handler), s.tokenDeployer, wbnb, factory
         );
@@ -115,14 +115,14 @@ contract DeployLaunchpadV3 is SharedPlatform {
         _log(s, owner, deployer);
     }
 
-    /// @dev Vault operator bound to this core: TaxHandlerV3 (dividend leg and pool-tax shares).
+    /// @dev Vault operator bound to this core: GangTaxHandler (dividend leg and pool-tax shares).
     function _ops(Stack memory s) internal pure returns (address[] memory ops) {
         ops = new address[](1);
         ops[0] = s.handler;
     }
 
     function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
-        TaxHandlerV3 handler = TaxHandlerV3(s.handler);
+        GangTaxHandler handler = GangTaxHandler(s.handler);
         LaunchpadV3 pad = LaunchpadV3(s.pad);
         _checkCore(s.quoteRegistry, s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (handler.launchpad() != s.pad) revert WiringCheck("handler.launchpad");

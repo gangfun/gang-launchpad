@@ -8,7 +8,7 @@ import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3} from "../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangTaxHandler} from "../src/gang/GangTaxHandler.sol";
 import {ILaunchpadV3} from "../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 
@@ -55,7 +55,7 @@ contract LaunchpadV3TestnetE2E is Script {
         quote = MockSPCXB(vm.envOr("TEST_QUOTE", T.TEST_QUOTE));
         blq = TestnetBlacklistQuote(vm.envAddress("BLACKLIST_QUOTE"));
         treasury = vm.envOr("RECIPIENT", T.DEMO_TREASURY);
-        TaxHandlerV3 router = pad.taxHandler();
+        GangTaxHandler router = pad.taxHandler();
 
         // create / curve trades are Agent-only: a fresh deployer registers a testnet Agent ID first
         ITestnetAgentId agentId = ITestnetAgentId(address(pad.agentIdRegistry()));
@@ -81,7 +81,7 @@ contract LaunchpadV3TestnetE2E is Script {
         console.log("pair", pair);
 
         // ---- A: pool buy + sell, leaving tax on the handler for the keeper
-        TaxHandlerV3 handler = pad.taxHandler();
+        GangTaxHandler handler = pad.taxHandler();
         vm.startBroadcast(deployerPk);
         quote.mint(deployer, 1 ether);
         _swap(address(quote), a, 0.5 ether);
