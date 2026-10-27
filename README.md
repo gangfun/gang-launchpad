@@ -59,15 +59,7 @@ npx skills add gangfun/gang-launchpad/skill
 
 npm i -g @binance/agentic-wallet
 npm i -g @gangfun/cli@latest
-```
-
-0.9.0 (the GangLaunchpad mainnet addresses built in) publishes to npm shortly; npm and the `gangfun/cli` git tip still
-have 0.8.0, which has no `gang v3` / `gang fair`. Check with `npm view @gangfun/cli version`; until it says 0.9.0,
-install it from this repo:
-
-```bash
-git clone --depth 1 https://github.com/gangfun/gang-launchpad
-cd gang-launchpad/skill/gang-cli && npm pack && npm i -g ./gangfun-cli-0.9.0.tgz
+# alternate (git tip): npm i -g github:gangfun/cli
 ```
 
 Sign in: `baw auth signin`.

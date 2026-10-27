@@ -40,9 +40,7 @@ The `gang` CLI reads the chain and builds calldata; all signing goes through the
 It never holds keys.
 
 Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g github:gangfun/cli`). Check with `npm ls -g @gangfun/cli`.
-`gang v3`, `gang fair` and pool trades need **0.9.0**, which publishes to npm shortly (npm and the git tip are still 0.8.0,
-which has no `gang v3` / `gang fair`). Until `npm view @gangfun/cli version` says 0.9.0, install it from source:
-`git clone --depth 1 https://github.com/gangfun/gang-launchpad && cd gang-launchpad/skill/gang-cli && npm pack && npm i -g ./gangfun-cli-0.9.0.tgz`.
+`gang v3`, `gang fair` and pool trades need **0.9.0** or later (on npm since 2026-10-27).
 
 ## Command Routing
 
