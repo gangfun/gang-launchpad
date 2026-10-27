@@ -184,7 +184,7 @@ contract Audit4SharedRegressionTest is SharedInfraTest {
         address v3tok = _v3Token(10_000);
         address fairTok = _fairSale();
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.startPrank(agent);
         vm.expectRevert(IGangLaunchpad.QuoteNotAllowed.selector);

@@ -40,6 +40,9 @@ contract CoreHandler is GangFixture {
     uint256 public owedEvents;
     uint256 public blqTokens;
     uint256 public blockedSet;
+    /// @dev §22: V3 tokens whose recipient is their own creator (no listing); the last one is blocked with treasury.
+    uint256 public selfRecipientTokens;
+    address public lastSelfRecipient;
     uint256 public mixedRounds; // same-WBNB rounds that touched both a live curve and a live sale
     /// @dev Spec §19 (no curve tax): curve trades that moved quote to the recipient / the vault / the tax handler, and
     ///      curve trades whose bucket accrual was not exactly 1% of the trade. Both must stay 0.
@@ -189,13 +192,21 @@ contract CoreHandler is GangFixture {
         buyBps = uint16(bound(buyBps, 100, 500));
         sellBps = uint16(bound(sellBps, 100, 500));
         dividendBps = noRecipient ? 10_000 : uint16(bound(dividendBps, 0, 10_000));
-        IGangLaunchpad.TaxConfig memory tax = _tax(buyBps, sellBps, dividendBps, noRecipient ? address(0) : treasury);
+        // §22: a third of the recipient tokens name their own (unlisted) creator instead of the listed treasury
+        bool self = !noRecipient && _pick(seed, 7, 3) == 0;
+        address recipient = noRecipient ? address(0) : self ? creator : treasury;
+        IGangLaunchpad.TaxConfig memory tax = _tax(buyBps, sellBps, dividendBps, recipient);
         if (_pick(seed, 5, 5) == 0) tax = _tax(0, 0, 0, address(0)); // untaxed GangToken
         vm.prank(creator);
         address t = pad.create("T", "T", "", "", q, address(0), tax);
         v3Tokens.push(t);
         kindAtCreate[t] = pad.kindOf(t);
         if (q == address(blq)) blqTokens++;
+        (,,, address r0) = pad.taxConfigOf(t);
+        if (r0 != address(0) && r0 == creator) {
+            selfRecipientTokens++;
+            lastSelfRecipient = creator;
+        }
         (uint16 b, uint16 s, uint16 d, address r) = pad.taxConfigOf(t);
         v3ConfigHash[t] = keccak256(abi.encode(b, s, d, r));
     }
@@ -316,6 +327,7 @@ contract CoreHandler is GangFixture {
 
     function blockRecipient(bool blocked) external action {
         blq.setBlocked(treasury, blocked);
+        if (lastSelfRecipient != address(0)) blq.setBlocked(lastSelfRecipient, blocked);
         if (blocked) blockedSet++;
     }
 
@@ -341,8 +353,8 @@ contract CoreHandler is GangFixture {
         address q = _pick(seed, 6, 3) == 0 ? address(quoteTok) : address(wbnb);
         IGangLaunchpad.MintConfig memory cfg = _mintCfg(
             bound(raise, 5 ether, 50 ether),
-            uint16(bound(capBps, 25, 50)),
-            uint16(bound(holdBps, 3_000, 8_000)),
+            uint16(bound(capBps, 25, 100)),
+            uint16(bound(holdBps, 6_000, 9_000)),
             uint16(bound(fees, 100, 300)),
             uint16(bound(fees >> 4, 100, 200))
         );
@@ -358,7 +370,7 @@ contract CoreHandler is GangFixture {
     }
 
     function _fairMintOne(address t, address who, uint256 shares, bool viaRouter) internal {
-        shares = bound(shares, 1, 120);
+        shares = bound(shares, 1, 240);
         address q = _saleQuote(t);
         vm.prank(who);
         if (!viaRouter) {
@@ -787,6 +799,7 @@ contract CoreInvariantsTest is Test {
         console2.log("calls / v3 tokens / graduations", h.calls(), h.v3TokenCount(), h.v3Graduations());
         console2.log("  owed events / sales / launches", h.owedEvents(), h.saleCount(), h.fairLaunches());
         console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
+        console2.log("  self-recipient V3 tokens", h.selfRecipientTokens());
         console2.log("  curve trades checked for no tax / same-WBNB mixed rounds", h.curveTrades(), h.mixedRounds());
     }
 }

@@ -283,8 +283,8 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     checkMeta() // a bad --website / --twitter / --description fails here, before any wrap / approve round or upload
     const raise = parseNum(fail, 'raise', opt('raise', '15'), 5, 50)
     if (flag('hours')) fail('--hours was removed: a fair-mint sale has no deadline and stays open until it fills')
-    const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.25, 0.5)
-    const holdPct = parseNum(fail, 'hold', opt('hold', '50'), 30, 80)
+    const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.25, 1)
+    const holdPct = parseNum(fail, 'hold', opt('hold', '60'), 60, 90)
     const mintFeePct = parseNum(fail, 'mint-fee', opt('mint-fee', '1'), 1, 3)
     const exitFeePct = parseNum(fail, 'exit-fee', opt('exit-fee', '1'), 1, 2)
     const devShares = parseIntIn(fail, 'shares', opt('shares', '1'), 1, Math.round(capPct * 200))

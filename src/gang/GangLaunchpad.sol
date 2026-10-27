@@ -72,10 +72,10 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     /// @dev QuoteRegistry overrides are "15 BNB worth of quote" (V2 graduation target); scaled to the raise.
     uint256 public constant REGISTRY_REF_BNB = PadCommon.REF_BNB;
     uint16 public constant MIN_CAP_BPS = FairLogic.MIN_CAP_BPS; // 0.25% of supply → ≥ 200 addresses
-    uint16 public constant MAX_CAP_BPS = FairLogic.MAX_CAP_BPS; // 0.5% of supply → ≥ 100 addresses
+    uint16 public constant MAX_CAP_BPS = FairLogic.MAX_CAP_BPS; // 1% of supply → ≥ 50 addresses
     uint16 public constant MIN_HOLD_BPS = FairLogic.MIN_HOLD_BPS;
     uint16 public constant MAX_HOLD_BPS = FairLogic.MAX_HOLD_BPS;
-    /// @dev Vault floor uses `<=`; must stay below 1 share × MIN_HOLD_BPS (15k tokens). = TAXED_MIN_SHARE.
+    /// @dev Vault floor uses `<=`; must stay below 1 share × MIN_HOLD_BPS (30k tokens). = TAXED_MIN_SHARE.
     uint256 public constant MIN_SHARE_BALANCE = PadCommon.MIN_SHARE;
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
@@ -240,9 +240,22 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         quoteToUser = CurveLogic.sell(_config, curves, _deps(), token, tokensIn, minQuoteOut);
     }
 
-    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting.
+    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting. The creator is not
+    ///         known here, so the recipient must be whitelisted; use `checkTaxConfigFor` when the creator itself is the
+    ///         recipient.
     function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason) {
-        reason = CurveLogic.checkTax(_deps(), tax);
+        reason = CurveLogic.checkTax(_deps(), address(0), tax);
+        ok = bytes(reason).length == 0;
+    }
+
+    /// @notice `checkTaxConfig` as `create` by `creator` sees it: the recipient may be `creator` itself (no listing
+    ///         needed) or a whitelisted address.
+    function checkTaxConfigFor(address creator, TaxConfig calldata tax)
+        external
+        view
+        returns (bool ok, string memory reason)
+    {
+        reason = CurveLogic.checkTax(_deps(), creator, tax);
         ok = bytes(reason).length == 0;
     }
 

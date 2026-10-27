@@ -44,12 +44,13 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … 
 gang upload-logo (--file ./avatar.png | --url <图片地址>)
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
 # 打新和 V3 共用一个内盘合约（GangLaunchpad）。--testnet 走 BSC 测试网；CLI 内置主网地址之前，主网要设 GANG_PAD
-gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+#   --cap 单地址上限 0.25–1%（1% 时至少 50 个地址），--hold 出局线 60–90%
 gang fair mint --token <addr> --shares <n> --testnet           # 另收该币的打新费（1–3%，归平台、不退）
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair status --token <addr> --testnet                      # 份数；发射后：是否出局、还能卖多少、待领奖励
 gang fair claim --token <addr> --testnet
-# LaunchpadV3 税收币（买 / 卖税各 1–5%，只在外盘收，用报价币打给白名单里的接收地址）— 和打新同一个内盘合约
+# LaunchpadV3 税收币（买 / 卖税各 1–5%，只在外盘收，用报价币打给接收地址：发币人自己，或白名单里的合作方）— 和打新同一个内盘合约
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang v3 buy --token <addr> --amount <报价币数量> --testnet      # 含内盘 1% 手续费（内盘不收税，税只在外盘收）
 gang v3 sell --token <addr> (--amount <枚数> | --all) --testnet

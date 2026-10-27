@@ -39,10 +39,12 @@ library FairLogic {
     uint256 internal constant STALE_STEP = 10;
     uint256 internal constant MIN_RAISE_BNB = 5 ether;
     uint256 internal constant MAX_RAISE_BNB = 50 ether;
+    /// @dev Per-wallet cap, % of TOTAL_SUPPLY: 0.25% (50 shares, ≥ 200 wallets) to 1% (200 shares, ≥ 50 wallets).
     uint16 internal constant MIN_CAP_BPS = 25;
-    uint16 internal constant MAX_CAP_BPS = 50;
-    uint16 internal constant MIN_HOLD_BPS = 3_000;
-    uint16 internal constant MAX_HOLD_BPS = 8_000;
+    uint16 internal constant MAX_CAP_BPS = 100;
+    /// @dev Hold line, % of the minted baseline: 60%–90%. 1 share × 60% = 30,000 tokens > MIN_SHARE (10,000).
+    uint16 internal constant MIN_HOLD_BPS = 6_000;
+    uint16 internal constant MAX_HOLD_BPS = 9_000;
     /// @dev 打新 tokens: 1% buy / 1% sell after launch; the handler gives holders HOLDER_SHARE (50%) of it.
     uint16 internal constant TAX_BPS = 100;
     uint16 internal constant HOLDER_SHARE_BPS = 5_000;
@@ -212,8 +214,8 @@ library FairLogic {
         if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) {
             return (false, "raiseBnb must be 5-50 BNB");
         }
-        if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 25-50 (0.25%-0.5%)");
-        if (cfg.holdBps < MIN_HOLD_BPS || cfg.holdBps > MAX_HOLD_BPS) return (false, "holdBps must be 3000-8000");
+        if (cfg.capBps < MIN_CAP_BPS || cfg.capBps > MAX_CAP_BPS) return (false, "capBps must be 25-100 (0.25%-1%)");
+        if (cfg.holdBps < MIN_HOLD_BPS || cfg.holdBps > MAX_HOLD_BPS) return (false, "holdBps must be 6000-9000");
         if (cfg.mintFeeBps < MIN_FEE_BPS || cfg.mintFeeBps > MAX_MINT_FEE_BPS) {
             return (false, "mintFeeBps must be 100-300 (1%-3%)");
         }

@@ -134,7 +134,7 @@ contract GangRouterTest is Test {
 
     function _fairSale() internal returns (address token) {
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
         token = fair.create("Fair", "FAIR", "", "", address(0), address(0), cfg, 1);

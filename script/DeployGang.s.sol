@@ -350,7 +350,8 @@ contract DeployGang is Script {
 
     /// @dev What only the real GangLaunchpad answers: a stand-in with the same setters and views (the old deploy-time
     ///      stub) fails here. checkTaxConfig runs CurveLogic's checkTax (a library call) on one valid and one invalid
-    ///      config.
+    ///      config; checkTaxConfigFor proves the creator-as-recipient rule and the 打新 bounds are the launch ones
+    ///      (AUDIT-BRIEF §22).
     function _checkRealPad(IGangPad pad) internal view {
         try pad.CURVE_SUPPLY() returns (uint256 v) {
             if (v != CURVE_SUPPLY) revert WiringCheck("pad.CURVE_SUPPLY");
@@ -377,6 +378,20 @@ contract DeployGang is Script {
         } catch {
             revert WiringCheck("pad.checkTaxConfig");
         }
+        // §22: the creator may be its own recipient without a listing (an address no one lists)
+        address self = address(uint160(uint256(keccak256("gang.deploy.creator-recipient"))));
+        IGangLaunchpad.TaxConfig memory own =
+            IGangLaunchpad.TaxConfig({buyTaxBps: 300, sellTaxBps: 300, dividendBps: 0, recipient: self});
+        try pad.checkTaxConfigFor(self, own) returns (bool ok, string memory reason) {
+            if (!ok || bytes(reason).length != 0) revert WiringCheck("pad.checkTaxConfigFor");
+        } catch {
+            revert WiringCheck("pad.checkTaxConfigFor");
+        }
+        // §22: 打新 per-wallet cap 0.25%–1%, hold line 60%–90%
+        if (
+            pad.MIN_CAP_BPS() != 25 || pad.MAX_CAP_BPS() != 100 || pad.MIN_HOLD_BPS() != 6_000
+                || pad.MAX_HOLD_BPS() != 9_000
+        ) revert WiringCheck("pad fair bounds");
     }
 
     /// @dev Both external libraries are linked and live: a delegatecall into an address without code returns nothing,

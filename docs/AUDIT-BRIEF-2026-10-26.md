@@ -2,6 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9；§19 记 V3 内盘不收税，§20 记把两个核心合并成一个内盘（GangLaunchpad）的改动，§1–§9 仍按合并前的两个核心写，以 §20 为准
 - 读者：外部审计方
+- **2026-10-27 上线前 §22：参数调整**（V3 接收地址可以是发币人自己；打新出局线 60%–90%、单地址上限 0.25%–1%）。分支 `feat/launch-params`（基于 `main` `36d55df`），改动列在 §22。
 - **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
 - 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在 §18 的修复提交（父提交 `4857118`；`98cab5c` 之后到 `4857118` 没有改动 `src/`）：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复，§18 对第五轮修复的 review。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`、`98cab5c`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
@@ -81,7 +82,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 ```
 
 - 每个币总量 10 亿：5 亿分成 10,000 份打新（每份 5 万枚），5 亿进池子。开盘价等于打新价。
-- dev 在平台上下限内设：募集额 5–50 BNB 等值、单地址上限 0.25%–0.5%、出局线 30%–80%、打新费 1%–3%、撤出费 1%–2%。创建时 dev 至少自己打 1 份。没有截止时间。
+- dev 在平台上下限内设：募集额 5–50 BNB 等值、单地址上限 0.25%–1%、出局线 60%–90%（§22 起；之前为 0.25%–0.5%、30%–80%）、打新费 1%–3%、撤出费 1%–2%。创建时 dev 至少自己打 1 份。没有截止时间。
 - 「进展」计时：创建者那一笔记 `progressAt`、`markSold = sold`；之后只有 `sold ≥ markSold + STALE_STEP`（10 份）的打新才重启计时。`block.timestamp ≥ progressAt + 7 天` 时撤出费为 0（`exitFeeBpsOf`）。
 - 报价币：WBNB，或任意 18 位小数的 ERC-20（`_requireQuote`，低级 `staticcall` 读 `decimals`）；拒绝转账扣费的报价币（`_pullExact`）和本平台发射的币（`TokenDeployer.isLaunchToken` 或已在分红合约登记）。QuoteRegistry 里设了固定换算额的币按固定额锁定募集额，其它按发币人自选的参考池换算（Pancake V2 池读储备，V3 池读 30 分钟 TWAP、观测不够时读现价，非 WBNB 对手币经 owner 设的中转池到 WBNB，最小深度 1 BNB）。
 - 合格持有人的权重 = `min(当前余额, 发射时基准)`；余额一旦低于 `基准 × 出局线` 就永久出局。分红在交税那一刻按交易前的份额记账：卖家按卖出前的份额分到自己这笔卖出的税（即使这笔让它出局），买家分不到自己这笔买入的税。
@@ -99,7 +100,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 ```
 
 - 税率、分红比例、接收地址都在创建时写死（代币里的税率是 immutable，handler 里的 `routeOf` 只能登记一次）。
-- 接收地址必须在 TaxHandlerV3 的白名单里；下架只影响之后新发的币。
+- 接收地址可以是发币人自己（不需要进白名单，§22），否则必须在 TaxHandlerV3 的白名单里；下架只影响之后新发的币。
 - 无税币等同 V2 无税轨（只收 1% 内盘手续费）。
 - 报价币规则与打新相同（§3.1）；毕业额按固定换算额或参考池在创建时锁定。V3 核心第一次拉报价币时按到账校验，转账扣费的报价币直接 `FeeOnTransferQuote`。
 - 内盘不收税（§19），只按成交后的余额写份额，毕业后外盘交税时按这些份额记账。外盘按交易前的份额记账：卖家拿不回自己的卖出税，买家分不到自己的买入税。
@@ -892,3 +893,86 @@ balanceOf(pad, q) == Σ_未发射 sale (sold × sharePrice) + owedFee[q] + Σ_�
 - **keeper**：V3 的份额补写循环要加 `kindOf(t) == 1`，打新的加 `kindOf(t) == 2`，否则会按 V3 规则判断打新币。
 - **CLI**：新环境变量 `GANG_PAD` / `GANG_TESTNET_PAD`，旧的 `GANG_V3_PAD` / `GANG_FAIR_PAD` 等仍可用；`gang v3 …` 拿到打新币时（或反过来）按 `kindOf` 提示用另一个命令；识别 `Untaxed`、`NotReclaimable`、`NotLocked`、`WrongKind`。
 - **网站**：不用改代码，只通过索引器拿配置。
+
+---
+
+## 22. 上线前参数调整（2026-10-27）
+
+> 分支 `feat/launch-params`，基于 `main` `36d55df`。§21 留给可升级路由分支（`feat/upgradeable-router`），本节不涉及 `src/launchpad-v2/`、`src/router/` 和部署脚本的路由部分。主网尚未部署，所以三项改动都只影响将来部署的合约；测试网第 8 套仍是旧参数，要重新部署才会生效。
+
+### 22.1 三项改动
+
+| # | 改动 | 合约 | 之前 | 之后 |
+|---|---|---|---|---|
+| 1 | V3 税收币的接收地址可以是发币人自己 | `CurveLogic.checkTax`、`GangLaunchpad.checkTaxConfig` / 新增 `checkTaxConfigFor` | 接收地址必须在 `GangTaxHandler` 白名单里 | 白名单里的地址，**或者等于发币人**（`create` 的 `msg.sender`，不需要进白名单）；其他第三方地址仍然拒绝 |
+| 2 | 打新出局线范围 | `FairLogic.MIN_HOLD_BPS` / `MAX_HOLD_BPS` | 3,000–8,000（30%–80%） | 6,000–9,000（60%–90%） |
+| 3 | 打新单地址上限范围 | `FairLogic.MAX_CAP_BPS`（`MIN_CAP_BPS` 不变） | 25–50（0.25%–0.5%） | 25–100（0.25%–1%） |
+
+**理由**（产品决定）：
+
+1. 很多发币人没有合作方金库，只想把税收给自己；以前只能先找平台上白名单，现在发币时直接填自己的地址。第三方地址仍要白名单，防止发币人把税指向任意别人的地址（例如冒充合作方）。
+2. 出局线是「打新进来的人要一直拿着多少才继续分红」。30% 太松：卖掉七成仍能分红。改成 60%–90%，分红更多留给真正持有的人。
+3. 上限 0.5% 时至少要 100 个地址才能打满，小项目凑不齐；放到 1% 时 50 个地址就能打满。下限 0.25%（至少 200 个地址）不变。
+
+### 22.2 改动 1：发币人当接收地址
+
+```solidity
+// CurveLogic
+function checkTax(Deps memory d, address creator, TaxConfig calldata tax) public view returns (string memory);
+//   … 前面的检查不变（税率 1%–5% 或都为 0；dividendBps ≤ 10000；recipient = 0 时 dividendBps 必须 10000）
+//   if (tax.recipient != creator && !handler.isListed(tax.recipient)) return "recipient not listed";
+// create: checkTax(d, msg.sender, tax)
+
+// GangLaunchpad
+function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason);          // 0x68c9f7e0，不变
+function checkTaxConfigFor(address creator, TaxConfig calldata tax) external view returns (bool ok, string memory reason); // 0x1020b11c，新增
+```
+
+- `checkTaxConfig(tax)` 的 selector、参数和返回值不变，语义改为「不知道发币人是谁、只认白名单」（内部传 `creator = 0`）。对接收地址在白名单里、或为 0 的配置，结果和以前完全一样；只有「接收地址 = 发币人、且不在白名单」这一种配置，它返回 `recipient not listed` 而 `create` 会通过。部署脚本的自检（`DeployGang._check` 调 `checkTaxConfig` 一好一坏两个配置）不受影响。
+- `creator = 0` 不会误放行：接收地址为 0 的情况在前一个分支已经处理（必须分红 100%），走到白名单检查时接收地址一定非 0，不会等于 0。
+- 「发币人」就是 `create` 的 `msg.sender`。库由 pad `delegatecall`，`msg.sender` 保持为调用 pad 的地址；pad 没有替别人创建的入口（路由只有 `buyFor` / `mintFor`），所以只能把税指向自己，不能借别人的身份放行。一个中转合约替别人调 `create` 时，pad 看到的发币人是中转合约：它只能填自己，填调用它的那个人会被拒（`test_creatorAsRecipient_relayCannotImpersonate`）。合约当发币人时（自己持有 Agent ID）可以填自己，外盘税用 ERC-20 报价币打给它，不依赖它能不能收原生 BNB。发币人仍要过 Agent 准入（准入开启时）。
+- 有分红时的其他检查（`VaultFloorTooHigh`：金库门槛被调高到 `TAXED_MIN_SHARE` 以上时拒绝）不变，和接收地址是谁无关。
+- `GangTaxHandler` 不改：`register` 本来就不检查白名单，只登记 `routeOf[token].recipient`；外盘税分账、推送失败记 `owedOf`、任何人 `release` 都按登记的地址打款，对发币人地址同样适用（测试见 22.5）。白名单的 `delist` 对发币人没有意义（它不在白名单里）；已有的币照常给登记的地址打款。
+- 没有合格持有人时持有人那份并入接收地址（K-10），接收地址是发币人时就并给发币人。这是原有规则，发币人当接收地址只是让这种情况更常见。
+- 信任面的变化：持币人需要知道税流向发币人本人。`TaxConfigured(token, …, recipient)` 和 `Created(token, creator, …)` 同一笔交易里发出，索引器可以直接判断 `recipient == creator`，网站应标出「接收地址 = 发币人」。
+
+### 22.3 改动 2 和 3：打新的范围
+
+- `checkConfig` 的失败原因相应改为 `capBps must be 25-100 (0.25%-1%)`、`holdBps must be 6000-9000`（服务端和网站没有按原文匹配这两句，已 grep 核对）。
+- 份额数：`capShares = capBps × 10 亿 ÷ 10,000 ÷ 50,000`，1% → 200 份（1,000 万枚，等于 V3 的单地址 1% 上限），0.25% → 50 份。`capShares`、`Position.shares`、`sold` 都是 `uint16`，200 远小于上限。最少参与地址数 = 10,000 ÷ capShares：1% → 50 个，0.5% → 100 个，0.25% → 200 个。`devShares` 上限跟着到 200（`devShares must be 1..cap`）。
+- 出局线与金库门槛：门槛是 `PadCommon.MIN_SHARE = 10,000` 枚，余额要严格大于它才有份额。1 份 = 50,000 枚，最低出局线 60% = 30,000 枚 > 10,000（以前 30% 时是 15,000），所以没出局的地址永远不会被门槛挡掉。最高出局线 90%：卖掉一成多一点就出局。
+- 依赖上限 / 出局线的其他地方都不变：`STALE_STEP` 仍是 10 份（上限最低 50 份，能达到）；最后一笔截到剩余份数；发射时 pad 持有恰好 `LP_SUPPLY` 和这个 sale 的本金；每个 sale 在创建时把 `capShares` / `holdBps` 写进自己的存储，常量只影响新 sale。
+- 打得越集中，一伙人凑满 50 个 Agent 钱包打满的门槛越低；每个钱包仍需要 Agent ID，打新价对所有人相同，开盘价等于打新价，这一点没有变化。
+
+### 22.4 合约大小（`forge build --sizes`，EIP-170 上限 24,576 B）
+
+| 合约 | 改前（`36d55df`） | 改后 | 余量 |
+|---|---|---|---|
+| GangLaunchpad | 13,494 | 13,651 | 10,925 |
+| CurveLogic | 11,140 | 11,160 | 13,416 |
+| FairLogic（`--sizes` 表里没有，量 `out/` 里的 `deployedBytecode`） | 11,015 | 11,005 | 13,571 |
+| GangTaxHandler | 22,214 | 22,214（不改） | 2,362 |
+
+### 22.5 测试
+
+| 文件 | 新增 / 改动 |
+|---|---|
+| `test/launchpad-v3/LaunchpadV3.t.sol` | 新增 `test_creatorAsRecipient_createsAndIsPaidAfterGraduation`（不在白名单的发币人当接收地址能创建；`checkTaxConfigFor` 通过、`checkTaxConfig` 返回 `recipient not listed`；毕业后外盘买入的税：平台拿成交额 0.5%，其余全部按报价币打给发币人）、`test_creatorAsRecipient_withDividend_splitByShare`（分红 40%：持有人 / 平台 / 发币人三份加起来等于换出的报价币，持有人 : 发币人 = 4 : 6）、`test_creatorAsRecipient_owedAndRelease`（发币人收不了报价币时记欠款，任何人 `release` 后打给发币人而不是调用者）、`test_creatorAsRecipient_thirdPartyStillListedOnly`（非白名单第三方被拒；别的发币人的地址也被拒；接收地址为 0 仍要求分红 100%；税率 / 分红上限等检查对发币人地址照旧） |
+| `test/fair-mint/FairMint.t.sol` | `test_create_rejectsOutOfBounds` 改为 59.99% / 90.01% 出局线、1.01% 上限被拒；新增 `test_launchParams_holdLineBounds`（60% / 90% 能创建，`MIN_HOLD × 1 份 > MIN_SHARE_BALANCE`）、`test_launchParams_capBounds`（1% = 200 份 = 总量 1%，dev 首笔 200 份能、201 份被拒，0.25% = 50 份）、`test_launchParams_fiftyWalletsAtOnePercentFill`（上限 1%、出局线 90%：50 个地址各 200 份打满发射，本金全部进池子；卖到正好 90% 仍有份额，再卖一点就出局）、`test_launchParams_oneShareAtSixtyPercentStillEarns`（1 份卖到 60% = 30,000 枚仍有 30,000 份额，再少 1 wei 出局） |
+| `test/invariant/CoreInvariants.t.sol` | `fairCreate` 的范围改为上限 25–100、出局线 6,000–9,000；`fairMint` 的份数上限 120 → 240（覆盖 200 份的上限边界） |
+| `test/merge/FairMixedIsolation.t.sol` | 随机交替 fuzz 的第二个 sale 按种子取上限 25–100、出局线 6,000–9,000；打新份数上限 120 → 240 |
+| `test/merge/MergeGuards.t.sol` | `test_merge_selectors` 新增 `checkTaxConfigFor` 的 selector `0x1020b11c`，原 `checkTaxConfig` 的 `0x68c9f7e0` 仍按原样钉住；用 3,000 / 5,000 出局线的配置改为 6,000 |
+| `test/launchpad-v3/LaunchpadV3.t.sol`（审查补充） | `test_creatorAsRecipient_relayCannotImpersonate`（中转合约替人创建时不能填那个人；填中转合约自己可以，`curves.creator` = 中转合约）、`test_creatorAsRecipient_contractCreatorPaidInQuote`（拒收 BNB 的合约发币人照样按报价币收到）、`test_creatorAsRecipient_blockedCreatorDoesNotBlockSell`（报价币拉黑发币人：用户在池子里的卖单照常成交，卖单顺带换块时发币人那份记成欠款，解除后任何人 `release` 打给发币人）、`test_creatorAsRecipient_delistedCreatorStillSelf`（先列入再下架的发币人照样能填自己；不带 creator 的 view 拒绝） |
+| `test/fair-mint/FairMint.t.sol`（审查补充） | `test_launchParams_lastFillTruncatedAtCap200`（上限 200 份：49 × 200 + dev 150 后最后一笔截到 50 份，`minShares` 200 回滚，只按 50 份收钱，打满发射）、`test_launchParams_staleNotRestartedByRemint200`（上限 200 份下全部撤出再打回不重启停滞计时，再多 10 份才重启）、`test_launchParams_eligibleShareAt90`（90% 线两侧 `eligibleShare` 与金库份额一致：正好 90% 是 900 万，再少 1 wei 为 0 并出局） |
+| `test/invariant/CoreInvariants.t.sol`（审查补充） | `v3Create` 里三分之一有接收地址的币改为「接收地址 = 发币人」（不在白名单），`blockRecipient` 同时拉黑最近一个这样的发币人，所以欠款 / `release` 的路径也覆盖发币人地址；`invariant_v3ConfigImmutable`、`invariant_handlerOwedBacked` 等原样覆盖 |
+| `script/DeployGang.s.sol` `_checkRealPad` | 部署自检新增：`MIN_CAP_BPS == 25`、`MAX_CAP_BPS == 100`、`MIN_HOLD_BPS == 6000`、`MAX_HOLD_BPS == 9000`，`checkTaxConfigFor(x, 3% / 3%、分红 0、接收地址 = x)` 对一个没人列入的地址 x 返回 ok；`IGangPad` 补上这四个常量的 getter。路由部分没动 |
+| 其他 | 所有固定用出局线 5,000 的打新配置（夹具、`SharedInfra`、`Audit4Regression`、`GangRouter`、`PadMergeGuards`、`FairMintFork`、`QuoteRefPoolFork`，测试网脚本 `GangTestnetE2E` / `RouterTestnetSmoke`）改为 6,000，断言不变（原来卖到 49% / 45% 的出局用例在 60% 线下同样出局） |
+
+**结果**（最终代码）：`forge fmt --check` 通过；`forge build --sizes` 见 22.4，全部 < 24,576 B；`forge test`（不设 RPC）881 个全过；主网分叉（48.club）`test/fork/*` 13 个、`test/fair-mint/FairMintFork.t.sol` 5 个全过；`test/audit5/**`（`--threads 1`）206 个里 203 个一次通过，剩下 3 个都是 `ReviewFairForkTest` 的 `not supported`（48.club 只留近期状态，和 §19、§20 的情况相同），该套件换 blastapi 重跑 7 个全过；部署脚本测试（`--threads 1`，`--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B1…bDb3`）`DeployScriptsFork` 16 + `DeployReview` 20 + `KeeperSmartCollectFork` 1 全过（含新的 `_checkRealPad` 自检）；不变量 200 × 80：`CoreInvariants` 10 条（16,000 次调用，含「接收地址 = 发币人」的创建）、`VaultUnitsInvariant` 3 条（16,000 次调用）全过，跑完 inline 配置已还原为 24 × 50 / 48 × 120。没有往任何链广播。
+
+### 22.6 对外接口与跟进
+
+- **新 view**：`GangLaunchpad.checkTaxConfigFor(address creator, (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient) tax) view returns (bool ok, string reason)`，selector `0x1020b11c`。服务端 / 网站做发币预检查时要用它，否则发币人自己当接收地址会被误报 `recipient not listed`。
+- **不变**：所有事件、`create` 的两个重载、`checkTaxConfig` / `checkConfig` / `taxConfigOf` 的 selector 和返回布局；常量 getter（`MIN_HOLD_BPS` 等）名字不变，取值变了。
+- **CLI**（本分支已改）：`gang v3 create` 用 `checkTaxConfigFor(发币钱包, tax)` 预检查（只有内盘没有这个函数——空回滚或空返回——时才退回 `checkTaxConfig`，其他错误照常报出），`gang v3 info` 在接收地址等于发币人时输出 `recipientIsCreator: true` 和 `recipientNote`（接收地址是发币人自己，未经平台审核），`--recipient` 提示改为「你自己的地址，或白名单里的合作方」，填自己时 `recipientLabel` 显示 `you (the creator)`；`gang fair create` 的 `--cap` 0.25–1、`--hold` 60–90，`--hold` 默认 50 → 60（旧默认超出新范围），`--cap` 默认 0.5 不变。
+- **网站**（gang-web-legacy，不在本分支）：`V3Recipient.jsx`（接收地址 = 发币人时的展示）已在 `feat/creator-recipient` 上改好；`i18n.jsx` 里 `fm_step_create`（「单地址 0.1–0.5% … 出局线 30–80%」）、`v3_lead` / `v3_step_create`（「接收地址必须在平台白名单里」）的文案以那个分支为准核对。

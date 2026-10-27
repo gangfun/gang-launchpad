@@ -183,9 +183,9 @@ abstract contract GangFixture is Test {
         });
     }
 
-    /// @dev Default 打新: 10 BNB raise, 0.5% cap (50 shares), 50% hold line, 1% mint fee, 1% exit fee.
+    /// @dev Default 打新: 10 BNB raise, 0.5% cap (100 shares), 60% hold line, 1% mint fee, 1% exit fee.
     function _createFair(address creator, address quote, uint256 devShares) internal returns (address t) {
-        t = _createFair(creator, quote, _mintCfg(10 ether, 50, 5_000, 100, 100), devShares);
+        t = _createFair(creator, quote, _mintCfg(10 ether, 50, 6_000, 100, 100), devShares);
     }
 
     function _createFair(address creator, address quote, IGangLaunchpad.MintConfig memory cfg, uint256 devShares)

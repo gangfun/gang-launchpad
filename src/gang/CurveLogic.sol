@@ -57,7 +57,7 @@ library CurveLogic {
     ) external returns (address token) {
         if (c.migrator == address(0)) revert IGangLaunchpad.MigratorNotSet();
         _requireAgent(c, msg.sender);
-        string memory reason = checkTax(d, tax);
+        string memory reason = checkTax(d, msg.sender, tax);
         if (bytes(reason).length != 0) revert IGangLaunchpad.BadTaxConfig(reason);
 
         if (quote == address(0)) quote = d.wbnb;
@@ -101,8 +101,10 @@ library CurveLogic {
         IGangPadHandler(d.taxHandler).register(token, quote, tax.recipient, tax.dividendBps, KIND);
     }
 
-    /// @dev Empty string = valid.
-    function checkTax(IGangLaunchpad.Deps memory d, IGangLaunchpad.TaxConfig calldata tax)
+    /// @dev Empty string = valid. The recipient is the creator itself (no listing needed) or a whitelisted address
+    ///      (2026-10-27, AUDIT-BRIEF §22). `creator` = 0 means "unknown": only the whitelist counts (the pad's old
+    ///      `checkTaxConfig(tax)`); a zero recipient never matches it, the branch above handles that case.
+    function checkTax(IGangLaunchpad.Deps memory d, address creator, IGangLaunchpad.TaxConfig calldata tax)
         public
         view
         returns (string memory)
@@ -122,7 +124,9 @@ library CurveLogic {
             if (tax.dividendBps != PadCommon.BPS) return "no recipient: dividendBps must be 10000";
             return "";
         }
-        if (!IGangPadHandler(d.taxHandler).isListed(tax.recipient)) return "recipient not listed";
+        if (tax.recipient != creator && !IGangPadHandler(d.taxHandler).isListed(tax.recipient)) {
+            return "recipient not listed";
+        }
         return "";
     }
 

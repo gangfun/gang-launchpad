@@ -259,7 +259,7 @@ contract GangTestnetE2E is Script {
                 address(quote),
                 address(0),
                 IGangLaunchpad.MintConfig({
-                    raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
+                    raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100
                 }),
                 1
             );
@@ -285,7 +285,7 @@ contract GangTestnetE2E is Script {
         if (pad.status(f) != IGangLaunchpad.Status.Launched) revert Check("not launched");
         console.log("launched, pair", IGangTokenPair(f).pair());
 
-        // pool buy; minter 0 sells 55% of its 100 shares (below the 50% line: out for good); keeper; minter 5 claims
+        // pool buy; minter 0 sells 55% of its 100 shares (45% left, below the 60% line: out for good); keeper; minter 5 claims
         address m0 = _minterAddr("gang-fair-mint-testnet", 0);
         if (!handler.isOut(f, m0)) {
             vm.startBroadcast(deployerPk);
