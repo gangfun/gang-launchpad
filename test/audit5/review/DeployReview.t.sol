@@ -61,11 +61,13 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
         vm.stopPrank();
     }
 
-    /// KEEPER overrides the default on both the handler and the bucket.
+    /// KEEPER (with the explicit KEEPER_OVERRIDE_OK=true on mainnet) overrides the default on both the handler and
+    /// the bucket.
     function test_review_deploy_keeperOverride() public {
         if (!forked) return;
         address k = address(0x3333);
         vm.setEnv("KEEPER", vm.toString(k));
+        vm.setEnv("KEEPER_OVERRIDE_OK", "true");
         DeployGang.Stack memory s = _deploy();
         _clear();
         assertEq(SharedPlatformFeeBucket(s.bucket).keeper(), k);

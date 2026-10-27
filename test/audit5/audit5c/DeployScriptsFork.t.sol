@@ -14,6 +14,7 @@ import {GangRouter} from "../../../src/router/GangRouter.sol";
 import {IGangPad} from "../../../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../../../src/gang/interfaces/IGangTaxHandlerOps.sol";
+import {StubGangLaunchpad} from "./mocks/StubGangLaunchpad.sol";
 
 /// @dev Exposes DeployGang's config, self-check and mainnet gate to the tests.
 contract DeployGangHarness is DeployGang {
@@ -25,8 +26,16 @@ contract DeployGangHarness is DeployGang {
         _check(s, c);
     }
 
+    function checkPadOnly(Stack memory s, Cfg memory c) external view {
+        _checkPad(s, c);
+    }
+
     function gate(bool mainnet, bool broadcasting) external view {
         _mainnetGate(mainnet, broadcasting);
+    }
+
+    function padsLine(Stack memory s) external pure returns (string memory) {
+        return _padsLine(s);
     }
 }
 
@@ -75,7 +84,7 @@ contract DeployScriptsForkTest is Test {
         for (uint256 i; i < addrs.length; i++) {
             vm.setEnv(addrs[i], vm.toString(address(0)));
         }
-        string[3] memory flags = ["MAINNET_OWNER_IS_DEPLOYER", "GANG_MAINNET_OK", "NEW_MOCKS"];
+        string[4] memory flags = ["MAINNET_OWNER_IS_DEPLOYER", "GANG_MAINNET_OK", "NEW_MOCKS", "KEEPER_OVERRIDE_OK"];
         for (uint256 i; i < flags.length; i++) {
             vm.setEnv(flags[i], "false");
         }
@@ -217,6 +226,77 @@ contract DeployScriptsForkTest is Test {
         _breaks(s.quoteRegistry, abi.encodeCall(QuoteRegistry.setQuote, (M.USDT, true, 1)), "mainnet USDT listed");
         // ownership (C-F8): something left pending for another address
         _breaks(s.vault, abi.encodeWithSignature("transferOwnership(address)", x), "owner / pendingOwner");
+    }
+
+    /// The deploy-time stub (same setters and wiring views as the pad, no logic), wired exactly like the real pad,
+    /// must not pass the self-check: it has no CURVE_SUPPLY / MINT_SUPPLY / checkTaxConfig, nor the USDT library path.
+    function test_fork_deploy_checkRefusesTheStub() public {
+        if (!forked) return;
+        DeployGang.Stack memory s = _deploy();
+        vm.startPrank(deployer);
+        StubGangLaunchpad stub = new StubGangLaunchpad(
+            deployer, s.quoteRegistry, s.vault, s.bucket, s.handler, s.tokenDeployer, M.WBNB, M.PANCAKE_V2_FACTORY
+        );
+        stub.setRouter(s.router, true);
+        stub.setAgentGate(true, M.AGENT_ID_REGISTRY);
+        stub.setV3Factory(M.PANCAKE_V3_FACTORY);
+        stub.setBridgePool(M.USDT, M.USDT_WBNB_V3);
+        SharedMigrator(s.migrator).addLaunchpad(address(stub));
+        stub.setMigrator(s.migrator);
+        vm.stopPrank();
+        DeployGang.Stack memory fake = st;
+        fake.pad = address(stub);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad.CURVE_SUPPLY"));
+        h.checkPadOnly(fake, cf);
+        // and the full self-check refuses it too
+        vm.expectRevert();
+        h.check(fake, cf);
+        h.check(st, cf); // the real one still passes
+    }
+
+    /// Mainnet: MAINNET_OWNER_IS_DEPLOYER=true with an OWNER that is not the deployer is refused, not ignored.
+    function test_fork_deploy_ownerIsDeployerFlagNeedsTheDeployer() public {
+        if (!forked) return;
+        vm.setEnv("MAINNET_OWNER_IS_DEPLOYER", "true"); // OWNER stays the multisig
+        DeployGangHarness g = new DeployGangHarness();
+        vm.expectRevert(DeployGang.OwnerNotDeployer.selector);
+        g.cfgFor(deployer);
+        _clear();
+    }
+
+    /// Mainnet: the keeper is 0xB6f1…cFc7 unless KEEPER_OVERRIDE_OK=true; TWAP_WINDOW has a 600 s floor.
+    function test_fork_deploy_keeperPinnedAndTwapFloor() public {
+        if (!forked) return;
+        DeployGangHarness g = new DeployGangHarness();
+        assertEq(g.cfgFor(deployer).keeper, M.KEEPER, "default keeper");
+        address other = address(0x1234);
+        vm.setEnv("KEEPER", vm.toString(other));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.KeeperNotDefault.selector, other));
+        g.cfgFor(deployer);
+        vm.setEnv("KEEPER_OVERRIDE_OK", "true");
+        assertEq(g.cfgFor(deployer).keeper, other, "explicit override");
+        _clear();
+        vm.setEnv("TWAP_WINDOW", "599");
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.TwapWindowTooShort.selector, uint32(599)));
+        g.cfgFor(deployer);
+        vm.setEnv("TWAP_WINDOW", "600");
+        assertEq(g.cfgFor(deployer).twapWindow, 600);
+        _clear();
+    }
+
+    /// The keeper line is exactly `PADS=gang:PAD(at)BLOCK`; a re-run without GANG_PAD_BLOCK prints no start block.
+    function test_fork_deploy_padsLineAndRerunWithoutBlock() public {
+        if (!forked) return;
+        DeployGang.Stack memory s = _deploy();
+        assertGt(s.padBlock, 0);
+        assertEq(
+            h.padsLine(s), string.concat("PADS=gang:", vm.toString(s.pad), "@", vm.toString(s.padBlock)), "PADS line"
+        );
+        _rerunEnv(s); // GANG_PAD_BLOCK stays unset (0)
+        DeployGang.Stack memory again = new DeployGang().run();
+        _clear();
+        assertEq(again.padBlock, 0);
+        assertEq(h.padsLine(again), "", "no @0 line");
     }
 
     // ---------------------------------------------------------------- OWNER, re-run, mainnet gate

@@ -154,6 +154,8 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
     function exitFeeBpsOf(address token) external view returns (uint256);
     function status(address token) external view returns (Status);
 
+    function CURVE_SUPPLY() external view returns (uint256);
+    function MINT_SUPPLY() external view returns (uint256);
     function TOTAL_SHARES() external view returns (uint256);
     function TOKENS_PER_SHARE() external view returns (uint256);
     function MIN_SHARE_BALANCE() external view returns (uint256);

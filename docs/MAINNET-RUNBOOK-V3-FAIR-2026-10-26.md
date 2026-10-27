@@ -4,7 +4,7 @@
 - **2026-10-27 晚：合约合并（审计说明 §20，规格 `docs/SPEC-GANG-MERGED-2026-10-27.md`）**。V3 和打新合成一个内盘 `GangLaunchpad`（外加两个外部库 `CurveLogic` / `FairLogic`）、一个外盘处理合约 `GangTaxHandler`、一种代币 `GangToken`、一个 `GangRouter`。本手册 §0、§2–§9 已按合并后的结构改写；**§1 部署步骤由部署脚本分支（`feat/merge-scripts`）改写，以它为准**。§2 自检里的变量名以 §1 脚本的输出为准。
 - **2026-10-27 下午：V3 内盘不收税（§19，审计说明 §19）**。部署的是含这项改动的合约（分支 `feat/v3-no-curve-tax`，合入 `main` 后以 `main` 为准）；部署步骤、接线、参数都不变。
 - 代码：gang-launchpad，合约冻结在审计说明 §18 的修复提交（方案 A 合并 + 第四轮内部审计修复 + 外盘税卖出时自动小额换 + 按税产生时记账 + 第五轮内部审计修复及其 review；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §15–§18）。合入 `main` 后以 `main` 为准
-- 服务端 / keeper：gangfun-server，`keeper/` 以分支 `feat/keeper-ops` 为准（合入 `main` 后以 `main` 为准）
+- 服务端 / keeper：gangfun-server，索引器和 `keeper/` 以分支 `feat/one-pad` 为准（它才支持合并内盘和 keeper 的 `PADS=`；合入 `main` 后以 `main` 为准）
 - 链：BSC 主网（chainId 56）
 - 谁做：部署钱包跑脚本；多签签 §3 的交易；服务端 / keeper 由能上服务器的人改 env
 
@@ -51,13 +51,15 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 set -a; . ~/Desktop/gang-mainnet.env; set +a   # 只放 DEPLOYER_PRIVATE_KEY；不要 echo
 export OWNER=0x<owner>                       # 主网必须给；不给回滚 OwnerRequired
 # 2026-10-27 首发：0x4EEd…19d3 既部署又持有 owner，OWNER 填它自己并加下一行（不加回滚 OwnerRequired；此时没有 acceptOwnership 这一步）
+# 加了下一行但 OWNER 不是部署钱包时回滚 OwnerNotDeployer（不会悄悄忽略）
 export MAINNET_OWNER_IS_DEPLOYER=true
 # 可选：
 #   RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<名称>"   部署时就列入白名单；不填则之后由 owner handler.list
-#   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（201 上 keeper 私钥对应的地址）
+#   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（201 上 keeper 私钥对应的地址）；主网填别的地址必须再加
+#                   KEEPER_OVERRIDE_OK=true，否则回滚 KeeperNotDefault（setKeeper 一生一次，填错要走 48 小时时间锁）
 #   BURNER=0x… / FEE_VAULT=0x…   新手续费池的回购合约 / 金库；不填或填 0 = 照抄 V2 手续费池 0xBDDd…F111 的。
-#                   部署时就按它接线，脚本最后也按它核对（R5-5）
-#   TWAP_WINDOW=1800   V3 参考池 TWAP 窗口（秒），默认 1800
+#                   部署时就按它接线，脚本最后也按它核对（R5-5）；主网覆盖成和 V2 不同的地址时日志打 WARN 行
+#   TWAP_WINDOW=1800   V3 参考池 TWAP 窗口（秒），默认 1800，不能小于 600（否则回滚 TwapWindowTooShort）
 L="--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3"
 G="--with-gas-price <当时主网 gas price，wei> --priority-gas-price <同上>"   # 必须显式给：公共节点偶尔估出 1 wei，交易会卡住
 R=https://bsc-dataseed1.defibit.io
@@ -82,12 +84,13 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 | **最后** | `pad.setMigrator(migrator)`：开放发币（A-1：前面全部接好之后才开放） |
 | 交接 | 7 个合约 `transferOwnership(OWNER)`（OWNER = 部署钱包时跳过） |
 
-日志里记下（`--- GANG ADDRESSES ---` 一段）：`GANG_PAD`、`GANG_PAD_BLOCK`、`GANG_TAX_HANDLER`、`GANG_ROUTER`、`QUOTE_REGISTRY`、`PLATFORM_BUCKET`、`DIVIDEND_VAULT`、`MIGRATOR`、`TOKEN_DEPLOYER`、`AGENT_ID`、`USDT_REF_POOL`。后面的 `--- server env ---` 一段就是 §4、§5 要填的行。
+日志里记下（`--- GANG ADDRESSES ---` 一段）：`GANG_PAD`、`GANG_PAD_BLOCK`、`GANG_TAX_HANDLER`、`GANG_ROUTER`、`QUOTE_REGISTRY`、`PLATFORM_BUCKET`、`DIVIDEND_VAULT`、`MIGRATOR`、`TOKEN_DEPLOYER`、`AGENT_ID`、`USDT_REF_POOL`。后面的 `--- server env ---` 一段（`# indexer.env` / `# keeper/.env` 两行注释下面每行一条，可以原样贴）就是 §4、§5 要填的行。
 `GANG_PAD_BLOCK` 是模拟时的区块，不晚于实际上链区块，可以直接当索引 / keeper 的起始区块；要精确值看 `broadcast/DeployGang.s.sol/56/run-latest.json` 里 `GangLaunchpad` 那笔 receipt 的 `blockNumber`。
 
 **脚本结束时的自检 `_check`**（任何一项不对直接报 `WiringCheck("<项>")`，广播的交易已经上链，但不要往下做，先查原因）：
 - pad：registry / vault / bucket / handler / tokenDeployer / WBNB / pairFactory 都是本次部署的；`migrator` 已设；Agent 准入开启且是真实 Agent ID；单地址上限开启；V3 factory、TWAP 窗口、USDT 中转池正确；路由已列入；两个门槛常量 `TAXED_MIN_SHARE == MIN_SHARE_BALANCE == 10,000 枚`。
-- 外部库：`graduationAmountOf(WBNB)` 走 `CurveLogic` 返回 15 BNB、`previewCreate(WBNB, 15 BNB)` 走 `FairLogic` 返回 15 BNB / 每份 0.0015，证明两个库都已部署并链接（库地址没有代码时 delegatecall 返回空，这两个调用会失败）。
+- 外部库：`graduationAmountOf(WBNB)` 走 `CurveLogic` 返回 15 BNB、`previewCreate(WBNB, 15 BNB)` 走 `FairLogic` 返回 15 BNB / 每份 0.0015，证明两个库都已部署并链接（库地址没有代码时 delegatecall 返回空，这两个调用会失败）；主网再走一遍 USDT：`graduationAmountOf(USDT, USDT_REF_POOL) > 0`、`previewCreate(USDT, USDT_REF_POOL, 5 BNB)` 不回滚，证明库里链接的 PoolCheck 可用。
+- 只有真 pad 才有的：`CURVE_SUPPLY() == 8 亿`、`MINT_SUPPLY() == 5 亿`、`checkTaxConfig` 对一个合法配置返回 `(true, "")`、对买税 6% 返回 `(false, 原因)`（旧的部署用 stub 过不了这几项；主网另核对 Agent ID 是 `0x60B9…022F`）。
 - 处理合约：`launchpad == pad`、vault / bucket 正确、keeper 正确且 `keeperSet`、换币路由是 Router02 且没有待生效的提议、接收地址已列入（设了 `RECIPIENT` 时）。
 - 分红金库：pad 在白名单、门槛 10k、operator 双向绑定、排除了自己 / migrator / bucket / pad / handler。
 - 手续费池：operator 是 pad 和 handler、keeper 正确且 `keeperSet`、金库和回购合约等于 `FEE_VAULT` / `BURNER`（不填时等于 V2 手续费池的；主网必须有回购合约）。
@@ -101,7 +104,7 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 - 如果同一份库字节码已经在这个地址上（例如上一次广播中途失败、库已上链），重跑时把它们也写进 `--libraries`：`--libraries src/gang/CurveLogic.sol:CurveLogic:<地址> --libraries src/gang/FairLogic.sol:FairLogic:<地址>`（地址见上次的 `run-latest.json`）。广播中途断了优先用 `--resume` 续发，不要重跑。
 - 验证合约源码时（`--verify`）两个库会一起验证；不验证也不影响使用。
 
-**重跑 / 换机器核对**：`GANG_PAD=<pad> GANG_ROUTER=<router> forge script script/DeployGang.s.sol --rpc-url $R $L` 不部署、不接线，只把 owner 交接补齐（幂等）并重新跑一遍 `_check`；`OWNER` 和第一次的 pendingOwner 不一致时回滚 `PendingOwnerMismatch`，不会覆盖。
+**重跑 / 换机器核对**（要打印 server env 时再加 `GANG_PAD_BLOCK=<区块>`，不加就不打印那几行，不会出现 `@0`）：`GANG_PAD=<pad> GANG_ROUTER=<router> forge script script/DeployGang.s.sol --rpc-url $R $L` 不部署、不接线，只把 owner 交接补齐（幂等）并重新跑一遍 `_check`；`OWNER` 和第一次的 pendingOwner 不一致时回滚 `PendingOwnerMismatch`，不会覆盖。
 
 其它：
 - 处理合约和手续费池的 `setKeeper` 由脚本在部署时调用，**合约一生只能调一次**（`keeperSet()` 变为 true）；之后换 keeper 只能 `proposeKeeper` → 48 小时 → `acceptKeeper`（审计说明 §18 R5-4）。

@@ -13,6 +13,7 @@ import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 import {GangRouter} from "../src/router/GangRouter.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
+import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
 import {GangLaunchpad, GangTaxHandler} from "./GangContracts.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
@@ -33,10 +34,12 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 ///         re-runs `_check` — e.g. to verify a deployment from another machine.
 /// @dev Mainnet broadcast is refused unless GANG_MAINNET_OK=true.
 ///      Env: DEPLOYER_PRIVATE_KEY; OWNER (required on mainnet; = the deployer only with MAINNET_OWNER_IS_DEPLOYER=true,
-///      else OwnerRequired); optional KEEPER (mainnet default 0xB6f1…cFc7, testnet the deployer), FEE_VAULT / BURNER
-///      (new bucket's; 0 / unset = the V2 bucket's on mainnet), RECIPIENT + RECIPIENT_LABEL (listed tax recipient;
-///      testnet default the demo treasury), TWAP_WINDOW (default 1800); testnet: AGENT_ID, TEST_QUOTE, BLACKLIST_QUOTE,
-///      NEW_MOCKS=true (fresh Agent ID registry + test quote); re-run: GANG_PAD, GANG_ROUTER.
+///      else OwnerRequired; the flag with another OWNER: OwnerNotDeployer); optional KEEPER (mainnet: must be
+///      0xB6f1…cFc7 unless KEEPER_OVERRIDE_OK=true, KeeperNotDefault; testnet default the deployer), FEE_VAULT / BURNER
+///      (new bucket's; 0 / unset = the V2 bucket's on mainnet, a WARN line when overridden), RECIPIENT + RECIPIENT_LABEL
+///      (listed tax recipient; testnet default the demo treasury), TWAP_WINDOW (default 1800, at least 600); testnet:
+///      AGENT_ID, TEST_QUOTE, BLACKLIST_QUOTE, NEW_MOCKS=true (fresh Agent ID registry + test quote); re-run: GANG_PAD,
+///      GANG_ROUTER, GANG_PAD_BLOCK (without it the server env lines are not printed).
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 ///      (CurveLogic / FairLogic are not passed: forge deploys them from the deployer as the first broadcast txs).
@@ -44,6 +47,11 @@ contract DeployGang is Script {
     uint256 internal constant MIN_SHARE = 10_000 ether;
     uint256 internal constant TESTNET_QUOTE_PER_15_BNB = 15 ether;
     uint32 internal constant DEFAULT_TWAP_WINDOW = 1800;
+    /// @dev Below 10 minutes a V3 reference-pool TWAP is cheap to move within a few blocks.
+    uint32 internal constant MIN_TWAP_WINDOW = 600;
+    /// @dev What only the real GangLaunchpad answers (the deploy-time stub had none of these).
+    uint256 internal constant CURVE_SUPPLY = 800_000_000 ether;
+    uint256 internal constant MINT_SUPPLY = 500_000_000 ether;
 
     struct Stack {
         address quoteRegistry;
@@ -80,6 +88,9 @@ contract DeployGang is Script {
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
     error OwnerRequired();
+    error OwnerNotDeployer();
+    error KeeperNotDefault(address keeper);
+    error TwapWindowTooShort(uint32 window);
     error WiringCheck(string what);
     error PendingOwnerMismatch(address target);
 
@@ -116,12 +127,13 @@ contract DeployGang is Script {
         _mainnetGate(c.mainnet, _broadcasting());
         c.deployer = deployer;
         c.owner = _owner(c.mainnet, deployer);
-        c.keeper = _envAddr("KEEPER", c.mainnet ? M.KEEPER : deployer);
+        c.keeper = _keeper(c.mainnet, deployer);
         c.wbnb = c.mainnet ? M.WBNB : T.WBNB;
         c.factory = c.mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY;
         c.dexRouter = c.mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER;
         c.v3Factory = c.mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY;
         c.twapWindow = uint32(vm.envOr("TWAP_WINDOW", uint256(DEFAULT_TWAP_WINDOW)));
+        if (c.twapWindow < MIN_TWAP_WINDOW) revert TwapWindowTooShort(c.twapWindow);
         c.burner = _burner(c.mainnet);
         c.feeVault = _feeVault(c.mainnet, deployer);
         c.label = vm.envOr("RECIPIENT_LABEL", string(c.mainnet ? "" : "testnet demo treasury"));
@@ -134,11 +146,25 @@ contract DeployGang is Script {
 
     /// @dev Mainnet: OWNER must be given; leaving every contract on the deploy key needs MAINNET_OWNER_IS_DEPLOYER=true
     ///      (the 2026-10-27 launch: 0x4EEd… deploys and owns). Testnet: OWNER defaults to the deployer.
+    ///      MAINNET_OWNER_IS_DEPLOYER=true with an OWNER that is not the deployer is a contradiction: refused.
     function _owner(bool mainnet, address deployer) internal view returns (address owner) {
         owner = _envAddr("OWNER", mainnet ? address(0) : deployer);
         if (mainnet) {
+            bool ownerIsDeployer = vm.envOr("MAINNET_OWNER_IS_DEPLOYER", false);
             if (owner == address(0)) revert OwnerRequired();
-            if (owner == deployer && !vm.envOr("MAINNET_OWNER_IS_DEPLOYER", false)) revert OwnerRequired();
+            if (owner == deployer && !ownerIsDeployer) revert OwnerRequired();
+            if (owner != deployer && ownerIsDeployer) revert OwnerNotDeployer();
+        }
+    }
+
+    /// @dev Mainnet: the keeper is the ops keeper M.KEEPER (0xB6f1…cFc7); another one needs KEEPER_OVERRIDE_OK=true
+    ///      (setKeeper is one-shot on the bucket and the handler: a wrong one costs a 48 h timelock to fix).
+    ///      Testnet: KEEPER, default the deployer.
+    function _keeper(bool mainnet, address deployer) internal view returns (address keeper) {
+        keeper = _envAddr("KEEPER", mainnet ? M.KEEPER : deployer);
+        if (mainnet && keeper != M.KEEPER) {
+            if (!vm.envOr("KEEPER_OVERRIDE_OK", false)) revert KeeperNotDefault(keeper);
+            console.log("WARN mainnet keeper is NOT the ops keeper 0xB6f1...cFc7 (KEEPER_OVERRIDE_OK=true):", keeper);
         }
     }
 
@@ -146,7 +172,11 @@ contract DeployGang is Script {
     ///      on mainnet, none on testnet (collectPlatform then reverts until the owner sets one).
     function _burner(bool mainnet) internal view returns (address burner) {
         burner = _envAddr("BURNER", address(0));
-        if (burner == address(0) && mainnet) burner = address(V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).burner());
+        if (mainnet) {
+            address v2 = address(V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).burner());
+            if (burner == address(0)) burner = v2;
+            else if (burner != v2) console.log("WARN mainnet BURNER overrides the V2 bucket's burner:", burner);
+        }
     }
 
     /// @dev R5-5: FEE_VAULT if set (non-zero), else the V2 bucket's on mainnet, the deployer on testnet.
@@ -154,6 +184,8 @@ contract DeployGang is Script {
         feeVault = _envAddr("FEE_VAULT", address(0));
         if (feeVault == address(0)) {
             feeVault = mainnet ? V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).feeVault() : deployer;
+        } else if (mainnet && feeVault != V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).feeVault()) {
+            console.log("WARN mainnet FEE_VAULT overrides the V2 bucket's fee vault:", feeVault);
         }
     }
 
@@ -281,6 +313,7 @@ contract DeployGang is Script {
         _checkVault(s);
         _checkBucket(s, c);
         _checkPlatform(s, c);
+        _checkLibsUsdt(s, c);
         _checkRouter(s, c);
         _checkOwners(s, c);
     }
@@ -296,6 +329,7 @@ contract DeployGang is Script {
         if (pad.pairFactory() != c.factory) revert WiringCheck("pad.pairFactory");
         if (pad.migrator() != s.migrator || s.migrator == address(0)) revert WiringCheck("pad.migrator");
         if (pad.agentIdRegistry() != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
+        if (c.mainnet && s.agentId != M.AGENT_ID_REGISTRY) revert WiringCheck("mainnet Agent ID registry");
         if (!pad.walletCapEnabled()) revert WiringCheck("wallet cap");
         if (pad.v3Factory() != c.v3Factory) revert WiringCheck("pad.v3Factory");
         if (pad.twapWindow() != c.twapWindow) revert WiringCheck("pad.twapWindow");
@@ -304,6 +338,38 @@ contract DeployGang is Script {
         // one vault floor for both kinds (merge plan §5.3), equal to the one the vault was given
         if (pad.TAXED_MIN_SHARE() != MIN_SHARE || pad.MIN_SHARE_BALANCE() != MIN_SHARE) {
             revert WiringCheck("pad floor constants");
+        }
+        _checkRealPad(pad);
+    }
+
+    /// @dev What only the real GangLaunchpad answers: a stand-in with the same setters and views (the old deploy-time
+    ///      stub) fails here. checkTaxConfig runs CurveLogic's checkTax (a library call) on one valid and one invalid
+    ///      config.
+    function _checkRealPad(IGangPad pad) internal view {
+        try pad.CURVE_SUPPLY() returns (uint256 v) {
+            if (v != CURVE_SUPPLY) revert WiringCheck("pad.CURVE_SUPPLY");
+        } catch {
+            revert WiringCheck("pad.CURVE_SUPPLY");
+        }
+        try pad.MINT_SUPPLY() returns (uint256 v) {
+            if (v != MINT_SUPPLY) revert WiringCheck("pad.MINT_SUPPLY");
+        } catch {
+            revert WiringCheck("pad.MINT_SUPPLY");
+        }
+        // holder dividend only (no recipient): valid; a 6% buy tax: refused with a reason
+        IGangLaunchpad.TaxConfig memory good =
+            IGangLaunchpad.TaxConfig({buyTaxBps: 200, sellTaxBps: 300, dividendBps: 10_000, recipient: address(0)});
+        IGangLaunchpad.TaxConfig memory bad =
+            IGangLaunchpad.TaxConfig({buyTaxBps: 600, sellTaxBps: 300, dividendBps: 10_000, recipient: address(0)});
+        try pad.checkTaxConfig(good) returns (bool ok, string memory reason) {
+            if (!ok || bytes(reason).length != 0) revert WiringCheck("pad.checkTaxConfig");
+        } catch {
+            revert WiringCheck("pad.checkTaxConfig");
+        }
+        try pad.checkTaxConfig(bad) returns (bool ok, string memory reason) {
+            if (ok || bytes(reason).length == 0) revert WiringCheck("pad.checkTaxConfig");
+        } catch {
+            revert WiringCheck("pad.checkTaxConfig");
         }
     }
 
@@ -320,6 +386,23 @@ contract DeployGang is Script {
             if (raise != 15 ether || price != 15 ether / 10_000) revert WiringCheck("FairLogic previewCreate");
         } catch {
             revert WiringCheck("FairLogic not linked");
+        }
+    }
+
+    /// @dev Mainnet: a USDT quote priced from its reference pool goes through the PoolCheck the libraries link (runs
+    ///      after _checkPlatform, which makes sure USDT has no fixed rate in the registry that would bypass the pool).
+    function _checkLibsUsdt(Stack memory s, Cfg memory c) internal view {
+        if (!c.mainnet) return;
+        IGangPad pad = IGangPad(s.pad);
+        try pad.graduationAmountOf(M.USDT, M.USDT_REF_POOL) returns (uint256 g) {
+            if (g == 0) revert WiringCheck("CurveLogic USDT graduationAmountOf");
+        } catch {
+            revert WiringCheck("CurveLogic USDT / PoolCheck");
+        }
+        try pad.previewCreate(M.USDT, M.USDT_REF_POOL, 5 ether) returns (uint256 raise, uint256 price) {
+            if (raise == 0 || price == 0) revert WiringCheck("FairLogic USDT previewCreate");
+        } catch {
+            revert WiringCheck("FairLogic USDT / PoolCheck");
         }
     }
 
@@ -427,6 +510,19 @@ contract DeployGang is Script {
         return vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
     }
 
+    /// @dev `PADS=gang:PAD(at)BLOCK` for keeper/.env, nothing else on the line ("" without a known block).
+    function _padsLine(Stack memory s) internal pure returns (string memory) {
+        if (s.padBlock == 0) return "";
+        return string.concat("PADS=gang:", vm.toString(s.pad), "@", vm.toString(s.padBlock));
+    }
+
+    function _indexerEnv(Stack memory s) internal pure returns (string[4] memory l) {
+        l[0] = string.concat("GANG_V3_PAD=", vm.toString(s.pad));
+        l[1] = string.concat("GANG_FAIR_PAD=", vm.toString(s.pad));
+        l[2] = string.concat("GANG_V3_START_BLOCK=", vm.toString(s.padBlock));
+        l[3] = string.concat("GANG_FAIR_START_BLOCK=", vm.toString(s.padBlock));
+    }
+
     function _log(Stack memory s, Cfg memory c) internal pure {
         console.log("--- GANG ADDRESSES ---");
         console.log("GANG_PAD", s.pad);
@@ -443,14 +539,20 @@ contract DeployGang is Script {
         if (s.testQuote != address(0)) console.log("TEST_QUOTE", s.testQuote);
         if (s.blacklistQuote != address(0)) console.log("BLACKLIST_QUOTE", s.blacklistQuote);
         if (s.recipient != address(0)) console.log("RECIPIENT", s.recipient);
-        // GANG_PAD_BLOCK is the simulated block, at or before the mined one: a safe start block for indexer / keeper
-        string memory pb = string.concat(vm.toString(s.pad), "@", vm.toString(s.padBlock));
-        console.log("--- server env (one pad for both tracks: indexer.env and keeper/.env) ---");
-        console.log(string.concat("GANG_V3_PAD=", vm.toString(s.pad)));
-        console.log(string.concat("GANG_FAIR_PAD=", vm.toString(s.pad)));
-        console.log(string.concat("GANG_V3_START_BLOCK=", vm.toString(s.padBlock)));
-        console.log(string.concat("GANG_FAIR_START_BLOCK=", vm.toString(s.padBlock)));
-        console.log(string.concat("PADS=gang:", pb, "   (keeper/.env; V3_PADS / FAIR_PADS stay empty)"));
+        // GANG_PAD_BLOCK is the simulated block, at or before the mined one: a safe start block for indexer / keeper.
+        // Each env line is printed alone so it can be pasted as is; the comments go on their own lines.
+        if (s.padBlock == 0) {
+            console.log("--- server env: not printed (re-run without GANG_PAD_BLOCK; pass it to print the lines) ---");
+        } else {
+            console.log("--- server env (one pad for both tracks) ---");
+            console.log("# indexer.env");
+            string[4] memory idx = _indexerEnv(s);
+            for (uint256 i; i < idx.length; i++) {
+                console.log(idx[i]);
+            }
+            console.log("# keeper/.env (V3_PADS / FAIR_PADS stay empty)");
+            console.log(_padsLine(s));
+        }
         if (s.recipient == address(0)) {
             console.log("PENDING owner: handler.list(<partner vault>, <label>) before the partner creates taxed tokens");
         }
