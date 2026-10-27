@@ -1,5 +1,7 @@
 # 规格 · LaunchpadV3 税收接收地址（合作方金库）
 
+> **2026-10-27 下午更新（§19，以本条为准，下文已按此改写）**：**内盘不收税**。V3 税收币在联合曲线上买卖和 V2 一样只收 1% 手续费（全部进平台手续费池，80% 回购 / 20% 金库）；买卖税（1%–5%）只在毕业后的 Pancake 池子里收，外盘规则不变。发币参数照旧，只用于外盘。
+
 > **2026-10-27 更新（以本条为准，下文已按此改写）**：
 > - **合约合并（方案 A）**：TaxRouterV3（分账 / 欠款）、RecipientRegistry（白名单）、PostGradTaxHandlerV3（外盘税）合成一个 `TaxHandlerV3`，事件签名不变；分红合约、迁移合约、代币部署合约与打新共用一份（`SharedDividendVault`、`SharedMigrator`、`TokenDeployer`）。
 > - **报价币**：WBNB 或任意 18 位 ERC-20（用户习惯 V2 的用法，不设白名单）；转账扣费的币和本平台发射的币拒收；毕业额按 QuoteRegistry 的固定换算额（可选）或发币人自选的参考池换算（V2 池读储备，V3 池读 30 分钟 TWAP）。主网 USDT 用 Pancake V3 USDT/WBNB 0.01% 池 `0x172f…f849`。参考池现价可被闪电贷拉偏的风险按产品决定接受（审计说明 K-1）。
@@ -17,13 +19,13 @@
 - 取代：`SPEC-V3-ECONOMIC-TEMPLATES-2026-10-26.md`（模版市场方案，已搁置）。本方案去掉模版工厂，只保留「接收地址」。
 - 来源：合作方需求（2026-10-26，经用户转达）：
   1. 发币时填一个「税收接收地址」（合作方金库合约），发币后不能改。
-  2. 税率可以自己设，内盘和外盘都收（合作方打算买卖各 2%）。
+  2. 税率可以自己设，内盘和外盘都收（合作方打算买卖各 2%）。**2026-10-27 用户改为只在外盘收，内盘不收（§19）。**
   3. 平台抽成按平台规则，持币分红比例可设（可为 0），剩下全部给接收地址。
   4. 给接收地址的那份用报价币结算（BNB 或 USDT），不给本币；外盘部分由平台卖成报价币后再转（2026-10-27 起：卖出时顺带分块卖，keeper 补位）。
   5. 直接转到接收地址；转账失败先记账，允许任何人调用补转。
   6. 每次往接收地址打款发一个事件（含币地址和金额），方便合作方统计收入。
   7. 其余规则不变：Agent 专属内盘、单地址 1% 上限、毕业规则照旧。
-- 用户已定（2026-10-26）：平台抽成固定占成交额 0.5%；内盘 1% 平台手续费保留、税另收；接收地址走平台白名单；买卖税率分开设，各 1%–5%。
+- 用户已定（2026-10-26）：平台抽成固定占成交额 0.5%；内盘 1% 平台手续费保留、税另收（2026-10-27 改为内盘不收税，§19）；接收地址走平台白名单；买卖税率分开设，各 1%–5%。
 
 ---
 
@@ -33,16 +35,16 @@
 
 | 参数 | 范围 | 说明 |
 |---|---|---|
-| `buyTaxBps` | 100–500（1%–5%） | 买入税，内盘买入和池子买入都收 |
-| `sellTaxBps` | 100–500（1%–5%） | 卖出税，内盘卖出和池子卖出都收 |
+| `buyTaxBps` | 100–500（1%–5%） | 买入税，只在毕业后的池子买入收；内盘不收（§19） |
+| `sellTaxBps` | 100–500（1%–5%） | 卖出税，只在毕业后的池子卖出收；内盘不收（§19） |
 | `dividendBps` | 0–10000 | 税扣掉平台部分后，分给持币人（持仓 > 1 万枚）的比例 |
 | `recipient` | 白名单地址 | 剩下的税全部给它，用报价币结算；为 0 时 `dividendBps` 必须是 10000（全部分红） |
 | 无税币 | 买卖都为 0，其余为空 | 与 V2 无税轨相同 |
 
-### 1.2 每笔税怎么分
+### 1.2 每笔税怎么分（只在外盘）
 
 ```
-税 = 成交额 × 买（或卖）税率
+税 = 外盘成交额 × 买（或卖）税率
 平台 = 成交额 × 0.5%                 （从税里出）
 剩余 = 税 − 平台
 分红 = 剩余 × dividendBps / 10000    （这个币当前没有合格持有人时并入接收地址）
@@ -51,19 +53,18 @@
 
 | 例：合作方设买卖各 2%，分红 0 | 成交额占比 |
 |---|---|
-| 内盘平台手续费（原有，另收） | 1% |
-| 税里的平台部分 | 0.5% |
-| 接收地址 | 1.5% |
-| 内盘每笔合计 | 3%（1% 手续费 + 2% 税） |
+| 内盘每笔合计 | 1%（只有平台手续费，不收税，§19） |
+| 外盘：税里的平台部分 | 0.5% |
+| 外盘：接收地址 | 1.5% |
 | 外盘每笔合计 | 2%（只有税） |
 
 - 买和卖税率不同时（例如买 1% / 卖 3%），平台部分仍是每笔成交额的 0.5%：买入时占税的一半，卖出时占税的六分之一。外盘按每笔交易分别记账，卖出换成报价币后按同一比例拆分。
-- 分红那份按交易前的份额记账：内盘、外盘都一样，卖家拿不回自己这笔卖出的税，买家分不到自己这笔买入的税。外盘的分红在交税时记成税币单位，这一批卖完后按实际换回的报价币兑现。
+- 分红那份按交易前的份额记账：卖家拿不回自己这笔卖出的税，买家分不到自己这笔买入的税。分红在交税时记成税币单位，这一批卖完后按实际换回的报价币兑现。内盘不收税，但内盘买卖照样按余额写份额，毕业时的持有人从第一笔外盘税起就能分到。
 - 平台部分进现有 PlatformFeeBucket（80% 回购 GANG / 20% 金库）。
 
 ### 1.3 打款给接收地址
 
-- 内盘：发射台收到的就是报价币，当笔直接转给接收地址。
+- 内盘：不收税，接收地址在内盘拿不到任何钱（§19）。
 - 外盘：税以本币累计在 TaxHandlerV3。每笔卖出前（池子未锁），代币让 handler 先卖一块攒下的税（≤ 这笔卖单的 25%；和 keeper 共用每个币每区块一个额度——池子代币储备的 0.5%；比区块参考价低 2% 以上不卖，最低成交额按同一调用里的储备算）；没有卖单时 keeper `process(token, amount, minQuoteOut)` 分块卖。换回的报价币在 handler 里直接拆分，接收地址那份当场转。**接收地址永远收报价币，不收本币。**
 - 卖出那一块失败不影响用户这笔卖出（代币发 `SwapBackFailed`）；分红合约或手续费池拒收时这一块照常卖出，持有人那份 / 平台那份先留在 handler，任何人 `flushHolders` / `flushPlatform` 补上。
 - 直接转账；失败（例如 USDT 黑名单、合约拒收）不影响交易，记入 `owedOf[token]`。**任何人**都可以调用 `release(token)` 补转；补转仍失败会回滚，欠款保留，不会丢。
@@ -89,10 +90,10 @@ Agent ID 专属内盘、单地址 1% 上限、≈15 BNB 毕业、毕业前代币
 
 | 合约 | 职责 |
 |---|---|
-| `src/launchpad-v3/LaunchpadV3.sol` | `create(…, TaxConfig{buyTaxBps, sellTaxBps, dividendBps, recipient})`；内盘按买 / 卖税率收税，平台部分按成交额 0.5% 算，税交给 TaxHandlerV3 分账；校验规则见 §1.1；报价币规则见顶部更新说明 |
+| `src/launchpad-v3/LaunchpadV3.sol` | `create(…, TaxConfig{buyTaxBps, sellTaxBps, dividendBps, recipient})`；内盘只收 1% 手续费、不收税（§19），有分红的币照常写份额；校验规则见 §1.1；报价币规则见顶部更新说明 |
 | `src/launchpad-v3/TaxLaunchTokenV3.sol` | 买、卖两个池子税率，immutable；从池子买入按买入税率、卖进池子按卖出税率；卖出时先调 `handler.swapBack`（失败吞掉、发 `SwapBackFailed`；调用方 gas 不够时整笔回滚 `SwapBackOutOfGas`，保证 gas 估算包含这一块） |
 | `src/launchpad-v3/LaunchTokenV3.sol` | 无税币 |
-| `src/launchpad-v3/TaxHandlerV3.sol` | 接收地址白名单；每个币的路由（`register` / `routeOf`，只能登记一次）；内盘 / 外盘分账（平台 → 分红 → 接收地址），推送失败记 `owedOf`、任何人 `release`；外盘税：按每笔方向记平台部分、`swapBack` / `process` 分块卖出、`previewSell`、`maxChunk`；`TaxPaid` / `TaxOwed` / `TaxDistributed` 事件 |
+| `src/launchpad-v3/TaxHandlerV3.sol` | 接收地址白名单；每个币的路由（`register` / `routeOf`，只能登记一次）；外盘分账（平台 → 分红 → 接收地址；§19 起没有内盘分账，`distribute` 已删），推送失败记 `owedOf`、任何人 `release`；外盘税：按每笔方向记平台部分、`swapBack` / `process` 分块卖出、`previewSell`、`maxChunk`；`TaxPaid` / `TaxOwed` / `TaxDistributed` 事件 |
 | `src/common/PostGradHandlerBase.sol` | 与打新 handler 共用的基类：keeper / owner、换币路由时间锁（`proposeDexRouter` → 48 小时 → `acceptDexRouter`）、分块与 `swapBack`、`flushHolders` / `flushPlatform`、带保护的写份额 |
 | `src/common/SharedDividendVault.sol` | 与打新共用的分红合约：按币记登记核心；operator 每核心绑定一次；门槛在登记时快照；按交税时记账（两批先进先出） |
 | `src/common/SharedMigrator.sol`、`src/common/TokenDeployer.sol` | 与打新共用的迁移合约（核心名单只加不减）和代币部署合约 |
@@ -124,17 +125,17 @@ Agent ID 专属内盘、单地址 1% 上限、≈15 BNB 毕业、毕业前代币
 | 用例 | 覆盖 |
 |---|---|
 | `test_create_rules` | 税率越界、单边为 0、分红比例越界、无接收地址时分红须 10000、未上白名单、无税币带参数；配置读回、无税币 = LaunchTokenV3（2026-10-27 起，原为 V2 LaunchToken） |
-| `test_delistedRecipient_onlyBlocksNewTokens` | 下架后新币不能用，老币照常打款 |
-| `test_bondingBuy_split_platformHalfPercent_restToRecipient` | 买 2%：平台 1% + 0.5%，接收地址 1.5%，`TaxPaid` 事件 |
-| `test_bondingSell_split_withDividends` | 卖 3%、分红 40%：平台 0.5%，持币人 1%，接收地址 1.5% |
-| `test_firstBuy_noHolders_dividendLegGoesToRecipient` | 没有合格持有人时分红那份给接收地址 |
-| `test_failedPush_isOwed_tradeStillWorks_anyoneReleases` | 接收地址被黑名单：交易照常、记欠款、`TaxOwed`；仍被拦时补转回滚、欠款保留；解除后任何人补转、`TaxPaid` |
+| `test_delistedRecipient_onlyBlocksNewTokens` | 下架后新币不能用，老币毕业后照常从外盘税打款 |
+| `test_curveBuy_onlyProtocolFee_noTax` | §19：买 5% / 卖 5%、分红 40% 的币内盘买入：只扣 1% 进手续费池，接收地址、分红合约、handler 都是 0，handler 不发任何事件，`Buy.tax` = 0，份额照常写 |
+| `test_curveSell_onlyProtocolFee_holdersAndRecipientGetNothing` | §19：内盘卖出只扣 1%，其他持有人 `pending` 为 0，接收地址 / 分红合约为 0，`Sell.tax` = 0，卖家份额跟着余额变 |
+| `test_curve_taxedPricesLikeUntaxed` | §19：5% / 5% 的税收币和无税币同样的买卖，拿到的代币和卖回的报价币完全一样 |
+| `test_failedPush_isOwed_tradeStillWorks_anyoneReleases` | 接收地址被黑名单：内盘照常、毕业不受影响；外盘税换币后推送失败记欠款、`TaxOwed`；仍被拦时补转回滚、欠款保留；解除后任何人补转、`TaxPaid` |
 | `test_postGrad_buySellRates_platformPerTrade_recipientInQuote` | 毕业后池子买 1% / 卖 3%：平台部分按每笔记账，换币后接收地址收到报价币、不收本币 |
 | `test_untaxed_noTaxAnywhere` | 无税币只收 1% 内盘手续费 |
 | `test_agentGateAndWalletCapUnchanged` | 非 Agent 不能买、1% 上限、15 BNB 毕业 |
 | `test_auditG01_excludedHolderZeroedOnSync` | 审计 G-01：被排除的持有人同步后份额为 0 |
-| `test_bondingAsymmetricRates_platformFromVolume` | 内盘买 1% / 卖 3%：平台部分按成交额 0.5%，不是按税的固定比例 |
-| `test_router_accessControl` | 只有发射台能登记、同一个币只登记一次、只有发射台能分账、平台部分不能超过总额、owner 权限、发射台一次性（测试名沿用合并前的「router」） |
+| `test_curveToGraduation_onlyFee_thenPoolTaxSplitsAsBefore` | §19：买家花的报价币 = 池子流动性 + 1% 手续费（+ ≤ 1 wei 截断零头），毕业前接收地址 / 分红合约 / handler 为 0；毕业后外盘买 2%、分红 50%：平台拿成交额 0.5%，持有人按内盘写的份额在交税时记账（买家自己分不到），剩下一半一半，持有人可领 |
+| `test_router_accessControl` | 只有发射台能登记、同一个币只登记一次、owner 权限、发射台一次性（测试名沿用合并前的「router」；§19 起 `distribute` / `previewSplit` 已删） |
 | `test_recipientRegistry_accessControl` | 只有 owner 能增删白名单（现在在 TaxHandlerV3 上）；重复上架、零地址、下架未上架的地址都拒绝；下架后重新上架不重复记录 |
 | `test_handler_onlyTokenAndKeeper` | 只有代币能通知收税、只有 keeper / owner 能换币分账 |
 
@@ -147,3 +148,24 @@ Agent ID 专属内盘、单地址 1% 上限、≈15 BNB 毕业、毕业前代币
 1. 测试网第 6 套部署（合并后的合约）+ 公开整轮。
 2. 第五轮内部审计结论处理（审计说明 §17）。
 3. 主网部署：运行手册 `docs/MAINNET-RUNBOOK-V3-FAIR-2026-10-26.md`（多签地址、合作方金库地址待定）。
+
+---
+
+## 19. V3 内盘不收税（2026-10-27 用户决定）
+
+编号与审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §19 对齐，完整的改动、测试和接口说明在那里。
+
+**改了什么**
+- 内盘（联合曲线）买卖只收 1% 手续费（`PROTOCOL_FEE_BPS`，全部进 SharedPlatformFeeBucket，80% 回购 / 20% 金库），和 V2 一样；不再收税，也不再把税交给 TaxHandlerV3。有税币和无税币在内盘的价格完全一样。
+- 买卖税（1%–5%）只在毕业后的 Pancake 池子里收，外盘规则不变：平台拿成交额 0.5%，剩下按 `dividendBps` 分给持有人，其余给白名单接收地址；卖出时自动小额换；交税时记账；卖家分不到自己这笔卖出的税。
+- 发币参数照旧（`buyTaxBps` / `sellTaxBps` 1%–5%、`dividendBps`、`recipient`，创建时定死），只用于外盘。
+- 内盘仍然按余额写分红份额（`setShare`），毕业时的持有人从第一笔外盘税起就能分到。
+- 内盘分红路径因此删除：TaxHandlerV3 的 `distribute` / `previewSplit`，SharedDividendVault 的 `depositReward` / `accRewardPerShare` / `rewardDebt` 和事件 `RewardDeposited`。分红合约只剩外盘分红（按交税时记账：`accrueDividendUnits` / `convertDividend`、批次、`pending` / `pendingUnits`、`claim`）。
+
+**为什么**：和 V2 有税轨一致，内盘用户只认 1% 手续费；税和分红都是毕业以后的事。
+
+**影响到哪里**
+- 事件签名都不变：`Buy.tax` / `Sell.tax` 恒为 0；`TaxDistributed` 只会是 `phase = 1`（PostGrad）；`TaxPaid` / `TaxOwed` 只来自外盘税和 `release`；`RewardDeposited` 不再存在。
+- 接收地址在毕业前收不到任何钱；合作方的收入从第一笔外盘税卖出开始。
+- CLI 已改（`v3 buy` / `sell` / `info` / `create` 的文字和输出、help、`references/v3.md`）。服务端和网站的文案、内盘交易表的「税」列、按 `phase='curve'` 的分账连表要跟着改（清单见汇报）。
+- 测试网第 8 套由用户按这版部署；本文的测试网记录不改。

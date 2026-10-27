@@ -213,18 +213,19 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                [--description <text>]
                                          --website / --twitter / --description and the logo go into the token's metadata JSON
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
-                                         LaunchpadV3: own buy / sell tax in % (fixed at create), on the curve and in the pool.
-                                         0.5% of volume to the platform; of the rest --dividend % to holders, the remainder to
-                                         --recipient (must be on the platform whitelist) in the quote. The curve's 1% fee is extra
+                                         LaunchpadV3: own buy / sell tax in % (fixed at create), only in the pool after
+                                         graduation: 0.5% of volume to the platform; of the rest --dividend % to holders, the
+                                         remainder to --recipient (must be on the platform whitelist) in the quote. Curve
+                                         trades pay only the 1% fee, no tax
                                          --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
                                          pool holding it, which prices the 15 BNB graduation target (as gang create), unless
                                          gang set a fixed rate. The output shows graduationAt
   gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
-                                         amount includes the 1% fee and the buy tax; WBNB-quoted: native BNB via GangRouter
+                                         amount includes the 1% fee (no tax on the curve); WBNB-quoted: native BNB via GangRouter
   gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
                                          on the curve; graduated: no tx, a pool quote (expectOut / minOut for amountOutMin;
                                          --amount needs no wallet)
-  gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it; graduated: swapBack
+  gang v3 info --token <addr>            curve, tax setting (taxNote: pool only), recipient, what the router still owes it; graduated: swapBack
                                          (tax not sold yet, the per-block chunk budget, what the latest block has left of it
                                          and the next chunk)
   gang v3 status --token <addr> [--slippage 1]

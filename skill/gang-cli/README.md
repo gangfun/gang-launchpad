@@ -61,7 +61,7 @@ gang fair status --token <addr> --testnet                      # shares; after l
 gang fair claim --token <addr> --testnet
 # LaunchpadV3 tax token (own buy / sell tax 1–5%, paid to a whitelisted recipient in the quote) — BSC testnet only for now
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
-gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee and the buy tax
+gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee (no tax on the curve; the tax is pool-only)
 gang v3 sell --token <addr> (--amount <tokens> | --all) --testnet
 gang v3 info --token <addr> --testnet                           # tax setting, recipient, what is still owed to it
 gang v3 release --token <addr> --testnet                        # push a payment that failed earlier
