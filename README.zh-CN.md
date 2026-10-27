@@ -17,7 +17,7 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**BSC 主网上有两个内盘。** **GangLaunchpad**（新，2026-10-27 上线）在同一个合约上发 **V3 税收币**（`gang v3`）和 **打新**（`gang fair`）；**LaunchpadV2**（旧内盘，仍在运行）是 `gang create` 用的。Soft / LaunchpadU / LaunchpadS **不是**发币入口（行情里可能仍有存量买卖/claim）。只有持有 SPACE ID Agent ID（`.ai`）的钱包能发币、在内盘买卖或打新。由 agent 跑 CLI；需要时在币安 App 确认。CLI **不持有私钥**。
+**新币一律发在 GangLaunchpad**（2026-10-27 起在 BSC 主网运行）：同一个合约上发联合曲线币（无税或自带税，`gang create` = `gang v3 create`）和 **打新**（`gang fair`）。**LaunchpadV2**（旧内盘）**不再发新币**，存量币照常交易（`gang buy` / `gang sell`）。Soft / LaunchpadU / LaunchpadS 也**不是**发币入口（行情里可能仍有存量买卖/claim）。只有持有 SPACE ID Agent ID（`.ai`）的钱包能发币、在内盘买卖或打新。由 agent 跑 CLI；需要时在币安 App 确认。CLI **不持有私钥**。
 
 ---
 
@@ -35,7 +35,7 @@
 
 完整清单（路由实现、ProxyAdmin、Migrator、TokenDeployer、QuoteRegistry、keeper）和测试网地址见 [docs/MAINNET-GANG-2026-10-27.md](docs/MAINNET-GANG-2026-10-27.md)；规则见 [docs/SPEC-GANG-MERGED-2026-10-27.md](docs/SPEC-GANG-MERGED-2026-10-27.md)。
 
-- **V3 税收币**：和 V2 一样走联合曲线（Agent ID 硬闸、单地址 1% 上限、约 15 BNB 毕业进 PancakeSwap V2、LP 销毁）。内盘只收 **1% 手续费，不收税**。毕业后池子里每笔买卖收这个币自己的税（买 / 卖各 **1–5%**，发币时定死）：平台拿 **成交额的 0.5%**，剩下按 `--dividend` 比例分给持币人，其余用报价币打给接收地址（发币人自己，或白名单里的合作方）。
+- **V3 币**（不带 `--buy-tax` / `--sell-tax` 就是无税）：和 V2 一样走联合曲线（Agent ID 硬闸、单地址 1% 上限、约 15 BNB 毕业进 PancakeSwap V2、LP 销毁）。内盘只收 **1% 手续费，不收税**。毕业后池子里每笔买卖收这个币自己的税（买 / 卖各 **1–5%**，发币时定死）：平台拿 **成交额的 0.5%**，剩下按 `--dividend` 比例分给持币人，其余用报价币打给接收地址（发币人自己，或白名单里的合作方）。
 - **打新**：没有曲线。**50% 的总量分成 10,000 份，同一个价格**；发币人设募集额（**5–50 BNB**）、单地址上限（总量的 **0.25–1%**）、出局线（**60–90%**）和 1–3% 的打新费。没有截止时间、没有退款：打满前可以按打新价减撤出费卖回。打出最后一份的那笔交易直接**发射**：另外 50% 加上全部募集款组成 PancakeSwap V2 池子（开盘价 = 打新价），LP 销毁。之后池子每笔买卖收 **1%**：一半给从没跌破出局线的打新地址，一半给平台。
 - **owner = 上面的 Safe 多签**：内盘、外盘处理合约、金库、手续费池等核心合约都已由它在链上接受所有权；路由的 ProxyAdmin 归时间锁。平台收入进手续费池：80% 回购销毁 GANG，20% 给 Safe。
 - **GangRouter** 负责用 BNB 在内盘买入 / 打新，以及所有 **PancakeSwap 外盘买卖**（V3、打新，以及已毕业的 V2 / Soft / U / S 币）。它是可升级代理，升级要在公开的时间锁里等 **48 小时**，只有 Safe 能提案、执行、取消；CLI 每笔只授权这一笔的数量。
@@ -72,7 +72,7 @@ npm i -g @gangfun/cli@latest
 gang preflight
 ```
 
-`createPad` 须为 LaunchpadV2，`isAgent: true`，`issues[]` 为空。
+`createPad` 须为 GangLaunchpad（`0x15CFD2dc…4365`），`isAgent: true`，`issues[]` 为空。
 
 ---
 
@@ -82,10 +82,12 @@ gang preflight
 `gang execute --request-id …`。需要时会先返回 `approve` / `approve-quote` / `wrap-bnb` 这类步骤：先执行它，再把同一条命令重跑一次。
 详见 [skill/references/v3.md](skill/references/v3.md)、[skill/references/fair.md](skill/references/fair.md)。
 
-**V3 税收币**（`--recipient` 填自己的钱包，或白名单里的合作方；税率和接收地址发币后不能改）：
+**V3 币**（`gang create` = `gang v3 create`）。不带 `--buy-tax` / `--sell-tax` 就是无税；带税时税款默认给创建者自己的钱包，
+也可以用 `--recipient` 指定白名单里的合作方。税率和接收地址发币后不能改：
 
 ```bash
-gang v3 create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --recipient 0x<你的钱包> --logo ./avatar.png
+gang create --name "My Token" --symbol MYT --logo ./avatar.png             # 无税：外盘不收税、无分红、无接收地址
+gang create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --logo ./avatar.png
 gang v3 buy  --token 0x… --amount 0.1      # 内盘：报价币数量，含 1% 手续费；WBNB 计价的币经 GangRouter 直接付 BNB
 gang v3 info --token 0x…                   # 税率、接收地址、还欠接收地址多少
 gang v3 claim --token 0x…                  # 领持币分红（报价币）
@@ -114,18 +116,18 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 
 ## 4. 规则（简要）
 
-| | V3 税收币（`gang v3`） | 打新（`gang fair`） | LaunchpadV2（`gang create`） |
+| | V3 币（`gang create` / `gang v3`） | 打新（`gang fair`） | LaunchpadV2（仅存量币） |
 |---|---|---|---|
-| 准入 | 发币、内盘买卖要 Agent ID（`.ai`） | 发起和打入要 Agent ID（每个打新在发起时固定） | 发币、买卖要 Agent ID |
+| 准入 | 发币、内盘买卖要 Agent ID（`.ai`） | 发起和打入要 Agent ID（每个打新在发起时固定） | 内盘买卖要 Agent ID（不再发新币） |
 | 单钱包上限 | 内盘最多持有总量 1%，多付的同笔退回 | 每个钱包总量的 0.25–1%，发起时设定 | 内盘 1%，多付的同笔退回 |
 | 进池子前的费用 | 内盘 1% 手续费，不收税 | 打新费 1–3%；打满前卖回扣 1–2% 撤出费 | 内盘 1% 手续费 |
 | 进池子的 | 约 15 BNB 募集款 + 剩下 20% 的代币，LP 销毁 | 全部募集款 + 另一半（50%）代币，开盘价等于打新价，LP 销毁 | 约 15 BNB，LP 销毁 |
-| 外盘税 | 买、卖各 1–5%：成交额 0.5% 归平台，其余分给持币人（`--dividend`）和接收地址 | 1%：一半给没跌破出局线的打新地址，一半归平台 | 无税轨：无；有税轨：1% → 持币人 / 回购 / 金库 |
+| 外盘税 | 无税：无；有税：买、卖各 1–5%：成交额 0.5% 归平台，其余分给持币人（`--dividend`）和接收地址 | 1%：一半给没跌破出局线的打新地址，一半归平台 | 无税轨：无；有税轨：1% → 持币人 / 回购 / 金库 |
 | 毕业 / 开盘前 | 不能转账，只能在内盘买卖 | 不能转账，只能卖回给内盘 | 不能转账，只能在内盘买卖 |
 
 ---
 
-## 5. LaunchpadV2（旧内盘，仍在运行；`gang create`）
+## 5. LaunchpadV2（旧内盘：存量币照常交易，不再发新币）
 
 | 合约 | 地址 |
 |---|---|
@@ -142,37 +144,14 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 | owner：Safe 多签（2026-10-27 起） | `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
 
 - 毕业 ≈ **15 BNB**（PoolCheck）
-- 两轨：**无税 / 有税**（`create(..., taxed, …)`）
+- 存量币分两轨：**无税 / 有税**（外盘 1%）
 - BAW Agent 硬闸 + 内盘 1% walletCap
 - BscScan：V2 合约均已 **Verified**
 
-### 5.1 Logo + 发币
+**不再发新币：** `gang create` 发到 GangLaunchpad（见第 3 节），`--taxed`（V2 的有税轨）会被拒绝：最接近的 V3 设置是
+`--buy-tax 1 --sell-tax 1 --dividend 100`。Soft / U / S 发币同样会被拒绝。
 
-ABI：`create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)`（selector `0x1abdc752`）
-
-```bash
-gang upload-logo --file ./avatar.png
-# → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
-
-# 或站内：https://gang.fun/dev/logo
-
-gang create --name "My Agent Coin" --symbol MAC \
-  --logo-uri https://gang.fun/api/logos/<id>.png
-# 或: gang create --name "…" --symbol … --logo ./avatar.png
-# 可选: --taxed   --quote <ERC-20> --ref-pool <持有它的 Pancake 池子>
-# 可选（0.7.0+）: --website mycoin.xyz   --twitter @mycoin（写进创建交易，gang.fun 币详情页展示）
-
-gang execute --request-id …
-gang tx --hash 0x…
-```
-
-- 默认：`taxed=false`，`quote=0x0`（WBNB），`refPool=0x0`。`--taxed` 不需要池子。
-- 非 WBNB 报价币：`--quote <ERC-20>` 加 `--ref-pool <持有它的 Pancake V2 pair 或 V3 池子>`，用来折算约 15 BNB 的毕业目标。
-- `--pair-or-quote` 已删除：CLI ≤0.3.0 编码的 5 参数 `create` 在 LaunchpadV2 上不存在，发不出去。
-- 网站和 X 链接写进创建交易，和 `logoURI` 一样发币后不能再改。
-- Soft/U/S **create 会被 CLI 拒绝**。
-
-### 5.2 V2 买卖
+### 5.1 V2 买卖
 
 V2 走 **报价 ERC-20**（非 payable BNB）。`--bnb` 在 V2 上表示报价币数量。
 
@@ -198,7 +177,6 @@ gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战
 
 | 变量 | 含义 |
 |---|---|
-| `GANG_LAUNCHPAD` | 默认 LaunchpadV2 |
 | `GANG_RPC_URL` | BSC RPC |
 | `GANG_LOGO_API` | 默认 `https://gang.fun/api/logos` |
 | `GANG_API` | 发现命令 indexer，默认 `https://gang.fun/api` |
