@@ -10,6 +10,7 @@ import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
+import {SkimMockPair} from "../mocks/SkimMockPair.sol";
 
 /// @notice Pool tax after graduation: sold in chunks — before a taxed sell (≤ 25% of that sell), by the keeper
 ///         otherwise — all within one budget per token per block (0.5% of the token side at the block's first chunk
@@ -69,6 +70,7 @@ contract SwapBackTest is LaunchpadV3Test {
     ///      it (a dust sell only uses dust of it), the next block opens a fresh one.
     function test_swapBack_blockBudgetSharedBySells() public {
         (address t, MockPair pair) = _dividendToken();
+        _withSkim(pair); // the first sell's tokens stay unsynced (no swap after it): set aside around the second chunk
         _buyBacklog(t, 12);
         address seller = address(uint160(0xC0000));
         uint256 budget = _cap(t, pair);
@@ -106,44 +108,81 @@ contract SwapBackTest is LaunchpadV3Test {
         assertEq(windowBlock, 0, "no chunk attempt");
     }
 
-    /// @dev D2 / audit 5 B-F2 (review): unsynced quote of at least LP_ADD_MIN_BPS of the quote reserve (someone
-    ///      mid-way adding liquidity, quote first) skips the chunk, and the skip leaves the block's budget alone.
-    function test_swapBack_skippedWhilePairUnsynced() public {
+    /// @dev The repo's MockPair has no `skim`; give the live pair one (same storage layout).
+    function _withSkim(MockPair pair) internal {
+        vm.etch(address(pair), address(new SkimMockPair()).code);
+    }
+
+    function _excess(address t, MockPair pair) internal view returns (uint256 exT, uint256 exQ) {
+        (uint256 rT, uint256 rQ) = _reserves(t, pair);
+        exT = IERC20(t).balanceOf(address(pair)) - rT;
+        exQ = quoteTok.balanceOf(address(pair)) - rQ;
+    }
+
+    /// @dev D2 / audit 5 B-F2 (review): unsynced quote in the pair (someone mid-way adding liquidity, quote first)
+    ///      no longer skips the chunk: it is set aside, the chunk sells at the reserves, and it goes back untouched.
+    function test_swapBack_unsyncedQuoteSetAsideAndReturned() public {
         (address t, MockPair pair) = _dividendToken();
+        _withSkim(pair);
         _buyBacklog(t, 12);
         uint256 sold = 1_000_000 ether;
         (, uint256 rQ) = _reserves(t, pair);
-        quoteTok.mintUnlimited(address(pair), (rQ * handler.LP_ADD_MIN_BPS()) / BPS); // one side sent, not minted
+        uint256 lpQuote = rQ / 1000; // one side sent, not minted
+        quoteTok.mintUnlimited(address(pair), lpQuote);
         uint256 accrued = handler.accruedTax(t);
-        uint256 max0 = handler.maxChunk(t);
-        assertGt(max0, 0);
-        vm.prank(address(uint160(0xC0000)));
-        IERC20(t).transfer(address(pair), sold);
-        assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "skipped");
-        (, uint96 used) = handler.windowOf(t);
-        assertEq(used, 0, "and the block's budget is untouched");
-        assertGt(handler.maxChunk(t), 0, "the keeper can still sell this block");
-    }
-
-    /// @dev B-F2 (review): unsynced quote just below LP_ADD_MIN_BPS of the reserve, however large next to the sell,
-    ///      is not an LP add: absorbed, and the chunk runs.
-    function test_swapBack_justBelowLpAddThresholdDoesNotSkip() public {
-        (address t, MockPair pair) = _dividendToken();
-        _buyBacklog(t, 12);
-        (, uint256 rQ) = _reserves(t, pair);
-        quoteTok.mintUnlimited(address(pair), (rQ * handler.LP_ADD_MIN_BPS()) / BPS - 1);
-        uint256 accrued = handler.accruedTax(t);
-        uint256 sold = 1000 ether; // a small sell: the old rule (excess vs half the sell) would have skipped
         uint256 chunk = _expectedChunk(t, sold);
         assertGt(chunk, 0);
         vm.prank(address(uint160(0xC0000)));
         IERC20(t).transfer(address(pair), sold);
         assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "the chunk ran");
+        (uint256 exT, uint256 exQ) = _excess(t, pair);
+        assertEq(exQ, lpQuote, "the LP's quote is still there, unsynced");
+        assertEq(exT, sold - (sold * 300) / BPS, "and the sell's tokens");
+        assertEq(IERC20(t).balanceOf(address(handler)), handler.accruedTax(t), "nothing set aside stayed here");
+        assertEq(quoteTok.balanceOf(address(handler)), 0);
+    }
+
+    /// @dev Unsynced tokens (sent to the pair, not swapped yet) are set aside and returned the same way.
+    function test_swapBack_unsyncedTokensSetAsideAndReturned() public {
+        (address t, MockPair pair) = _dividendToken();
+        _withSkim(pair);
+        _buyBacklog(t, 12);
+        address a = address(uint160(0xC0000));
+        address b = address(uint160(0xC0001));
+        vm.prank(a);
+        IERC20(t).transfer(address(pair), 1000 ether); // a's chunk runs, its tokens stay unsynced
+        (uint256 exT0, uint256 exQ0) = _excess(t, pair);
+        assertEq(exT0, 1000 ether - (1000 ether * 300) / BPS);
+        assertEq(exQ0, 0);
+        uint256 accrued = handler.accruedTax(t);
+        uint256 sold = 1_000_000 ether;
+        uint256 chunk = _expectedChunk(t, sold);
+        assertGt(chunk, 0);
+        vm.prank(b);
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "b's chunk ran too");
+        (uint256 exT, uint256 exQ) = _excess(t, pair);
+        assertEq(exT, exT0 + sold - (sold * 300) / BPS, "a's unsynced tokens went back");
+        assertEq(exQ, 0);
+        assertEq(IERC20(t).balanceOf(address(handler)), handler.accruedTax(t), "nothing set aside stayed here");
+    }
+
+    /// @dev A pair without `skim` (not Pancake) can't set balances aside: the chunk fails, the sell goes through.
+    function test_swapBack_unsyncedWithoutSkimNeverFailsTheSell() public {
+        (address t, MockPair pair) = _dividendToken();
+        _buyBacklog(t, 12);
+        quoteTok.mintUnlimited(address(pair), 1);
+        uint256 accrued = handler.accruedTax(t);
+        uint256 sold = 1_000_000 ether;
+        vm.prank(address(uint160(0xC0000)));
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "no chunk, the sell went through");
     }
 
     /// @dev B-F2 (review): a dust sell next to 1 wei of unsynced quote neither skips nor spends the block.
     function test_swapBack_dustSellPlusOneWeiSpendsNothing() public {
         (address t, MockPair pair) = _dividendToken();
+        _withSkim(pair);
         _buyBacklog(t, 12);
         quoteTok.mintUnlimited(address(pair), 1);
         address seller = address(uint160(0xC0000));
@@ -158,10 +197,13 @@ contract SwapBackTest is LaunchpadV3Test {
         vm.prank(seller);
         IERC20(t).transfer(address(pair), sold);
         assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "the real sell still gets its chunk");
+        (, uint256 exQ) = _excess(t, pair);
+        assertEq(exQ, 1, "the 1 wei is still there");
     }
 
     function test_swapBack_dustDonationDoesNotSkip() public {
         (address t, MockPair pair) = _dividendToken();
+        _withSkim(pair);
         _buyBacklog(t, 12);
         quoteTok.mintUnlimited(address(pair), 1); // B-F2: 1 wei used to skip the chunk for free
         uint256 accrued = handler.accruedTax(t);
@@ -349,9 +391,7 @@ contract SwapBackTest is LaunchpadV3Test {
         _buyBacklog(t, 6);
         address a = address(uint160(0xB0000));
         uint256 p0 = divVault.pending(t, a); // its curve-phase dividends (paid in quote at the trade)
-        vm.mockCallRevert(
-            address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "no"
-        );
+        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "no");
         vm.prank(keeper);
         handler.process(t, type(uint256).max, 1);
         uint256 units = handler.pendingHolderUnits(t);
@@ -377,9 +417,15 @@ contract SwapBackTest is LaunchpadV3Test {
         (address t,) = _dividendToken();
         // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
         vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
-        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
-        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
-        vm.mockCallRevert(address(divVault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
+        vm.mockCallRevert(
+            address(divVault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(divVault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused"
+        );
         address a = address(uint160(0xB0000));
         vm.expectEmit(true, true, false, false, address(handler));
         emit PostGradHandlerBase.ShareWriteFailed(t, a, 0);

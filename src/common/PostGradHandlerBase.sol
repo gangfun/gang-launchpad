@@ -13,6 +13,7 @@ import {IPancakeRouter02} from "../launchpad-v2/interfaces/IPancake.sol";
 
 interface IPairSwap {
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+    function skim(address to) external;
 }
 
 interface IHasPair {
@@ -32,10 +33,11 @@ interface IHasPair {
 ///         of the token's reserve as it stood at the block's first chunk attempt, counted by tokens sold — so neither
 ///         a dust sell nor a keeper looping `process` with a 1-wei floor can sell more than one chunk's worth a block.
 ///         Every chunk also refuses to sell more than MAX_PRICE_DROP_BPS below that same block-start reference: a
-///         sell (or a keeper) can't first dump the price and then convert the holders' tax at it. Unsynced quote in
-///         the pair only skips the chunk when it looks like a half-made LP add (at least LP_ADD_MIN_BPS of the quote
-///         reserve, not dust), and a skip leaves the block's budget alone; a sell paid in from a flash swap's callback
-///         (the pair's quote below its reserve) is refused (`SellDuringFlashSwap`), not skipped. `previewSell` /
+///         sell (or a keeper) can't first dump the price and then convert the holders' tax at it. Balances the pair
+///         holds above its reserves (a half-made LP add, a donation) never skip the chunk: `_swapBack` skims them
+///         here, sells the chunk at the reserves and sends them back untouched, so nobody can dodge the chunk with a
+///         donation it takes back, and an LP add in progress keeps what it sent. A sell paid in from a flash swap's
+///         callback (the pair's quote below its reserve) is refused (`SellDuringFlashSwap`). `previewSell` /
 ///         `previewSellNextBlock` quote a sell with its chunk included.
 ///         Each chunk's quote is split at once: the holders' units sold go to the vault (`convertDividend`), the rest to
 ///         the subclass (`_onProceeds`). Neither sink can make a chunk fail: a conversion the vault refuses waits here
@@ -63,9 +65,6 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     uint256 public constant KEEPER_DELAY = 48 hours;
     /// @notice A chunk never sells at a price more than this below the block's reference price (bps).
     uint256 public constant MAX_PRICE_DROP_BPS = 200;
-    /// @notice Unsynced quote in the pair counts as a half-made LP add (and skips the swap-back chunk) only from this
-    ///         share of the pair's quote reserve (bps): dust can't skip it (audit 5 B-F2, review).
-    uint256 public constant LP_ADD_MIN_BPS = 10;
 
     SharedDividendVault public immutable dividendVault;
 
@@ -289,38 +288,54 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         // paid in from the callback, the pair locked). Skipping its chunk would be free, so the sell is refused (B-F2).
         if (IERC20(_quoteOf(token)).balanceOf(pair) < rQ) revert SellDuringFlashSwap();
         _openWindow(token, rT, rQ);
-        // a skip (a half-made LP add) leaves the budget alone: the block's reference price already stops a
-        // "dump first, convert after" (B-F2 review: a skip that spent the budget let dust freeze every chunk)
-        (uint256 amount, uint256 out) = _swapBackChunk(token, sellAmount, false);
+        (uint256 amount, uint256 out, bool unsynced) = _swapBackChunk(token, sellAmount, false);
         if (amount == 0 || out == 0) return 0;
         windowOf[token].used += uint96(amount);
-        return _sellChunk(token, amount, (out * (10_000 - SWAP_BACK_SLIPPAGE_BPS)) / 10_000, true);
+        uint256 minOut = (out * (10_000 - SWAP_BACK_SLIPPAGE_BPS)) / 10_000;
+        if (!unsynced) return _sellChunk(token, amount, minOut, true);
+        // balances above the reserves (an LP add sent but not minted, a donation): set them aside, sell at the
+        // reserves, give them back as they were (B-F2 review). Skipping instead let a seller dodge the chunk with a
+        // donation it takes back in its own swap. The handler is tax-excluded both ways (no tax, no swap-back), and
+        // what it holds meanwhile is never counted: the chunk is sized above and `_sellChunk` reads no balance of it.
+        (uint256 heldT, uint256 heldQ) = _skimToSelf(token, pair);
+        quoteOut = _sellChunk(token, amount, minOut, true);
+        if (heldT != 0) IERC20(token).safeTransfer(pair, heldT);
+        if (heldQ != 0) IERC20(_quoteOf(token)).safeTransfer(pair, heldQ);
+    }
+
+    /// @dev `pair.skim` to this contract; what actually arrived of each side (a quote that charges on transfer delivers
+    ///      less, and only that much can go back).
+    function _skimToSelf(address token, address pair) internal returns (uint256 heldT, uint256 heldQ) {
+        IERC20 quote = IERC20(_quoteOf(token));
+        uint256 t0 = IERC20(token).balanceOf(address(this));
+        uint256 q0 = quote.balanceOf(address(this));
+        IPairSwap(pair).skim(address(this));
+        heldT = IERC20(token).balanceOf(address(this)) - t0;
+        heldQ = quote.balanceOf(address(this)) - q0;
     }
 
     /// @dev The chunk a sell of `sellAmount` would trigger and what it fetches (`fresh`: as the first chunk attempt of
     ///      a new block). None when the sell pays no tax, the budget is spent, the price is below the block's
-    ///      reference, the pair is mid-swap, or it holds unsynced quote that looks like a half-made LP add. Unsynced
-    ///      dust (below LP_ADD_MIN_BPS of the quote reserve, or any token excess) is simply absorbed by the chunk.
+    ///      reference, or the pair is mid-swap. `unsynced`: the pair holds more than its reserves (set aside around
+    ///      the chunk by `_swapBack`; the chunk is priced at the reserves either way).
     function _swapBackChunk(address token, uint256 sellAmount, bool fresh)
         internal
         view
-        returns (uint256 amount, uint256 out)
+        returns (uint256 amount, uint256 out, bool unsynced)
     {
-        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0);
+        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0, false);
         address pair = IHasPair(token).pair();
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         Ref memory ref = fresh || windowOf[token].blockNumber != block.number
             ? Ref(uint112(rT), uint112(rQ))
             : refOf[token];
-        if (_belowRef(rT, rQ, ref)) return (0, 0);
+        if (_belowRef(rT, rQ, ref)) return (0, 0, false);
         // a balance below its reserve: mid-swap (the pair is locked) — never sell into that (`_swapBack` refuses a
         // sell with the quote below its reserve outright)
         uint256 bQ = IERC20(_quoteOf(token)).balanceOf(pair);
-        if (bQ < rQ || IERC20(token).balanceOf(pair) < rT) return (0, 0);
-        // someone mid-way adding liquidity with the quote sent first, not minted yet: a swap now would absorb it.
-        // Only unsynced quote of at least LP_ADD_MIN_BPS of the quote reserve counts (B-F2 review: measured against
-        // the pool, not the sell, so a dust sell can't count 1 wei as an LP add).
-        if (bQ != rQ && (bQ - rQ) * 10_000 >= rQ * LP_ADD_MIN_BPS) return (0, 0);
+        uint256 bT = IERC20(token).balanceOf(pair);
+        if (bQ < rQ || bT < rT) return (0, 0, false);
+        unsynced = bQ != rQ || bT != rT;
         amount = accruedTax[token];
         uint256 bal = _sellable(token);
         if (amount > bal) amount = bal;
@@ -328,7 +343,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (amount > left) amount = left;
         uint256 bySell = (sellAmount * SWAP_BACK_SELL_BPS) / 10_000;
         if (amount > bySell) amount = bySell;
-        if (amount == 0) return (0, 0);
+        if (amount == 0) return (0, 0, false);
         out = _amountOut(amount, rT, rQ);
     }
 
@@ -358,7 +373,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (pair == address(0)) return (0, 0);
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         uint256 chunkOut;
-        (chunk, chunkOut) = _swapBackChunk(token, amountIn, fresh);
+        (chunk, chunkOut,) = _swapBackChunk(token, amountIn, fresh);
         uint256 net = amountIn - (amountIn * _sellTaxBps(token)) / 10_000;
         quoteOut = _amountOut(net, rT + chunk, rQ - chunkOut);
     }

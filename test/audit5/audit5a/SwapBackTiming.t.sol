@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {LaunchpadV3Test} from "../../launchpad-v3/LaunchpadV3.t.sol";
+import {SkimMockPair} from "../../mocks/SkimMockPair.sol";
 
 /// @notice audit5a: who decides when (and at what price) the holders' tax tokens are sold.
 contract SwapBackTimingTest is LaunchpadV3Test {
@@ -59,11 +60,12 @@ contract SwapBackTimingTest is LaunchpadV3Test {
         uint256 honest = quoteTok.balanceOf(address(divVault)) - v0;
         vm.revertToState(snap);
 
+        vm.etch(address(pair), address(new SkimMockPair()).code); // the repo's MockPair has no skim
         quoteTok.mintUnlimited(address(pair), 1);
         uint256 a0 = handler.accruedTax(t);
         v0 = quoteTok.balanceOf(address(divVault));
         _poolSell(t, whale, dump);
-        assertLt(handler.accruedTax(t), a0 + (dump * 100) / BPS, "the dump sold its chunk (1 wei is absorbed)");
+        assertLt(handler.accruedTax(t), a0 + (dump * 100) / BPS, "the dump sold its chunk (1 wei set aside)");
         assertEq(quoteTok.balanceOf(address(divVault)) - v0, honest, "at the honest price");
         uint256 a1 = handler.accruedTax(t);
         _poolSell(t, whale, small);

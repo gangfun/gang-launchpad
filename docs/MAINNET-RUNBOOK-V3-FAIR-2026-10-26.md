@@ -220,9 +220,9 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 | 外盘税 | 自动 | 每笔卖出顺带卖一小块（≤ 这笔卖单的 25%）；没有卖单时 keeper 每 10 分钟分块补位。每个币每区块一个额度（池子代币储备的 0.5%），卖出和 keeper 共用，所以同一区块里第二次 `process` 会回滚 `ZeroAmount`，价格比区块参考价低 2% 以上会回滚 `PriceBelowReference`——都是等下一个区块再卖，不是故障。健康检查在未卖税 > 池子代币储备 1% 时报警 |
 | 分红兑现被拒（`HolderConversionDeferred`） | 健康检查报「pendingHolderQuote 卡住」 | 说明分红合约当时拒绝兑现。查清原因后任何人调 `handler.flushHolders(token)`；keeper 每次运行也会自动重试 |
 | 平台那份被拒（`PlatformOwed`） | 健康检查报「owedPlatformOf 卡住」 | 说明手续费池拒收（operator 被撤等）。恢复后任何人调 `handler.flushPlatform(quote)`；keeper 自动重试 |
-| `SwapBackFailed` | 健康检查报警 | 某个币卖单顺带的那一块失败了（卖单本身照常成交）。查池子状态（储备 / 余额不同步、报价币异常）；keeper 分块补位照常进行 |
+| `SwapBackFailed` | 健康检查报警 | 某个币卖单顺带的那一块失败了（卖单本身照常成交）。查池子和报价币状态（报价币暂停 / 拉黑了池子或处理合约、报价币异常）；池子里有未同步的余额本身不会让它失败（处理合约会先收走、卖完再退回，审计说明 §18 R5-O1）；keeper 分块补位照常进行 |
 | 用户反馈卖出回滚 `SellDuringFlashSwap` | 用户 / 聚合器报错 | 有意为之（审计说明 §18 R5-1a、K-21）：在 Pancake 闪电兑换回调里付币的卖出一律拒绝。让用户经 Router02 或 CLI / 网站卖出。若池子的报价币余额长期低于储备（会负 rebase 的报价币），任何人对池子调一次 `sync()` 即可恢复 |
-| 有人反馈小额加池失败（`INSUFFICIENT_LIQUIDITY_MINTED`） | 用户报错 | 报价币在前的小额 `addLiquidity`（不到池子报价币储备的 0.1%）恰好赶上一块要卖时会失败（不亏钱，审计说明 §18）。让用户把代币放在前面（`addLiquidity(代币, 报价币, …)`，WBNB 池用 `addLiquidityETH`）或加大金额 |
+| 链上看到处理合约和池子之间成对的转账 | 有人加流动性到一半、或往池子转了币时的卖出 | 正常（审计说明 §18 R5-O1）：`swapBack` 把池子里多出的两边先 `skim` 到处理合约、卖完这一块再原样转回。索引 / 对账时这对转账不算税币流水；加流动性两种顺序、任何金额都不受影响 |
 | 接收地址欠款 | keeper 日志 / 健康检查里出现 `owedOf > 0` | 联系合作方处理收款问题；能收款之后 keeper 或任何人都能 `TaxHandlerV3.release(token)` |
 | 接新合作方 | 需要时 | 多签 `TaxHandlerV3.list(地址, 名称)` |
 | 非官方池子分红 | 发现某个 V3 币在别的 DEX 或 V3 池子里有大额持仓 | 多签 `SharedDividendVault.setExcluded(pool, true)`，**同一批交易里** `TaxHandlerV3.syncShares(token, pool, 0)` |
