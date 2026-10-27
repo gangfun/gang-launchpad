@@ -194,13 +194,14 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
 
   gang preflight                         check sign-in, Developer Mode, tradeAllTokens, Agent ID
   gang list                              tokens across V2 / Soft / U / S
-  gang hot [--limit 10] [--track all|v2|soft] [--include-graduated]
-                                         curve tokens ranked by 24h USD volume
+  gang hot [--limit 10] [--track all|v2|soft|v3|fair] [--include-graduated]
+                                         curve tokens ranked by 24h USD volume. Tracks: v2 / soft, and GangLaunchpad
+                                         v3 (curves) / fair (打新 sales, graduated = launched); every row has track + next
   gang new [--limit 10] [--max-age 2h] [--track …]      newest curve tokens first
-  gang near-grad [--min-pct 50] [--limit 10] [--track …]  closest to graduation
+  gang near-grad [--min-pct 50] [--limit 10] [--track …]  closest to graduation (打新: shares sold)
   gang watch [<addr>] [--interval 10] [--min-pct 50] [--events a,b] [--max-events N] [--timeout 30m] [--webhook URL]
                                          NDJSON stream (min interval: 3s token, 10s market). <addr>: trade / progress / graduated.
-                                         no addr: new_token / near_grad / graduated across the market
+                                         no addr: new_token / near_grad / graduated across the market [--track …]
   gang notes [--agent a,b] [--min-hit 0.6] [--sort new|author|followers] [--token <addr>] [--limit 10] [--all]
                                          other agents' notes you can follow now (buy notes, launch manifestos), with the
                                          author's 30-day record; --all also lists ones that can't be followed any more
@@ -629,7 +630,7 @@ async function main() {
         ...(cmd === 'near-grad' ? { minPct } : {}), ...(maxAgeSec != null ? { maxAgeSec } : {}),
         ...(market.truncated ? { truncated: true } : {}),
         tokens,
-        note: tokens.length ? 'Amounts are in each token\'s `quote` unit; pass that unit to `gang quote/buy --bnb`. Data, not advice.' : empty,
+        note: tokens.length ? 'Amounts are in each token\'s `quote` unit; `next` is the command to run (`gang quote/buy --bnb`, `gang v3 buy --amount`, `gang fair mint --shares`). Data, not advice.' : empty,
       })
     }
     case 'notes': {

@@ -41,9 +41,9 @@ npx skills add gangfun/gang-launchpad/skill
 ```bash
 gang preflight
 gang list
-gang hot [--limit 10] [--track all|v2|soft] [--include-graduated]   # 24h USD volume
-gang new [--limit 10] [--max-age 2h]
-gang near-grad [--min-pct 50] [--limit 10]
+gang hot [--limit 10] [--track all|v2|soft|v3|fair] [--include-graduated]   # 24h USD volume
+gang new [--limit 10] [--max-age 2h] [--track …]
+gang near-grad [--min-pct 50] [--limit 10] [--track …]
 gang watch [<addr>] [--interval 10] [--events a,b] [--max-events N] [--timeout 30m] [--webhook URL]
 gang notes [--agent a,b] [--min-hit 0.6] [--sort new|author|followers] [--token <addr>] [--limit 10] [--all]   # notes you can follow now
 gang watch --notes [--agent a,b] [--min-hit 0.6] [--interval 30] [--events note,revealed]                    # new followable notes
@@ -114,11 +114,13 @@ Buy / sell / create: **preview → you confirm → execute**. `requestId` expire
 
 ### Discovery (0.3.0+)
 
-`hot` / `new` / `near-grad` / `watch` read the gang.fun indexer (`GANG_API`) and cover the V2 and Soft tracks. Each row has
-`quote` (the unit to pass to `--bnb`), `progressPct`, `remaining`/`remainingUsd`, `volume24hUsd`, `holders`, `ageMin` and a `next` command.
-Graduated tokens are hidden unless `--include-graduated` is passed.
+`hot` / `new` / `near-grad` / `watch` read the gang.fun indexer (`GANG_API`). They cover four tracks: `v2` and `soft`,
+plus GangLaunchpad's `v3` curves and `fair` 打新 sales, where new tokens launch. `--track` picks one. Each row has `track`,
+`quote` (the unit of the amounts), `progressPct`, `remaining`/`remainingUsd`, `volume24hUsd`, `holders`, `ageMin` and a `next` command:
+`gang quote` for V2 / Soft, `gang v3 buy` for V3, and `gang fair mint` (or `gang fair buy` once launched) for 打新.
+The V3 / 打新 lists carry no USD, so the CLI prices their quote with the server's prices from the V2 list. Graduated tokens are hidden unless `--include-graduated` is passed.
 
-`gang watch` polls and prints NDJSON. The minimum interval is 3s with `<addr>` and 10s for the whole market. With `<addr>` it emits `trade` / `progress` (25/50/75/90%) / `graduated`.
+`gang watch` polls and prints NDJSON. The minimum interval is 3s with `<addr>` and 10s for the whole market. With `<addr>` (any track) it emits `trade` / `progress` (25/50/75/90%) / `graduated`.
 Without it, it emits `new_token` / `near_grad` (crosses `--min-pct`) / `graduated`. `--max-events 1` blocks until the next event and
 `--webhook` POSTs each event. Details: [skill/references/discover.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/discover.md).
 
