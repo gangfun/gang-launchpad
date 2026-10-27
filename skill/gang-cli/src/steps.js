@@ -14,15 +14,37 @@ const ERC20_ABI = parseAbi([
 const WBNB_ABI = parseAbi(['function deposit() payable'])
 
 /**
- * GangRouter (gang-launchpad src/router): stateless entry in front of both cores. With native BNB it wraps, calls the
- * core for the caller and returns any refund as BNB — no wrap / approve round for WBNB-quoted tokens and sales.
+ * GangRouter (gang-launchpad src/router; a proxy, so its address stays): stateless entry in front of the pad. With
+ * native BNB it wraps, calls the pad for the caller and returns any refund as BNB — no wrap / approve round for
+ * WBNB-quoted tokens and sales. The pool* functions trade a graduated / launched token on PancakeSwap (see pool.js):
+ * the token / proceeds go to the caller; poolBuy / poolSell pull the quote / token, so approve the router first.
  */
 export const ROUTER_ABI = parseAbi([
+  'function v3Buy(address token, uint256 quoteIn, uint256 minTokensOut, uint256 deadline) returns (uint256)',
   'function v3BuyBNB(address token, uint256 minTokensOut, uint256 deadline) payable returns (uint256)',
+  'function fairMint(address token, uint256 shares, uint256 minShares, uint256 deadline) returns (uint256)',
   'function fairMintBNB(address token, uint256 shares, uint256 minShares, uint256 deadline) payable returns (uint256)',
+  'function poolBuyBNB(address token, address quote, uint256 minTokensOut, uint256 deadline) payable returns (uint256 tokensOut)',
+  'function poolBuy(address token, address quote, uint256 quoteIn, uint256 minTokensOut, uint256 deadline) returns (uint256)',
+  'function poolSell(address token, address quote, uint256 amountIn, uint256 minQuoteOut, uint256 deadline) returns (uint256)',
+  'function poolSellForBNB(address token, address quote, uint256 amountIn, uint256 minBnbOut, uint256 deadline) returns (uint256)',
   'error Expired()', 'error NotDeployed()', 'error UnknownToken()', 'error NotWbnbQuote()', 'error NotEnoughValue()',
   'error OnlyWbnb()', 'error BnbTransferFailed()',
+  // pool* errors — TODO(router): names taken before the router branch wrote them; check against GangRouter.sol.
+  // Decoding goes by selector, so an entry the router does not have costs nothing (but a renamed one is not decoded).
+  'error InsufficientOutput()', 'error ZeroAmount()', 'error NoPool()', 'error NotGraduated()', 'error BadQuote()',
+  'error SameToken()',
 ])
+/** What to tell the agent for each router error. */
+export const ROUTER_HINTS = {
+  Expired: 'the tx landed after its deadline (30 min after the preview): re-run the command for a fresh one',
+  InsufficientOutput: 'the pool moved past --slippage (or the tax chunk sold first took more): re-run to re-quote, or raise --slippage',
+  ZeroAmount: 'the amount is 0',
+  NoPool: 'PancakeSwap has no pool for this token and quote (not graduated / launched yet?)',
+  NotGraduated: 'the token has not graduated / launched yet: trade it on the curve / in the sale',
+  BadQuote: 'the quote passed is not the token\'s pool quote',
+  NotEnoughValue: 'the BNB sent does not cover the amount',
+}
 /** Router deadline: half an hour, for a preview that is executed a few minutes later. */
 export const routerDeadline = () => BigInt(Math.floor(Date.now() / 1000) + 1800)
 /** Native BNB kept back for gas on a router call, as `gang buy` keeps for wrap + approve + buy. */
@@ -240,7 +262,8 @@ export async function swapBackState(ctx, handler, token, reserveToken) {
 }
 
 /** Hint for selling a graduated / launched token on PancakeSwap with the minOut of a pool quote (poolSellQuote) as amountOutMin. */
-export const POOL_SELL_HINT = 'sell on PancakeSwap with swapExactTokensForTokensSupportingFeeOnTransferTokens (the token takes its sell tax in the transfer), passing minOut (poolQuote.minOut / poolSellAll.minOut, set by --slippage) as amountOutMin so the sell reverts rather than fills below it; '
+export const POOL_SELL_HINT = '`gang v3 sell` / `gang fair sell` build this sell through GangRouter (poolSell / --to-bnb poolSellForBNB, minOut as here); '
+  + 'or sell on PancakeSwap with swapExactTokensForTokensSupportingFeeOnTransferTokens (the token takes its sell tax in the transfer), passing minOut (poolQuote.minOut / poolSellAll.minOut, set by --slippage) as amountOutMin so the sell reverts rather than fills below it; '
   + 'the quote includes the small chunk of tax the handler sells right before a sell and assumes the tx lands in a new block (previewSellNextBlock). '
   + 'Let the wallet estimate gas, or give at least 750k: a sell that triggers a chunk uses about 660k (about 330k without), and too little gas reverts with SwapBackOutOfGas'
 

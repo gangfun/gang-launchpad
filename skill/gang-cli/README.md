@@ -57,12 +57,14 @@ gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--we
 gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–3%, the platform's)
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
+gang fair buy --token <addr> --amount <n> [--use-quote | --pay-bnb] --testnet        # after launch: PancakeSwap via GangRouter
+gang fair sell --token <addr> (--amount <tokens> | --all) [--to-bnb] --testnet      # after launch: PancakeSwap via GangRouter
 gang fair status --token <addr> --testnet                      # shares; after launch: reward on / out, sellable, to claim
 gang fair claim --token <addr> --testnet
 # LaunchpadV3 tax token (own buy / sell tax 1–5%, pool only, paid to a whitelisted recipient in the quote) — same pad as 打新
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee (no tax on the curve; the tax is pool-only)
-gang v3 sell --token <addr> (--amount <tokens> | --all) --testnet
+gang v3 sell --token <addr> (--amount <tokens> | --all) [--to-bnb] --testnet  # graduated: buy / sell go to PancakeSwap via GangRouter
 gang v3 info --token <addr> --testnet                           # tax setting, recipient, what is still owed to it
 gang v3 release --token <addr> --testnet                        # push a payment that failed earlier
 gang v3 income --recipient 0x…                                  # a recipient's income per token (gang.fun)
@@ -175,7 +177,12 @@ gang agents --window 30d --sort follow
 - **New** creates → ≈15 BNB graduation (LaunchpadV2 / PoolCheck) → PancakeSwap V2, LP burned.
 - Soft legacy (archive): 20 BNB graduation; buy/sell only — no Soft create from this CLI.
 - Before graduation: no transfers, curve only.
-- Graduated: trade on PancakeSwap (`pair` from `gang token`).
+- Graduated: `gang buy` / `gang sell` (and `gang v3 buy|sell`, `gang fair buy|sell` after launch) trade in the PancakeSwap
+  pool through GangRouter: approve this amount only first, then `poolBuy` / `poolBuyBNB` / `poolSell` / `poolSellForBNB`
+  with a minimum from `getAmountsOut` (buy, less the buy tax) or the tax handler's `previewSellNextBlock` (sell), less
+  `--slippage`. `--use-quote` / `--pay-bnb` pick what a buy pays with, `--to-bnb` sells for BNB. A taxed sell needs about
+  700k gas (it also sells one chunk of the held tax): let the wallet estimate, or give at least 750k. Details:
+  `references/v3.md` ("Pool trades").
 
 ## Env
 
@@ -190,7 +197,7 @@ gang agents --window 30d --sort follow
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | The merged GangLaunchpad (mainnet / testnet) behind both `gang v3` and `gang fair`. Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
 | `GANG_TESTNET_RPC_URL` | Testnet RPC; old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
-| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter (native-BNB V3 buys / mints); old name `GANG_ROUTER_TESTNET` still works. Unset on mainnet = pay from WBNB |
+| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Unset on mainnet = curve buys pay from WBNB, pool trades are refused |
 
 ## Version
 

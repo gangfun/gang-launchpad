@@ -15,7 +15,8 @@ import { bsc, bscTestnet } from 'viem/chains'
  */
 
 export const TESTNET_SET8 = { pad: '0x4f7391D69cbf62891Ba8db929c323cd2609b94e7', router: '0xaeC638b258521ba2C39ADd5dAA3038F2c95C5747' }
-// TODO(mainnet): fill in after the mainnet broadcast; until then mainnet needs GANG_PAD (and GANG_ROUTER for BNB buys).
+// TODO(mainnet): fill in after the mainnet broadcast; until then mainnet needs GANG_PAD (and GANG_ROUTER, the GangRouter
+// proxy, for BNB buys and for every PancakeSwap trade of a graduated token — V3, 打新 and V2 / Soft / U / S alike).
 export const MAINNET_GANG = { pad: '', router: '' }
 // 旧部署兼容，第 8 套填好后可删: testnet set 7 (before the merge: one pad per kind, one router for both).
 const TESTNET_SET7 = {
