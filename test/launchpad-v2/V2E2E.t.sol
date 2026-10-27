@@ -48,7 +48,10 @@ contract V2E2EForkTest is Test {
 
     /// @dev No-op when setUp did not fork, so `forge test` does not touch mainnet.
     modifier forkOnly() {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         _;
     }
 
@@ -82,7 +85,7 @@ contract V2E2EForkTest is Test {
     }
 
     // ---------------------------------------------------------------- pricing sanity
-    function test_tickMath_matchesLivePools() public view forkOnly {
+    function test_tickMath_matchesLivePools() public forkOnly {
         address[2] memory pools = [NVDAB_USDT_V3, bridge];
         for (uint256 i; i < 2; i++) {
             (uint160 sqrtP, int24 tick,,,,,) = IV3PoolLite(pools[i]).slot0();
@@ -91,20 +94,20 @@ contract V2E2EForkTest is Test {
         }
     }
 
-    function test_gradAmt_v3RefPool_matches15Bnb() public view forkOnly {
+    function test_gradAmt_v3RefPool_matches15Bnb() public forkOnly {
         uint256 g = pad.graduationAmountOf(NVDAB, NVDAB_USDT_V3);
         uint256 expected = Math.mulDiv(15e18, _usdtPerQ96(bridge, WBNB), _usdtPerQ96(NVDAB_USDT_V3, NVDAB));
         console.log("gradAmt NVDAB via V3 (e15)", g / 1e15, "expected from spot (e15)", expected / 1e15);
         assertApproxEqRel(g, expected, 0.1e18, "within 10% of spot (TWAP drift)"); // TWAP vs spot
     }
 
-    function test_gradAmt_v2RefPool() public view forkOnly {
+    function test_gradAmt_v2RefPool() public forkOnly {
         uint256 g = pad.graduationAmountOf(NVDAB, NVDAB_WBNB_V2);
         console.log("gradAmt NVDAB via V2 NVDAB/WBNB (e15)", g / 1e15);
         assertGt(g, 0);
     }
 
-    function test_gradAmt_usdtQuote_viaBridgeAsRef() public view forkOnly {
+    function test_gradAmt_usdtQuote_viaBridgeAsRef() public forkOnly {
         uint256 g = pad.graduationAmountOf(USDT, bridge); // counter == WBNB, no bridge needed
         console.log("gradAmt USDT (e18)", g / 1e18);
         assertApproxEqRel(g, Math.mulDiv(15e18, _usdtPerQ96(bridge, WBNB), Q96), 0.1e18);

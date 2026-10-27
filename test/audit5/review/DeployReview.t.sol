@@ -15,7 +15,10 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
     /// BURNER / FEE_VAULT overrides go into the new bucket (the review PoC: BURNER used to be check-only, so the deploy
     /// wired the V2 burner and then failed its own check); a re-run with the defaults instead is caught by its check.
     function test_review_deploy_burnerAndFeeVaultOverridesUsed() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         address burner = address(0x1111);
         address feeVault = address(0x2222);
         vm.setEnv("BURNER", vm.toString(burner));
@@ -41,7 +44,10 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
 
     /// Defaults (no override): the V2 bucket's burner and fee vault; keepers set through the one-time setKeeper.
     function test_review_deploy_defaultsAndKeeperFlags() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         SharedPlatformFeeBucket pb = SharedPlatformFeeBucket(s.bucket);
         assertEq(address(pb.burner()), address(PlatformFeeBucket(M.V2_PLATFORM_BUCKET).burner()));
@@ -64,7 +70,10 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
     /// KEEPER (with the explicit KEEPER_OVERRIDE_OK=true on mainnet) overrides the default on both the handler and
     /// the bucket.
     function test_review_deploy_keeperOverride() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         address k = address(0x3333);
         vm.setEnv("KEEPER", vm.toString(k));
         vm.setEnv("KEEPER_OVERRIDE_OK", "true");
@@ -76,7 +85,10 @@ contract DeployReviewForkTest is DeployScriptsForkTest {
 
     /// RECIPIENT on mainnet is listed at deploy (else the owner lists the partner later).
     function test_review_deploy_recipientListed() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         address r = address(0x4444);
         vm.setEnv("RECIPIENT", vm.toString(r));
         vm.setEnv("RECIPIENT_LABEL", "partner");

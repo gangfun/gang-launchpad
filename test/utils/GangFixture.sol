@@ -17,6 +17,8 @@ import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {GangToken} from "../../src/gang/GangToken.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
+import {GangRouterDeployLib} from "../../script/GangRouterDeployLib.sol";
+import {MockPancakeV2Swap} from "../mocks/GangRouterV2Mock.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
 
@@ -40,7 +42,7 @@ contract GangBlacklistQuote is ERC20("Blacklist USD", "BUSD") {
 
 /// @notice One whole merged deployment on mocks (merge plan §7.1): GangLaunchpad (+ CurveLogic / FairLogic, linked by
 ///         forge) and GangTaxHandler over the shared vault, bucket, migrator, registry and TokenDeployer, behind
-///         GangRouter. Wired in the deploy script's order: everything first, `pad.setMigrator` last (A-1).
+///         the GangRouter proxy (GangRouterDeployLib, as DeployGang deploys it). Wired in the deploy script's order: everything first, `pad.setMigrator` last (A-1).
 /// @dev Names follow the old suites (`pad`, `handler`, `divVault`, `bucket`, `migrator`, `tokenDeployer`, `agents`,
 ///      `quoteRegistry`) so most migrated cases only change their import. Three quotes are listed: WBNB, an 18-decimal
 ///      test quote (fixed 15-BNB equivalent in the registry) and a quote that can blacklist the tax recipient.
@@ -67,11 +69,17 @@ abstract contract GangFixture is Test {
     TokenDeployer public tokenDeployer;
     GangTaxHandler public handler;
     GangLaunchpad public pad;
+    /// @dev the router PROXY (as deployed: TransparentUpgradeableProxy over GangRouter, ProxyAdmin owned by a 48 h
+    ///      timelock whose proposer / executor / canceller is `owner`)
     GangRouter public router;
+    GangRouterDeployLib.Router internal routerStack;
 
     address public owner = makeAddr("owner");
     address public treasury = makeAddr("treasury");
     address public feeVault = makeAddr("feeVault");
+    /// @dev the router's Pancake V2 router: a 1:1 stand-in answering factory() / WETH() (the real pool entries are
+    ///      tested on a fork)
+    address public pancakeRouter;
 
     uint256 internal _agentNonce;
     uint256 internal _nextAgentId = 1;
@@ -84,6 +92,9 @@ abstract contract GangFixture is Test {
         blq = new GangBlacklistQuote();
         agents = new MockAgentId();
         pairFactory = new MockPairFactory();
+        MockPancakeV2Swap pancake = new MockPancakeV2Swap();
+        pancake.setRefs(address(pairFactory), address(wbnb));
+        pancakeRouter = address(pancake);
 
         quoteRegistry = new QuoteRegistry(owner);
         bucket = new SharedPlatformFeeBucket(owner, feeVault);
@@ -101,7 +112,10 @@ abstract contract GangFixture is Test {
             address(wbnb),
             address(pairFactory)
         );
-        router = new GangRouter(address(pad), address(wbnb));
+        routerStack = GangRouterDeployLib.deploy(
+            address(pad), address(wbnb), pancakeRouter, owner, GangRouterDeployLib.MAINNET_MIN_DELAY
+        );
+        router = GangRouter(payable(routerStack.proxy));
 
         vm.startPrank(owner);
         quoteRegistry.setQuote(address(quoteTok), true, 15 ether);
@@ -114,6 +128,7 @@ abstract contract GangFixture is Test {
         divVault.setOperator(address(handler), address(pad));
         divVault.setExcluded(address(migrator), true);
         divVault.setExcluded(address(bucket), true);
+        divVault.setExcluded(address(router), true); // as DeployGang (§21)
         migrator.addLaunchpad(address(pad));
         tokenDeployer.setLaunchpad(address(pad), true);
         handler.setLaunchpad(address(pad));

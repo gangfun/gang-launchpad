@@ -9,7 +9,7 @@ import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
-import {GangRouter} from "../src/router/GangRouter.sol";
+import {GangRouter, IPancakeV2Router} from "../src/router/GangRouter.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
@@ -17,6 +17,10 @@ import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol"
 interface ITestnetAgentId {
     function balanceOf(address) external view returns (uint256);
     function register() external returns (uint256);
+}
+
+interface IPairFactoryLite {
+    function getPair(address, address) external view returns (address);
 }
 
 interface IGangTokenPair {
@@ -34,17 +38,20 @@ interface IGangTokenPair {
 ///           sells below the reward line (out for good), the keeper `process`es a chunk, minter 5 claims.
 /// @dev TESTNET ONLY. The deployer must be the handler's keeper (DeployGang's testnet default) and the blacklist quote's
 ///      admin (DeployGang deploys it from the deployer). Minter keys derive from DEPLOYER_PRIVATE_KEY (recoverable,
-///      worthless off testnet); the labels are the old per-core scripts' ones, so their Agent IDs are reused.
+///      worthless off testnet); A's and 打新's labels are the old per-core scripts' ones, so their Agent IDs are reused;
+///      B fills its curve with its own wallets (V3_B_LABEL), so the whole round runs in one go.
 ///      Resumable: TOKEN_A / TOKEN_B / TOKEN_W / TOKEN_F skip their create; minters that already hold a token (V3) or a
 ///      position (打新) are skipped; fills stop once graduated / launched; each trading step is skipped when its result is
 ///      already on chain. SKIP_V3=true / SKIP_FAIR=true / SKIP_B=true / SKIP_W=true run only the rest.
-///      Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, BLACKLIST_QUOTE (unless SKIP_B); optional GANG_ROUTER (for W), TEST_QUOTE,
+///      Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, BLACKLIST_QUOTE (unless SKIP_B); optional GANG_ROUTER (for W, and the
+///      router's Pancake V2 pool entries on A after its keeper step), TEST_QUOTE,
 ///      RECIPIENT, GAS_PRICE_WEI (default 0.1 gwei — pass the same value as --with-gas-price; minter prefunds are sized
 ///      from it), GAS_PER_MINTER (wei, overrides the sized prefund). Broadcast with --slow: the keeper steps assume the
 ///      trades before them are already mined (the simulation rolls one block before each `process`). Deadlines are a day out (fixed at simulation time;
 ///      the ~1,000 broadcasts take a while). Afterwards run `--sig "sweep()"` as its own script to return what the
 ///      minters did not burn: it must be a separate run, since a simulation does not charge gas.
-///      Needs ≈ 0.15 tBNB at 0.1 gwei (most of it prefunds the 180 minters; `sweep` brings the rest back).
+///      Needs ≈ 0.03 tBNB at 0.1 gwei (an anvil fork run: 1,343 txs, 0.025 tBNB; most of it prefunds the ~260 minters,
+///      `sweep` brings the rest back); keep 0.15 on hand.
 contract GangTestnetE2E is Script {
     uint256 internal constant SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
     uint256 internal constant V3_MINTERS = 120;
@@ -53,6 +60,11 @@ contract GangTestnetE2E is Script {
     uint256 internal constant MINTER_GAS = 600_000;
     uint256 internal constant NEAR_END_FACTOR = 10;
     uint256 internal constant TPS = 50_000 ether;
+    /// @dev Minter wallet labels. B fills its curve with its own wallets: a simulation charges no gas, so A's wallets
+    ///      would still look prefunded when B starts and be sent nothing, while on chain A's buys already spent it.
+    string internal constant V3_A_LABEL = "gang-v3-testnet";
+    string internal constant V3_B_LABEL = "gang-v3-owed-testnet";
+    string internal constant FAIR_LABEL = "gang-fair-mint-testnet";
 
     error WrongChain(uint256 chainId);
     error Check(string what);
@@ -90,9 +102,10 @@ contract GangTestnetE2E is Script {
         if (a == address(0)) a = _createV3(address(quote), "Gang V3 Tax Test", "GV3T");
         console.log("V3 token A", a);
         _curveTrade(a, address(quote));
-        _graduate(a, address(quote));
+        _graduate(a, address(quote), V3_A_LABEL);
         _poolRound(a, address(quote));
         _keeperChunk(a, address(quote));
+        _routerPoolRound(a, address(quote));
         console.log("A accruedTax", handler.accruedTax(a), "platform part", handler.accruedPlatformTax(a));
         console.log("treasury quote", quote.balanceOf(treasury));
 
@@ -133,11 +146,11 @@ contract GangTestnetE2E is Script {
         if (IERC20(t).balanceOf(deployer) == 0) revert Check("curve trade");
     }
 
-    /// @dev Throwaway Agents buy at the 1% cap until the curve graduates (~80).
-    function _graduate(address t, address q) internal {
+    /// @dev Throwaway Agents (wallets `label`, one set per token) buy at the 1% cap until the curve graduates (~80).
+    function _graduate(address t, address q, string memory label) internal {
         for (uint256 i = 0; i < V3_MINTERS; i++) {
             if (_graduated(t)) break;
-            uint256 pk = _minterKey("gang-v3-testnet", i);
+            uint256 pk = _minterKey(label, i);
             address m = vm.addr(pk);
             if (IERC20(t).balanceOf(m) > 0) continue; // bought on an earlier run
             // the buy that graduates also builds the pair: the last few get more gas
@@ -165,6 +178,48 @@ contract GangTestnetE2E is Script {
         uint256 afterSell = handler.accruedTax(t);
         console.log("accruedTax before / after buy / after sell", accrued0, afterBuy, afterSell);
         if (afterBuy <= accrued0) revert Check("pool buy accrued no tax");
+    }
+
+    /// @dev The router's Pancake V2 entries on A (GANG_ROUTER, an upgradeable router with `pancakeRouter`; skipped
+    ///      otherwise): poolBuy in the quote, poolSell back to it, and the BNB pair (poolBuyBNB / poolSellForBNB through
+    ///      [WBNB, quote, A]) when a WBNB/quote pair exists. The router must end with nothing and no allowance.
+    function _routerPoolRound(address t, address q) internal {
+        address r = vm.envOr("GANG_ROUTER", address(0));
+        if (r == address(0)) return;
+        GangRouter router = GangRouter(payable(r));
+        try router.pancakeRouter() returns (IPancakeV2Router pr) {
+            if (address(pr) != T.PANCAKE_V2_ROUTER) revert Check("router pancakeRouter");
+        } catch {
+            console.log("router pool round skipped: router has no pool entries");
+            return;
+        }
+        uint256 dl = block.timestamp + 1 days;
+        bool bnbPath = IPairFactoryLite(T.PANCAKE_V2_FACTORY).getPair(T.WBNB, q) != address(0);
+        _nextBlock();
+        vm.startBroadcast(deployerPk);
+        _faucet(q, deployer, 1 ether);
+        IERC20(q).approve(r, 0.2 ether);
+        uint256 bought = router.poolBuy(t, q, 0.2 ether, 1, dl);
+        IERC20(t).approve(r, bought);
+        uint256 got = router.poolSell(t, q, bought / 2, 1, dl);
+        uint256 bnbBought;
+        uint256 bnbGot;
+        if (bnbPath) {
+            bnbBought = router.poolBuyBNB{value: 0.0005 ether}(t, q, 1, dl);
+            IERC20(t).approve(r, bnbBought);
+            bnbGot = router.poolSellForBNB(t, q, bnbBought, 1, dl);
+        }
+        vm.stopBroadcast();
+        console.log("router pool: bought / sold-for quote", bought, got);
+        if (bnbPath) console.log("router pool: BNB bought / sold-for BNB", bnbBought, bnbGot);
+        else console.log("router pool: no WBNB/quote pair, BNB entries skipped");
+        if (
+            IERC20(t).balanceOf(r) != 0 || IERC20(q).balanceOf(r) != 0 || IERC20(T.WBNB).balanceOf(r) != 0
+                || r.balance != 0
+        ) revert Check("router not empty after pool round");
+        if (IERC20(t).allowance(r, T.PANCAKE_V2_ROUTER) != 0 || IERC20(q).allowance(r, T.PANCAKE_V2_ROUTER) != 0) {
+            revert Check("router left a Pancake allowance");
+        }
     }
 
     /// @dev Keeper sells one chunk with a 1% slippage bound (skipped when nothing is sellable this block).
@@ -221,7 +276,7 @@ contract GangTestnetE2E is Script {
         address b = vm.envOr("TOKEN_B", address(0));
         if (b == address(0)) b = _createV3(address(blq), "Gang V3 Owed Test", "GV3O");
         console.log("V3 token B", b);
-        _graduate(b, address(blq));
+        _graduate(b, address(blq), V3_B_LABEL);
 
         if (handler.owedOf(b) == 0) {
             // the treasury refuses the quote: the swap-back's push to it fails and is booked as owed
@@ -270,7 +325,7 @@ contract GangTestnetE2E is Script {
 
         // 100 minters × 100 shares (the last one is truncated to 99) → launch
         for (uint256 i = 0; i < FAIR_MINTERS && pad.status(f) != IGangLaunchpad.Status.Launched; i++) {
-            uint256 pk = _minterKey("gang-fair-mint-testnet", i);
+            uint256 pk = _minterKey(FAIR_LABEL, i);
             address m = vm.addr(pk);
             if (pad.positions(f, m) > 0) continue; // minted on an earlier run
             // the filling mint also builds the pair: give the last minter 10x gas
@@ -286,7 +341,7 @@ contract GangTestnetE2E is Script {
         console.log("launched, pair", IGangTokenPair(f).pair());
 
         // pool buy; minter 0 sells 55% of its 100 shares (45% left, below the 60% line: out for good); keeper; minter 5 claims
-        address m0 = _minterAddr("gang-fair-mint-testnet", 0);
+        address m0 = _minterAddr(FAIR_LABEL, 0);
         if (!handler.isOut(f, m0)) {
             vm.startBroadcast(deployerPk);
             _faucet(address(quote), deployer, 3 ether);
@@ -294,7 +349,7 @@ contract GangTestnetE2E is Script {
             vm.stopBroadcast();
             // its mint used most of the prefund: the approve + a sell carrying a swap-back chunk need ~3 more
             _prefund(m0, gasPerMinter * 3);
-            vm.startBroadcast(_minterKey("gang-fair-mint-testnet", 0));
+            vm.startBroadcast(_minterKey(FAIR_LABEL, 0));
             _swap(f, address(quote), 55 * TPS, m0);
             vm.stopBroadcast();
             if (!handler.isOut(f, m0)) revert Check("minter 0 not out");
@@ -302,11 +357,11 @@ contract GangTestnetE2E is Script {
         uint256 out = _keeperChunk(f, address(quote));
 
         SharedDividendVault vault = SharedDividendVault(pad.dividendVault());
-        address m5 = _minterAddr("gang-fair-mint-testnet", 5);
+        address m5 = _minterAddr(FAIR_LABEL, 5);
         uint256 pend = vault.pending(f, m5);
         if (pend == 0) revert Check("no reward for minter 5");
         _prefund(m5, gasPerMinter);
-        vm.startBroadcast(_minterKey("gang-fair-mint-testnet", 5));
+        vm.startBroadcast(_minterKey(FAIR_LABEL, 5));
         vault.claim(f);
         vm.stopBroadcast();
 
@@ -323,7 +378,8 @@ contract GangTestnetE2E is Script {
         if (block.chainid != 97) revert WrongChain(block.chainid);
         deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         deployer = vm.addr(deployerPk);
-        uint256 total = _sweep("gang-v3-testnet", V3_MINTERS) + _sweep("gang-fair-mint-testnet", FAIR_MINTERS);
+        uint256 total =
+            _sweep(V3_A_LABEL, V3_MINTERS) + _sweep(V3_B_LABEL, V3_MINTERS) + _sweep(FAIR_LABEL, FAIR_MINTERS);
         console.log("swept", total);
     }
 

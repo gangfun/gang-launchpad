@@ -8,6 +8,8 @@ optimizer = true
 optimizer_runs = 200
 via_ir = false
 fs_permissions = [{ access = "read", path = "./" }]
+# storage layout in the artifacts: test/router/GangRouterLayout.t.sol locks the upgradeable router's layout
+extra_output = ["storageLayout"]
 
 # LaunchpadU is over the EIP-170 limit without IR (~26.3KB). Compile that file
 # (and files that import it, i.e. the draft deploy script) with IR (~24.3KB).

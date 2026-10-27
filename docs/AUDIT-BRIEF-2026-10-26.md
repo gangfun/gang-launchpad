@@ -3,6 +3,7 @@
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9；§19 记 V3 内盘不收税，§20 记把两个核心合并成一个内盘（GangLaunchpad）的改动，§1–§9 仍按合并前的两个核心写，以 §20 为准
 - 读者：外部审计方
 - **2026-10-27 上线前 §22：参数调整**（V3 接收地址可以是发币人自己；打新出局线 60%–90%、单地址上限 0.25%–1%）。分支 `feat/launch-params`（基于 `main` `36d55df`），改动列在 §22。
+- **2026-10-27 晚 §21：GangRouter 改为可升级（TransparentUpgradeableProxy + 48 小时 TimelockController，Safe 是唯一的提案 / 执行 / 取消者）并新增 Pancake V2 外盘买卖入口**。分支 `feat/upgradeable-router`，改动列在 §21；§4.1 里 GangRouter「无 owner」一行以 §21 为准。
 - **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
 - 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在 §18 的修复提交（父提交 `4857118`；`98cab5c` 之后到 `4857118` 没有改动 `src/`）：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复，§18 对第五轮修复的 review。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`、`98cab5c`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
@@ -140,7 +141,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 | TokenDeployer | `setLaunchpad(core, bool)` | — | 名单里的核心：`deployPlain` / `deployTax` / `deployFair` | `isLaunchToken` 查询 |
 | SharedPlatformFeeBucket（共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`（合约一生只能调一次，之后 48 小时时间锁）、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（固定路径：80% 回购销毁 / 20% 金库；没有 `collectPlatformSmart`） | operator：`notifyAccrual`（按到账额记账） | — |
 | QuoteRegistry（复用代码，共用一份新实例） | `setQuote`：给报价币设固定换算额（15 BNB 合多少该币），设了就优先于参考池；只影响之后创建的币。不再决定哪些币能用 | — | — | 查询 |
-| GangRouter | 无 | — | — | 全部函数 |
+| GangRouter | 无（§21 起是代理：升级权在 48 小时时间锁，时间锁只听 Safe） | — | — | 全部函数 |
 
 ### 4.2 我们的信任假设（请验证或推翻）
 
@@ -893,6 +894,69 @@ balanceOf(pad, q) == Σ_未发射 sale (sold × sharePrice) + owedFee[q] + Σ_�
 - **keeper**：V3 的份额补写循环要加 `kindOf(t) == 1`，打新的加 `kindOf(t) == 2`，否则会按 V3 规则判断打新币。
 - **CLI**：新环境变量 `GANG_PAD` / `GANG_TESTNET_PAD`，旧的 `GANG_V3_PAD` / `GANG_FAIR_PAD` 等仍可用；`gang v3 …` 拿到打新币时（或反过来）按 `kindOf` 提示用另一个命令；识别 `Untaxed`、`NotReclaimable`、`NotLocked`、`WrongKind`。
 - **网站**：不用改代码，只通过索引器拿配置。
+
+---
+
+## 21. 可升级路由 + 外盘买卖入口（2026-10-27）
+
+分支 `feat/upgradeable-router`（基于 `main` `36d55df`）。改动只在 `src/router/GangRouter.sol`、部署脚本、测试和文档；内盘、处理合约、分红合约等全部不动、不可升级。§4.1 表里「GangRouter：owner 无」一行由本节取代。
+
+### 21.1 设计
+
+- **只有路由可升级，地址固定**。`GangRouter` 现在是 `TransparentUpgradeableProxy`（OZ 5.1）背后的实现合约。内盘 `setRouter(代理, true)` 只登记代理；用户授权的也是代理。以后升级换的是实现，代理地址不变，内盘不用重新登记，用户不用重新授权。
+- **实现合约**：原来的 immutable `pad` / `wbnb` 改为存储变量，另加 `pancakeRouter`，三者只在 `initialize(pad, wbnb, pancakeRouter)` 里设一次（`initializer`，任何一个为 0 回滚 `NotDeployed`）。实现合约的构造函数调 `_disableInitializers()`，实现合约自身永远不能被初始化（初始化槽 = `type(uint64).max`）。代理在自己的构造函数里带 `initData` 调用 `initialize`，同一笔交易完成，没有抢跑窗口。
+- **存储布局**（代理存储；升级规则：新变量从 `__gap` 里取槽位（声明在 gap 前面），gap 长度相应减少，gap 之后的一切不动；不能重排、改类型、删除变量，也不能改继承列表）：slot 0 `ReentrancyGuard._status`，slot 1 `pad`，slot 2 `wbnb`，slot 3 `pancakeRouter`，slot 4–50 `uint256[47] __gap`。`Initializable` 的标记在 ERC-7201 槽 `0xf0c5…6a00`。新版本需要初始化时用 `reinitializer(2)`，经 `ProxyAdmin.upgradeAndCall` 的 `data` 调用。测试逐槽读代理存储核对布局；`test/router/GangRouterLayout.t.sol` 读编译器输出的 storageLayout（`foundry.toml` 的 `extra_output`，与 `forge inspect GangRouter storageLayout` 同源）锁定 slot 0 `_status`、1–3 `pad` / `wbnb` / `pancakeRouter`、4 起 `__gap[47]`；按规则写的 V2（`test/mocks/GangRouterV2Next.sol`：新变量占 slot 4，gap 47 → 46）升级后 slot 0–3 不动、新变量在 slot 4、其余 gap 仍为空。
+- **防重入**：8 个对外入口都加了 OZ 5.1 `ReentrancyGuard.nonReentrant`（放在修饰符第一位）。OZ 5.1 的 `_status` 是普通存储槽，判断条件是 `_status == ENTERED(2)`，所以代理存储里的初始值 0 被当作「未进入」，第一次调用后变成 `NOT_ENTERED(1)`；实现合约构造时写的 1 只在实现合约自己的存储里，与代理无关。测试直接读 slot 0 证明这一点，并验证 BNB 退款回调、恶意代币在 `transferFrom` 里回调、跨入口回调（BNB 回调里调 ERC-20 入口）、升级后都会被 `ReentrancyGuardReentrantCall` 拦下。`receive` 不加锁（只有 WBNB 能打 BNB 进来）。
+- **路由不留钱**：每笔调用按本次调用前后的余额差结算，多出的部分（内盘截断退款、多付的 BNB、意外剩下的代币）全部退回调用者；调用开始时路由是空的，结束时就是空的。没有 sweep（K-11 不变）。
+- **2300 gas 的 WBNB 退款**：WBNB 用 `transfer` 付 BNB。经代理时多一次（已热的）实现槽读取和一次 delegatecall，`receive` 里读一次（已热的）`wbnb`，仍在 2300 以内。单元测试的 MockWBNB 同样用 `transfer`，fork 测试用真实 WBNB 走了内盘截断退款和 `poolSellForBNB` 两条退款路径。
+
+### 21.2 权限
+
+| 角色 | 地址 | 能做什么 |
+|---|---|---|
+| 代理 | `GANG_ROUTER` | 用户调用的地址；内盘登记的就是它 |
+| ProxyAdmin | 代理构造时自动部署（代理的第一个 CREATE，地址 = `computeCreateAddress(代理, 1)`） | 只有它能让代理 `upgradeToAndCall`；它自己只能被 owner 调用。它调用代理的其它函数一律 `ProxyDeniedAdminAccess` |
+| ProxyAdmin 的 owner | `TimelockController` | 升级、转移 / 放弃 ProxyAdmin 的所有权都只能由时间锁执行 |
+| 时间锁 | `GANG_ROUTER_TIMELOCK`；`minDelay` 主网固定 48 小时 | proposer = executor = canceller = Safe `0x2866…B41E`（OZ 5.1 里 proposer 自动带 canceller）；admin = `address(0)`：`DEFAULT_ADMIN_ROLE` 只有时间锁自己，角色和延迟只能经时间锁自己的提案（同样等 48 小时）修改 |
+| 部署钱包 | `0x4EEd…19d3` | 无任何角色 |
+
+升级流程：Safe 调 `timelock.schedule(ProxyAdmin, 0, upgradeAndCall(代理, 新实现, data), 0, salt, 172800)`（链上公示 `CallScheduled`）→ 等 48 小时 → Safe 调 `timelock.execute(...)`；48 小时内 Safe 可 `cancel`。时间锁和 ProxyAdmin 都不需要 `acceptOwnership`：时间锁没有 owner，ProxyAdmin 构造时 owner 就是时间锁。
+
+部署脚本自检（`GangRouterDeployLib.check`，任何一项不对回滚 `WiringCheck("<项>")`）：代理地址上的 runtime code 就是 OZ 5.1 的 `TransparentUpgradeableProxy`（取本次构建的产物，把 immutable `_admin` 那 32 字节填成 ProxyAdmin 地址后比对 keccak，仿冒的「代理」过不了，review PoC-2），ERC-1967 实现槽 = 实现合约，实现合约的代码 = 本仓库这一版 `GangRouter`（codehash），实现合约已锁死、没有 pad；管理员槽 = 代理自己创建的 ProxyAdmin，代码是标准 OZ ProxyAdmin，owner = 时间锁；代理已初始化且不在初始化中，`pad()` / `v3()` / `fair()` / `wbnb()` / `pancakeRouter()` 正确，Pancake 路由的 `factory()` 是 Pancake V2 工厂（主网 `0xcA14…0c73`）、`WETH()` 是 WBNB；时间锁代码是标准 OZ TimelockController，`minDelay` ≥ 48 小时（主网），**主网上时间锁的角色持有者必须是 Safe 常量 `0x2866…B41E`**（不论 `OWNER` 是谁，`MAINNET_OWNER_IS_DEPLOYER=true` 时也一样；库在主网上拒绝给别人部署时间锁，`MainnetTimelockNotSafe`；只部署路由的脚本在主网上 `OWNER` 不是 Safe 直接回滚 `OwnerNotSafe`，review PoC-1），Safe 有三个角色，`address(0)` 没有任何角色（否则任何人都能执行），三个角色的管理角色都是 `DEFAULT_ADMIN_ROLE`，`DEFAULT_ADMIN_ROLE` 只在时间锁自己手里（Safe、部署钱包、`address(0)`、ProxyAdmin 都没有），部署钱包没有任何角色（主网上无论它是不是 `OWNER`；测试网只有部署钱包本身就是 `OWNER` 时例外，用来演练升级）；内盘登记了代理，没有登记实现合约 / ProxyAdmin / 时间锁；分红合约排除了代理。测试对每一项各造一个错误接线（时间锁延迟 48 小时 − 1 秒、部署钱包留着 proposer 或 executor、admin 是部署钱包或 Safe、executor 含 `address(0)`、Safe 不是 proposer、Pancake 路由不对、实现不是本版 `GangRouter`、实现槽不一致、实现合约未锁、ProxyAdmin 被转走、ProxyAdmin 不是代理创建的、内盘登记了实现、内盘没登记代理、分红合约没排除代理），自检都报出对应的项。
+
+### 21.3 外盘买卖入口（新增，原有函数不变）
+
+V2、V3、打新三种币只要有 Pancake V2 交易对都能用。`quote` 由调用者传入，合约不校验 token 和 quote 的关系：交易对不存在时 Pancake 回滚，用的是调用者自己的钱。deadline 与原有入口一样（`block.timestamp > deadline` 回滚 `Expired`）。
+
+| 函数 | 路径 | 资金流 | 返回值（按实际到账算，必须 ≥ 最低值） |
+|---|---|---|---|
+| `poolBuyBNB(token, quote, minTokensOut, deadline)` payable | quote = WBNB：`[WBNB, token]`；否则 `[WBNB, quote, token]` | BNB 包成 WBNB 在路由里，Pancake 把代币直接打给调用者 | 调用者代币余额的增量 |
+| `poolBuy(token, quote, quoteIn, minTokensOut, deadline)` | `[quote, token]` | 从调用者 `transferFrom` 拉 `quoteIn`，按实际到账额换；代币直接到调用者 | 调用者代币余额的增量 |
+| `poolSell(token, quote, amountIn, minQuoteOut, deadline)` | `[token, quote]` | 从调用者拉 `amountIn` 枚代币到路由，Pancake 把报价币直接打给调用者 | 调用者报价币余额的增量 |
+| `poolSellForBNB(token, quote, amountIn, minBnbOut, deadline)` | quote = WBNB：`[token, WBNB]`；否则 `[token, quote, WBNB]` | 代币到路由；WBNB 到路由后 unwrap，BNB 转给调用者 | 转给调用者的 BNB |
+
+- 全部用 `swapExactTokensForTokensSupportingFeeOnTransferTokens`，给 Pancake 的 `amountOutMin` 是 0，最低值由路由按调用者实际到账（扣过买卖税）检查，不满足回滚 `TooLittleReceived(received, minimum)`；金额为 0（`msg.value` 为 0、`amountIn` / `quoteIn` 为 0、或实际到账为 0）回滚 `ZeroAmount`。
+- 给 Pancake 路由的授权恰好是这一笔的数量，换完立即 `forceApprove` 回 0。每笔调用后路由的 BNB、WBNB、quote、token 余额和对 Pancake 的授权都是 0（单元测试用 1:1 的假 Pancake，fork 测试用真实 Pancake，每一步都检查）。
+- **卖出时代币会短暂停留在路由**。`GangToken` 每次转账都同步双方份额，所以用户转给路由时用户的份额已按转后余额同步；路由转进池子时，处理合约的 `notifyTax` 先把卖家（路由）的份额同步成卖后持仓（0）再记这笔税（审计 5 C-F7），所以路由拿不到这笔卖出税。这一笔 swap-back 卖出的是之前已经记账的单位（`convertDividend` 只换已记账的单位，不按此刻的份额重新分配），路由此刻持有的份额也分不到。此外部署脚本把代理加进了分红合约的排除名单（`vault.setExcluded(代理, true)`），分红合约从不为它写份额，每笔经路由的卖出省约 9 万 gas。fork 测试在**不排除**路由的情况下证明：路由在分红合约里的份额、待结算单位、可领都为 0；同一笔卖出经路由和直接在 Pancake 上卖，用户到手、用户份额与单位、其他持有人的单位、总份额、未卖单位、攒下的税、平台部分、接收地址到账全部相等（V3 WBNB 币、V3 USDT 币、打新币的 minter 各一组，打新另比出局状态）。
+- **gas**（主网 fork，真实 Pancake，一笔带一块 swap-back 的 V3 有税币卖出，`poolSell` 调用本身）：路由被分红合约排除（部署后的状态）698,176；不排除 788,478（USDT 报价币 793,813；打新币 minter 的一笔卖出 709,905）；同一笔直接在 Pancake Router02 上卖 619,570（USDT 624,911）。swap-back 的 600k gas 上限经路由多出的几层调用仍然够用：fork 测试 `test_fork_pool_v3_chunkRunsThroughRouter` 用 `previewSell` 的结果作 `minQuoteOut`，精确成交且这一块确实卖掉了（没有被当作 gas 不够吞掉）。钱包估 gas 时要按这个量级给（建议上限 ≥ 90 万）。
+- 主网真实 V2 币只在 fork 上测：AGI（`0x4000…177A`，LaunchpadV2 `allTokens[224]`，有税，报价币 GANG），BNB 进出走三跳路径；只做 swap，不调用线上 V2 处理合约的 `process`，并确认线上 V2 分红合约里路由的份额为 0。
+
+### 21.4 风险
+
+1. **恶意升级可以动用户对路由的授权**。代理地址固定，用户对它的 ERC-20 授权在升级后仍然有效；一个恶意实现可以 `transferFrom` 走用户授权过、且钱包里还有的代币（测试 `test_upgrade_maliciousNeeds48h_exactApprovalLimitsIt` 演示）。缓解：(a) 升级必须经 48 小时时间锁，提案在链上公示（`CallScheduled`），期间用户可以撤销授权，Safe 可以 `cancel`；(b) 只授权本次用量——CLI 的 `v3 buy` / `fair mint` 给路由发原生 BNB；`poolBuy` / `poolSell` 先按这一笔的精确数量授权给路由，从不做无限授权；网页 / 第三方集成同样按单笔数量授权（`poolSell` / `poolBuy` / `v3Buy` / `fairMint` 都只拉本次的数量）；(c) 监控时间锁的 `CallScheduled` 事件并报警。内盘里的资金不受影响：内盘对路由只开放 `buyFor` / `mintFor`，而且付款方是路由自己（§4.2 第 3 条）。
+2. **Safe 就是升级权**。2/3 的 Safe 签名被拿到后，攻击者仍要等 48 小时，期间公开可见；Safe 另外两把钥匙可以 `cancel`（canceller 也是 Safe 本身，所以取消也要 2/3）。时间锁本身的角色 / 延迟只能经时间锁提案修改，同样 48 小时。
+3. **存储布局错误**会让升级后读错 `pad` / `wbnb` / `pancakeRouter` 或破坏重入标记。规则写在合约注释里；升级前用 `forge inspect GangRouter storageLayout` 对比新旧布局。
+4. **外盘入口不校验 quote**：调用者传错 quote 只会让 Pancake 回滚或按错误路径成交，损失的是调用者自己（有最低值保护）。路由不持有任何人的资金，传错参数影响不到别人。
+
+### 21.5 测试
+
+- `test/router/GangRouter.t.sol`（20）：原有用例全部改为经代理调用，另加 `initialize` 三个参数为 0 都回滚。
+- `test/router/GangRouterUpgrade.t.sol`（18）：部署形态与布局、实现不能初始化、代理不能重复初始化、ProxyAdmin 只听时间锁、只有 Safe 能提案且不能缩短延迟、48 小时差 1 秒回滚 / 到点能执行 / 只有 Safe 能执行 / 只能执行一次、Safe 取消、角色只能经时间锁自身修改、升级后 `pad` / `wbnb` / `pancakeRouter` 保留且新逻辑和追加变量生效、恶意升级演示、每次调用后路由为空（含 fuzz）、重入（初值 0、BNB 回调、打新回调、跨入口、升级后）、`receive` 只收 WBNB。
+- `test/router/GangRouterPool.t.sol`（4）：四个外盘入口的路径与按到账计量、拒绝情况（`Expired` / `ZeroAmount` / `TooLittleReceived`）、授权归零与余额为 0、恶意代币和 BNB 回调的重入。
+- `test/fork/RouterPoolFork.t.sol`（10，主网 fork、真实 Pancake）：V3 WBNB 有税币、V3 USDT 有税币、打新币、真实主网 V2 币（AGI / GANG）各跑 BNB 买、quote 买、卖成 quote、卖成 BNB，最低值多 1 wei 回滚，路由余额与授权为 0；三组「经路由卖 = 直接卖」记账对比；经路由的 swap-back 块确实执行；分红合约排除路由后的 gas；升级后外盘入口照常。
+- `test/router/GangRouterReviewPoC.t.sol`（2）：严格审查的两个 PoC 作为回归——部署钱包持有时间锁角色在主网规则下被拒（库拒绝部署、自检报错、部署钱包另留一个角色也报错），仿冒代理被「router proxy code」拦下。`test/router/GangRouterLayout.t.sol`（2）：存储布局快照。
+- 没有 RPC 时 fork 用例用 `vm.skip(true)` 显示为跳过（不再显示 PASS）。
+- 部署脚本（`test/audit5/audit5c/DeployScriptsFork.t.sol`，`--threads 1`）：主网 `MAINNET_OWNER_IS_DEPLOYER=true` 时路由时间锁仍只给 Safe、部署钱包无角色；只部署路由的脚本在主网上 `OWNER` 不是 Safe（含部署钱包）回滚；整套部署里路由的形态、21.2 列出的每一种错误接线被自检抓出、主网 `ROUTER_TIMELOCK_DELAY` 只能是 48 小时（测试网可缩短）、重跑时从代理读回实现 / ProxyAdmin / 时间锁再核对、真实 WBNB 的退款经代理、`DeployGangRouterUpgradeable` 给已有内盘挂新路由及其重跑。
 
 ---
 
