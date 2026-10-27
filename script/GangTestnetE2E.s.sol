@@ -9,7 +9,8 @@ import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
-import {GangRouter, IPancakeV2Router} from "../src/router/GangRouter.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {GangRouter, IPancakeV2Router, IWBNB} from "../src/router/GangRouter.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
@@ -27,11 +28,45 @@ interface IGangTokenPair {
     function pair() external view returns (address);
 }
 
+/// @dev A wallet aggregator's router, as small as it gets (AUDIT-BRIEF §23): listed on the pad for the E2E only. It
+///      names ITS OWN msg.sender as `trader` (the pad then requires msg.sender == tx.origin) and never reads tx.origin
+///      itself; sell proceeds go only to that msg.sender. The buy's cut refund goes from the pad to the trader (WBNB);
+///      the sell pulls the trader's tokens with the allowance it gave THIS contract, unwraps the proceeds and pays them
+///      to msg.sender as BNB.
+contract E2EAggregator {
+    IGangPad public immutable pad;
+    address public immutable wbnb;
+
+    constructor(IGangPad pad_, address wbnb_) {
+        pad = pad_;
+        wbnb = wbnb_;
+    }
+
+    receive() external payable {
+        require(msg.sender == wbnb, "only WBNB");
+    }
+
+    function buyBNB(address token, uint256 minOut) external payable returns (uint256 out) {
+        IWBNB(wbnb).deposit{value: msg.value}();
+        IERC20(wbnb).approve(address(pad), msg.value);
+        out = pad.buyFor(msg.sender, token, msg.value, minOut);
+    }
+
+    function sellForBNB(address token, uint256 amount, uint256 minOut) external returns (uint256 out) {
+        out = pad.sellFor(msg.sender, token, amount, minOut);
+        IWBNB(wbnb).withdraw(out);
+        (bool ok,) = msg.sender.call{value: out}("");
+        require(ok, "BNB");
+    }
+}
+
 /// @title GangTestnetE2E — one full round of both kinds of token on the one pad from DeployGang, BSC testnet
 /// @notice V3 (curve; no curve tax, pool tax 2% / 2%, half to holders, half to the listed demo treasury):
 ///         A (test quote): curve buy + sell, 80 throwaway Agents fill the curve (graduation), then a pool buy + sell —
 ///           the sell sells one chunk of the accrued tax on its way in (swap-back) — and the keeper `process`es one more.
-///         W (WBNB, optional): a router buy with native BNB (v3BuyBNB) and a direct curve sell.
+///         W (WBNB, optional): a router buy with native BNB (v3BuyBNB) and a direct curve sell; then (deployer = pad
+///           owner, not SKIP_AGG) an aggregator-like contract, listed for the step only, does buyFor / sellFor with
+///           trader = its msg.sender (the deployer, who is tx.origin; §23) and is delisted again.
 ///         B (blacklist quote): graduated the same way; with the treasury blocked, the pool sell's swap-back books the
 ///           treasury's part as owed (TaxOwed); the treasury is unblocked and `release` pushes it.
 ///         打新: a sale in the test quote, 100 throwaway Agents fill it (launch: pair + LP), then a pool buy, minter 0
@@ -42,7 +77,7 @@ interface IGangTokenPair {
 ///      B fills its curve with its own wallets (V3_B_LABEL), so the whole round runs in one go.
 ///      Resumable: TOKEN_A / TOKEN_B / TOKEN_W / TOKEN_F skip their create; minters that already hold a token (V3) or a
 ///      position (打新) are skipped; fills stop once graduated / launched; each trading step is skipped when its result is
-///      already on chain. SKIP_V3=true / SKIP_FAIR=true / SKIP_B=true / SKIP_W=true run only the rest.
+///      already on chain. SKIP_V3=true / SKIP_FAIR=true / SKIP_B=true / SKIP_W=true / SKIP_AGG=true run only the rest.
 ///      Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, BLACKLIST_QUOTE (unless SKIP_B); optional GANG_ROUTER (for W, and the
 ///      router's Pancake V2 pool entries on A after its keeper step), TEST_QUOTE,
 ///      RECIPIENT, GAS_PRICE_WEI (default 0.1 gwei — pass the same value as --with-gas-price; minter prefunds are sized
@@ -268,6 +303,33 @@ contract GangTestnetE2E is Script {
         vm.stopBroadcast();
         console.log("V3 token W (WBNB)", w, "bought via router", out);
         if (IERC20(T.WBNB).balanceOf(r) != 0 || r.balance != 0) revert Check("router not empty");
+        if (!vm.envOr("SKIP_AGG", false)) _aggregatorRound(w);
+    }
+
+    /// @dev §23 on chain: a contract that is not GangRouter, listed, buys for and sells for its caller, the deployer.
+    ///      Needs the deployer to own the pad (DeployGang's testnet default) for setRouter; skipped otherwise.
+    function _aggregatorRound(address w) internal {
+        if (Ownable(address(pad)).owner() != deployer) {
+            console.log("aggregator round skipped: deployer does not own the pad");
+            return;
+        }
+        uint256 held = IERC20(w).balanceOf(deployer);
+        vm.startBroadcast(deployerPk);
+        E2EAggregator agg = new E2EAggregator(pad, T.WBNB);
+        pad.setRouter(address(agg), true);
+        uint256 bought = agg.buyBNB{value: 0.001 ether}(w, 1);
+        IERC20(w).approve(address(agg), bought);
+        uint256 bnbOut = agg.sellForBNB(w, bought, 1);
+        pad.setRouter(address(agg), false);
+        vm.stopBroadcast();
+        console.log("aggregator", address(agg));
+        console.log("aggregator: bought for origin / sold for origin (BNB wei)", bought, bnbOut);
+        if (IERC20(w).balanceOf(deployer) != held) revert Check("aggregator round: tokens not back to start");
+        if (IERC20(w).allowance(deployer, address(agg)) != 0) revert Check("aggregator round: allowance left");
+        if (IERC20(w).balanceOf(address(agg)) != 0 || IERC20(T.WBNB).balanceOf(address(agg)) != 0) {
+            revert Check("aggregator round: aggregator not empty");
+        }
+        if (pad.routers(address(agg))) revert Check("aggregator still listed");
     }
 
     function _owedFlow() internal {

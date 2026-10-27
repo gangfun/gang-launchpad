@@ -239,7 +239,7 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
         v3.sell(b1, 1, 0);
         vm.stopPrank();
-        vm.startPrank(address(router));
+        vm.startPrank(address(router), agent);
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
         v3.mintFor(agent, a1, 1, 1);
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);

@@ -90,8 +90,10 @@ interface IWBNB {
 ///         setRouter, users approve the PROXY, and that address never changes. The proxy's ProxyAdmin is owned by a
 ///         TimelockController (48 h on mainnet; proposer / executor / canceller = the platform Safe, no admin), so a
 ///         new version is public for 48 h before it can run. No owner and no funds here: the only state is the pad,
-///         WBNB and Pancake router addresses (set once by `initialize`) and the reentrancy flag. A listed router can only spend what it
-///         was sent — it cannot sell, withdraw, refund or claim for anyone (those stay msg.sender-only on the pad). A
+///         WBNB and Pancake router addresses (set once by `initialize`) and the reentrancy flag. A listed router can
+///         only spend what it was sent, and the pad only lets it act for the wallet that sent the tx (`trader ==
+///         tx.origin`, AUDIT-BRIEF §23): callers must be EOAs. This router has no curve sell / withdraw entry (the
+///         pad's sellFor / withdrawFor are for listed aggregators; curve sells and withdraws stay direct on the pad). A
 ///         token of the other kind reads as an empty curve / sale here, so `v3*` on a 打新 token and `fair*` on a V3
 ///         token revert UnknownToken.
 /// @dev Anything sent here outside a call (tokens, BNB) stays here: every call settles against its own balance delta,
@@ -169,7 +171,8 @@ contract GangRouter is Initializable, ReentrancyGuard {
     }
 
     // ---------------------------------------------------------------- V3 (curve)
-    /// @notice Buy on the curve with `quoteIn` of the token's quote (approved to this router); any refund comes back.
+    /// @notice Buy on the curve with `quoteIn` of the token's quote (approved to this router). The pad sends any refund
+    ///         of a cap / graduation cut straight to the caller (§23); `_settle` then finds nothing left here.
     function v3Buy(address token, uint256 quoteIn, uint256 minTokensOut, uint256 deadline)
         external
         nonReentrant
@@ -186,7 +189,8 @@ contract GangRouter is Initializable, ReentrancyGuard {
         _settle(quote, base, false);
     }
 
-    /// @notice Buy a WBNB-quoted token with native BNB (msg.value); any refund comes back as BNB.
+    /// @notice Buy a WBNB-quoted token with native BNB (msg.value). The pad sends any refund of a cap / graduation cut
+    ///         straight to the caller as WBNB (not BNB, §23); `_settle` then finds nothing left here.
     function v3BuyBNB(address token, uint256 minTokensOut, uint256 deadline)
         external
         payable
@@ -360,7 +364,8 @@ contract GangRouter is Initializable, ReentrancyGuard {
         return (IERC20(q), cost + fee);
     }
 
-    /// @dev Return to msg.sender whatever this call left above `base` (a pad refund, unspent msg.value), as BNB if asked.
+    /// @dev Return to msg.sender whatever this call left above `base` (unspent msg.value of fairMintBNB, a pool
+    ///      leftover), as BNB if asked. Curve buys leave nothing: the pad refunds the trader directly (§23).
     function _settle(IERC20 quote, uint256 base, bool asBnb) internal {
         uint256 left = quote.balanceOf(address(this)) - base;
         if (left == 0) return;

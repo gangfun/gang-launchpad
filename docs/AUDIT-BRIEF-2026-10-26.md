@@ -119,6 +119,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 - 代币、份额、分红权重、Agent 门槛、单地址上限全部记在 `trader` 名下。
 - 卖出、打新的卖回、领取没有路由入口，只能本人直接调核心 / 分红合约（理由见 §4.2）。
 - 路由入口只在准入开启时可用：V3 要求 `agentGateEnabled`，打新要求该 sale 创建时快照了准入（理由见 §10 A-2）。
+- **§23 修订**：`buyFor` / `mintFor` 另要求 `trader == tx.origin`；`buyFor` 的截断退款由核心直接打给 trader（不再经路由）；核心新增 `sellFor` / `withdrawFor`，只对列入的路由、`trader == tx.origin`、且花 trader 给该路由的代币授权。`GangRouter` 本身仍没有卖出 / 卖回入口。
 
 ---
 
@@ -155,6 +156,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
    - LaunchpadV3 的 `setAgentGate` / `setWalletCapEnabled` 是全局开关，会影响正在曲线上的币（与 V2 一致）；打新则在创建时快照，不受影响。
    - 核心的 `setRouter`：列入的路由能调 `buyFor` / `mintFor`。
 3. **一个被列入白名单的恶意路由最坏只能「用自己的钱替别人买 / 打新」**——前提是准入开启。准入关闭时它能把代币打给未来的池子地址、分走发射流动性（§10 A-2），所以现在路由入口在准入关闭时直接 revert。核心对路由只开放 `buyFor` / `mintFor`，付款方是 `msg.sender`（路由）。测试 `test_v3_listedRouterOnlySpendsItsOwnQuote`、`test_fair_listedRouterOnlySpendsItsOwnQuote` 覆盖。
+   （§23 修订：核心另开放 `sellFor` / `withdrawFor`，但只能在 trader 自己发起的交易里、花 trader 给这个路由的授权；trader 只授权给核心时上述两个测试里的卖出 / 卖回仍然全部失败。）
 4. **keeper 被信任设 `minQuoteOut` 和 `minGangOut`**：它可以给一个很低的值然后自己夹，损失的是这一块的价值（≤ 池子代币储备 0.5%）。`process` 拒绝 `minQuoteOut == 0`。`swapBack` 的最低成交额由合约按同一调用里的储备算（下限 1%）。手续费池 `collectPlatform` 的回购最低成交额 `minGangOut` 也由 keeper 给，合约不设下限（K-20）。keeper 的 48 小时时间锁约束的是**换 keeper**，不约束 owner：owner 本来就能直接调 `process` / `collectPlatform`。
 5. **发射台只能付钱进 TaxHandlerV3**：`distribute` 从 `msg.sender`（只能是发射台）拉 `amount`，再按登记的路由拆分。（§19 起 `distribute` 已删，发射台不再付钱给 handler；这一条只对 §19 之前的代码成立。）
 
@@ -1040,3 +1042,117 @@ function checkTaxConfigFor(address creator, TaxConfig calldata tax) external vie
 - **不变**：所有事件、`create` 的两个重载、`checkTaxConfig` / `checkConfig` / `taxConfigOf` 的 selector 和返回布局；常量 getter（`MIN_HOLD_BPS` 等）名字不变，取值变了。
 - **CLI**（本分支已改）：`gang v3 create` 用 `checkTaxConfigFor(发币钱包, tax)` 预检查（只有内盘没有这个函数——空回滚或空返回——时才退回 `checkTaxConfig`，其他错误照常报出），`gang v3 info` 在接收地址等于发币人时输出 `recipientIsCreator: true` 和 `recipientNote`（接收地址是发币人自己，未经平台审核），`--recipient` 提示改为「你自己的地址，或白名单里的合作方」，填自己时 `recipientLabel` 显示 `you (the creator)`；`gang fair create` 的 `--cap` 0.25–1、`--hold` 60–90，`--hold` 默认 50 → 60（旧默认超出新范围），`--cap` 默认 0.5 不变。
 - **网站**（gang-web-legacy，不在本分支）：`V3Recipient.jsx`（接收地址 = 发币人时的展示）已在 `feat/creator-recipient` 上改好；`i18n.jsx` 里 `fm_step_create`（「单地址 0.1–0.5% … 出局线 30–80%」）、`v3_lead` / `v3_step_create`（「接收地址必须在平台白名单里」）的文案以那个分支为准核对。
+
+---
+
+## 23. 聚合器路由：交易发起钱包 = trader（2026-10-27）
+
+> 分支 `feat/origin-trader`，基于 `feat/launch-final` `daa3ddd`。改动在 `src/gang/**`（内盘、两个库、代币、接口）、`src/router/GangRouter.sol`（只改注释，代码不变）、测试网 E2E 脚本、测试和文档；不涉及 `src/launchpad-v2/**`。主网尚未部署，只影响将来部署的合约。本节修订 §3 的路由说明、§4.2 第 3 条和 §21.1「路由不留钱」里关于内盘截断退款的描述。
+
+### 23.1 需求
+
+钱包聚合器（LiquidMesh、Binance Agentic Wallet 的集成等）要经**它们自己的路由合约**在 V3 曲线上买卖、在打新里打新 / 卖回。Agent ID 准入（`.ai` Agent ID NFT，`PadCommon.isAgent`）和 1% 单地址上限必须和直接交易一样严。主网已核对：所有 Agent ID 持有者都是 EOA，所以发起交易的钱包（`tx.origin`）就是 Agent 钱包。
+
+限制：毕业 / 发射前 `GangToken` 是 `locked`，只有内盘能动代币（`_update`：`from != launchpad && msg.sender != launchpad` 就回滚）。路由既不能先收下代币再转给用户，也不能自己 `transferFrom` 用户的代币，所以买入时代币必须由内盘直接打给用户，卖出时必须由内盘直接从用户那里拉。
+
+### 23.2 规则
+
+四个「替人交易」入口 `buyFor` / `sellFor` / `mintFor` / `withdrawFor` 用同一个检查（`GangLaunchpad._forTrader`）：
+
+1. `routers[msg.sender]`：调用者必须是 owner 列入的路由，否则 `OnlyRouter()`（`0x9e41bdd7`，原有错误）。**没有未列入调用者的路径**。
+2. `trader == tx.origin`：只能替发起这笔交易的钱包交易，否则 `TraderNotOrigin()`（`0x88a28ebf`，新增）。
+3. `buyFor` / `mintFor` 另外保留原来的 A-2 检查（准入关闭 / sale 没快照准入 → `RouterNeedsGate`），放在 1、2 之后，不变。
+4. `sellFor` / `withdrawFor` 另外要花 **trader 给调用者（路由）的代币授权**（标准 `approve(路由, 数量)`，和任何 DEX 路由一样）：`GangToken.pullFor(trader, 路由, 数量)` = `_spendAllowance(trader, 路由, 数量)` + `_transfer(trader, 内盘, 数量)`。trader 只授权给内盘（直接 `sell` 用的那种授权）不算，`pullFor` 照样回滚 `ERC20InsufficientAllowance`。
+
+准入和上限对 `trader` 生效，与直接调用完全一样（库里本来就按 `trader` 参数检查）：`buyFor` 的 `_requireAgent(trader)`、`walletRoom(trader)`；`sellFor` 的 `_requireAgent(trader)`；`mintFor` 按 sale 快照的准入和 `positions[token][trader]` 的上限；`withdrawFor` 和 `withdraw` 一样不查准入（卖回是打满前唯一的出口）。
+
+| 入口 | 谁付 / 谁收 | 代币 | 份额 / 事件 |
+|---|---|---|---|
+| `buyFor(trader, token, quoteIn, minTokensOut)` `0xf6819293`（原有） | 路由付 `quoteIn`；**截断退款（上限 / 毕业截断）打给 trader**（报价币 ERC-20，WBNB 报价时是 WBNB 不是 BNB） | 内盘 → trader | 分红份额、`Buy.buyer` = trader |
+| `sellFor(trader, token, tokensIn, minQuoteOut) returns (uint256 quoteOut)` `0x9d10cdb1`（新增） | 扣 1% 手续费后的报价币打给路由（路由继续后面的路径） | trader → 内盘（花 trader 给路由的授权） | 分红份额按 trader 卖后余额同步、`Sell.seller` = trader |
+| `mintFor(trader, token, shares, minShares)` `0x27d3f054`（原有） | 路由付 cost + 打新费，**按实际接受的份数精确拉取，内盘没有退款**，路由应按 `previewMint(token, trader, shares)` 的 cost + fee 授权 | 内盘 → trader | `positions[token][trader]`、份额、`Minted.user` = trader |
+| `withdrawFor(trader, token, shares, minPayout) returns (uint256 payout)` `0x60382b4e`（新增） | 扣撤出费后的本金打给路由 | trader → 内盘（`shares × 50,000` 枚，花 trader 给路由的授权） | `positions[token][trader]` 减少、份额按 trader 同步（与 `withdraw` 同样非阻塞）、`Withdrawn.user` = trader |
+
+直接入口 `buy` / `sell` / `mint` / `withdraw` 的 selector、行为不变（`buy` 的退款本来就给 msg.sender = trader；`sell` 仍花用户给内盘的授权；`withdraw` 仍用 `reclaim`，不需要授权）。`curves` / `sales` getter 布局不变。
+
+### 23.3 `GangToken.pullFor`
+
+```solidity
+function pullFor(address owner, address spender, uint256 amount) external onlyLaunchpad {
+    if (!locked) revert NotLocked();
+    _spendAllowance(owner, spender, amount);
+    _transfer(owner, launchpad, amount);
+}
+```
+
+- 三种币（V3 有税、V3 无税、打新）都有（同一份代码）。只有内盘能调（`OnlyLaunchpad`），而内盘只在 `sellFor` / `withdrawFor` 里以 `spender = msg.sender` 调它。
+- 只在锁定期可用（`NotLocked`）：曲线卖出只存在于毕业前，打新卖回只存在于发射前；毕业 / 发射的第一步就是 `unlock`。锁定期没有 pair（`setPair` 要求已解锁），所以 `_shouldTax` 为假、`_syncShares` 直接返回：不收税、不调处理合约，份额由内盘写。解锁后它永远回滚，所以不可能借它绕开外盘税或动池子交易的代币。
+- `_transfer` 进 `_update` 时 `msg.sender == launchpad`，锁定检查放行。授权是无限（`type(uint256).max`）时 OZ 不扣减，与普通 `transferFrom` 一致。
+
+### 23.4 威胁模型
+
+为什么这里可以用 `tx.origin`：`tx.origin` 只用来**限定 trader**，从不用来授权花谁的钱。三层各挡一类问题：
+
+1. **白名单（`routers`）挡恶意调用者**。未列入的合约（包括用户只是交互过的合约、钓鱼合约）什么都调不了，即使这笔交易就是 trader 自己发起的（`OnlyRouter`）。
+2. **trader = 发起钱包，挡「借列入的路由替别人交易」**：
+   - 买 / 打新只花路由自己的钱、只把代币记给 `tx.origin`。别人不能借列入的路由替某个钱包买满 1% / 打满上限去占它的额度或灌它的份额（griefing），也不能把未来的 pair 当 trader 在毕业 / 发射前往池子地址塞代币、分走发射流动性（A-2）——pair 是合约，永远不是 `tx.origin`。原 A-2 的 `RouterNeedsGate` 检查仍保留。
+   - 卖 / 卖回：用户对某个列入路由的长期授权，只能在**用户自己发起的交易里**被用掉；攻击者发起的交易里 `tx.origin` 是攻击者，`TraderNotOrigin`。
+3. **授权挡「用户交互过的合约经列入路由把币卖掉」**：卖 / 卖回必须花 trader 给**调用它的那个路由**的授权。用户给内盘的授权（直接 `sell` 用的）不算；用户没授权过的路由拉不动。
+
+剩余风险（写明，由路由的列入审核和用户授权习惯承担）：
+
+- **列入的路由本身有任意调用（arbitrary call）能力，或自己读 `tx.origin` 当 trader**时：用户被骗去调一个恶意合约 M，M 再经这个路由（任意调用入口，或一个按 `tx.origin` 填 trader、把所得付给 msg.sender = M 的入口）调到 `sellFor(用户, …)`——白名单看到的是列入的路由，`tx.origin` 是用户，用户对这个路由又有授权，于是能卖掉，所得落到路由或 M 手里（`test_phishing_originReadingAggregator_isExploitable` 演示）。这**不**等同于「任何 DEX 上的无限授权风险」：§23 之前，列入一个路由是无害的——它只能花自己的钱替人买 / 打新，锁定期的代币谁的授权都动不了（`_update` 只放行内盘）；§23 之后，列入一个合约就让用户对它的授权能够触及**锁定期的代币**（经 `pullFor`）。所以 `setRouter` 本身成了一项安全决定，按 23.9 的清单审核。按清单写的路由（trader = 它自己的 msg.sender、所得只给这个 msg.sender）经 M 调用时 trader = M ≠ `tx.origin`，`TraderNotOrigin`（`test_phishing_msgSenderAggregator_notExploitable`）。
+- **列入的路由被升级成恶意实现**：它能花的仍只有用户给它的授权、只能在用户自己发起的交易里用（§21.4 第 1 条同理）。
+- **合约钱包（Safe、4337 账户等）不能经任何路由买 / 打新 / 卖**：`msg.sender` 链上不是 `tx.origin`。它们仍可直接调 `buy` / `sell` / `mint` / `withdraw`（前提是持有 Agent ID；现状主网 Agent ID 持有者全是 EOA）。我们自己的 `GangRouter` 调 `buyFor(msg.sender, …)` / `mintFor(msg.sender, …)`：EOA 直接调它不受影响，合约调它会 `TraderNotOrigin`（`test_gangRouter_contractCaller_traderNotOrigin`）。
+- **EIP-7702**：被委托代码的 EOA 仍可作为 `tx.origin`，它就是 Agent 钱包本身，规则不变。
+
+### 23.5 截断退款改给 trader
+
+`CurveLogic._execBuy` 的退款从 `msg.sender` 改为 `trader`。直接 `buy` 时两者相同，行为不变；`buyFor` 时退款不再回到路由。理由：聚合器路由按 exact-in 设计，常常不转发也不清扫多出来的余额，退款留在路由里会卡住或被下一个调用者拿走。新规则下 `buyFor` 要求列入的路由且 trader = 发起钱包，所以把退款直接给 trader 是安全的（trader 就是付钱的人）。
+
+对 `GangRouter` 的影响（实现代码不变，只改注释）：`v3Buy` / `v3BuyBNB` 的截断退款由内盘直接以报价币 ERC-20 打给用户——`v3BuyBNB` 退回的是 **WBNB 而不是 BNB**；`_settle` 此时看到的余额差是 0，直接返回。`fairMintBNB` 多付的 `msg.value` 仍由路由以 BNB 退回（那是路由自己的余额差，不是内盘退款）。测试相应改为断言用户拿到 WBNB 退款、路由为空；`v3BuyBNB` 不再有 BNB 回调可重入，重入测试改用 `fairMintBNB` 的 BNB 退款回调（含跨入口和升级后），并新增「`v3BuyBNB` 没有 BNB 回调」一条。
+
+`mintFor` 不动：内盘只拉实际接受份数的 cost + fee，没有退款（调用者按 `previewMint` 精确付款）。`sellFor` / `withdrawFor` 的所得仍给调用者（路由继续后面的路径）。
+
+### 23.6 合约大小（`forge build --sizes`，EIP-170 上限 24,576 B）
+
+| 合约 | runtime | 余量 |
+|---|---|---|
+| GangLaunchpad | 14,109 | 10,467 |
+| CurveLogic | 11,402 | 13,174 |
+| FairLogic（`--sizes` 表里没有，量 `out/` 的 `deployedBytecode`） | 11,178 | 13,398 |
+| GangToken | 4,957 | 19,619 |
+| TokenDeployer（内含 GangToken 创建码） | 9,530 | 15,046 |
+| GangRouter | 6,635（代码不变） | 17,941 |
+| GangTaxHandler | 22,214（不改） | 2,362 |
+
+### 23.7 测试
+
+| 文件 | 内容 |
+|---|---|
+| `test/gang/OriginTrader.t.sol`（新增，27） | 一个列入的 `MockAggregator`：`buyFor(trader = 发起钱包)` 代币到 EOA、路由付钱、上限记在 EOA 名下；1% 上限截断：退款到 trader（WBNB）、路由余额差 = −quoteIn，第二笔 `WalletCapReached`（与直接 `buy` 相同）；毕业截断：退款到 trader、路由余额差 = −quoteIn；未列入调用者 + trader = origin → `OnlyRouter`；列入 + trader ≠ origin（别人、路由自己）→ `TraderNotOrigin`；非 Agent 的 origin → `NotAgent`；准入关闭 → `RouterNeedsGate`；`sellFor`：有授权能卖、授权扣减、所得到路由、`Sell.seller` = trader、分红份额按 trader 同步；只授权给内盘 → `ERC20InsufficientAllowance`；未列入 → `OnlyRouter`；攻击者发起的交易里用 trader 对路由的授权 → `TraderNotOrigin`；非 Agent → `NotAgent`；直接 `sell` 不变；`mintFor` / `withdrawFor` 的同样几组（含上限截断、`BadAmount`、`Withdrawn` 事件字段）；`pullFor`：非内盘（包括被授权的 spender）→ `OnlyLaunchpad`，内盘也只能在授权内拉，毕业后（V3）/ 发射后（打新）→ `NotLocked`；合约调用 `GangRouter` → `TraderNotOrigin`。审查补充：毕业后 `sellFor` → `AlreadyGraduated`、发射后 `withdrawFor` → `NotMinting`、对打新币 `sellFor` / 对 V3 币 `withdrawFor` → `UnknownToken`；准入关闭时 `sellFor` / `withdrawFor` 仍要求列入、发起钱包和授权；非 WBNB 报价币（ERC-20）的截断退款到 trader、路由余额差 = −quoteIn；钓鱼：读 `tx.origin`、把所得付给 msg.sender 的聚合器能被恶意中间合约利用（`test_phishing_originReadingAggregator_isExploitable`，即 23.9 清单要防的写法），按清单写的聚合器经中间合约调用 → `TraderNotOrigin`（`test_phishing_msgSenderAggregator_notExploitable`） |
+| `test/router/GangRouter.t.sol` 及继承它的套件（`SharedInfra`、`Audit4SharedRegression`、`PadMergeGuards`、`FairMixedIsolation`） | 经路由调用的 `vm.prank(x)` 改为 `vm.prank(x, x)`（用户是 EOA，发起交易）；`test_v3_capRefundComesBackAsBnb` → `test_v3_capRefundComesBackAsWbnb`（BNB 全部付出，截断部分以 WBNB 回到用户，路由为空）；两个「列入的恶意路由」用例改为在 trader 自己发起的交易里调（`vm.prank(rogue, agent2)`），并把 `sellFor` / `withdrawFor` 换成真实签名：因为 trader 只授权了内盘，照样全部失败 |
+| `test/router/GangRouterUpgrade.t.sol` | 同上改 prank；重入测试见 23.5 |
+| `test/launchpad-v3/LaunchpadV3Audit.t.sol`、`test/fair-mint/FairMintAudit.t.sol` | A-2：以 pair 为 trader 先被 `TraderNotOrigin` 拦下；再以 pair 作 origin 证明 `RouterNeedsGate` 检查仍在 |
+| `test/merge/MergeGuards.t.sol` | `test_merge_selectors` 钉住 `sellFor` `0x9d10cdb1`、`withdrawFor` `0x60382b4e`、`GangToken.pullFor` `0x7d18ac71`；原有 selector 全部照旧 |
+| `script/GangTestnetE2E.s.sol` | W 步骤之后加一步（部署钱包是内盘 owner 时；`SKIP_AGG=true` 跳过）：部署一个最小的 `E2EAggregator`（trader = 它的 msg.sender，所得只给 msg.sender），`setRouter` 列入，`buyFor` 用 BNB 买、`approve(聚合器)` 后 `sellFor` 卖成 BNB，再 `setRouter(…, false)` 撤下；检查部署钱包代币回到起点、授权为 0、聚合器为空、已撤下 |
+
+部署脚本 `DeployGang` 自检新增 `_checkOriginTrader`（新部署和 `GANG_PAD` 接续两种模式都跑）：`TokenDeployer` 的 codehash 必须等于本次构建的 `keccak256(type(TokenDeployer).runtimeCode)`（它没有 immutable，且内含 `GangToken` 的创建码，所以 §23 之前的部署器——发出的币没有 `pullFor`——过不了），内盘的代码里必须有 `sellFor` / `withdrawFor` 的 dispatcher（`PUSH4 <selector>`）；内盘有 immutable 和链接库，不能直接比 codehash，自检是 view，也不能发一笔会写重入标记的探测调用。任何一项不对回滚 `WiringCheck("tokenDeployer code")` / `WiringCheck("pad sellFor / withdrawFor")`。`test/audit5/audit5c/DeployScriptsFork.t.sol`（`--threads 1`）新增 `test_fork_deploy_checksOriginTraderCode`（改动部署器代码的一个字节、或把内盘 dispatcher 里的 `sellFor` 去掉，自检分别报出这两项）；`test_fork_deploy_routerBnbRefundRealWbnb` 改为：`v3BuyBNB` 的截断部分以真实 WBNB 回到买家、路由不发 BNB，经代理用真实 WBNB 解包退 BNB 的路径改由 `fairMintBNB` 多付的 BNB 覆盖。`GangRouterDeployLib.check` 比对的是 `GangRouter` 的 codehash，`GangRouter.sol` 只改了注释，元数据哈希变化随本次构建一起更新。
+
+- CLI（`skill/gang-cli`，不升版本，只改文字）：`gang v3 buy` 经路由用 BNB 买时的 `note` 和代码注释改为「1% 上限 / 毕业截断多出的部分以 WBNB（不是 BNB）退回这个钱包」；`skill/references/v3.md` 同步。
+
+### 23.8 对外接口
+
+- 新函数：`sellFor(address,address,uint256,uint256)` `0x9d10cdb1`、`withdrawFor(address,address,uint256,uint256)` `0x60382b4e`；代币 `pullFor(address,address,uint256)` `0x7d18ac71`（只有内盘能调）。新错误：`TraderNotOrigin()` `0x88a28ebf`。
+- 语义变化：`buyFor` / `mintFor` 在列入检查之外要求 `trader == tx.origin`；`buyFor`（以及直接 `buy`，但那里 trader 就是调用者）的截断退款给 trader。
+- 聚合器接入要点：路由要先由多签 `setRouter(路由, true)`（按 23.9 审核）；四个入口的 `trader` **一律填路由自己的 `msg.sender`**（用户 EOA 直接调路由时它就是 `tx.origin`，内盘负责检查二者相等），路由**绝不自己读 `tx.origin`**；卖出 / 卖回的所得**只付给这个 msg.sender**；卖出 / 卖回前让用户把代币 `approve` 给路由（不是内盘）；打新按 `previewMint` 的 cost + fee 精确付；买入的截断退款会直接到用户钱包（报价币 ERC-20），路由不会收到。
+
+### 23.9 `setRouter` 审核清单（多签列入前逐项确认）
+
+1. **不列入任何会替调用者发起任意 / 调用者给定调用的合约**：0x AllowanceHolder / Settler 一类、Multicall / Multicall3、通用执行器（executor、`execute(target, data)`）、ERC-4337 EntryPoint、带 `delegatecall` 插件的路由、Permit2 一类授权中转。它们的调用者可以让它们调到内盘，白名单就形同虚设。
+2. **四个入口的 `trader` 必须是该路由自己的 `msg.sender`**，代码里不出现 `tx.origin`，也不接受调用者传入的 trader 参数。
+3. **卖出 / 卖回的所得只付给同一个 `msg.sender`**（或它在同一次调用里指定、且只能花它自己所得的接收地址），不留在路由里供他人取走，也不付给调用者传入的任意地址以外的第三方。
+4. **源码已验证**（BscScan），且列入的是最终地址；可升级的路由要看清升级权归谁、有无时间锁，升级等同于重新列入。
+5. 买入 / 打新只花调用者本次交来的钱；不持有用户长期资金。
+6. 列入后监控：`RouterSet` 事件、该路由的升级事件；发现问题多签 `setRouter(路由, false)` 立即撤下（撤下后它的四个入口立即 `OnlyRouter`）。
+

@@ -389,7 +389,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(tokensOut, 18),
       minTokensOut: formatUnits(minOut, 18), curveTaxPct: 0, ...(c.buyTaxPct > 0 && { poolBuyTaxPct: c.buyTaxPct }),
     })
-    // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet, refunds come back as BNB)
+    // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet; a cap / graduation
+    // refund comes back from the pad to this wallet as WBNB, not BNB)
     if (viaRouter(ctx, c.quote, flag)) {
       const native = await ctx.client.getBalance({ address: me })
       if (native < quoteIn + GAS_RESERVE) {
@@ -403,7 +404,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const data = encodeFunctionData({ abi: GANG_ROUTER_ABI, functionName: 'v3BuyBNB', args: [token, minOut, routerDeadline()] })
       return out(step(ctx, { from: me, to: ctx.router, data, value: quoteIn }, {
         ...extra(sim.result, minOut), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
-        note: 'paid in BNB through GangRouter; spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap the excess comes back as BNB',
+        note: 'paid in BNB through GangRouter; spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap or the graduation cut the excess comes back to this wallet as WBNB (not BNB)',
       }, rawOnly, summarize))
     }
     const pre = await fundingStep(ctx, me, c.quote, quoteIn, c.quoteSymbol, 'approve-quote', rawOnly, summarize)

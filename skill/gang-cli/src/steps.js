@@ -15,8 +15,9 @@ const WBNB_ABI = parseAbi(['function deposit() payable'])
 
 /**
  * GangRouter (gang-launchpad src/router; a proxy, so its address stays): stateless entry in front of the pad. With
- * native BNB it wraps, calls the pad for the caller and returns any refund as BNB — no wrap / approve round for
- * WBNB-quoted tokens and sales. The pool* functions trade a graduated / launched token on PancakeSwap (see pool.js):
+ * native BNB it wraps and calls the pad for the caller — no wrap / approve round for WBNB-quoted tokens and sales. A V3
+ * buy's cap / graduation refund goes from the pad straight to the caller as WBNB (not BNB); fairMintBNB returns
+ * unspent BNB as BNB. The pool* functions trade a graduated / launched token on PancakeSwap (see pool.js):
  * the token / proceeds go to the caller; poolBuy / poolSell pull the quote / token, so approve the router first.
  */
 export const ROUTER_ABI = parseAbi([
