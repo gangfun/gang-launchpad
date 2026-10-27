@@ -2,14 +2,16 @@
 pragma solidity 0.8.28;
 
 import {IGangLaunchpad} from "./IGangLaunchpad.sol";
+import {IGangPadView} from "./IGangPadView.sol";
 
 /// @notice GangLaunchpad's external surface as the deploy script, the testnet E2E, GangRouter and their tests use it
 ///         (merge plan §1.3). Names, parameters and return layouts are the old LaunchpadV3 / FairMintPad ones, so
 ///         selectors and getter decoding are unchanged; contract-typed getters of the old cores are `address` here
 ///         (same ABI).
-/// @dev Written before GangLaunchpad (feat/merge-pad) exists: at integration, check every line against the real pad
-///      (or make the pad `is IGangPad`). Types, events and errors come from IGangLaunchpad (shared with the pad).
-interface IGangPad is IGangLaunchpad {
+/// @dev Types, events and errors come from IGangLaunchpad, and baselineOf / holdBpsOf / kindOf from IGangPadView (the pad
+///      inherits both). Every function here was checked against GangLaunchpad's ABI at integration (same selector,
+///      same outputs); the pad does not inherit this interface because its contract-typed getters would clash.
+interface IGangPad is IGangLaunchpad, IGangPadView {
     // ---------------------------------------------------------------- immutables
     function quoteRegistry() external view returns (address);
     function dividendVault() external view returns (address);
@@ -41,8 +43,6 @@ interface IGangPad is IGangLaunchpad {
     function setBridgePool(address asset, address pool) external;
 
     // ---------------------------------------------------------------- shared views
-    /// @notice 0 = not this pad's token, 1 = curve (V3), 2 = 打新. Written once at create.
-    function kindOf(address token) external view returns (uint8);
     function isAgent(address account) external view returns (bool);
     function tokenCount() external view returns (uint256);
     function allTokens(uint256 i) external view returns (address);
@@ -153,8 +153,6 @@ interface IGangPad is IGangLaunchpad {
         returns (uint256 payout, uint256 fee);
     function exitFeeBpsOf(address token) external view returns (uint256);
     function status(address token) external view returns (Status);
-    function baselineOf(address token, address user) external view returns (uint256);
-    function holdBpsOf(address token) external view returns (uint16);
 
     function TOTAL_SHARES() external view returns (uint256);
     function TOKENS_PER_SHARE() external view returns (uint256);
