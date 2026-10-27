@@ -10,17 +10,19 @@ mainnet GangLaunchpad; without it the CLI answers `… has no mainnet address in
 `--testnet` (BSC testnet). Testnet tokens and quotes have no value; say so if the user asks.
 
 **One pad for 打新 and V3**: sales and V3 tax tokens live on the same GangLaunchpad. Given a V3 token, `gang fair
-info|status|mint|withdraw|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
+info|status|mint|withdraw|buy|sell|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
 pad's `kindOf`); run the `gang v3` command it names instead.
 
 ```bash
 gang fair list [--status minting|launched|all]              # sales on gang.fun (needs the server to run fair mint)
 gang fair info --token <addr> --testnet                      # one sale from the chain
 gang fair status --token <addr> [--slippage 1] --testnet     # my shares; after launch my reward state + poolSellAll
-gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)
+gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb] --testnet    # after launch: in the pool
+gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out] --testnet  # after launch: in the pool
 gang fair claim --token <addr> --testnet
 gang execute --request-id …
 gang fair tx --hash 0x… --testnet                            # decode Created / Minted / Launched / … on the fair chain
@@ -28,9 +30,9 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 
 ## Rules to tell the user
 
-- **Create** (Agent ID required): `--raise` 5–50 BNB (converted to the quote at create and locked), `--cap` 0.25–0.5% of
-  supply per wallet (0.5% = 100 shares, so the sale needs at least 100 wallets to fill; 0.25% → 200), `--hold` 30–80
-  (the hold line, below). There is no deadline (`--hours` is gone). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
+- **Create** (Agent ID required): `--raise` 5–50 BNB (converted to the quote at create and locked), `--cap` 0.25–1% of
+  supply per wallet (1% = 200 shares, so the sale needs at least 50 wallets to fill; 0.5% → 100; 0.25% → 200), `--hold`
+  60–90 (the hold line, below; default 60). There is no deadline (`--hours` is gone). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
   Quote is WBNB unless `--quote`: any 18-decimal ERC-20 (e.g. a stock token; other decimals fail with `QuoteNotAllowed`).
   As with `gang create`, it needs `--ref-pool` (a PancakeSwap V2 pair or V3 pool holding it) to convert the raise at
   create (mainnet USDT defaults to the Pancake V3 USDT/WBNB 0.01% pool), unless gang has set a fixed rate for it. The
@@ -62,7 +64,7 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   it for the whole balance as `position.poolSellAll`, `gang fair info` the chunk state as `swapBack`. A sell that triggers
   a chunk uses about 660k gas (about 330k without).
 - **Holder reward**: only wallets that minted. Weight = current balance, capped at what the wallet minted.
-  **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
+  **Falling below the hold line (60–90% of what it minted, set at create) once is out for good**: buying back does not restore it.
   Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards credited
   before going out (taxes paid while the wallet was in) stay claimable, even if they are sold after it went out.
   `gang fair status` shows `pendingReward` (claimable now) and `creditedUnsoldEstimate` (credited when the tax was paid,
@@ -73,10 +75,19 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
   Tell the user why in words instead.
 - Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` is the mainnet pad (shared
-  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The old names `GANG_FAIR_TESTNET_PAD` /
+  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The router address is fixed: it is an upgradeable proxy whose
+  upgrades go through a public 48-hour timelock held by the platform Safe (AUDIT-BRIEF §21). Buys and mints through it pay native BNB; a pool buy in a quote token or a pool sell first approves the router for exactly that call's amount (never unlimited) — keep it that way. The old names `GANG_FAIR_TESTNET_PAD` /
   `GANG_FAIR_TESTNET_RPC_URL` / `GANG_FAIR_PAD` / `GANG_ROUTER_TESTNET` still work as aliases.
 - `NotReclaimable` / `NotLocked` on a withdraw: the token is not a 打新 token, or the sale already launched (sell-back
-  is over: trade on PancakeSwap). Both come back with a `hint`.
+  is over: `gang fair sell`). Both come back with a `hint`.
+- **After launch, trade with `gang fair buy` / `gang fair sell`**: the PancakeSwap pool through GangRouter, exactly as a
+  graduated V3 token ([v3.md](v3.md), "Pool trades"): approve this amount only first (re-run after it), `minOut` from
+  `previewSellNextBlock` less `--slippage`, `--to-bnb` to receive BNB, a taxed sell needs about 700k gas (give at least
+  750k). **A minter still earning cannot sell past `sellableBeforeOut` by accident**: `gang fair sell` (also `--all`)
+  then fails with a `WARNING: … loses the holder reward FOR GOOD` and builds nothing; tell the user, and only with their
+  yes re-run with `--confirm-out` (the output keeps the `warning`, `confirmedOut: true`). The tax rates are read from the
+  token; if they can't be read the trade fails instead of assuming 0%. Before launch both commands refuse and point at `mint` / `withdraw`; `mint` / `withdraw` on a
+  launched sale point at `buy` / `sell`.
 
 ## Reading results
 
@@ -85,9 +96,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   token, check `sellableBeforeOut` and warn the user if the trade goes past it** — it ends the reward for good.
   `poolSellAll.expectOut` is what selling the whole balance into the pool pays (1% tax and the chunk sold first included),
   `poolSellAll.minOut` the same less `--slippage` (default 1%); any wallet holding the token gets it, also one that only
-  bought in the pool (`shares: 0`, `reward: 'none'`). The CLI builds no pool sell — sell on PancakeSwap with
-  `swapExactTokensForTokensSupportingFeeOnTransferTokens` and `minOut` as `amountOutMin`. `gang fair withdraw` on a
-  launched sale points here.
+  bought in the pool (`shares: 0`, `reward: 'none'`). `gang fair sell --all` builds that sell (same minimum).
+  `gang fair withdraw` on a launched sale points there.
 - `info.swapBack` after launch, read at `latestBlock`: `unsoldTaxTokens`, `budgetPerBlockTokens` (0.5% of the pool's
   token side: what a new block allows), `budgetLeftInLatestBlockTokens` (what is left of the latest block's budget — the
   whole of it when no chunk ran in that block), `nextChunkTokens` (the largest chunk the latest block still allows: unsold

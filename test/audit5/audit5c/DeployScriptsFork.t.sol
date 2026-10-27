@@ -2,8 +2,10 @@
 pragma solidity 0.8.28;
 
 import {Test, Vm} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {DeployGang} from "../../../script/DeployGang.s.sol";
+import {DeployGangRouterUpgradeable} from "../../../script/DeployGangRouterUpgradeable.s.sol";
 import {GangMainnetRefs as M, GangTestnetRefs as T} from "../../../config/GangDeployRefs.sol";
 import {QuoteRegistry} from "../../../src/launchpad-v2/QuoteRegistry.sol";
 import {SharedPlatformFeeBucket} from "../../../src/common/SharedPlatformFeeBucket.sol";
@@ -15,6 +17,15 @@ import {IGangPad} from "../../../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../../../src/gang/interfaces/IGangTaxHandlerOps.sol";
 import {StubGangLaunchpad} from "./mocks/StubGangLaunchpad.sol";
+import {GangRouterDeployLib as R} from "../../../script/GangRouterDeployLib.sol";
+import {GangRouterV2Mock} from "../../mocks/GangRouterV2Mock.sol";
+import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+
+interface IWBNBDeposit {
+    function deposit() external payable;
+}
 
 /// @dev Exposes DeployGang's config, self-check and mainnet gate to the tests.
 contract DeployGangHarness is DeployGang {
@@ -28,6 +39,14 @@ contract DeployGangHarness is DeployGang {
 
     function checkPadOnly(Stack memory s, Cfg memory c) external view {
         _checkPad(s, c);
+    }
+
+    function checkRouterOnly(Stack memory s, Cfg memory c) external view {
+        _checkRouter(s, c);
+    }
+
+    function deployRouter(address pad, address safe) external returns (R.Router memory) {
+        return R.deploy(pad, M.WBNB, M.PANCAKE_V2_ROUTER, safe, 48 hours);
     }
 
     function gate(bool mainnet, bool broadcasting) external view {
@@ -94,6 +113,7 @@ contract DeployScriptsForkTest is Test {
             vm.setEnv(flags[i], "false");
         }
         vm.setEnv("TWAP_WINDOW", "1800");
+        vm.setEnv("ROUTER_TIMELOCK_DELAY", "172800");
         vm.setEnv("GANG_PAD_BLOCK", "0");
         vm.setEnv("RECIPIENT_LABEL", "");
         vm.setEnv("OWNER", vm.toString(multisig));
@@ -118,7 +138,10 @@ contract DeployScriptsForkTest is Test {
 
     // ---------------------------------------------------------------- mainnet: the whole stack in one run
     function test_fork_deploy_mainnet_wholeStack() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         IGangPad pad = IGangPad(s.pad);
         // pad on the stack the same run made, router on the pad, both libraries live (the self-check also ran)
@@ -136,6 +159,22 @@ contract DeployScriptsForkTest is Test {
         assertTrue(pad.routers(s.router));
         assertEq(address(GangRouter(payable(s.router)).v3()), s.pad);
         assertEq(address(GangRouter(payable(s.router)).fair()), s.pad);
+        // §21: the pad lists the proxy; impl → timelock-owned ProxyAdmin; the Safe alone runs the 48 h timelock
+        assertEq(R.implementationOf(s.router), s.routerImpl);
+        assertEq(R.adminOf(s.router), s.routerAdmin);
+        assertEq(ProxyAdmin(s.routerAdmin).owner(), s.routerTimelock);
+        TimelockController tl = TimelockController(payable(s.routerTimelock));
+        assertEq(tl.getMinDelay(), 48 hours);
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), multisig));
+        assertTrue(tl.hasRole(tl.EXECUTOR_ROLE(), multisig));
+        assertTrue(tl.hasRole(tl.CANCELLER_ROLE(), multisig));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), deployer));
+        assertFalse(tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), deployer));
+        assertFalse(tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), multisig));
+        assertTrue(tl.hasRole(tl.DEFAULT_ADMIN_ROLE(), s.routerTimelock));
+        assertFalse(pad.routers(s.routerImpl), "never the implementation");
+        assertEq(address(GangRouter(payable(s.router)).pancakeRouter()), M.PANCAKE_V2_ROUTER);
+        assertEq(GangRouter(payable(s.router)).wbnb(), M.WBNB);
         assertEq(IGangTaxHandlerOps(s.handler).launchpad(), s.pad);
         assertEq(IGangTaxHandlerOps(s.handler).dexRouter(), M.PANCAKE_V2_ROUTER);
         assertEq(address(SharedMigrator(s.migrator).factory()), M.PANCAKE_V2_FACTORY);
@@ -153,7 +192,10 @@ contract DeployScriptsForkTest is Test {
 
     /// A-1: setMigrator is the last wiring call; after it only the ownership hand-over follows.
     function test_fork_deploy_setMigratorIsLast() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         vm.recordLogs();
         DeployGang.Stack memory s = _deploy();
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -200,7 +242,10 @@ contract DeployScriptsForkTest is Test {
     }
 
     function test_fork_deploy_checksCatch() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         h.check(st, cf); // a clean stack passes
         address x = address(0x1234);
@@ -233,10 +278,312 @@ contract DeployScriptsForkTest is Test {
         _breaks(s.vault, abi.encodeWithSignature("transferOwnership(address)", x), "owner / pendingOwner");
     }
 
+    // ---------------------------------------------------------------- the self-check catches a mis-wired router
+    /// @dev A router proxy over `impl` (0 = a fresh GangRouter) behind a timelock built from the given roles, listed on
+    ///      the pad by the deploy key; the self-check run on a stack that names it must fail with `what`.
+    function _badRouter(
+        address[] memory proposers,
+        address[] memory executors,
+        address tlAdmin,
+        uint256 delay,
+        address pancake,
+        address impl,
+        string memory what
+    ) internal {
+        uint256 snap = vm.snapshotState();
+        vm.startPrank(deployer);
+        if (impl == address(0)) impl = address(new GangRouter());
+        TimelockController tl = new TimelockController(delay, proposers, executors, tlAdmin);
+        address proxy = address(
+            new TransparentUpgradeableProxy(
+                impl, address(tl), abi.encodeCall(GangRouter.initialize, (st.pad, M.WBNB, pancake))
+            )
+        );
+        IGangPad(st.pad).setRouter(proxy, true);
+        SharedDividendVault(st.vault).setExcluded(proxy, true);
+        vm.stopPrank();
+        DeployGang.Stack memory bad = st;
+        bad.router = proxy;
+        bad.routerImpl = impl;
+        bad.routerAdmin = R.adminOf(proxy);
+        bad.routerTimelock = address(tl);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, what));
+        h.check(bad, cf);
+        vm.revertToState(snap);
+    }
+
+    function _one(address a) internal pure returns (address[] memory l) {
+        l = new address[](1);
+        l[0] = a;
+    }
+
+    function _two(address a, address b) internal pure returns (address[] memory l) {
+        l = new address[](2);
+        (l[0], l[1]) = (a, b);
+    }
+
+    function test_fork_deploy_checksCatchRouter() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        _deploy();
+        h.check(st, cf);
+        address safe = multisig;
+        address v2 = M.PANCAKE_V2_ROUTER;
+        // the good shape passes when rebuilt by hand (the helper itself is sound)
+        uint256 snap = vm.snapshotState();
+        vm.startPrank(deployer);
+        R.Router memory ok = R.deploy(st.pad, M.WBNB, v2, safe, 48 hours);
+        IGangPad(st.pad).setRouter(ok.proxy, true);
+        SharedDividendVault(st.vault).setExcluded(ok.proxy, true);
+        vm.stopPrank();
+        DeployGang.Stack memory good = st;
+        (good.router, good.routerImpl, good.routerAdmin, good.routerTimelock) =
+        (ok.proxy, ok.impl, ok.proxyAdmin, ok.timelock);
+        h.check(good, cf);
+        vm.revertToState(snap);
+
+        // timelock delay too short
+        _badRouter(_one(safe), _one(safe), address(0), 48 hours - 1, v2, address(0), "router timelock delay");
+        // the deploy wallet kept a role: proposer, executor
+        _badRouter(
+            _two(safe, deployer), _one(safe), address(0), 48 hours, v2, address(0), "router timelock deployer role"
+        );
+        _badRouter(
+            _one(safe), _two(safe, deployer), address(0), 48 hours, v2, address(0), "router timelock deployer role"
+        );
+        // an admin that can bypass the timelock (the deploy wallet, or the Safe)
+        _badRouter(_one(safe), _one(safe), deployer, 48 hours, v2, address(0), "router timelock admin");
+        _badRouter(_one(safe), _one(safe), safe, 48 hours, v2, address(0), "router timelock admin");
+        // anyone may execute
+        _badRouter(
+            _one(safe), _two(safe, address(0)), address(0), 48 hours, v2, address(0), "router timelock open role"
+        );
+        // the Safe is not the proposer
+        _badRouter(
+            _one(address(0xBEEF)), _one(safe), address(0), 48 hours, v2, address(0), "router timelock safe roles"
+        );
+        // wrong Pancake router
+        _badRouter(_one(safe), _one(safe), address(0), 48 hours, address(0xBEEF), address(0), "router pancakeRouter");
+        // an implementation that is not this build's GangRouter
+        address other = address(new GangRouterV2Mock());
+        _badRouter(_one(safe), _one(safe), address(0), 48 hours, v2, other, "router impl code");
+
+        // on the deployed stack itself:
+        // the stack names another implementation than the proxy's slot
+        DeployGang.Stack memory bad = st;
+        bad.routerImpl = other;
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "router impl slot"));
+        h.check(bad, cf);
+        // the implementation unlocked (simulated: its Initializable slot cleared)
+        snap = vm.snapshotState();
+        vm.store(st.routerImpl, R.INITIALIZABLE_SLOT, bytes32(0));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "router impl locked"));
+        h.check(st, cf);
+        vm.revertToState(snap);
+        // the ProxyAdmin handed to someone else (only the timelock could do it)
+        snap = vm.snapshotState();
+        vm.prank(st.routerTimelock);
+        ProxyAdmin(st.routerAdmin).transferOwnership(safe);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "router admin owner"));
+        h.check(st, cf);
+        vm.revertToState(snap);
+        // a ProxyAdmin the proxy did not create: the proxy's own code embeds its real admin, so the code check (run
+        // first) already refuses it
+        bad = st;
+        bad.routerAdmin = address(new ProxyAdmin(st.routerTimelock));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "router proxy code"));
+        h.check(bad, cf);
+        // the pad lists the implementation too
+        _breaks(st.pad, abi.encodeCall(IGangPad.setRouter, (st.routerImpl, true)), "pad.routers impl");
+        // the pad does not list the proxy
+        _breaks(st.pad, abi.encodeCall(IGangPad.setRouter, (st.router, false)), "pad.routers");
+        // the vault no longer excludes the router
+        _breaks(st.vault, abi.encodeCall(SharedDividendVault.setExcluded, (st.router, false)), "vault excludes router");
+        h.check(st, cf);
+    }
+
+    /// Mainnet refuses any router timelock delay other than 48 h; testnet takes a short one (upgrade rehearsals).
+    function test_fork_deploy_mainnetTimelockDelayFixed() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        DeployGangHarness g = new DeployGangHarness();
+        assertEq(g.cfgFor(deployer).routerDelay, 48 hours);
+        vm.setEnv("ROUTER_TIMELOCK_DELAY", "3600");
+        vm.expectRevert(abi.encodeWithSelector(R.MainnetTimelockDelay.selector, uint256(3600)));
+        g.cfgFor(deployer);
+        vm.setEnv("ROUTER_TIMELOCK_DELAY", "172801");
+        vm.expectRevert(abi.encodeWithSelector(R.MainnetTimelockDelay.selector, uint256(172801)));
+        g.cfgFor(deployer);
+        vm.chainId(97);
+        vm.setEnv("ROUTER_TIMELOCK_DELAY", "600");
+        vm.setEnv("OWNER", vm.toString(address(0)));
+        assertEq(g.cfgFor(deployer).routerDelay, 600, "testnet: short delay allowed");
+        vm.chainId(56);
+        _clear();
+    }
+
+    /// A re-run reads impl / ProxyAdmin / timelock from the proxy and re-checks all of it.
+    function test_fork_deploy_rerunReadsRouterFromProxy() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        DeployGang.Stack memory s = _deploy();
+        _rerunEnv(s);
+        DeployGang.Stack memory again = new DeployGang().run();
+        _clear();
+        assertEq(again.router, s.router);
+        assertEq(again.routerImpl, s.routerImpl);
+        assertEq(again.routerAdmin, s.routerAdmin);
+        assertEq(again.routerTimelock, s.routerTimelock);
+    }
+
+    /// The real-WBNB refund path through the proxy: WBNB's 2300-gas `transfer` into the proxy's receive fits.
+    function test_fork_deploy_routerBnbRefundRealWbnb() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        DeployGang.Stack memory s = _deploy();
+        address buyer = address(0xB0B);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSignature("balanceOf(address)"), abi.encode(uint256(1)));
+        vm.prank(buyer, buyer);
+        address t = IGangPad(s.pad)
+            .create(
+                "R",
+                "R",
+                "",
+                "",
+                address(0),
+                address(0),
+                IGangLaunchpad.TaxConfig({buyTaxBps: 200, sellTaxBps: 300, dividendBps: 10_000, recipient: address(0)})
+            );
+        vm.deal(buyer, 10 ether);
+        uint256 bal = buyer.balance;
+        uint256 wbal = IERC20(M.WBNB).balanceOf(buyer);
+        vm.prank(buyer, buyer); // an EOA's own tx (§23: the pad only buys for tx.origin)
+        uint256 out = GangRouter(payable(s.router)).v3BuyBNB{value: 5 ether}(t, 1, vm.getBlockTimestamp());
+        assertEq(out, IGangPad(s.pad).MAX_PER_WALLET(), "capped");
+        // §23: the cut goes from the pad straight to the buyer, in real WBNB; the router sends no BNB
+        assertEq(bal - buyer.balance, 5 ether, "all BNB in");
+        assertGt(IERC20(M.WBNB).balanceOf(buyer) - wbal, 4 ether, "the cut came back as WBNB");
+        assertEq(s.router.balance + IERC20(M.WBNB).balanceOf(s.router), 0);
+
+        // the router's own BNB refund (fairMintBNB's unspent msg.value) still unwraps real WBNB through the proxy
+        vm.deal(buyer, 20 ether);
+        vm.startPrank(buyer, buyer);
+        IWBNBDeposit(M.WBNB).deposit{value: 1 ether}();
+        IERC20(M.WBNB).approve(s.pad, type(uint256).max);
+        address f = IGangPad(s.pad)
+            .create(
+                "F",
+                "F",
+                "",
+                "",
+                address(0),
+                address(0),
+                IGangLaunchpad.MintConfig({
+                    raiseBnb: 10 ether, capBps: 50, holdBps: 6_000, mintFeeBps: 100, exitFeeBps: 100
+                }),
+                1
+            );
+        bal = buyer.balance;
+        (, uint256 cost, uint256 fee) = IGangPad(s.pad).previewMint(f, buyer, 10);
+        GangRouter(payable(s.router)).fairMintBNB{value: 5 ether}(f, 10, 10, vm.getBlockTimestamp());
+        vm.stopPrank();
+        assertEq(bal - buyer.balance, cost + fee, "unspent BNB unwrapped and paid back through the proxy");
+        assertEq(s.router.balance + IERC20(M.WBNB).balanceOf(s.router), 0);
+    }
+
+    /// §23: a pre-§23 token deployer (tokens without `pullFor`) or pad (no sellFor / withdrawFor) fails the self-check,
+    /// in a fresh deploy and on a re-run alike (both end in `_check`).
+    function test_fork_deploy_checksOriginTraderCode() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        _deploy();
+        h.check(st, cf); // as deployed
+
+        uint256 snap = vm.snapshotState();
+        bytes memory code = st.tokenDeployer.code;
+        code[code.length - 1] ^= 0x01; // any other build
+        vm.etch(st.tokenDeployer, code);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "tokenDeployer code"));
+        h.check(st, cf);
+        vm.revertToState(snap);
+
+        code = st.pad.code;
+        bytes4 sel = IGangPad.sellFor.selector;
+        uint256 hits;
+        for (uint256 i; i + 5 <= code.length; i++) {
+            if (
+                code[i] == 0x63 && code[i + 1] == sel[0] && code[i + 2] == sel[1] && code[i + 3] == sel[2]
+                    && code[i + 4] == sel[3]
+            ) {
+                code[i + 1] = 0xde; // the dispatcher no longer has sellFor: a pad without it
+                hits++;
+            }
+        }
+        assertGt(hits, 0, "found sellFor in the dispatcher");
+        vm.etch(st.pad, code);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad sellFor / withdrawFor"));
+        h.check(st, cf);
+    }
+
+    /// DeployGangRouterUpgradeable on an existing pad the deploy wallet owns: same shape as DeployGang's router,
+    /// listed by the script, checked; a re-run with GANG_ROUTER only checks. On mainnet only OWNER = the Safe path.
+    function test_fork_deployRouterUpgradeable_existingPad() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        DeployGang.Stack memory s = _deploy();
+        vm.setEnv("GANG_PAD", vm.toString(s.pad));
+        R.Router memory r = new DeployGangRouterUpgradeable().run();
+        assertTrue(r.proxy != s.router, "a second router");
+        assertTrue(IGangPad(s.pad).routers(r.proxy), "listed by the script (the deploy wallet owns the pad)");
+        assertTrue(SharedDividendVault(s.vault).excluded(r.proxy), "excluded in the vault by the script");
+        assertTrue(IGangPad(s.pad).routers(s.router), "the first router is left as it was");
+        assertEq(ProxyAdmin(r.proxyAdmin).owner(), r.timelock);
+        TimelockController tl = TimelockController(payable(r.timelock));
+        assertTrue(tl.hasRole(tl.PROPOSER_ROLE(), multisig));
+        assertFalse(tl.hasRole(tl.PROPOSER_ROLE(), deployer));
+        assertEq(tl.getMinDelay(), 48 hours);
+        assertEq(address(GangRouter(payable(r.proxy)).pancakeRouter()), M.PANCAKE_V2_ROUTER);
+        // re-run: nothing deployed, only checked
+        vm.setEnv("GANG_ROUTER", vm.toString(r.proxy));
+        R.Router memory again = new DeployGangRouterUpgradeable().run();
+        assertEq(again.impl, r.impl);
+        assertEq(again.timelock, r.timelock);
+        // a mainnet OWNER is required
+        vm.setEnv("GANG_ROUTER", vm.toString(address(0)));
+        vm.setEnv("OWNER", vm.toString(address(0)));
+        DeployGangRouterUpgradeable d = new DeployGangRouterUpgradeable();
+        vm.expectRevert(DeployGangRouterUpgradeable.OwnerRequired.selector);
+        d.run();
+        // review S1: on mainnet any OWNER other than the Safe is refused (no WARN-and-continue), the deployer too
+        address[2] memory notSafe = [address(0xBAD), deployer];
+        for (uint256 i; i < notSafe.length; i++) {
+            vm.setEnv("OWNER", vm.toString(notSafe[i]));
+            d = new DeployGangRouterUpgradeable();
+            vm.expectRevert(abi.encodeWithSelector(DeployGangRouterUpgradeable.OwnerNotSafe.selector, notSafe[i]));
+            d.run();
+        }
+        _clear();
+    }
+
     /// The deploy-time stub (same setters and wiring views as the pad, no logic), wired exactly like the real pad,
     /// must not pass the self-check: it has no CURVE_SUPPLY / MINT_SUPPLY / checkTaxConfig, nor the USDT library path.
     function test_fork_deploy_checkRefusesTheStub() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         vm.startPrank(deployer);
         StubGangLaunchpad stub = new StubGangLaunchpad(
@@ -263,7 +610,10 @@ contract DeployScriptsForkTest is Test {
     /// that state, a re-run with the Safe is idempotent, a re-run with another OWNER is refused, and the Safe
     /// Transaction Builder batch has exactly the 7 acceptOwnership() calls.
     function test_fork_deploy_mainnetSafeOwner() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         assertEq(multisig, 0x2866369F7acEFC9760bdE7779362fae5cD68B41E);
         DeployGang.Stack memory s = _deploy();
         address[7] memory owned = _owned(s);
@@ -296,7 +646,10 @@ contract DeployScriptsForkTest is Test {
 
     /// Re-runs against a Safe-pending stack: the same OWNER is idempotent, another OWNER is refused.
     function test_fork_deploy_mainnetSafeOwnerRerun() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         _rerunEnv(s);
         new DeployGang().run();
@@ -312,7 +665,10 @@ contract DeployScriptsForkTest is Test {
 
     /// Mainnet: MAINNET_OWNER_IS_DEPLOYER=true with an OWNER that is not the deployer is refused, not ignored.
     function test_fork_deploy_ownerIsDeployerFlagNeedsTheDeployer() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         vm.setEnv("MAINNET_OWNER_IS_DEPLOYER", "true"); // OWNER stays the multisig
         DeployGangHarness g = new DeployGangHarness();
         vm.expectRevert(DeployGang.OwnerNotDeployer.selector);
@@ -322,7 +678,10 @@ contract DeployScriptsForkTest is Test {
 
     /// Mainnet: the keeper is 0xB6f1…cFc7 unless KEEPER_OVERRIDE_OK=true; TWAP_WINDOW has a 600 s floor.
     function test_fork_deploy_keeperPinnedAndTwapFloor() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGangHarness g = new DeployGangHarness();
         assertEq(g.cfgFor(deployer).keeper, M.KEEPER, "default keeper");
         address other = address(0x1234);
@@ -342,7 +701,10 @@ contract DeployScriptsForkTest is Test {
 
     /// The keeper line is exactly `PADS=gang:PAD(at)BLOCK`; a re-run without GANG_PAD_BLOCK prints no start block.
     function test_fork_deploy_padsLineAndRerunWithoutBlock() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         assertGt(s.padBlock, 0);
         assertEq(
@@ -357,7 +719,10 @@ contract DeployScriptsForkTest is Test {
 
     // ---------------------------------------------------------------- OWNER, re-run, mainnet gate
     function test_fork_deploy_ownerRequiredOnMainnet() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         vm.setEnv("OWNER", vm.toString(address(0)));
         DeployGang d = new DeployGang();
         vm.expectRevert(DeployGang.OwnerRequired.selector);
@@ -371,7 +736,10 @@ contract DeployScriptsForkTest is Test {
 
     /// The 2026-10-27 launch: the deploy wallet is also the owner. Everything stays on it, nothing pending.
     function test_fork_deploy_ownerIsDeployer() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         vm.setEnv("OWNER", vm.toString(deployer));
         vm.setEnv("MAINNET_OWNER_IS_DEPLOYER", "true");
         DeployGang.Stack memory s = _deploy();
@@ -381,11 +749,68 @@ contract DeployScriptsForkTest is Test {
             assertEq(Ownable2Step(owned[i]).owner(), deployer);
             assertEq(Ownable2Step(owned[i]).pendingOwner(), address(0), "no pending owner");
         }
+        // review S1: the router timelock still belongs to the Safe alone; the deploy wallet (= OWNER) has no role
+        TimelockController tl = TimelockController(payable(s.routerTimelock));
+        bytes32[4] memory roles = [tl.PROPOSER_ROLE(), tl.EXECUTOR_ROLE(), tl.CANCELLER_ROLE(), tl.DEFAULT_ADMIN_ROLE()];
+        for (uint256 i; i < 3; i++) {
+            assertTrue(tl.hasRole(roles[i], M.OWNER_SAFE), "Safe holds the role");
+        }
+        for (uint256 i; i < 4; i++) {
+            assertFalse(tl.hasRole(roles[i], deployer), "deploy wallet holds nothing");
+        }
+    }
+
+    /// Review S1: on mainnet the self-check refuses a router timelock whose role holder is not the Safe, and one where
+    /// the deploy wallet kept a role, also when OWNER is the deploy wallet.
+    function test_fork_deploy_mainnetTimelockOnlySafe() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        _deploy();
+        // a stack whose timelock is run by the deploy wallet (built off-chain-id so deploy() lets it through)
+        _badRouter(
+            _one(deployer),
+            _one(deployer),
+            address(0),
+            48 hours,
+            M.PANCAKE_V2_ROUTER,
+            address(0),
+            "router timelock safe roles"
+        );
+        DeployGang.Cfg memory c = cf;
+        c.owner = deployer; // MAINNET_OWNER_IS_DEPLOYER=true: the router check still wants the Safe
+        uint256 snap = vm.snapshotState();
+        vm.startPrank(deployer);
+        address[] memory both = _two(M.OWNER_SAFE, deployer);
+        TimelockController tl = new TimelockController(48 hours, both, _one(M.OWNER_SAFE), address(0));
+        address proxy = address(
+            new TransparentUpgradeableProxy(
+                address(new GangRouter()),
+                address(tl),
+                abi.encodeCall(GangRouter.initialize, (st.pad, M.WBNB, M.PANCAKE_V2_ROUTER))
+            )
+        );
+        IGangPad(st.pad).setRouter(proxy, true);
+        SharedDividendVault(st.vault).setExcluded(proxy, true);
+        vm.stopPrank();
+        DeployGang.Stack memory bad = st;
+        (bad.router, bad.routerImpl, bad.routerAdmin, bad.routerTimelock) =
+        (proxy, R.implementationOf(proxy), R.adminOf(proxy), address(tl));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "router timelock deployer role"));
+        h.checkRouterOnly(bad, c);
+        vm.revertToState(snap);
+        // and the library itself will not build a mainnet timelock for anyone but the Safe
+        vm.expectRevert(abi.encodeWithSelector(R.MainnetTimelockNotSafe.selector, deployer));
+        h.deployRouter(st.pad, deployer);
     }
 
     /// C-F8: a re-run naming another OWNER does not overwrite the pending owner; the same OWNER is idempotent.
     function test_fork_deploy_rerunPendingOwnerMismatch() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         _rerunEnv(s);
         DeployGang.Stack memory again = new DeployGang().run();
@@ -408,7 +833,10 @@ contract DeployScriptsForkTest is Test {
 
     /// A re-run needs the router too (it is not readable from the pad).
     function test_fork_deploy_rerunNeedsRouter() public {
-        if (!forked) return;
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
         DeployGang.Stack memory s = _deploy();
         vm.setEnv("GANG_PAD", vm.toString(s.pad));
         DeployGang d = new DeployGang();
@@ -442,7 +870,10 @@ contract DeployScriptsForkTest is Test {
     // ---------------------------------------------------------------- testnet
     function test_fork_deploy_testnet() public {
         string memory rpc = vm.envOr("BSC_TESTNET_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) return;
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
         vm.createSelectFork(rpc);
         _clear();
         vm.setEnv("OWNER", vm.toString(address(0))); // testnet default: the deployer

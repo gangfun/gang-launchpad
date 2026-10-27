@@ -37,8 +37,14 @@ contract FairMintAuditTest is FairMintTest {
 
         wbnb.mintUnlimited(address(this), 1 ether);
         wbnb.approve(address(pad), type(uint256).max);
+        address pair = makeAddr("pair");
+        // §23: the future pair is never tx.origin
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        pad.mintFor(pair, t, 1, 1);
+        // and the A-2 check is still there behind it (even for the sender of the tx)
+        vm.prank(address(this), pair);
         vm.expectRevert(IGangLaunchpad.RouterNeedsGate.selector);
-        pad.mintFor(makeAddr("pair"), t, 1, 1);
+        pad.mintFor(pair, t, 1, 1);
 
         // the direct path still works ungated: msg.sender is the minter
         vm.prank(stranger);

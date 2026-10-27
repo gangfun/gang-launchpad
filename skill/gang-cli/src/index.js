@@ -17,6 +17,10 @@ import { rememberPreview, previewFor } from './previews.js'
 import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
+import { poolPayBnb, poolTrade } from './pool.js'
+import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn } from './steps.js'
+import { MERGED_ERRORS_ABI, padNets } from './gangpad.js'
+import { V2_ABI } from './abi.js'
 
 const args = process.argv.slice(2)
 const cmd = args[0]
@@ -74,6 +78,41 @@ const myAddress = () => {
 }
 // native BNB kept back when wrapping for a V2 buy: gas for the wrap, approve and buy txs (well above BSC's usual cost)
 const GAS_RESERVE = parseEther('0.002')
+
+/**
+ * A graduated V2 / Soft / U / S token trades in its PancakeSwap pool through the same GangRouter as gang v3 / gang fair
+ * (mainnet only, like every V2 pad). Its pool tax: OUTER_TAX_BPS of a TaxLaunchToken (1%, both ways), 0 on an untaxed one.
+ */
+const v2PoolCtx = () => ({
+  chainId: CONFIG.chainId, client, wbnb: ADDR.wbnb, router: padNets('v3').mainnet.router, pad: padNets('v3').mainnet.pad,
+  read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }),
+})
+const V2_TAX_ABI = [{ type: 'function', name: 'OUTER_TAX_BPS', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }]
+async function v2PoolTrade(side, token, info, me, note, { amount, all = false }) {
+  const ctx = v2PoolCtx()
+  let taxBps = 0
+  if (info.taxed) taxBps = Number(await client.readContract({ address: token, abi: V2_TAX_ABI, functionName: 'OUTER_TAX_BPS' }).catch(() => 100n))
+  return out(await poolTrade(ctx, {
+    side, token, quote: info.quote, me, amount, all, slippage: parseSlippage(opt('slippage', '1')), buyTaxBps: taxBps, sellTaxBps: taxBps,
+    handler: null, swapBackGas: false, payBnb: side === 'buy' && poolPayBnb(ctx, info.quote, flag), toBnb: flag('to-bnb'),
+    base: {
+      kind: info.kind, pad: info.pad, symbol: info.symbol, pair: info.pair,
+      ...(note && { agentNote: { attached: false, reason: 'notes are matched to curve trades only: this PancakeSwap trade carries none' } }),
+    },
+  }, {
+    rawOnly: flag('calldata'), summarize: summarizePreview,
+    revertOf: (e) => revertIn(e, [ROUTER_ABI, V2_ABI, MERGED_ERRORS_ABI], ROUTER_HINTS),
+  }))
+}
+/** --from <addr> (pool trades only: builds for that wallet, e.g. with --calldata); null when not given. */
+const fromArg = () => {
+  if (!flag('from')) return null
+  const a = opt('from')
+  if (!isAddress(a ?? '')) fail('--from must be a 0x address', { got: a ?? null })
+  return a
+}
+const FROM_CURVE = '--from only applies to a graduated token (a PancakeSwap trade through GangRouter); curve trades are previewed for the Agentic Wallet: leave --from out'
+const NOT_TESTNET = 'gang buy / gang sell trade the mainnet V2 / Soft / U / S pads only (no testnet deployment): leave --testnet out, or use gang v3 … / gang fair … --testnet'
 
 // --note is validated before any RPC / preview, so a bad note never reaches calldata
 const parseNote = () => {
@@ -173,9 +212,12 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang quote --token <addr> --bnb <n>    Soft: BNB quote; V2/U/S: quote-token amount (same flag)
   gang buy --token <addr> --bnb <n> [--slippage 1] [--follow <note tx>] [--note "<why>" [--conf 0-100] [--reveal-after 1-72h]]
                                          Soft: payable BNB; V2: wrap BNB→WBNB if short, approve quote, then buy
+                                         graduated: buys in the PancakeSwap pool through GangRouter (see POOL below;
+                                         [--use-quote | --pay-bnb] [--from <addr>] [--calldata]; no --note / --follow)
   gang follow <note tx> --bnb <n> [--slippage 1] [--note …]
                                          buy the token that note is about, marked on-chain as following it (= buy --follow)
   gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
+                                         graduated: sells into the pool through GangRouter ([--to-bnb] [--from] [--calldata])
   gang upload-logo (--file <path> | --url <image URL>)
                                          copy an image to https://gang.fun/api/logos → logoUrl
   gang create --name <n> --symbol <s> [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle|x.com link]
@@ -184,12 +226,12 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --website / --twitter (optional) go into the create tx, shown on gang.fun; permanent
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
-  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1]
+  gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1]
                  [--shares 1] [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL]
                  [--twitter @handle] [--description <text>]
                                          打新 (fair mint): one price per share both ways, the last share launches on PancakeSwap at
-                                         that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–0.5% of
-                                         supply per wallet, hold line 30–80%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
+                                         that price. No deadline, no refund: open until it fills. raise 5–50 BNB, cap 0.25–1% of
+                                         supply per wallet (1% → at least 50 wallets), hold line 60–90%, mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares).
                                          Wraps / approves first when needed (re-run after each)
                                          --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
                                          pool holding it, which prices the raise (as gang create; mainnet USDT defaults to the USDT/WBNB pool)
@@ -199,6 +241,11 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          + the sale's mint fee (the platform's, not returned); WBNB sales pay native BNB
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
   gang fair withdraw --token <addr> (--shares <n> | --all)           sell back before it fills: mint price − exit fee (none once stale)
+  gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb]
+  gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out]
+                                         after launch: trade in the PancakeSwap pool through GangRouter (POOL below);
+                                         a sell past status.sellableBeforeOut (ends the holder reward for good) is refused
+                                         unless --confirm-out
   gang fair status --token <addr> [--slippage 1]
                                          my shares; after launch: reward on / out, how much I can sell and stay in, to claim
                                          (claimable now + reward credited when tax was paid, not sold yet), poolSellAll
@@ -215,16 +262,15 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          (uploaded to gang.fun; the token's contractURI / metaURI, permanent)
                                          LaunchpadV3: own buy / sell tax in % (fixed at create), only in the pool after
                                          graduation: 0.5% of volume to the platform; of the rest --dividend % to holders, the
-                                         remainder to --recipient (must be on the platform whitelist) in the quote. Curve
+                                         remainder to --recipient (your own address, or a partner on the platform whitelist) in the quote. Curve
                                          trades pay only the 1% fee, no tax
                                          --quote: WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair or V3
                                          pool holding it, which prices the 15 BNB graduation target (as gang create), unless
                                          gang set a fixed rate. The output shows graduationAt
   gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
                                          amount includes the 1% fee (no tax on the curve); WBNB-quoted: native BNB via GangRouter
-  gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
-                                         on the curve; graduated: no tx, a pool quote (expectOut / minOut for amountOutMin;
-                                         --amount needs no wallet)
+  gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb]
+                                         on the curve; graduated: buy / sell trade in the PancakeSwap pool (POOL below)
   gang v3 info --token <addr>            curve, tax setting (taxNote: pool only), recipient, what the router still owes it; graduated: swapBack
                                          (tax not sold yet, the per-block chunk budget, what the latest block has left of it
                                          and the next chunk)
@@ -236,6 +282,17 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>
                                          V3 tokens and 打新 sales share one pad: a token of the other kind is pointed at the
                                          other command (kindOf). --testnet / mainnet, --calldata / --from as in gang fair
+  POOL (graduated / launched token; gang v3 buy|sell, gang fair buy|sell, gang buy|sell): PancakeSwap through GangRouter.
+                                         buy: WBNB quote → native BNB (poolBuyBNB), --use-quote pays WBNB; other quote → the
+                                         quote (poolBuy), --pay-bnb pays BNB via WBNB → quote → token. minTokensOut =
+                                         getAmountsOut − buy tax − --slippage. sell: poolSell → quote, --to-bnb poolSellForBNB
+                                         → BNB; minOut = the tax handler's previewSellNextBlock (V2 / untaxed: getAmountsOut −
+                                         sell tax) − --slippage. Approves only this trade's amount first (re-run after it;
+                                         --calldata: all txs in steps[] in order). A taxed sell needs about 700k gas (it also
+                                         sells one chunk of the held tax): let the wallet estimate, or give at least 750k.
+                                         The router is checked first (a GangRouter with pool trades, not Pancake / an old one);
+                                         a reverted simulation with --calldata is doNotSend: true, no tx. gang buy|sell:
+                                         --from only on graduated tokens, mainnet only
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -262,7 +319,7 @@ GANG_UPDATE_CHECK, GANG_UPDATE_URL,
 GANG_PAD / GANG_TESTNET_PAD (the one GangLaunchpad behind both gang v3 and gang fair; old names GANG_V3_PAD / GANG_FAIR_PAD
 and GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD still work as aliases), GANG_TESTNET_RPC_URL (aliases
 GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET_ROUTER (alias GANG_ROUTER_TESTNET; GangRouter
-for BNB buys / mints; unset on mainnet = pay from WBNB)`
+for BNB buys / mints and every pool trade; unset on mainnet = curve buys pay from WBNB, pool trades are refused)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
@@ -433,10 +490,17 @@ async function resolveMetaUri({ name, symbol, logoURI }) {
  * its check already done).
  */
 async function buy(token, bnb, note, followTx, checked = null) {
+  if (flag('testnet')) fail(NOT_TESTNET)
   const slippage = parseSlippage(opt('slippage', '1'))
-  const me = bawAddress()
+  const from = fromArg()
+  const me = from || bawAddress()
   const info = await tokenInfo(token, me)
-  if (info.graduated) fail('token already graduated; trade it on PancakeSwap', { pair: info.pair })
+  if (from && !info.graduated) fail(FROM_CURVE)
+  if (info.graduated) {
+    // graduated: buy in the PancakeSwap pool through GangRouter (--bnb = the amount to spend, in BNB or the quote)
+    if (followTx) fail('--follow only counts on curve buys before graduation; this token trades on PancakeSwap now', { pair: info.pair })
+    return v2PoolTrade('buy', token, info, me, note, { amount: parseAmount(fail, 'bnb', bnb) })
+  }
   if (!(await isAgent(me))) fail('this wallet holds no Agent ID (.ai); buying is gated', { address: me })
   const follow = checked ?? (followTx ? (await confirmFollow(followTx, me, token)).follow : null)
   const rerun = cmd === 'follow' ? '`gang follow`' : '`gang buy`'
@@ -720,13 +784,19 @@ async function main() {
       const token = opt('token'); if (!token) fail('--token required')
       const note = parseNote()
       parseFollow() // refuses --follow: only buys follow a note
-      const me = bawAddress()
+      if (flag('testnet')) fail(NOT_TESTNET)
+      const from = fromArg()
+      const me = from || bawAddress()
       const info = await tokenInfo(token, me)
-      if (info.graduated) fail('token already graduated; sell on PancakeSwap', { pair: info.pair })
-      const bal = await balanceOf(token, me)
-      if (bal === 0n) fail('no balance to sell')
+      if (from && !info.graduated) fail(FROM_CURVE)
       if (!flag('all') && !opt('amount')) fail('pass --amount <tokens> or --all (full sell is no longer the default)')
       if (flag('all') && opt('amount')) fail('use either --all or --amount, not both')
+      // graduated: sell into the PancakeSwap pool through GangRouter
+      if (info.graduated) {
+        return v2PoolTrade('sell', token, info, me, note, { amount: flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: flag('all') })
+      }
+      const bal = await balanceOf(token, me)
+      if (bal === 0n) fail('no balance to sell')
       const amount = flag('all') ? bal : parseEther(opt('amount'))
       if (amount > bal) fail('amount exceeds balance', { balance: fmtTok(bal) })
       const pad = await resolvePad(token)

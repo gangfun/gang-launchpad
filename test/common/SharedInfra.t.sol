@@ -20,7 +20,7 @@ contract SharedInfraTest is GangRouterTest {
         for (uint256 i = 0; i < 200 && !_v3Graduated(token); i++) {
             address w = address(uint160(0xE0000 + i));
             _agent(w);
-            vm.prank(w);
+            vm.prank(w, w);
             router.v3BuyBNB{value: 1 ether}(token, 0, block.timestamp);
         }
         assertTrue(_v3Graduated(token), "V3 graduated");
@@ -44,7 +44,7 @@ contract SharedInfraTest is GangRouterTest {
         for (uint256 i = 0; i < 101; i++) {
             address m = address(uint160(0xF0000 + i));
             _agent(m);
-            vm.prank(m);
+            vm.prank(m, m);
             router.fairMintBNB{value: 1 ether}(token, 100, 1, block.timestamp);
             if (fair.status(token) == IGangLaunchpad.Status.Launched) return;
         }
@@ -75,7 +75,7 @@ contract SharedInfraTest is GangRouterTest {
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
         v3.buy(b, 1 ether, 0);
 
-        vm.prank(agent2);
+        vm.prank(agent2, agent2);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
         assertGt(v3Vault.shares(a, agent2), 0, "V3 holder's share written on the curve");
         assertEq(v3Vault.pending(a, agent2), 0, "V3 holders earn only from the pool tax");
@@ -133,7 +133,7 @@ contract SharedInfraTest is GangRouterTest {
     function test_shared_nobodyButTheHandlerWritesTheVault() public {
         address a = _v3Token(5000);
         address b = _fairSale();
-        vm.prank(agent2);
+        vm.prank(agent2, agent2);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
         uint256 shareA = v3Vault.shares(a, agent2);
         assertGt(shareA, 0);
@@ -160,7 +160,7 @@ contract SharedInfraTest is GangRouterTest {
     /// @dev Delisting the pad stops new tokens of both kinds; its existing tokens keep trading and earning.
     function test_shared_ownerRemovesCore_existingTokensKeepWorking() public {
         address a = _v3Token(5000);
-        vm.prank(agent2);
+        vm.prank(agent2, agent2);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
 
         vm.startPrank(owner);
@@ -172,13 +172,13 @@ contract SharedInfraTest is GangRouterTest {
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
         v3.create("New", "NEW", "", "", address(0), address(0), _tax(5000));
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
         fair.create("Fair", "FAIR", "", "", address(0), address(0), cfg, 1);
 
-        vm.prank(agent);
+        vm.prank(agent, agent);
         router.v3BuyBNB{value: 0.5 ether}(a, 0, block.timestamp);
         assertGt(v3Vault.shares(a, agent), 0, "existing token: shares still written");
         // dividends come from the pool tax (§19: none on the curve): graduate, sell into the pool, sell the tax
@@ -206,7 +206,7 @@ contract SharedInfraTest is GangRouterTest {
         vm.prank(owner);
         v3Vault.setMinimumShareBalance(address(v3), 100_000_000 ether);
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
         vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);

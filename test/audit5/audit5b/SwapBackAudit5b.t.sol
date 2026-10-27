@@ -95,7 +95,10 @@ contract SwapBackAudit5bTest is Test {
     address pair;
 
     modifier forkOnly() {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         _;
     }
 

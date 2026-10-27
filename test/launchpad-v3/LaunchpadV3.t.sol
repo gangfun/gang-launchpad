@@ -21,6 +21,17 @@ import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol"
 import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
+/// @dev A contract creator (holds an Agent ID itself) that also relays create for whoever calls it (§22 review).
+contract CreatorContract {
+    function create(LaunchpadV3 pad, address quote, IGangLaunchpad.TaxConfig memory t) external returns (address) {
+        return pad.create("C", "C", "", "", quote, address(0), t);
+    }
+
+    receive() external payable {
+        revert("no bnb");
+    }
+}
+
 /// @dev Quote that refuses transfers to blacklisted addresses (USDT-style), to make a recipient push fail.
 contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
     mapping(address => bool) public blocked;
@@ -252,6 +263,190 @@ contract LaunchpadV3Test is Test {
         vm.prank(keeper);
         handler.process(t, type(uint256).max, 1);
         assertGt(quoteTok.balanceOf(treasury), 0, "existing token keeps paying its recipient (pool tax)");
+    }
+
+    // ---------------------------------------------------------------- creator as recipient (2026-10-27, §22)
+    /// @notice The creator may name itself as the recipient without being listed; the pool tax after graduation pays
+    ///         it exactly like a listed recipient (platform 0.5% of volume, the rest to the creator in quote).
+    function test_creatorAsRecipient_createsAndIsPaidAfterGraduation() public {
+        assertFalse(handler.isListed(agent), "the creator is not on the whitelist");
+        ILaunchpadV3.TaxConfig memory tx_ = _tax(100, 300, 0, agent);
+        (bool ok, string memory reason) = pad.checkTaxConfigFor(agent, tx_);
+        assertTrue(ok, reason);
+        // the creator-blind view only knows the whitelist
+        (ok, reason) = pad.checkTaxConfig(tx_);
+        assertFalse(ok);
+        assertEq(reason, "recipient not listed");
+
+        address t = _create(tx_);
+        (,,, address r) = pad.taxConfigOf(t);
+        assertEq(r, agent, "recipient = creator, fixed at create");
+        (address creator,,,,,,,,,,,) = pad.curves(t);
+        assertEq(creator, agent);
+
+        _graduate(t);
+        uint256 recBefore = quoteTok.balanceOf(agent);
+        _poolBuy(t, stranger, 1 ether);
+        uint256 platformTokens = handler.accruedPlatformTax(t);
+        uint256 totalTokens = handler.accruedTax(t);
+        assertEq(platformTokens, totalTokens / 2, "buy: 0.5 of 1% to the platform");
+        uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.prank(keeper);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
+        uint256 platformQuote = (quoteOut * platformTokens) / totalTokens;
+        assertGt(quoteOut, 0);
+        assertEq(bucket.accruedQuote(address(quoteTok)) - bucketBefore, platformQuote);
+        assertEq(quoteTok.balanceOf(agent) - recBefore, quoteOut - platformQuote, "the rest to the creator, in quote");
+        assertEq(handler.owedOf(t), 0);
+    }
+
+    /// @notice With a dividend share the creator gets the recipient's part: holders' part to the vault first.
+    function test_creatorAsRecipient_withDividend_splitByShare() public {
+        address t = _create(_tax(300, 300, 4_000, agent));
+        _graduate(t);
+        uint256 recBefore = quoteTok.balanceOf(agent);
+        uint256 vaultBefore = quoteTok.balanceOf(address(divVault));
+        uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        _poolBuy(t, stranger, 1 ether);
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.prank(keeper);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
+        uint256 toHolders = quoteTok.balanceOf(address(divVault)) - vaultBefore;
+        uint256 toPlatform = bucket.accruedQuote(address(quoteTok)) - bucketBefore;
+        uint256 toCreator = quoteTok.balanceOf(agent) - recBefore;
+        assertGt(toHolders, 0, "holders' part");
+        assertGt(toCreator, 0, "recipient's part");
+        assertEq(toHolders + toPlatform + toCreator, quoteOut, "every unit accounted for");
+        // of the tax after the platform's 0.5%: 40% holders, 60% creator (rounding only)
+        assertApproxEqRel(toHolders * 6_000, toCreator * 4_000, 1e15);
+    }
+
+    /// @notice A creator that cannot receive is owed like any recipient; anyone releases it to the creator.
+    function test_creatorAsRecipient_owedAndRelease() public {
+        BlacklistQuote bq = new BlacklistQuote();
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(bq), true, 15 ether);
+        bq.setBlocked(agent, true);
+        vm.prank(agent);
+        address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(200, 200, 0, agent));
+        _graduate(t);
+        _poolBuy(t, stranger, 1 ether);
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.prank(keeper);
+        handler.process(t, type(uint256).max, 1);
+        uint256 owedAmt = handler.owedOf(t);
+        assertGt(owedAmt, 0, "booked as owed");
+
+        bq.setBlocked(agent, false);
+        vm.expectEmit(true, true, true, true, address(handler));
+        emit TaxPaid(t, agent, address(bq), owedAmt);
+        vm.prank(stranger);
+        handler.release(t);
+        assertEq(bq.balanceOf(agent), owedAmt, "released to the creator, not the caller");
+        assertEq(handler.owedOf(t), 0);
+    }
+
+    /// @notice Third parties still need the whitelist: an unlisted address that is not the creator is refused, also
+    ///         when it is some other creator's own address; a zero recipient still needs dividend 100%.
+    function test_creatorAsRecipient_thirdPartyStillListedOnly() public {
+        _expectBad(_tax(200, 200, 0, stranger), "recipient not listed");
+        _expectBad(_tax(200, 200, 0, agent2), "recipient not listed"); // agent creates, names agent2
+        (bool ok, string memory reason) = pad.checkTaxConfigFor(agent, _tax(200, 200, 0, stranger));
+        assertFalse(ok);
+        assertEq(reason, "recipient not listed");
+        (ok, reason) = pad.checkTaxConfigFor(agent2, _tax(200, 200, 0, agent));
+        assertFalse(ok);
+        assertEq(reason, "recipient not listed");
+        (ok, reason) = pad.checkTaxConfigFor(agent, _tax(200, 200, 5_000, address(0)));
+        assertFalse(ok);
+        assertEq(reason, "no recipient: dividendBps must be 10000");
+        (ok, reason) = pad.checkTaxConfigFor(address(0), _tax(200, 200, 10_000, address(0)));
+        assertTrue(ok, reason);
+        (ok, reason) = pad.checkTaxConfigFor(agent, _tax(200, 200, 0, treasury));
+        assertTrue(ok, reason);
+        // the other bounds are unchanged for a creator recipient
+        (ok, reason) = pad.checkTaxConfigFor(agent, _tax(99, 200, 0, agent));
+        assertEq(reason, "buyTaxBps and sellTaxBps must each be 100-500 (1%-5%)");
+        (ok, reason) = pad.checkTaxConfigFor(agent, _tax(200, 200, 10_001, agent));
+        assertEq(reason, "dividendBps > 10000");
+        (ok, reason) = pad.checkTaxConfigFor(agent, _tax(0, 0, 0, agent));
+        assertEq(reason, "untaxed: dividendBps / recipient must be empty");
+        // and agent2 may name itself
+        vm.prank(agent2);
+        address t = pad.create("Own", "OWN", "", "", address(quoteTok), address(0), _tax(200, 200, 0, agent2));
+        (,,, address r) = pad.taxConfigOf(t);
+        assertEq(r, agent2);
+    }
+
+    /// @notice A relaying contract cannot lend its caller's identity: naming the EOA that called it is refused, naming
+    ///         the contract itself passes (the pad sees the contract as the creator).
+    function test_creatorAsRecipient_relayCannotImpersonate() public {
+        CreatorContract cc = new CreatorContract();
+        agents.mint(address(cc), 9_999);
+        vm.prank(agent);
+        vm.expectRevert(abi.encodeWithSelector(IGangLaunchpad.BadTaxConfig.selector, "recipient not listed"));
+        cc.create(pad, address(quoteTok), _tax(200, 200, 0, agent));
+
+        address t = cc.create(pad, address(quoteTok), _tax(200, 200, 0, address(cc)));
+        (,,, address r) = pad.taxConfigOf(t);
+        assertEq(r, address(cc));
+        (address creator,,,,,,,,,,,) = pad.curves(t);
+        assertEq(creator, address(cc));
+    }
+
+    /// @notice A contract creator that refuses native BNB is still paid: the pool tax is paid in the ERC20 quote.
+    function test_creatorAsRecipient_contractCreatorPaidInQuote() public {
+        CreatorContract cc = new CreatorContract();
+        agents.mint(address(cc), 9_998);
+        address t = cc.create(pad, address(quoteTok), _tax(200, 200, 0, address(cc)));
+        _graduate(t);
+        _poolBuy(t, stranger, 1 ether);
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.prank(keeper);
+        uint256 out = handler.process(t, type(uint256).max, 1);
+        assertGt(out, 0);
+        assertGt(quoteTok.balanceOf(address(cc)), 0);
+        assertEq(handler.owedOf(t), 0);
+    }
+
+    /// @notice A creator recipient the quote blacklists does not block a user's pool sell (swap-back path): the chunk is
+    ///         sold, the recipient's leg is booked as owed, the sell lands; release pays the creator later.
+    function test_creatorAsRecipient_blockedCreatorDoesNotBlockSell() public {
+        BlacklistQuote bq = new BlacklistQuote();
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(bq), true, 15 ether);
+        vm.prank(agent);
+        address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(300, 300, 0, agent));
+        _graduate(t);
+        bq.setBlocked(agent, true);
+        _poolBuy(t, stranger, 1 ether); // accrues the buy tax in tokens
+        assertGt(handler.accruedTax(t), 0);
+        vm.roll(vm.getBlockNumber() + 1);
+        address seller = address(uint160(0xB0000)); // a curve buyer
+        uint256 bal = IERC20(t).balanceOf(seller);
+        assertGt(bal, 0);
+        _poolSell(t, seller, bal / 2);
+        assertEq(IERC20(t).balanceOf(seller), bal - bal / 2, "sell landed");
+        assertGt(handler.owedOf(t), 0, "recipient leg owed, not reverted");
+        bq.setBlocked(agent, false);
+        uint256 owed = handler.owedOf(t);
+        vm.prank(stranger);
+        handler.release(t);
+        assertEq(bq.balanceOf(agent), owed);
+        assertEq(handler.owedOf(t), 0);
+    }
+
+    /// @notice Listing and delisting the creator changes nothing for naming itself; the creator-blind view refuses it.
+    function test_creatorAsRecipient_delistedCreatorStillSelf() public {
+        vm.prank(owner);
+        handler.list(agent, "agent");
+        vm.prank(owner);
+        handler.delist(agent);
+        (bool ok, string memory reason) = pad.checkTaxConfigFor(agent, _tax(200, 200, 0, agent));
+        assertTrue(ok, reason);
+        (ok,) = pad.checkTaxConfig(_tax(200, 200, 0, agent));
+        assertFalse(ok);
     }
 
     // ---------------------------------------------------------------- §19: no tax on the curve

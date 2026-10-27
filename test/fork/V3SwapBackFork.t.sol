@@ -47,7 +47,10 @@ contract V3SwapBackForkTest is Test {
     V3ForkAgent agent;
 
     modifier forkOnly() {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         _;
     }
 

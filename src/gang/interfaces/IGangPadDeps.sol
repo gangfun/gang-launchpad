@@ -11,6 +11,10 @@ interface IGangPadToken {
 
     /// @notice 打新 only, before launch: pull a minter's tokens back to the pad (withdraw).
     function reclaim(address from, uint256 amount) external;
+
+    /// @notice Any kind, before graduation / launch only: spend the allowance `owner` gave `spender` and pull `amount`
+    ///         from `owner` to the pad (`sellFor` / `withdrawFor`, AUDIT-BRIEF §23).
+    function pullFor(address owner, address spender, uint256 amount) external;
 }
 
 /// @notice The slice of GangTaxHandler the pad calls.

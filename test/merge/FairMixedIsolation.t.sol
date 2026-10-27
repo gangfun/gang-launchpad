@@ -47,7 +47,7 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
 
     function _cfgQ() internal pure returns (IGangLaunchpad.MintConfig memory) {
         return
-            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 300, exitFeeBps: 100});
+            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 6000, mintFeeBps: 300, exitFeeBps: 100});
     }
 
     function _gradAny(address token) internal {
@@ -239,7 +239,7 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
         v3.sell(b1, 1, 0);
         vm.stopPrank();
-        vm.startPrank(address(router));
+        vm.startPrank(address(router), agent);
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
         v3.mintFor(agent, a1, 1, 1);
         vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
@@ -313,8 +313,12 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
         vm.prank(agent);
         address a2 = v3.create("Plain", "PLN", "", "", address(0), address(0), _plain());
         address b1 = _fairSale();
+        // b2's rules span the launch ranges (2026-10-27): cap 0.25%–1%, hold line 60%–90%
+        IGangLaunchpad.MintConfig memory cfg2 = _cfgQ();
+        cfg2.capBps = uint16(25 + (seed >> 200) % 76);
+        cfg2.holdBps = uint16(6_000 + (seed >> 216) % 3_001);
         vm.prank(agent);
-        address b2 = fair.create("Fair2", "F2", "", "", address(0), address(0), _cfgQ(), 2);
+        address b2 = fair.create("Fair2", "F2", "", "", address(0), address(0), cfg2, 2);
         cs.push(a1);
         cs.push(a2);
         ss.push(b1);
@@ -354,7 +358,7 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
                 }
                 exact = false;
             } else if (op == 2 || op == 3) {
-                _try(w, abi.encodeWithSignature("mint(address,uint256,uint256)", s, (r >> 40) % 120 + 1, 0));
+                _try(w, abi.encodeWithSignature("mint(address,uint256,uint256)", s, (r >> 40) % 240 + 1, 0));
             } else if (op == 4) {
                 uint256 sh = v3.positions(s, w);
                 if (sh > 0) {

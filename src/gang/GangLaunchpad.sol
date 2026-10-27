@@ -72,10 +72,10 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     /// @dev QuoteRegistry overrides are "15 BNB worth of quote" (V2 graduation target); scaled to the raise.
     uint256 public constant REGISTRY_REF_BNB = PadCommon.REF_BNB;
     uint16 public constant MIN_CAP_BPS = FairLogic.MIN_CAP_BPS; // 0.25% of supply → ≥ 200 addresses
-    uint16 public constant MAX_CAP_BPS = FairLogic.MAX_CAP_BPS; // 0.5% of supply → ≥ 100 addresses
+    uint16 public constant MAX_CAP_BPS = FairLogic.MAX_CAP_BPS; // 1% of supply → ≥ 50 addresses
     uint16 public constant MIN_HOLD_BPS = FairLogic.MIN_HOLD_BPS;
     uint16 public constant MAX_HOLD_BPS = FairLogic.MAX_HOLD_BPS;
-    /// @dev Vault floor uses `<=`; must stay below 1 share × MIN_HOLD_BPS (15k tokens). = TAXED_MIN_SHARE.
+    /// @dev Vault floor uses `<=`; must stay below 1 share × MIN_HOLD_BPS (30k tokens). = TAXED_MIN_SHARE.
     uint256 public constant MIN_SHARE_BALANCE = PadCommon.MIN_SHARE;
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
@@ -93,8 +93,9 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     // ---------------------------------------------------------------- storage
     Config internal _config;
     mapping(address => address) public bridgePoolOf;
-    /// @notice Stateless entry contracts (e.g. GangRouter) that may buy / mint for a trader they pay for. A router only
-    ///         ever spends its own quote; sells, withdraws and claims stay msg.sender-only.
+    /// @notice Entry contracts (GangRouter, listed aggregators) that may buy / mint (paying themselves) and sell /
+    ///         withdraw (with the trader's token allowance to them) for a trader — only the wallet that sent the tx
+    ///         (`trader == tx.origin`, AUDIT-BRIEF §23). Claims stay msg.sender-only.
     mapping(address router => bool) public routers;
     /// @inheritdoc IGangPadView
     mapping(address token => uint8) public kindOf;
@@ -218,16 +219,19 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         tokensOut = CurveLogic.buy(_config, curves, _deps(), msg.sender, token, quoteIn, minTokensOut);
     }
 
-    /// @notice A listed router buys for `trader`: the router pays and gets any refund (cap / graduation truncation);
-    ///         the tokens, the dividend share, the gate and the wallet cap are the trader's.
+    /// @notice A listed router (GangRouter, a listed aggregator) buys for `trader`, who must be the wallet that sent
+    ///         the tx (`trader == tx.origin`, §23). The router pays `quoteIn`; the refund of any cap / graduation cut
+    ///         goes to the TRADER (quote ERC-20, never to the router); the tokens, the dividend share, the gate and the
+    ///         wallet cap are the trader's, exactly as a direct `buy`.
+    ///         Reverts OnlyRouter (caller not listed) / TraderNotOrigin.
     function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
         external
         nonReentrant
         returns (uint256 tokensOut)
     {
-        if (!routers[msg.sender]) revert OnlyRouter();
+        _forTrader(trader);
         // A-2 (V3): the pad's gate must be on now — ungated, a router could name any trader (e.g. the future pair,
-        // seeding it before graduation)
+        // seeding it before graduation). Kept as is; the origin binding (§23) now also rules that case out.
         if (!_config.agentGateEnabled) revert RouterNeedsGate();
         tokensOut = CurveLogic.buy(_config, curves, _deps(), trader, token, quoteIn, minTokensOut);
     }
@@ -237,12 +241,39 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         nonReentrant
         returns (uint256 quoteToUser)
     {
-        quoteToUser = CurveLogic.sell(_config, curves, _deps(), token, tokensIn, minQuoteOut);
+        quoteToUser = CurveLogic.sell(_config, curves, _deps(), msg.sender, false, token, tokensIn, minQuoteOut);
     }
 
-    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting.
+    /// @notice A listed router sells `trader`'s tokens, `trader` being the wallet that sent the tx (§23). The tokens
+    ///         are pulled from `trader` into the pad with the allowance `trader` gave the ROUTER (`approve(router, …)`
+    ///         on the token, as for any DEX router); the quote goes to the router. Gate: the trader's; the dividend
+    ///         share and the `Sell` event are the trader's. Reverts OnlyRouter / TraderNotOrigin.
+    /// @return quoteOut Quote paid to the caller (after the 1% protocol fee).
+    function sellFor(address trader, address token, uint256 tokensIn, uint256 minQuoteOut)
+        external
+        nonReentrant
+        returns (uint256 quoteOut)
+    {
+        _forTrader(trader);
+        quoteOut = CurveLogic.sell(_config, curves, _deps(), trader, true, token, tokensIn, minQuoteOut);
+    }
+
+    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting. The creator is not
+    ///         known here, so the recipient must be whitelisted; use `checkTaxConfigFor` when the creator itself is the
+    ///         recipient.
     function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason) {
-        reason = CurveLogic.checkTax(_deps(), tax);
+        reason = CurveLogic.checkTax(_deps(), address(0), tax);
+        ok = bytes(reason).length == 0;
+    }
+
+    /// @notice `checkTaxConfig` as `create` by `creator` sees it: the recipient may be `creator` itself (no listing
+    ///         needed) or a whitelisted address.
+    function checkTaxConfigFor(address creator, TaxConfig calldata tax)
+        external
+        view
+        returns (bool ok, string memory reason)
+    {
+        reason = CurveLogic.checkTax(_deps(), creator, tax);
         ok = bytes(reason).length == 0;
     }
 
@@ -315,16 +346,18 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         accepted = FairLogic.mint(_config, sales, positions, _deps(), msg.sender, token, shares, minShares);
     }
 
-    /// @notice A listed router mints for `trader`: the router pays (cost + mint fee), the shares and tokens are the
-    ///         trader's (a later withdraw pays the trader, never the router). Gate and cap: the trader's.
+    /// @notice A listed router mints for `trader`, the wallet that sent the tx (§23). The router pays cost + mint fee,
+    ///         pulled exactly: there is no refund, so the router approves exactly `previewMint(token, trader, n)`'s
+    ///         cost + fee. The shares and tokens are the trader's (a later `withdraw` pays the trader; `withdrawFor`
+    ///         pays the router that calls it). Gate and cap: the trader's. Reverts OnlyRouter / TraderNotOrigin.
     function mintFor(address trader, address token, uint256 shares, uint256 minShares)
         external
         nonReentrant
         returns (uint256 accepted)
     {
-        if (!routers[msg.sender]) revert OnlyRouter();
+        _forTrader(trader);
         // A-2 (打新): the sale's own snapshot gate must be set — ungated, a router could name any trader (e.g. the
-        // future pair, seeding it before launch to take the LP)
+        // future pair, seeding it before launch to take the LP). Kept as is; the origin binding (§23) also stops that.
         if (FairLogic.minting(sales, token).gate == address(0)) revert RouterNeedsGate();
         accepted = FairLogic.mint(_config, sales, positions, _deps(), trader, token, shares, minShares);
     }
@@ -334,7 +367,20 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     /// @param minPayout Reverts (Slippage) below this: a mint landing first can restart the stale clock and bring the
     ///        exit fee back (flow review F3). Use `previewWithdraw` for the expected payout.
     function withdraw(address token, uint256 shares, uint256 minPayout) external nonReentrant returns (uint256 payout) {
-        payout = FairLogic.withdraw(sales, positions, owedFee, _deps(), token, shares, minPayout);
+        payout = FairLogic.withdraw(sales, positions, owedFee, _deps(), msg.sender, false, token, shares, minPayout);
+    }
+
+    /// @notice A listed router withdraws `trader`'s shares, `trader` being the wallet that sent the tx (§23). The
+    ///         tokens (shares × TOKENS_PER_SHARE) are pulled from `trader` with the allowance `trader` gave the ROUTER
+    ///         on the token; the payout goes to the router; the position, the dividend share and the `Withdrawn` event
+    ///         are the trader's. No gate, as `withdraw` (the only way out). Reverts OnlyRouter / TraderNotOrigin.
+    function withdrawFor(address trader, address token, uint256 shares, uint256 minPayout)
+        external
+        nonReentrant
+        returns (uint256 payout)
+    {
+        _forTrader(trader);
+        payout = FairLogic.withdraw(sales, positions, owedFee, _deps(), trader, true, token, shares, minPayout);
     }
 
     /// @notice Send exit fees the bucket refused on to it, now that it accepts again. Anyone can call.
@@ -445,6 +491,14 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     }
 
     // ---------------------------------------------------------------- internal
+    /// @dev Who may act for `trader` (§23): only a listed router (OnlyRouter), and only for the wallet that sent the
+    ///      tx (TraderNotOrigin). The whitelist keeps unknown contracts out; the origin binding keeps a listed router
+    ///      from being used to fill someone else's cap or to seed the future pair (it is a contract, never tx.origin).
+    function _forTrader(address trader) internal view {
+        if (!routers[msg.sender]) revert OnlyRouter();
+        if (trader != tx.origin) revert TraderNotOrigin();
+    }
+
     function _deps() internal view returns (Deps memory) {
         return Deps({
             quoteRegistry: address(quoteRegistry),

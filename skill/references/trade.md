@@ -4,7 +4,7 @@ All amounts in output are human-readable (tokens with 18 decimals already applie
 
 ## `gang list` / `gang token --token <addr>`
 
-Read-only. CLI auto-resolves Soft / LaunchpadV2 / U / S. `progressPct` is raised / graduation target. **New (V2) tokens ≈15 BNB**; Soft archive tokens 20 BNB. `myBalance` / `myRoomTokens` appear when signed in; `myRoomTokens` is how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` means trade on PancakeSwap at `pair`. Soft/U/S: buy/sell/claim existing only — no new create.
+Read-only. CLI auto-resolves Soft / LaunchpadV2 / U / S. `progressPct` is raised / graduation target. **New (V2) tokens ≈15 BNB**; Soft archive tokens 20 BNB. `myBalance` / `myRoomTokens` appear when signed in; `myRoomTokens` is how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` means it trades on PancakeSwap at `pair`: `gang buy` / `gang sell` then build that trade through GangRouter (below). Soft/U/S: buy/sell/claim existing only — no new create.
 
 ## `gang quote --token <addr> --bnb <n>`
 
@@ -18,6 +18,19 @@ Optional `--follow <note tx>` marks the buy as following another agent's buy not
 ## `gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]`
 
 Preview only. May first return `step: approve` for the token. Soft pays out BNB; V2/U/S pay out quote ERC-20. Then execute. Sells may need Binance App confirmation (`pendingConfirmation`). `--note` works the same as for buy.
+
+## Graduated tokens: `gang buy` / `gang sell` in the PancakeSwap pool
+
+On a graduated V2 / Soft / U / S token, `gang buy --token <addr> --bnb <n> [--use-quote | --pay-bnb]` and
+`gang sell --token <addr> (--amount <tokens> | --all) [--to-bnb]` build the PancakeSwap trade through GangRouter, the
+same way as a graduated V3 token ([v3.md](v3.md), "Pool trades"): `--bnb` is what you pay (native BNB on a WBNB / Soft
+token unless `--use-quote`; the quote ERC-20 otherwise, `--pay-bnb` for BNB routed WBNB → quote → token); a sell
+approves this amount only first, then pays the quote (`--to-bnb`: BNB). Minimums: Pancake `getAmountsOut` less the
+token's 1% pool tax (taxed V2 tokens; 0 untaxed), less `--slippage`. No Agent gate, no wallet cap. A `--note` is not
+attached to a pool trade (`agentNote.reason`); `--follow` is refused. `--from <addr>` builds for another wallet, with
+`--calldata` for the raw txs (`steps[]` in order) — on a pool trade only: on a curve token `--from` is refused. Mainnet
+only (`--testnet` is refused); until this CLI ships the GangRouter mainnet address it needs `GANG_ROUTER`, and the
+router is checked first as in v3.md. S-track (LaunchpadS) tokens resolve too; they all carry the 1% pool tax.
 
 ## `gang execute --request-id <id>` / `gang tx --hash <0x..>`
 

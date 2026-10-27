@@ -19,9 +19,10 @@ import {TokenURI} from "../launchpad-v3/TokenURI.sol";
 ///      can't (the pair is locked). Every transfer syncs dividend / reward shares (V2 Finding 3); the handler ignores
 ///      tokens it does not know.
 ///      The launchpad's power is fixed and one-shot (2026-10-26): the handler is set at construction, `reclaim` (打新
-///      only) works only while locked, graduation calls `unlock(migrator)` and (taxed kinds) `setPair(pair)` once
-///      each, and after that the token has no admin function left. Pool tax and share syncing start only once the
-///      pair is set (the migration itself runs untaxed and unsynced).
+///      only) and `pullFor` (any kind, spends the owner's allowance to a spender) work only while locked, graduation
+///      calls `unlock(migrator)` and (taxed kinds) `setPair(pair)` once each, and after that the token has no admin
+///      function left. Pool tax and share syncing start only once the pair is set (the migration itself runs untaxed
+///      and unsynced).
 contract GangToken is ERC20, TokenURI {
     uint256 public constant TOTAL_SUPPLY = 1_000_000_000 ether;
     uint256 public constant BPS = 10_000;
@@ -116,6 +117,16 @@ contract GangToken is ERC20, TokenURI {
         if (!reclaimable) revert NotReclaimable();
         if (!locked) revert NotLocked();
         _transfer(from, launchpad, amount);
+    }
+
+    /// @notice Any kind, pre-graduation / pre-launch only: pull `amount` from `owner` to the pad, spending the
+    ///         allowance `owner` gave `spender` (a curve `sellFor` / 打新 `withdrawFor` by an aggregator, AUDIT-BRIEF
+    ///         §23). Locked only, so it can never move a pool trade's tokens or skip the pool tax: while locked there
+    ///         is no pair, nothing is taxed and no share is synced here (the pad writes the shares).
+    function pullFor(address owner, address spender, uint256 amount) external onlyLaunchpad {
+        if (!locked) revert NotLocked();
+        _spendAllowance(owner, spender, amount);
+        _transfer(owner, launchpad, amount);
     }
 
     /// @notice Graduation / launch, step 2 (taxed kinds, once, after the migrator made the pair): pool tax and share

@@ -27,10 +27,14 @@ contract KeeperSmartCollectForkTest is Test {
 
     function test_fork_keeperCanNoLongerStealBuybackLeg() public {
         string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
-        if (bytes(rpc).length == 0) return;
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return;
+        }
         vm.createSelectFork(rpc);
         vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(PK));
         vm.setEnv("OWNER", vm.toString(address(0xBEEF)));
+        vm.setEnv("ROUTER_TIMELOCK_DELAY", "172800");
         DeployGang.Stack memory s = new DeployGang().run();
         PlatformFeeBucket bucket = PlatformFeeBucket(s.bucket);
         address burner = address(bucket.burner());

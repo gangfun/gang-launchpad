@@ -15,7 +15,7 @@
 ## 0. 一句话
 
 一个内盘合约上有两种发币方式：
-- **V3 税收币**：联合曲线，Agent 专属，单地址 1% 上限，约 15 BNB 毕业。发币时设买 / 卖税（各 1%–5%，或都不设）、分红比例和白名单里的接收地址。内盘每笔只收 1% 手续费；毕业后池子里每笔交易收税，平台拿成交额的 0.5%，剩下按比例分给持币人和接收地址。
+- **V3 税收币**：联合曲线，Agent 专属，单地址 1% 上限，约 15 BNB 毕业。发币时设买 / 卖税（各 1%–5%，或都不设）、分红比例和接收地址（发币人自己，或白名单里的合作方）。内盘每笔只收 1% 手续费；毕业后池子里每笔交易收税，平台拿成交额的 0.5%，剩下按比例分给持币人和接收地址。
 - **打新**：没有曲线，所有人按同一个价格一份一份打，打满 10,000 份就开盘，开盘价等于打新价；打满前随时可以按原价卖回。开盘后每笔池子交易收 1% 税，一半给打新进来、一直没卖到出局线以下的地址，一半给平台。
 
 两种币的外盘税都在卖出时顺带分块卖成报价币，持有人的分红在交税那一刻就按当时的份额记账。
@@ -34,7 +34,7 @@
 | 毕业 / 发射前 | 代币锁转账，只能经内盘进出；钱包里看得到余额 |
 | 毕业 / 发射 | 解锁代币，代币和报价币经 SharedMigrator 加进 Pancake V2 池子，LP 打到 `0xdead`；池子里已有 LP 时拒绝。有税币再设一次 pair，之后池子买卖开始收税 |
 | 平台收入 | 全部进 `SharedPlatformFeeBucket`：80% 回购 GANG，20% 进金库 |
-| 路由 | `GangRouter` 无状态、无 owner：用原生 BNB 替调用者买 V3（`v3BuyBNB`）或打新（`fairMintBNB`），多付的退回。只能替人付钱；卖出、卖回、领取只能本人直接调。准入关闭时路由入口直接回滚 |
+| 路由 | 内盘白名单里的路由（`GangRouter`，或经多签列入的聚合器路由）可以替人买 / 打新（`buyFor` / `mintFor`，路由付钱）和卖 / 卖回（`sellFor` / `withdrawFor`，花用户给该路由的代币授权，所得给路由），但**只能替发起这笔交易的钱包**（`trader == tx.origin`，见 §9）。准入、上限按这个钱包算，与直接交易相同；买入的截断退款直接退给这个钱包（报价币 ERC-20）。`GangRouter` 无 owner：用原生 BNB 替调用者买 V3（`v3BuyBNB`）或打新（`fairMintBNB`），没有卖出 / 卖回入口。领取只能本人直接调。准入关闭时 `buyFor` / `mintFor` 直接回滚 |
 | 外盘税只对官方池子 | 税只在代币和它的 pair 之间的转账上收；钱包之间转账不收 |
 
 ---
@@ -48,11 +48,12 @@
 | `buyTaxBps` | 100–500（1%–5%） | 池子买入税，只在毕业后收 |
 | `sellTaxBps` | 100–500（1%–5%） | 池子卖出税，只在毕业后收 |
 | `dividendBps` | 0–10,000 | 税扣掉平台部分后，分给持币人的比例 |
-| `recipient` | 白名单地址 | 剩下的税全部给它，用报价币结算；为 0 时 `dividendBps` 必须是 10,000 |
+| `recipient` | 发币人自己或白名单地址 | 剩下的税全部给它，用报价币结算；为 0 时 `dividendBps` 必须是 10,000 |
 | 无税币 | 四个字段全为 0 | 和 V2 无税轨一样，只收内盘 1% 手续费；永远不设 pair，转账从不调用外盘处理合约 |
 
 - 买卖税率分开设，可以不对称（例如买 1% / 卖 3%）。两个税率要么都在 1%–5%，要么都为 0。
-- 接收地址必须在 `GangTaxHandler` 的白名单里（owner = 多签，`list` / `delist`）。下架只影响之后发的新币，已有的币照常给它打款。
+- 接收地址可以是发币人自己（`create` 的调用者，不需要进白名单），也可以是 `GangTaxHandler` 白名单里的地址（owner = 多签，`list` / `delist`）；其他第三方地址一律拒绝（`recipient not listed`）。下架只影响之后发的新币，已有的币照常给它打款。发币人当接收地址时，外盘分账、欠款和 `release` 与白名单地址完全一样（2026-10-27，AUDIT-BRIEF §22）。
+- 预检查：`checkTaxConfigFor(creator, tax)` 按 `create` 的规则核对（接收地址等于 `creator` 时不查白名单）；原来的 `checkTaxConfig(tax)` 保留（selector `0x68c9f7e0` 不变），它不知道发币人是谁，只认白名单。
 
 ### 2.2 联合曲线（内盘）
 
@@ -104,8 +105,8 @@
 | 参数 | 范围 | 默认 | 说明 |
 |---|---|---|---|
 | 募集额 `raiseBnb` | 5–50 BNB 等值 | 15 BNB | 打满即发射；创建时换算成报价币锁定 |
-| 单地址上限 `capBps` | 0.25%–0.5% 总量 | 0.5% | 最少参与地址数 = 50% ÷ 上限（0.5% → 100 个，0.25% → 200 个） |
-| 出局线 `holdBps` | 30%–80% | 50% | 见 §3.5 |
+| 单地址上限 `capBps` | 0.25%–1% 总量 | 0.5% | 最少参与地址数 = 50% ÷ 上限（1% → 50 个，0.5% → 100 个，0.25% → 200 个） |
+| 出局线 `holdBps` | 60%–90% | 60%（CLI） | 见 §3.5；1 份 × 60% = 30,000 枚，高于金库门槛 1 万枚 |
 | 打新费 `mintFeeBps` | 1%–3% | 1% | 本金之外另收，当笔进平台，不退 |
 | 撤出费 `exitFeeBps` | 1%–2% | 1% | 从卖回的本金里扣；停滞时为 0（§3.4） |
 | dev 首笔 `devShares` | 1 份到单地址上限 | 1 | 创建者在创建的同一笔交易里打 |
@@ -240,7 +241,8 @@
 - 两个 `create` 是重载，selector 和合并前一样：V3 `create(name, symbol, logoURI, metaURI, quote, refPool, (buyTaxBps, sellTaxBps, dividendBps, recipient))`，打新 `create(name, symbol, logoURI, metaURI, quote, refPool, (raiseBnb, capBps, holdBps, mintFeeBps, exitFeeBps), devShares)`。
 - 事件名、参数、topic0 都和合并前一样；V3 `Created`（8 个参数）和打新 `Created`（13 个参数）都从内盘地址发出。
 - 用错种类的币调用（例如对打新币调 `buy`）会回滚：`UnknownToken`，或者 `WrongKind`【待定：合约最后是否加这个错误】。
-- 代币新错误：`Untaxed`（对无税币设 pair）、`NotReclaimable`（对 V3 币收回）、`NotLocked`（发射后收回）。
+- 代币新错误：`Untaxed`（对无税币设 pair）、`NotReclaimable`（对 V3 币收回）、`NotLocked`（发射后收回，或毕业 / 发射后 `pullFor`）。
+- 替人交易（§9）：`buyFor` / `mintFor`（原有）、`sellFor(trader, token, tokensIn, minQuoteOut)` `0x9d10cdb1`、`withdrawFor(trader, token, shares, minPayout)` `0x60382b4e`（新增）；代币 `pullFor(owner, spender, amount)` `0x7d18ac71` 只有内盘能调；内盘新错误 `TraderNotOrigin`。
 
 ---
 
@@ -256,3 +258,26 @@
 | `QuoteRegistry` | 给报价币设固定换算额（只影响之后创建的币） | |
 
 合约不可升级，没有暂停开关。出问题时能用的手段见运行手册 §9。
+
+---
+
+## 9. 聚合器路由（替发起钱包交易）
+
+钱包聚合器可以经自己的路由合约在 V3 曲线上买卖、在打新里打新 / 卖回。规则（合约细节和威胁模型见审计说明 §23）：
+
+| 项 | 规则 |
+|---|---|
+| 谁能调 | 只有多签 `setRouter` 列入的路由；否则 `OnlyRouter` |
+| 替谁 | 只能替发起这笔交易的钱包（`trader == tx.origin`）；否则 `TraderNotOrigin`。路由应把自己的 `msg.sender` 填作 trader，不要自己读 `tx.origin`。主网 Agent ID 持有者都是 EOA，发起钱包就是 Agent 钱包；合约钱包不能经路由交易，只能直接调内盘 |
+| 准入 / 上限 | 按 trader 算，与直接交易完全一样（V3 当前准入 + 1% 上限；打新按 sale 快照的准入 + 单地址上限）。卖回不查准入，与直接卖回一样 |
+| 买（`buyFor`） | 路由付钱，代币直接到 trader；上限 / 毕业截断的退款直接退给 trader（报价币 ERC-20，WBNB 报价时是 WBNB），不经路由。准入关闭时回滚 `RouterNeedsGate` |
+| 打新（`mintFor`） | 路由付 cost + 打新费，按实际接受份数精确拉取、没有退款，路由按 `previewMint` 付；份额和代币归 trader。sale 没快照准入时回滚 `RouterNeedsGate` |
+| 卖（`sellFor`）/ 卖回（`withdrawFor`） | 代币从 trader 直接拉进内盘，花的是 **trader 给这个路由的授权**（给内盘的授权不算）；所得（扣手续费 / 撤出费后）给路由，由路由继续后面的路径；份额、持仓、事件记在 trader 名下 |
+| 代币侧 | `GangToken.pullFor` 只有内盘能调，只在毕业 / 发射前（锁定期）可用：那时没有 pair，不收税；之后永远回滚 |
+
+为什么安全：白名单挡住未知合约；「只替发起钱包」挡住借列入的路由替别人买满上限、或把未来的池子当 trader 塞代币；卖出要求用户给这个路由的授权，挡住用户只是交互过的合约经列入路由把币卖掉。
+
+但列入一个路由不再是无害的：以前它只能花自己的钱替人买，锁定期的代币谁也动不了；现在用户对它的授权能触及锁定期的代币。所以：
+
+- **聚合器接入**：四个入口的 `trader` 一律填路由自己的 `msg.sender`（内盘检查它等于 `tx.origin`），路由绝不自己读 `tx.origin`；卖出 / 卖回所得只付给这个 `msg.sender`。否则用户被骗调用的恶意合约可以经这个路由卖掉用户的币并拿走所得。
+- **多签列入前的清单**（详见审计说明 §23.9）：不列入会发起任意 / 调用者给定调用的合约（0x AllowanceHolder / Settler 一类、Multicall、通用执行器、4337 EntryPoint 等）；要求 trader = `msg.sender`、所得 → `msg.sender`；源码已验证；可升级的路由看清升级权。发现问题立即 `setRouter(路由, false)`。

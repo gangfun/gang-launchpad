@@ -35,7 +35,7 @@ contract PadMergeGuardsTest is GangRouterTest {
 
     function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
         return
-            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200});
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200});
     }
 
     /// @dev Number of logs emitted by the pad with `topic0 == keccak(sig)`, each with `topics` topics.
@@ -209,7 +209,7 @@ contract PadMergeGuardsTest is GangRouterTest {
         assertEq(sc, agent);
         assertEq(progressAt, block.timestamp);
         assertEq(cap, 100);
-        assertEq(hold, 5000);
+        assertEq(hold, 6000);
         assertEq(sq, address(wbnb));
         assertEq(sold, 1);
         assertEq(mintFee, 100);

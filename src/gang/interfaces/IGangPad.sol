@@ -63,6 +63,10 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
         external
         returns (uint256 tokensOut);
     function sell(address token, uint256 tokensIn, uint256 minQuoteOut) external returns (uint256 quoteOut);
+    /// @dev §23: listed router, trader == tx.origin; spends the trader's token allowance to the router; quote → router.
+    function sellFor(address trader, address token, uint256 tokensIn, uint256 minQuoteOut)
+        external
+        returns (uint256 quoteOut);
 
     /// @dev Same 12 fields, same order as LaunchpadV3.curves (GangRouter decodes field 2, the indexer all of them).
     function curves(address token)
@@ -83,6 +87,10 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
             address refPair
         );
     function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason);
+    function checkTaxConfigFor(address creator, TaxConfig calldata tax)
+        external
+        view
+        returns (bool ok, string memory reason);
     function walletRoom(address token, address buyer) external view returns (uint256);
     function gradAmtOf(address token) external view returns (uint256);
     function graduationRemaining(address token) external view returns (uint256);
@@ -110,6 +118,10 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
         external
         returns (uint256 accepted);
     function withdraw(address token, uint256 shares, uint256 minPayout) external returns (uint256 payout);
+    /// @dev §23: listed router, trader == tx.origin; spends the trader's allowance to the router; payout → router.
+    function withdrawFor(address trader, address token, uint256 shares, uint256 minPayout)
+        external
+        returns (uint256 payout);
     function flushFees(address quote) external returns (uint256 amount);
 
     /// @dev Same 14 fields, same order as FairMintPad.sales (GangRouter decodes field 5, the indexer all of them).
@@ -159,4 +171,8 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
     function TOTAL_SHARES() external view returns (uint256);
     function TOKENS_PER_SHARE() external view returns (uint256);
     function MIN_SHARE_BALANCE() external view returns (uint256);
+    function MIN_CAP_BPS() external view returns (uint16);
+    function MAX_CAP_BPS() external view returns (uint16);
+    function MIN_HOLD_BPS() external view returns (uint16);
+    function MAX_HOLD_BPS() external view returns (uint16);
 }
