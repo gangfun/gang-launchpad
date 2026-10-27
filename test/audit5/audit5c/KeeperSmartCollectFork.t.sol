@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {DeployLaunchpadV3} from "../../../script/DeployLaunchpadV3.s.sol";
+import {DeployGang} from "../../../script/DeployGang.s.sol";
 import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../../../src/common/SharedPlatformFeeBucket.sol";
 
 interface ISmartRouter {
@@ -31,11 +31,11 @@ contract KeeperSmartCollectForkTest is Test {
         vm.createSelectFork(rpc);
         vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(PK));
         vm.setEnv("OWNER", vm.toString(address(0xBEEF)));
-        DeployLaunchpadV3.Stack memory s = new DeployLaunchpadV3().run();
+        DeployGang.Stack memory s = new DeployGang().run();
         PlatformFeeBucket bucket = PlatformFeeBucket(s.bucket);
         address burner = address(bucket.burner());
 
-        // 10 WBNB of platform fees accrued by an operator (e.g. the V3 pad)
+        // 10 WBNB of platform fees accrued by an operator (e.g. the pad)
         deal(WBNB, s.pad, 10 ether);
         vm.startPrank(s.pad);
         IERC20(WBNB).approve(s.bucket, 10 ether);

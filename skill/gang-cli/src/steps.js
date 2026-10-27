@@ -144,7 +144,8 @@ export const VAULT_ABI = parseAbi([
 ])
 
 /**
- * The pool-tax handler of a graduated V3 / launched 打新 token (TaxHandlerV3 / HolderRewardHandler, PostGradHandlerBase).
+ * The pool-tax handler of a graduated V3 / launched 打新 token (GangTaxHandler since the merge, one for both kinds; before
+ * it TaxHandlerV3 / HolderRewardHandler; all PostGradHandlerBase).
  * The tax is held in the token and sold in chunks: each token has one budget per block, at most 0.5% of the pair's token
  * side as it stood at the block's first chunk, shared by the chunk a taxed sell triggers (≤ 25% of that sell) and the
  * keeper; no chunk sells more than 2% below that block-start price.

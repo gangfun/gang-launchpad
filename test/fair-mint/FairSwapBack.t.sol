@@ -5,8 +5,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
@@ -161,7 +161,6 @@ contract FairSwapBackTest is FairMintTest {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         uint256 unsold0 = vault.unsoldUnits(t);
         _buy(t, buyer, 2 ether);
         _sell(t, buyer, IERC20(t).balanceOf(buyer) / 2);

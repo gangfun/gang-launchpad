@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test, Vm, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
@@ -9,10 +9,10 @@ import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 
 contract V3ForkAgent {
     mapping(address => uint256) public balanceOf;
@@ -224,5 +224,77 @@ contract V3SwapBackForkTest is Test {
             handler.accruedTax(t), accrued - chunk + (amount * SELL_TAX) / 10_000, "the chunk ran at the estimated gas"
         );
         console.log("estimated gas for a taxed sell transfer with a chunk", lo);
+    }
+
+    /// @dev The first chunk after graduation, everything cold: the handler's first approve of the router (allowance
+    ///      0 → max), the recipient's and the vault's first WBNB (balance 0 → non-zero). The chunk must fit the token's
+    ///      SWAP_BACK_GAS cap (600k): measured on a direct swapBack call with exactly the cap, then on a real router sell.
+    function test_fork_v3_firstChunkAfterGraduation_coldFitsTheCap() public forkOnly {
+        (address t, address pair) = _launched();
+        _backlog(t, 10);
+        assertEq(IERC20(t).allowance(address(handler), V2_ROUTER), 0, "no approve yet");
+        assertEq(IERC20(WBNB).balanceOf(treasury), 0, "recipient never paid yet");
+        uint256 cap = TaxLaunchTokenV3(t).SWAP_BACK_GAS();
+        assertEq(cap, 600_000);
+        vm.roll(vm.getBlockNumber() + 1);
+        address seller = address(uint160(0xA11CE002));
+        uint256 amount = IERC20(t).balanceOf(seller) / 2;
+        (, uint256 chunk) = handler.previewSell(t, amount);
+        assertGt(chunk, 0);
+        uint256 accrued = handler.accruedTax(t);
+
+        // 1) the swap-back alone, with exactly the cap and cold storage
+        uint256 snap = vm.snapshotState();
+        _coolAll(t, pair);
+        vm.prank(t);
+        uint256 g = gasleft();
+        uint256 out = handler.swapBack{gas: cap}(t, amount);
+        g -= gasleft();
+        assertGt(out, 0, "the chunk sold within the cap");
+        assertEq(handler.accruedTax(t), accrued - chunk, "exactly one chunk");
+        assertGt(IERC20(WBNB).balanceOf(treasury), 0, "recipient's first payment in the chunk");
+        console.log("gas: first swapBack after graduation, cold (cap 600000)", g);
+        vm.revertToState(snap);
+
+        // 2) a real router sell (the token's own gas-capped try): the chunk runs, it is not swallowed
+        _coolAll(t, pair);
+        address[] memory path = new address[](2);
+        path[0] = t;
+        path[1] = WBNB;
+        vm.startPrank(seller);
+        IERC20(t).approve(V2_ROUTER, amount);
+        vm.recordLogs();
+        g = gasleft();
+        IPancakeRouter02(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, path, seller, block.timestamp);
+        g -= gasleft();
+        vm.stopPrank();
+        bytes32 failed = keccak256("SwapBackFailed()");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; i++) {
+            assertTrue(logs[i].topics.length == 0 || logs[i].topics[0] != failed, "chunk not swallowed");
+        }
+        assertEq(
+            handler.accruedTax(t), accrued - chunk + (amount * SELL_TAX) / 10_000, "first chunk ran in the router sell"
+        );
+        assertGt(IERC20(WBNB).balanceOf(treasury), 0, "recipient paid");
+        console.log("gas: first router sell after graduation with its chunk, cold", g);
+    }
+
+    function _coolAll(address t, address pair) internal {
+        address[9] memory c = [
+            t,
+            pair,
+            address(handler),
+            WBNB,
+            address(vault),
+            address(handler.platformBucket()),
+            treasury,
+            V2_ROUTER,
+            address(pad)
+        ];
+        for (uint256 i; i < c.length; i++) {
+            vm.cool(c[i]);
+        }
     }
 }

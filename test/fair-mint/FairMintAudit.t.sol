@@ -7,7 +7,8 @@ import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
@@ -36,7 +37,7 @@ contract FairMintAuditTest is FairMintTest {
 
         wbnb.mintUnlimited(address(this), 1 ether);
         wbnb.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.RouterNeedsGate.selector);
+        vm.expectRevert(IGangLaunchpad.RouterNeedsGate.selector);
         pad.mintFor(makeAddr("pair"), t, 1, 1);
 
         // the direct path still works ungated: msg.sender is the minter
@@ -59,7 +60,7 @@ contract FairMintAuditTest is FairMintTest {
         // the vault refuses the pad's share write (a shared vault never drops a core's existing tokens, so mock it)
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
         vm.expectEmit(true, true, false, true, address(pad));
-        emit FairMintPad.ShareWriteFailed(t, m, 0);
+        emit IGangLaunchpad.ShareWriteFailed(t, m, 0);
         vm.prank(m);
         uint256 got = pad.withdraw(t, 100, 0);
         assertEq(got, 100 * SHARE_PRICE * 99 / 100, "principal minus the 1% exit fee");
@@ -117,7 +118,7 @@ contract FairMintAuditTest is FairMintTest {
         assertEq(pad.flushFees(address(wbnb)), fee);
         assertEq(pad.owedFee(address(wbnb)), 0);
         assertEq(bucket.accruedQuote(address(wbnb)), accrued + fee);
-        vm.expectRevert(FairMintPad.ZeroAmount.selector);
+        vm.expectRevert(IGangLaunchpad.ZeroAmount.selector);
         pad.flushFees(address(wbnb));
     }
 
@@ -127,18 +128,18 @@ contract FairMintAuditTest is FairMintTest {
     function test_audit_quoteRules() public {
         MockSPCXB unlisted = new MockSPCXB();
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         pad.create("Q", "Q", "", "", address(unlisted), address(0), _cfg(), 1);
 
         SixDecimalQuote six = new SixDecimalQuote();
         vm.prank(owner);
         registry.setQuote(address(six), true, 9_000e6);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
+        vm.expectRevert(IGangLaunchpad.QuoteNotAllowed.selector);
         pad.create("S", "S", "", "", address(six), address(0), _cfg(), 1);
 
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
+        vm.expectRevert(IGangLaunchpad.QuoteNotAllowed.selector);
         pad.create("E", "E", "", "", makeAddr("notAToken"), address(0), _cfg(), 1);
     }
 
@@ -155,7 +156,7 @@ contract FairMintAuditTest is FairMintTest {
             address(factory)
         );
         vm.prank(owner);
-        vm.expectRevert(FairMintPad.WrongMigrator.selector);
+        vm.expectRevert(IGangLaunchpad.WrongMigrator.selector);
         fresh.setMigrator(address(migrator)); // the shared migrator does not list `fresh` yet
         vm.startPrank(owner);
         migrator.addLaunchpad(address(fresh));
@@ -216,7 +217,6 @@ contract FairMintAuditTest is FairMintTest {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         _sell(t, v, 10 * TPS); // the handler's setShare reverts (not out of gas) → swallowed, the sell goes through
         assertEq(IERC20(t).balanceOf(v), 90 * TPS);
         assertEq(vault.shares(t, v), 100 * TPS, "stale until the vault accepts writes again");

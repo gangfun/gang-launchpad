@@ -2,16 +2,15 @@
 pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {LaunchTokenV3} from "../launchpad-v3/LaunchTokenV3.sol";
-import {TaxLaunchTokenV3} from "../launchpad-v3/TaxLaunchTokenV3.sol";
-import {FairToken} from "../fair-mint/FairToken.sol";
+import {GangToken} from "../gang/GangToken.sol";
 
-/// @title TokenDeployer (LaunchpadV3 + 打新 · token creation code, outside the cores)
+/// @title TokenDeployer (every launch token's creation code, outside the cores)
 /// @notice Keeps the token bytecode out of the cores (24 KB limit). Only listed cores may deploy, and the caller is
-///         always the token's launchpad (the core that mints and unlocks it).
+///         always the token's launchpad (the core that mints and unlocks it). One token contract for every kind
+///         (GangToken): V3 taxed (rates checked to 1%–5% by the pad), V3 untaxed (0 / 0), 打新 (1% / 1%, reclaimable).
 contract TokenDeployer is Ownable2Step {
     mapping(address => bool) public launchpads;
-    /// @notice Every token deployed here (both cores). The cores refuse these as quotes (audit 4 C-F3 / B-F1).
+    /// @notice Every token deployed here (all cores). The cores refuse these as quotes (audit 4 C-F3 / B-F1).
     mapping(address token => bool) public isLaunchToken;
 
     error OnlyLaunchpad();
@@ -27,40 +26,18 @@ contract TokenDeployer is Ownable2Step {
         emit LaunchpadSet(launchpad, enabled);
     }
 
-    /// @notice LaunchpadV3 untaxed token.
-    function deployPlain(string calldata name, string calldata symbol, string calldata uri) external returns (address) {
-        _onlyLaunchpad();
-        return _record(address(new LaunchTokenV3(name, symbol, msg.sender, uri)));
-    }
-
-    /// @notice LaunchpadV3 taxed token.
-    function deployTax(
+    /// @notice Deploys a GangToken whose launchpad is the caller (a listed core).
+    function deploy(
         string calldata name,
         string calldata symbol,
+        string calldata uri,
+        address handler,
         uint16 buyTaxBps,
         uint16 sellTaxBps,
-        address taxHandler,
-        string calldata uri
-    ) external returns (address) {
-        _onlyLaunchpad();
-        return _record(address(new TaxLaunchTokenV3(name, symbol, buyTaxBps, sellTaxBps, msg.sender, taxHandler, uri)));
-    }
-
-    /// @notice 打新 token.
-    function deployFair(string calldata name, string calldata symbol, address taxHandler, string calldata uri)
-        external
-        returns (address)
-    {
-        _onlyLaunchpad();
-        return _record(address(new FairToken(name, symbol, msg.sender, taxHandler, uri)));
-    }
-
-    function _record(address token) internal returns (address) {
-        isLaunchToken[token] = true;
-        return token;
-    }
-
-    function _onlyLaunchpad() internal view {
+        bool reclaimable
+    ) external returns (address token) {
         if (!launchpads[msg.sender]) revert OnlyLaunchpad();
+        token = address(new GangToken(name, symbol, uri, msg.sender, handler, buyTaxBps, sellTaxBps, reclaimable));
+        isLaunchToken[token] = true;
     }
 }

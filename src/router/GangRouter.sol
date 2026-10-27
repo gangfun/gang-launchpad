@@ -4,7 +4,9 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-interface IV3CoreEntry {
+/// @dev The slice of GangLaunchpad (the one pad for V3 curves and 打新 sales) this router calls. `curves` / `sales` keep
+///      the old cores' 12- / 14-field layouts, so decoding is unchanged.
+interface IGangPadEntry {
     function curves(address token)
         external
         view
@@ -25,9 +27,6 @@ interface IV3CoreEntry {
     function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
         external
         returns (uint256 tokensOut);
-}
-
-interface IFairCoreEntry {
     function sales(address token)
         external
         view
@@ -61,20 +60,20 @@ interface IWBNB {
     function withdraw(uint256 amount) external;
 }
 
-/// @title GangRouter — stateless entry for LaunchpadV3 buys and 打新 mints
-/// @notice The cores (LaunchpadV3, FairMintPad) hold every reserve and enforce every rule: price, fee, tax and its
+/// @title GangRouter — stateless entry for V3 curve buys and 打新 mints on GangLaunchpad
+/// @notice The pad (GangLaunchpad: V3 curves and 打新 sales in one contract) holds every reserve and enforces every rule: price, fee, tax and its
 ///         split, wallet cap, Agent gate (on the trader this router names), graduation / launch. This contract only
-///         moves the caller's own money into one core call: native BNB in (wrapped to WBNB) and back out, a deadline,
-///         and whatever the core refunds (cap / fill truncation) returned to the caller in what they paid with.
-///         No owner, no storage: a new version is a new deployment that the core owner lists with setRouter, and that
+///         moves the caller's own money into one pad call: native BNB in (wrapped to WBNB) and back out, a deadline,
+///         and whatever the pad refunds (cap / fill truncation) returned to the caller in what they paid with.
+///         No owner, no storage: a new version is a new deployment that the pad owner lists with setRouter, and that
 ///         users opt into by approving it. A listed router can only spend what it was sent — it cannot sell, withdraw,
-///         refund or claim for anyone (those stay msg.sender-only on the cores).
+///         refund or claim for anyone (those stay msg.sender-only on the pad). A token of the other kind reads as an
+///         empty curve / sale here, so `v3*` on a 打新 token and `fair*` on a V3 token revert UnknownToken.
 /// @dev Anything sent here outside a call (tokens, BNB) stays here: every call settles against its own balance delta.
 contract GangRouter {
     using SafeERC20 for IERC20;
 
-    IV3CoreEntry public immutable v3;
-    IFairCoreEntry public immutable fair;
+    IGangPadEntry public immutable pad;
     address public immutable wbnb;
 
     error Expired();
@@ -85,13 +84,21 @@ contract GangRouter {
     error OnlyWbnb();
     error BnbTransferFailed();
 
-    /// @param v3_   LaunchpadV3 core, or address(0) on a chain without one
-    /// @param fair_ FairMintPad core, or address(0) on a chain without one
-    constructor(address v3_, address fair_, address wbnb_) {
-        if (wbnb_ == address(0)) revert NotDeployed();
-        v3 = IV3CoreEntry(v3_);
-        fair = IFairCoreEntry(fair_);
+    /// @param pad_ GangLaunchpad (both kinds of token)
+    constructor(address pad_, address wbnb_) {
+        if (pad_ == address(0) || wbnb_ == address(0)) revert NotDeployed();
+        pad = IGangPadEntry(pad_);
         wbnb = wbnb_;
+    }
+
+    /// @notice The pad, under the old V3 core getter name (CLI / indexer compatibility).
+    function v3() external view returns (IGangPadEntry) {
+        return pad;
+    }
+
+    /// @notice The pad, under the old 打新 core getter name (CLI / indexer compatibility).
+    function fair() external view returns (IGangPadEntry) {
+        return pad;
     }
 
     /// @dev Only WBNB unwrapping sends BNB here.
@@ -104,7 +111,7 @@ contract GangRouter {
         _;
     }
 
-    // ---------------------------------------------------------------- LaunchpadV3
+    // ---------------------------------------------------------------- V3 (curve)
     /// @notice Buy on the curve with `quoteIn` of the token's quote (approved to this router); any refund comes back.
     function v3Buy(address token, uint256 quoteIn, uint256 minTokensOut, uint256 deadline)
         external
@@ -114,10 +121,10 @@ contract GangRouter {
         IERC20 quote = IERC20(_v3Quote(token));
         uint256 base = quote.balanceOf(address(this));
         quote.safeTransferFrom(msg.sender, address(this), quoteIn);
-        // a fee-on-transfer quote arrives short: pass on what arrived (the core prices on what it receives)
+        // a fee-on-transfer quote arrives short: pass on what arrived (the pad prices on what it receives)
         uint256 arrived = quote.balanceOf(address(this)) - base;
-        quote.forceApprove(address(v3), arrived);
-        tokensOut = v3.buyFor(msg.sender, token, arrived, minTokensOut);
+        quote.forceApprove(address(pad), arrived);
+        tokensOut = pad.buyFor(msg.sender, token, arrived, minTokensOut);
         _settle(quote, base, false);
     }
 
@@ -132,8 +139,8 @@ contract GangRouter {
         if (address(quote) != wbnb) revert NotWbnbQuote();
         uint256 base = quote.balanceOf(address(this));
         IWBNB(wbnb).deposit{value: msg.value}();
-        quote.forceApprove(address(v3), msg.value);
-        tokensOut = v3.buyFor(msg.sender, token, msg.value, minTokensOut);
+        quote.forceApprove(address(pad), msg.value);
+        tokensOut = pad.buyFor(msg.sender, token, msg.value, minTokensOut);
         _settle(quote, base, true);
     }
 
@@ -148,8 +155,8 @@ contract GangRouter {
         (IERC20 quote, uint256 need) = _fairCost(token, shares);
         uint256 base = quote.balanceOf(address(this));
         quote.safeTransferFrom(msg.sender, address(this), need);
-        quote.forceApprove(address(fair), need);
-        accepted = fair.mintFor(msg.sender, token, shares, minShares);
+        quote.forceApprove(address(pad), need);
+        accepted = pad.mintFor(msg.sender, token, shares, minShares);
         _settle(quote, base, false);
     }
 
@@ -165,29 +172,27 @@ contract GangRouter {
         if (msg.value < need) revert NotEnoughValue();
         uint256 base = quote.balanceOf(address(this));
         IWBNB(wbnb).deposit{value: msg.value}();
-        quote.forceApprove(address(fair), need);
-        accepted = fair.mintFor(msg.sender, token, shares, minShares);
+        quote.forceApprove(address(pad), need);
+        accepted = pad.mintFor(msg.sender, token, shares, minShares);
         _settle(quote, base, true);
     }
 
     // ---------------------------------------------------------------- internal
     function _v3Quote(address token) internal view returns (address quote) {
-        if (address(v3) == address(0)) revert NotDeployed();
-        (, quote,,,,,,,,,,) = v3.curves(token);
+        (, quote,,,,,,,,,,) = pad.curves(token);
         if (quote == address(0)) revert UnknownToken();
     }
 
-    /// @dev What the core will pull for `shares` minted by msg.sender right now (same block, same state as the mint).
+    /// @dev What the pad will pull for `shares` minted by msg.sender right now (same block, same state as the mint).
     function _fairCost(address token, uint256 shares) internal view returns (IERC20 quote, uint256 need) {
-        if (address(fair) == address(0)) revert NotDeployed();
         address q;
-        (,,,, q,,,,,,,,,) = fair.sales(token);
+        (,,,, q,,,,,,,,,) = pad.sales(token);
         if (q == address(0)) revert UnknownToken();
-        (, uint256 cost, uint256 fee) = fair.previewMint(token, msg.sender, shares);
+        (, uint256 cost, uint256 fee) = pad.previewMint(token, msg.sender, shares);
         return (IERC20(q), cost + fee);
     }
 
-    /// @dev Return to msg.sender whatever this call left above `base` (a core refund, unspent msg.value), as BNB if asked.
+    /// @dev Return to msg.sender whatever this call left above `base` (a pad refund, unspent msg.value), as BNB if asked.
     function _settle(IERC20 quote, uint256 base, bool asBnb) internal {
         uint256 left = quote.balanceOf(address(this)) - base;
         if (left == 0) return;

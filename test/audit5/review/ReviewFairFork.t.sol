@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {FairMintForkTest} from "../../fair-mint/FairMintFork.t.sol";
-import {FairToken} from "../../../src/fair-mint/FairToken.sol";
+import {GangToken as FairToken} from "../../../src/gang/GangToken.sol";
 import {FlashSellerR} from "./ReviewFork.t.sol";
 
 /// @notice Review of the audit 5 fixes (AUDIT-BRIEF §18): a flash-swap sell of an 打新 token is refused too
@@ -23,7 +23,7 @@ contract ReviewFairForkTest is FairMintForkTest {
         uint256 amount = IERC20(t).balanceOf(m) / 2;
         (, uint256 chunk) = handler.previewSell(t, amount);
         assertGt(chunk, 0);
-        uint256 taxBps = FairToken(t).TAX_BPS();
+        uint256 taxBps = FairToken(t).sellTaxBps();
         FlashSellerR f = new FlashSellerR();
         vm.prank(m);
         IERC20(t).transfer(address(f), amount);
@@ -55,7 +55,7 @@ contract ReviewFairForkTest is FairMintForkTest {
         (, uint256 chunk) = handler.previewSell(t, amount);
         assertGt(chunk, 0);
         uint256 acc0 = handler.accruedTax(t);
-        uint256 taxBps = FairToken(t).TAX_BPS();
+        uint256 taxBps = FairToken(t).sellTaxBps();
         vm.prank(m);
         IERC20(t).transfer(pair, amount);
         assertEq(handler.accruedTax(t), acc0 - chunk + (amount * taxBps) / 10_000, "the chunk ran");

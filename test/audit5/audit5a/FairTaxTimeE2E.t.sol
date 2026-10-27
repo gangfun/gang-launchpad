@@ -3,10 +3,10 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {FairToken} from "../../../src/fair-mint/FairToken.sol";
+import {GangToken as FairToken} from "../../../src/gang/GangToken.sol";
 import {FairMintTest} from "../../fair-mint/FairMint.t.sol";
 
-/// @notice audit5a: end-to-end tax-time dividends on 打新 (FairToken + HolderRewardHandler + shared vault).
+/// @notice audit5a: end-to-end tax-time dividends on 打新 (FairToken + GangTaxHandler + shared vault).
 contract FairTaxTimeE2E is FairMintTest {
     address[] holders;
     address t;

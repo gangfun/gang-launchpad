@@ -5,7 +5,7 @@ import {console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SwapBackAudit5bTest, IPairA} from "../audit5b/SwapBackAudit5b.t.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../../src/gang/GangToken.sol";
 
 interface IRouterR {
     function swapExactTokensForTokensSupportingFeeOnTransferTokens(

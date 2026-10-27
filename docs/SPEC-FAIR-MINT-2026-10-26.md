@@ -253,7 +253,7 @@ else:                                         share = min(balance, base)
 | | `Launched(token, pair, quote, tokenAmount, quoteAmount)` · `ShareWriteFailed(token, user, share)` · `FeeOwed(quote, amount)` · `FeesFlushed(quote, amount)` |
 | HolderRewardHandler | `TaxAccrued` · `OuterTaxProcessed(token, quote, taxTokens, quoteOut, toHolders, toPlatform)` · `TaxChunkSold(token, taxTokens, quoteOut, holderUnits, swapBack)` · `HolderConversionDeferred` · `PlatformOwed` / `PlatformFlushed` · `ShareWriteFailed` · `Disqualified(token, user, balance, baseline)` · `DexRouterProposed` / `DexRouterSet` / `DexRouterCancelled` |
 | FairToken | `SwapBackFailed` |
-| SharedDividendVault | `TokenRegistered` · `ShareUpdated` · `DividendUnitsAccrued` · `DividendConverted` · `DividendBatchSettled` · `RewardDeposited` · `DividendClaimed` |
+| SharedDividendVault | `TokenRegistered` · `ShareUpdated` · `DividendUnitsAccrued` · `DividendConverted` · `DividendBatchSettled` · `DividendClaimed` |
 
 ### 5.5 安全约束
 

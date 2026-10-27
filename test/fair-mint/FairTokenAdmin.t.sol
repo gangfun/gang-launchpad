@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
 /// @notice The pad's power over 打新 tokens is fixed and one-shot; tokens carry the creator's metadata URI.

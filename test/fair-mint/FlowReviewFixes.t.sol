@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {FairMintTest} from "./FairMint.t.sol";
@@ -11,7 +12,7 @@ import {FairMintTest} from "./FairMint.t.sol";
 contract FlowReviewFixesTest is FairMintTest {
     /// @dev F3: a 10-share mint landing first restarts the stale clock; the seller's minPayout refuses the 1% fee.
     function test_F3_withdrawFloorRefusesARestartedFee() public {
-        FairMintPad.MintConfig memory c = _cfg(); // exit fee 1%
+        IGangLaunchpad.MintConfig memory c = _cfg(); // exit fee 1%
         vm.prank(dev);
         address t = pad.create("Stale", "STL", "", "", address(0), address(0), c, 1);
         address victim = _minter(0);
@@ -25,7 +26,7 @@ contract FlowReviewFixesTest is FairMintTest {
         vm.prank(_minter(1));
         pad.mint(t, 10, 1); // 61 = 51 + STALE_STEP: the fee is back
         vm.prank(victim);
-        vm.expectRevert(FairMintPad.Slippage.selector);
+        vm.expectRevert(IGangLaunchpad.Slippage.selector);
         pad.withdraw(t, 50, expected);
 
         vm.prank(victim);
