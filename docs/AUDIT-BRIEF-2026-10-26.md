@@ -1,6 +1,6 @@
 # 审计说明 · 打新（FairMintPad）、LaunchpadV3 税收接收地址、GangRouter
 
-- 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9
+- 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9；§19 记 V3 内盘不收税，§20 记把两个核心合并成一个内盘（GangLaunchpad）的改动，§1–§9 仍按合并前的两个核心写，以 §20 为准
 - 读者：外部审计方
 - **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
 - 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在 §18 的修复提交（父提交 `4857118`；`98cab5c` 之后到 `4857118` 没有改动 `src/`）：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复，§18 对第五轮修复的 review。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`、`98cab5c`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
@@ -37,7 +37,7 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 | `src/fair-mint/FairToken.sol` | 100 | 打新代币：发射前锁转账、发射台可收回；发射后池子买卖收 1% 税，卖出时调 handler 的 `swapBack`；税处理合约构造时写死，发射时一次性 `unlock(migrator)` + `setPair` |
 | `src/fair-mint/HolderRewardHandler.sol` | 110 | 发射后的税：50% 给合格持有人（按交税时记账）/ 50% 平台；出局判断 |
 | `src/launchpad-v3/LaunchpadV3.sol` | 544 | V2 曲线 + 买 / 卖税 + 接收地址；`buyFor` 路由入口 |
-| `src/launchpad-v3/TaxHandlerV3.sol` | 255 | 接收地址白名单、每个币的路由、内盘 / 外盘分账、欠款与 `release`、外盘税（§15 合并自三个旧合约） |
+| `src/launchpad-v3/TaxHandlerV3.sol` | 255 | 接收地址白名单、每个币的路由、外盘分账（§19 起没有内盘分账）、欠款与 `release`、外盘税（§15 合并自三个旧合约） |
 | `src/launchpad-v3/TaxLaunchTokenV3.sol` | 110 | 带买、卖两个税率（immutable）的代币；卖出时调 `swapBack`；毕业时一次性 `unlock(migrator)` + `setPair` |
 | `src/launchpad-v3/LaunchTokenV3.sol` | 31 | V3 无税币：`unlock` 只能一次，没有 `burn` |
 | `src/launchpad-v3/TokenURI.sol` | 13 | 三种代币共用：构造时写入的 `_uri`，`contractURI()`（ERC-7572）/ `metaURI()` |
@@ -154,7 +154,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
    - 核心的 `setRouter`：列入的路由能调 `buyFor` / `mintFor`。
 3. **一个被列入白名单的恶意路由最坏只能「用自己的钱替别人买 / 打新」**——前提是准入开启。准入关闭时它能把代币打给未来的池子地址、分走发射流动性（§10 A-2），所以现在路由入口在准入关闭时直接 revert。核心对路由只开放 `buyFor` / `mintFor`，付款方是 `msg.sender`（路由）。测试 `test_v3_listedRouterOnlySpendsItsOwnQuote`、`test_fair_listedRouterOnlySpendsItsOwnQuote` 覆盖。
 4. **keeper 被信任设 `minQuoteOut` 和 `minGangOut`**：它可以给一个很低的值然后自己夹，损失的是这一块的价值（≤ 池子代币储备 0.5%）。`process` 拒绝 `minQuoteOut == 0`。`swapBack` 的最低成交额由合约按同一调用里的储备算（下限 1%）。手续费池 `collectPlatform` 的回购最低成交额 `minGangOut` 也由 keeper 给，合约不设下限（K-20）。keeper 的 48 小时时间锁约束的是**换 keeper**，不约束 owner：owner 本来就能直接调 `process` / `collectPlatform`。
-5. **发射台只能付钱进 TaxHandlerV3**：`distribute` 从 `msg.sender`（只能是发射台）拉 `amount`，再按登记的路由拆分。
+5. **发射台只能付钱进 TaxHandlerV3**：`distribute` 从 `msg.sender`（只能是发射台）拉 `amount`，再按登记的路由拆分。（§19 起 `distribute` 已删，发射台不再付钱给 handler；这一条只对 §19 之前的代码成立。）
 
 ---
 
@@ -649,6 +649,13 @@ gas（主网分叉、真实 Pancake）：
 
 **不变量变化（§5）**：#8 改为「每笔内盘交易只收 1% 进手续费池，接收地址、分红合约、TaxHandlerV3 收不到任何报价币」；CoreInvariants 新增 `invariant_v3CurveNoTax`（直接买、经路由用报价币 / BNB 买、卖出，每笔都核对手续费恰好 1%、三个去处余额不变，并且没毕业的 V3 币在分红合约里没有任何记账单位）。分红合约的偿付和对账不变量（#11 `invariant_sinksSolvent`、#12 `invariant_taxTimeDividendsBacked`，以及 `VaultUnitsInvariant` 的精确性 / 偿付 / 清空三条）原样保留并通过：`pending` 现在只由交税时记账构成。#7 仍是 `≥`：毕业截断可能在核心留下 ≤ 1 wei。
 
+**审计修复的影响**
+
+- §10 A-6（内盘卖出先更新卖家份额再分账）：内盘没有税了，这条在内盘上不再适用；外盘的同一条（§17 C-F7）不变。
+- 审计 4 F-2（`depositReward` 按到账差额记账）：函数已删，问题随之消失。
+- 不变量 §5 #8 改为「内盘每笔只收 1% 进 bucket，接收地址、分红合约、handler 收不到任何报价币」；#5「发射台只能付钱进 TaxHandlerV3」不再适用（发射台不再付钱给 handler）。
+- K-10 只剩外盘：没有合格持有人时，分红那份并入接收地址。
+
 **测试**
 
 | 文件 | 改动 |
@@ -672,3 +679,212 @@ gas（主网分叉、真实 Pancake）：
 - CLI（本仓库 `skill/`，已改）：`v3 buy` / `v3 sell` 的提示和输出（`curveTaxPct: 0`，`poolBuyTaxPct` / `poolSellTaxPct` 表示外盘税），`v3 info` 新增 `taxNote`，`v3 create` 的 `split` / `note`，help、`references/v3.md`、`SKILL.md`、README。CLI 的报价本来就是对核心 `eth_call` 模拟，不用改算法。
 - 服务端（gangfun-server）：`feesIndexer.js` 会订阅主网 V3 / 打新核心的分红合约上的 `RewardDeposited`（以后不会再有这个事件，不报错，只是一直没有记录）；`burn.js` 的 `accRewardPerShare` 只对 V2 / S / U 的股票币读，读不到共用分红合约（股票币在共用分红合约里 `quoteOf` 为 0），不受影响。其余要点： `trackMarket.js` 里按 `phase='curve'` 连 `TaxDistributed` 的分账以后恒为空，`tax` 字段恒为 0，注释与 README 里「内盘收税」的说法过时；收入面板（`v3.js` income 汇总）和 `TaxPaid` 统计不受影响。
 - 网站（gang-web-legacy）：税率旁「内外盘都收」、交易步骤「已含 X% 买入税」、内盘交易表的「税」列（恒为 0）、`v3_lead` / `v3_tips` / `v3_rec_tips` 等文案要改成「内盘只收 1% 手续费，税只在外盘收」。
+
+---
+
+## 20. 合约合并：一个内盘、一个外盘处理合约、一种代币（2026-10-27）
+
+> 本节按合并方案 `MERGE-PLAN`（2026-10-27）和四个实现分支（`feat/merge-token`、`feat/merge-handler`、`feat/merge-pad`、`feat/merge-scripts`）写成。标【待填】的地方要等最终代码和 `forge build --sizes` 实测后补上。合并以 §19 之后的代码为基础。
+
+### 20.1 为什么合并、合并成什么
+
+V3 和打新原来各有一个核心、一个外盘处理合约、各自的代币，靠五个共用合约（QuoteRegistry、bucket、vault、migrator、TokenDeployer）连在一起。两个核心共用金库后，金库里两种币的 `launchpadOf` 不再能区分来源，部署也要两个脚本、靠 `PEER_CORE` 互相核对（§17 C-F1、§18 R5-3）。合并后只剩一个内盘地址、一个外盘处理合约、一种代币；币的种类由内盘在创建时写一次 `kindOf`，外盘处理合约在登记时写一次 `routeOf.kind`。
+
+不可升级，没有代理，也没有 diamond。内盘超过 24 KB 的部分拆进两个外部库，用 delegatecall 调用。
+
+### 20.2 合并后的合约清单
+
+| # | 合约 / 库 | 类型 | 由谁合并而来 | 职责 | 运行时字节 |
+|---|---|---|---|---|---|
+| 1 | `GangToken` | 代币（每个币一份） | TaxLaunchTokenV3 + FairToken + LaunchTokenV3 | 三种币一份代码：V3 有税（买 / 卖各 1–5%）、V3 无税（0 / 0）、打新（1% / 1%，`reclaimable`）。毕业前锁转账；`unlock(migrator)`、`setPair` 各一次；外盘收税、卖出时 `swapBack` | 【待填】 |
+| 2 | `GangLaunchpad` | 内盘核心 | LaunchpadV3 + FairMintPad 的外壳、存储、管理函数、共用部分 | 唯一地址、唯一状态：`curves`、`sales`、`positions`、`kindOf`、`owedFee`；准入、路由白名单、`nonReentrant` 都在这里；视图 `baselineOf` / `holdBpsOf` 直接读存储 | 【待填】 |
+| 3 | `CurveLogic` | 外部库（delegatecall） | LaunchpadV3 的创建、买卖、毕业 | V3 曲线：`create` / `buy` / `sell` / 毕业；只收 1% 手续费（§19） | 【待填】 |
+| 4 | `FairLogic` | 外部库（delegatecall） | FairMintPad 的创建、打新、卖回、发射 | 打新：`create` / `mint` / `withdraw` / `flushFees` / 发射；计时、撤出费、`owedFee` | 【待填】 |
+| 5 | `PadCommon` | internal 库（编译进调用方） | 两个核心的重复代码 | `requireQuote`、`toQuote`、`pullExact`、`toPlatform`、`migrate` | — |
+| 6 | `GangTaxHandler` | 外盘税处理（继承 `PostGradHandlerBase`） | TaxHandlerV3 + HolderRewardHandler | 两种币按 `routeOf.kind` 分派：V3 平台拿成交额 0.5%、分红比例自设、接收地址白名单和欠款；打新平台部分为 0、一半给合格持有人、出局线 | 【待填】 |
+| 7 | `PostGradHandlerBase` | 抽象基类 | 不变，只改两个钩子的默认实现 | keeper / dexRouter 时间锁、每区块额度、`swapBack` / `process`、skim 后退回、`flushHolders` / `flushPlatform`、带保护的写份额 | — |
+| 8 | `GangRouter` | 无状态路由 | GangRouter（构造参数改成一个 pad） | `v3Buy` / `v3BuyBNB` / `fairMint` / `fairMintBNB` 不变；`v3()`、`fair()` 都返回同一个 pad | 【待填】 |
+| 9 | `SharedDividendVault` | 外盘分红 | 不变（§19 版） | 按交税时记账，两批先进先出；一个 pad 只绑一个 operator（这个 handler） | 【待填】 |
+| 10 | `SharedPlatformFeeBucket` | 内盘手续费池 | 不变 | operator：pad、handler | 4,365（不变） |
+| 11 | `SharedMigrator` | 迁移、LP 销毁 | 不变，只登记一个 pad | | 2,001（不变） |
+| 12 | `QuoteRegistry` | 固定换算额 | 不变 | | 1,537（不变） |
+| 13 | `TokenDeployer` 或 `TokenFactory` | 部署代币 | 缩成一个 `deploy(...)`；或换成外部库 `TokenFactory`，`isLaunchToken` 换成 `kindOf != 0` | 【待填：最终用哪一种】 | 【待填】 |
+| 14 | `PoolCheck` | 外部库，主网已部署 `0xd2B1…bDb3` | 不变，按地址链接（`CurveLogic` / `FairLogic` 都要链接） | 参考池检查 | 5,345（不变） |
+
+带 owner 的合约从 9 个减到 6 个：pad、handler、vault、bucket、migrator、registry；保留 TokenDeployer 时是 7 个。
+
+### 20.3 库的 delegatecall 语义和风险
+
+语义：
+- 库的 external 函数由 pad 用 delegatecall 调用，在 pad 的上下文里执行：`msg.sender` 仍是调 pad 的人（用户或路由），`address(this)` 是 pad，余额、存储、事件发出地址都是 pad 的。所以 `pullExact` 从 `msg.sender` 拉钱、退款给 `msg.sender` 的行为和合并前一样。
+- 库内部调 `PoolCheck` 是嵌套的 delegatecall，仍在 pad 的上下文里。
+- 可变配置放在一个 `Config` 存储结构里，以 storage 指针传给库；不可变量（registry、vault、bucket、handler、deployer、wbnb）在 pad 的字节码里，库读不到，由 pad 每次组一个 `Deps memory` 传进去。
+- `nonReentrant`、路由白名单、A-2 的准入检查都写在 pad 的包装函数里，不放进库。审计员只看 pad 就能确认每个入口的门槛。
+- 事件：每个库只声明自己那一版（`CurveLogic` 是 V3 的 `Created`，`FairLogic` 是打新的 `Created`）；pad 继承的接口 `IGangLaunchpad` 声明两版重载，只用来生成 ABI。两版参数不同，topic0 和合并前完全一样。
+
+风险（请重点看）：
+1. **storage 指针传错 mapping**：库的签名里有多个同类型的 mapping（`curves` / `sales`、`logoURIOf`、`kindOf`），传错位置时编译器不会报错。`test_merge_getterLayout` 和两种币交替的端到端测试兜底。
+2. **库被直接调用**：库的非 view 函数如果被直接 call（不经 delegatecall），会在库自己的上下文里执行。Solidity 的 external 库函数默认带「只能 delegatecall」检查，非 view 函数直接 call 会回滚；`test_merge_libsNotDirectlyCallable` 锁住这一点。库没有存储、也不持有资金。
+3. **链接地址**：部署时 `CurveLogic`、`FairLogic` 链接 PoolCheck，pad 链接两个库；地址错了 pad 会 delegatecall 到错的代码。部署脚本要核对 pad 字节码里链接的库地址的 `extcodehash`。【待填：mscripts 的核对写法】
+4. **不可变量只能靠 `Deps` 传**：如果库里漏用 `Deps` 字段、写死了地址，测试网和主网会不同。
+5. **ABI 漂移**：indexed 位置、getter 字段顺序、事件参数名变了时，topic0 不变但解码会错。`test_merge_eventTopics` / `test_merge_selectors` / `test_merge_getterLayout` 兜底。
+6. **gas**：路由卖出多一次 delegatecall，约多 3–5k gas；`swapBack` 在 handler 里，不受影响。如果 handler 为了大小降了 optimizer runs，要重跑 §18 的 gas 扫描（`SWAP_BACK_GAS = 600_000`）。【待填：实测】
+
+### 20.4 旧函数到新位置
+
+**内盘：LaunchpadV3 / FairMintPad → GangLaunchpad + 两个库**
+
+| 合并前 | 合并后 | 说明 |
+|---|---|---|
+| V3 `create(name, symbol, logoURI, metaURI, quote, refPool, TaxConfig)` | pad `create` 重载 → `CurveLogic.create` | selector 不变；合并后加了 `nonReentrant` |
+| 打新 `create(…, MintConfig, devShares)` | pad `create` 重载 → `FairLogic.create` | selector 不变；保留 `nonReentrant` |
+| V3 `buy` / `buyFor` / `sell` | pad → `CurveLogic` | `buyFor` 的路由白名单和 `agentGateEnabled` 检查留在 pad |
+| 打新 `mint` / `mintFor` / `withdraw` / `flushFees` | pad → `FairLogic` | `mintFor` 的路由白名单和 `s.gate != 0` 检查留在 pad |
+| 两边都有的 `setMigrator` / `setRouter` / `setAgentGate` / `setV3Factory` / `setTwapWindow` / `setBridgePool` | pad 各一份 | 事件签名本来就一样，合成一份 |
+| V3 `setPairFactory` / `setWalletCapEnabled` | pad | 打新原来的 `pairFactory` 是不可变量，合并后可以设置，只影响之后创建的币。【待填：是否改回不可变量】 |
+| `checkTaxConfig` / `taxConfigOf` / `walletRoom` / `gradAmtOf` / `graduationRemaining` / `graduationAmountOf` | pad 视图 | 不变 |
+| `checkConfig` / `previewCreate` / `previewMint` / `previewWithdraw` / `exitFeeBpsOf` / `status` / `baselineOf` / `holdBpsOf` | pad 视图 | `baselineOf` / `holdBpsOf` 每笔池子交易都被 handler 调用，留在 pad 直接读存储 |
+| `isAgent`、`tokenCount` / `allTokens` / `logoURIOf` | pad 一份，两种币混在一起 | 新增 `kindOf(token)`：0 不是本 pad 的币 / 1 V3 曲线 / 2 打新 |
+| `owedFee` | pad | 只有打新用 |
+| 事件 V3 `Created`（8 个参数）/ 打新 `Created`（13 个参数） | 重载，topic0 都不变 | |
+| `Buy` / `Sell` / `VirtualQuoteLocked` / `Graduated` / `TaxConfigured` | `CurveLogic` 发出（发出地址是 pad） | `tax` 恒为 0（§19） |
+| `Minted` / `Withdrawn` / `Launched` / `ShareWriteFailed` / `FeeOwed` / `FeesFlushed` | `FairLogic` 发出（发出地址是 pad） | 不变 |
+| 错误 | 同名的合成一份，各自独有的保留 | 名字和参数不变，CLI 按 selector 解码。`WrongKind()` 方案里是可选项【待填：最终是否加】；不加时用错种类的币调用报 `UnknownToken` |
+
+**外盘：TaxHandlerV3 / HolderRewardHandler → GangTaxHandler**
+
+| 合并前 | 合并后 | 说明 |
+|---|---|---|
+| V3 `setLaunchpad` / 打新 `setPad` | `setLaunchpad`（一次性） | 删掉 `PadSet` / `PadAlreadySet`；打新的 `pad()` getter 改为 `launchpad()` |
+| V3 `register(token, quote, recipient, dividendBps)` | `register(token, quote, recipient, dividendBps, kind)` | 只有 pad 能调，同一个币只能登记一次（`AlreadyRegistered`）；kind 不对回滚 `BadKind`。打新登记成 `(quote, 0, 5000, Fair)` |
+| V3 `notifyTax`（5 个参数）/ 打新 `notifyTax`（4 个参数） | 只留 5 个参数的版本 | 打新分支忽略 `rateBps` |
+| `syncShares` / `process` / `swapBack` | 一份，按 `kind` 分派（§20.5） | |
+| `release` / `list` / `delist` / `isListed` / `recipients` / `entries` / `owedOf` / `owedTotalOf` / `accruedPlatformTax` | 一份 | 只对 V3 有意义 |
+| `eligibleShare` / `isOut` | 一份 | 只对打新；V3 币返回 0 / false |
+| `OuterTaxProcessed`（V3 5 个字段、打新 6 个字段） | 两版重载，按 kind 发 | topic0 都不变 |
+| `TaxDistributed` / `TaxPaid` / `TaxOwed` / `RouteRegistered` / `Listed` / `Delisted` / `Disqualified` | 不变 | `RouteRegistered` 对打新币也发 |
+| 基类事件（`TaxAccrued`、`TaxChunkSold`、`HolderConversionDeferred`、`PlatformOwed` / `PlatformFlushed`、`ShareWriteFailed`、keeper / dexRouter 系列） | 不变 | 两种币从同一个地址发出，下游要按币分轨道 |
+
+**代币、路由**
+
+| 合并前 | 合并后 |
+|---|---|
+| `TaxLaunchTokenV3` / `FairToken` / `LaunchTokenV3` | `GangToken`，不可变量 `buyTaxBps`、`sellTaxBps`、`reclaimable`。事件不变；新错误 `Untaxed`、`NotReclaimable`，`NotLocked` 原来只有打新币有 |
+| `LaunchTokenV3.unlock()`（无参数） | `GangToken.unlock(migrator)` |
+| `TokenDeployer.deployPlain` / `deployTax` / `deployFair` | 一个 `deploy(…)`，或 `TokenFactory.deploy`【待填】 |
+| `GangRouter(v3_, fair_, wbnb_)` | `GangRouter(pad_, wbnb_)`，`v3()` 和 `fair()` 都返回 pad |
+| 三个部署脚本 + `SharedPlatform` 的复用逻辑 | 一个部署脚本（见运行手册 §1，由 `feat/merge-scripts` 改）；`PEER_CORE` / `PartialShared` 没有了 |
+
+### 20.5 外盘按 kind 分派
+
+打新币可以看成一种特殊的路由：平台部分为 0，`dividendBps = 5000`，没有接收地址（剩下的归平台）。这样只有三处要分支：
+
+| 地方 | V3（kind 1） | 打新（kind 2） |
+|---|---|---|
+| `notifyTax` 平台那份 | 成交额 × 0.5%（`tax × 50 / rate`，不超过税额） | 0 |
+| 写份额 | `_syncShare`：余额、10,000 枚门槛、被排除地址和 pair 为 0 | `_sync`：`min(余额, 基准)`、出局线、`isOut` 只能变 true |
+| `_onProceeds` 的事件 | `TaxDistributed(PostGrad)` + 5 个字段的 `OuterTaxProcessed` | 6 个字段的 `OuterTaxProcessed` |
+
+- `notifyTax` / `swapBack`：`routeOf[token].kind == 0` 回滚 `UnknownToken`，只认 pad 登记过的币。
+- `syncShares`（任何人都能调，永远不回滚）：kind 0 直接返回；V3 在 `dividendBps == 0` 时返回；打新在 `token.locked()` 时返回。
+- **不能再用 `vault.launchpadOf(token) == pad` 判断是不是打新币**：两种币的 `launchpadOf` 都是同一个 pad。合并前 HolderRewardHandler 就是这样判断的。
+
+### 20.6 审计修复的落点
+
+【易丢】是我们认为合并时最容易丢的，请重点看。
+
+| 来源 | 修复 | 合并后的位置 | 风险 |
+|---|---|---|---|
+| §10 A-1 | 新 bucket 和 registry；所有接线做完、最后才 `setMigrator` | 合并后的部署脚本：最后一步 `pad.setMigrator` | 中：脚本合并时顺序容易乱 |
+| §10 A-2 | `buyFor` 要求 `agentGateEnabled`；`mintFor` 要求 `s.gate != 0` | pad 的两个包装函数，分开写 | 【易丢】容易被「统一」成一个检查 |
+| §10 A-3 / §15 | 18 位小数、拒收转账扣费、第一次拉钱时校验 | `PadCommon.requireQuote` / `pullExact` | 低 |
+| §10 A-5 | catch 里的 63/64 gas 检查 | `FairLogic` 卖回写份额；基类 `_setShareGuarded` / `_creditHolders` | 中：库里重写时可能漏 |
+| §10 A-6 / §17 C-F7 | 卖家拿不到自己这笔卖出税的分红 | handler `notifyTax`：两种币卖出时都先同步卖家份额 | 【易丢】打新分支漏写 `_sync(from)` |
+| §10 A-7 | `setMigrator` 检查 `launchpads(this)` | pad | 低 |
+| §10 A-9 / §17 C-F8 | owner 检查；路由核对核心 | 部署脚本；路由在同一个脚本里部署，核对 `pad.wbnb()` 和 `curves` / `sales` 可调 | 低 |
+| §11 R2-3 | 一个核心的 handler 不能给另一个核心的币写份额 | 变成「kind 隔离」：`syncShares` / `notifyTax` 按 `routeOf.kind` 分派（§20.5） | 【易丢】**最容易出错的一条** |
+| §11 R2-4 / 审计 4 | 金库排除 migrator、bucket、自己 | 部署脚本 + 金库构造函数 | 低 |
+| §12 | handler 构造时写死；`unlock`、`setPair` 各一次；没有 `setTaxHandler` / `exclude` / `burn`；`reclaim` 只在发射前；metaURI | `GangToken` | 【易丢】`reclaim` 只给打新币：靠不可变的 `reclaimable`，V3 币上永远回滚 `NotReclaimable`。V3 币原来根本没有 `reclaim`，否则「发射台能拿走持有人的代币」这条信任假设对 V3 币就不成立了 |
+| §13 #1 | `notifyTax` 只认登记过的币；平台部分不超过税额 | handler：kind 判断 + `min(…, tax)` | 中 |
+| §13 #3 | 两条换币路径都核对池子的报价币 | 基类 `_tokenIs0` | 低（不动） |
+| §14 R3-1 | 计时规则 `markSold` / `STALE_STEP` | `FairLogic` 打新 | 中：搬家时条件容易写反 |
+| §14 R3-2 | 撤出费不阻塞、`owedFee`、`flushFees` | `FairLogic` 撤出费 | 【易丢】被「统一」成阻塞的 `toPlatform` |
+| §14 R3-3 | 卖回时写份额失败发 `ShareWriteFailed` | `FairLogic` | 中 |
+| §15 | `owedTotalOf`，`_sellable` 减欠款 | handler 两种币统一减 | 【易丢】打新以前不减 |
+| 审计 4 F-1 | 第一次拉钱拒收转账扣费 | `PadCommon.pullExact` | 低 |
+| 审计 4 F-2 | `depositReward` 按到账差额记 | 函数已在 §19 删掉 | — |
+| 审计 4 F-3 | 本平台的币不能当报价币 | `isLaunchToken`，或者去掉 TokenDeployer 后的 `kindOf != 0`，再加 `vault.launchpadOf == 0` | 中：去掉 TokenDeployer 时必须换成 `kindOf` |
+| 审计 4 A-F3 / §17 C-F10 | handler 只认本 pad 的币；pad 设置之前什么都不认 | `routeOf.kind != 0`（只有 pad 能登记） | 【易丢】 |
+| 审计 4 A-F4 | migrator 的 `PairHasLiquidity` | SharedMigrator（不动） | 低 |
+| 审计 4 B-Info | 直连池子路径按到账再查 `Slippage` | 基类 | 低 |
+| §16 swapBack 设计；F3 `minPayout`；F4a operator 只绑一次；F4c 门槛按币快照；F4b 路由时间锁；V3 C 写份额带保护 | | 基类 / `FairLogic.withdraw` / 金库 / 基类 | 低（基本不动） |
+| §17 B-F1 / B-F3 / B-F4 / C-F6 | 额度按卖出数量扣；`previewSellNextBlock`；每区块额度、参考价 2%；keeper 一次 | 基类、bucket | 低 |
+| §17 C-F1 / §18 R5-3 | 复用共用合约时对 `PEER_CORE` 的核对 | 只剩一个脚本，复用模式没有了；`_checkCore` 保留对 registry / bucket / vault / migrator / deployer 的核对 | 低：问题随合并消失 |
+| §17 C-F2 | bucket 只有固定路径 | 不动 | — |
+| §17 C-F4 | V3 创建时检查 `VaultFloorTooHigh` | `CurveLogic` 创建（只在有分红时查） | 中：打新是每次创建都查，V3 只在有分红时查，两处不一样 |
+| §17 C-F5 / §18 R5-2 | `setExcluded` 只能排合约，7702 钱包除外 | 金库 | — |
+| §18 R5-1a / R5-O1 | `SellDuringFlashSwap`；skim 后退回 | 基类 + `GangToken` 的 try/catch 按 selector 原样抛出 | 【易丢】合并代币时漏掉 catch 里的原样抛出 |
+| §18 R5-4 | `keeperSet` | 基类、bucket | 低 |
+| §18 R5-5 | `BURNER` / `FEE_VAULT` 部署时生效 | 部署脚本 `_burner` / `_feeVault` | 中：脚本合并时要保留 |
+| §19 | 内盘不收税；事件 `tax` 恒为 0 | `CurveLogic` | 中：要以 §19 版为准，不能拿 main 版搬 |
+
+两种语义不对称、合并后必须都保留的地方（容易被「统一」坏）：
+- 准入：V3 按当前设置检查；打新按创建时快照的 `Sale.gate` 检查。
+- 手续费进 bucket：V3 内盘手续费和打新费阻塞（失败整笔回滚）；撤出费不阻塞（失败记 `owedFee`）。
+- 写份额：V3 内盘阻塞写；打新卖回带保护写。
+- `VaultFloorTooHigh`：打新每次创建都查，V3 只在有分红时查。
+
+### 20.7 新增的不变量
+
+原来 §5 的 #1（打新托管 `==`）和 #7（V3 `≥`）合成一条，因为曲线和 sale 的钱现在都在 pad 一个地址里：
+
+```
+对每个报价币 q：
+balanceOf(pad, q) == Σ_未发射 sale (sold × sharePrice) + owedFee[q] + Σ_未毕业曲线 realQuote + dust[q]
+其中 dust[q] ≥ 0，只会增长
+```
+
+要证明的是：打新卖回或发射动不到 V3 曲线的 `realQuote`，V3 卖出或毕业也动不到打新托管的本金。
+
+其它新增的不变量：
+- `kindOf[token]` 写入后不变；`routeOf[token].kind` 写入后不变，且等于 `kindOf[token]`。
+- `kindOf == 1` 的币只出现在 `curves`，`kindOf == 2` 的只出现在 `sales`。
+- `GangToken.reclaimable == (kindOf == 2)`；V3 币上 `reclaim` 永远回滚。
+- 无税币（0 / 0）的 `pair` 永远是 0，转账永远不调用 handler。
+- 打新币的份额 ≤ 基准，出局后为 0（原 #6，挪到合并后的 handler 上）。
+- handler：对每个报价币 `balanceOf(handler, q) ≥ owedTotalOf[q] + owedPlatformOf[q] + Σ 该报价币的 pendingHolderQuote`（原 #9 扩展）。
+- 金库门槛只有一个：`TAXED_MIN_SHARE == MIN_SHARE_BALANCE == 10_000 ether`（测试断言两者相等）。
+
+### 20.8 大小（EIP-170 上限 24,576 B）
+
+方案的估算：pad 10–13 KB，两个库各 9–11 KB，handler 21.5–23 KB（不拆库），代币 4.6–4.9 KB。实测数在最终代码上用 `forge build --sizes` 填。
+
+| 合约 | 合并前（§19 版） | 合并后实测 | 余量 |
+|---|---|---|---|
+| GangLaunchpad | LaunchpadV3 16,948 / FairMintPad 16,803 | 【待填】 | 【待填】 |
+| CurveLogic | — | 【待填】 | 【待填】 |
+| FairLogic | — | 【待填】 | 【待填】 |
+| GangTaxHandler | TaxHandlerV3 19,941 / HolderRewardHandler 18,041 | 【待填】 | 【待填】 |
+| GangToken | TaxLaunchTokenV3 4,472 / FairToken 4,372 / LaunchTokenV3 2,297 | 【待填】 | 【待填】 |
+| GangRouter | 4,135 | 【待填】 | 【待填】 |
+| TokenDeployer / TokenFactory | 20,688 | 【待填】 | 【待填】 |
+| SharedDividendVault | 9,799（§19 之前） | 【待填】 | 【待填】 |
+
+- 新目录 `src/gang/` 已加进 `foundry.toml` 的 via-ir 列表【待填：确认】；不加会用非 IR 编译，可能 stack too deep，体积也会变大。
+- handler 如果超过 23,500 B，先只给这个文件降 optimizer runs，再考虑把纯视图挪进库；降 runs 后要重跑 §18 的 gas 扫描。【待填：最终做法】
+- 测试 `test_sizes` 断言每个合约 < 24,064 B（留 512 B 余量）。
+
+### 20.9 测试
+
+- 新增 `test/merge/MergeGuards.t.sol`：`test_merge_eventTopics`（topic0 等于服务端和 CLI 里的签名）、`test_merge_selectors`、`test_merge_getterLayout`、`test_merge_kindIsolation_syncShares` / `_notifyTax` / `_swapBack`、`test_merge_reclaimOnlyFair`、`test_merge_untaxedNeverHooks`、`test_merge_sameQuoteIsolation_wbnb`、`test_merge_libsNotDirectlyCallable`、`test_sizes`、`test_merge_floorConstantsEqual`。
+- 原有套件改用共用夹具 `GangFixture`，断言不变；`SharedInfra` 改写成「一个核心、两种 kind」；`Audit4Regression` 跨核心的用例改成跨 kind；`CoreInvariants` 改用 §20.7 的等式。
+- 结果：【待填：`forge test` 个数、不变量 200 × 80、主网分叉 `test/fork/*` 和 `test/audit5/**` 的结果、gas 基线】
+
+### 20.10 对外接口变化
+
+- **地址**：V3 和打新只有一个 pad、一个 handler、一个 GangRouter。服务端的 `GANG_V3_PAD` 和 `GANG_FAIR_PAD` 填同一个地址；keeper 的 `V3_PADS`、`FAIR_PADS` 各写一条，指向同一个 pad。
+- **事件和 selector**：全部不变（两个 `create`、两个 `Created`、两个 `OuterTaxProcessed` 都是重载）。pad 上的事件按 topic0 分轨道；handler 上的基类事件（`TaxChunkSold`、`HolderConversionDeferred`、`ShareWriteFailed` 等）两种币共用，索引器要按币过滤到各自的轨道；`postgrad_events` 的唯一键要加上轨道。
+- **新视图**：pad 的 `kindOf(address) → uint8`；handler 的 `routeOf` 多一个返回值 `kind`（按 3 个返回值解码的旧调用方不受影响）。
+- **keeper**：V3 的份额补写循环要加 `kindOf(t) == 1`，打新的加 `kindOf(t) == 2`，否则会按 V3 规则判断打新币。
+- **CLI**：新环境变量 `GANG_PAD` / `GANG_TESTNET_PAD`，旧的 `GANG_V3_PAD` / `GANG_FAIR_PAD` 等仍可用；`gang v3 …` 拿到打新币时（或反过来）按 `kindOf` 提示用另一个命令；识别 `Untaxed`、`NotReclaimable`、`NotLocked`、`WrongKind`。
+- **网站**：不用改代码，只通过索引器拿配置。

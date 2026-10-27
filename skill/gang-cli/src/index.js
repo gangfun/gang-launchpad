@@ -206,7 +206,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          minOut for amountOutMin; also for a wallet that only bought in the pool)
   gang fair claim --token <addr>         claim the holder reward
   gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
-                                         fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
+                                         --testnet = BSC testnet; mainnet needs GANG_PAD until this CLI ships the address; --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
                [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle]
@@ -234,7 +234,8 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang v3 claim --token <addr>           claim my dividend (the quote token)
   gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
   gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>
-                                         v3 commands need --testnet for now (BSC testnet); --calldata / --from as in gang fair
+                                         V3 tokens and 打新 sales share one pad: a token of the other kind is pointed at the
+                                         other command (kindOf). --testnet / mainnet, --calldata / --from as in gang fair
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -257,9 +258,11 @@ update: { current, latest, cmd, skill } (npm is asked at most once a day in the 
 off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_LAUNCHPAD (default V2 ${ADDR.v2}), GANG_RPC_URL, GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes),
-GANG_UPDATE_CHECK, GANG_UPDATE_URL, GANG_FAIR_TESTNET_PAD / GANG_FAIR_TESTNET_RPC_URL (gang fair --testnet), GANG_FAIR_PAD (mainnet, once deployed),
-GANG_V3_TESTNET_PAD / GANG_V3_TESTNET_RPC_URL (gang v3 --testnet), GANG_V3_PAD (mainnet, once deployed),
-GANG_ROUTER_TESTNET / GANG_ROUTER (GangRouter for BNB buys / mints; unset on mainnet = pay from WBNB)`
+GANG_UPDATE_CHECK, GANG_UPDATE_URL,
+GANG_PAD / GANG_TESTNET_PAD (the one GangLaunchpad behind both gang v3 and gang fair; old names GANG_V3_PAD / GANG_FAIR_PAD
+and GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD still work as aliases), GANG_TESTNET_RPC_URL (aliases
+GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET_ROUTER (alias GANG_ROUTER_TESTNET; GangRouter
+for BNB buys / mints; unset on mainnet = pay from WBNB)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }
@@ -762,9 +765,9 @@ async function main() {
     }
     case 'create': {
       const name = opt('name'), symbol = opt('symbol'); if (!name || !symbol) fail('--name and --symbol required')
-      // own buy / sell tax and a tax recipient are LaunchpadV3, which is only on BSC testnet until the audit
+      // own buy / sell tax and a tax recipient are LaunchpadV3 settings (GangLaunchpad, `gang v3 create`), not V2
       const v3Flag = ['buy-tax', 'sell-tax', 'dividend', 'recipient'].find((f) => flag(f))
-      if (v3Flag) fail(`--${v3Flag} is a LaunchpadV3 setting: use \`gang v3 create … --testnet\` (V3 is on BSC testnet until its audit)`)
+      if (v3Flag) fail(`--${v3Flag} is a LaunchpadV3 setting: use \`gang v3 create …\` (add --testnet for BSC testnet)`)
       try { assertCreateTarget(CONFIG.launchpad) } catch (e) { fail(e.message) }
       const note = parseNote()
       const links = parseLinks()

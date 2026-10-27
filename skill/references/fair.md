@@ -5,8 +5,13 @@ the other half plus every share's principal goes into a PancakeSwap V2 pool when
 **opens at the mint price**. LP is burned. **No deadline, no refund**: a sale stays open until it fills. Until then a
 minter can sell shares back to the sale at the same fixed price (minus the exit fee), so the price is flat both ways.
 
-**For now fair mint runs on BSC testnet only: every `gang fair` command needs `--testnet`.** Without it the CLI answers
-`fair mint is not deployed on BSC mainnet yet`. Testnet tokens and quotes have no value; say so if the user asks.
+**Mainnet needs the pad address**: until this CLI version ships it, mainnet `gang fair` commands need `GANG_PAD` set to the
+mainnet GangLaunchpad; without it the CLI answers `… has no mainnet address in this CLI version yet` — then use
+`--testnet` (BSC testnet). Testnet tokens and quotes have no value; say so if the user asks.
+
+**One pad for 打新 and V3**: sales and V3 tax tokens live on the same GangLaunchpad. Given a V3 token, `gang fair
+info|status|mint|withdraw|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
+pad's `kindOf`); run the `gang v3` command it names instead.
 
 ```bash
 gang fair list [--status minting|launched|all]              # sales on gang.fun (needs the server to run fair mint)
@@ -67,8 +72,11 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.
 - **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
   Tell the user why in words instead.
-- Env: `GANG_FAIR_TESTNET_PAD` / `GANG_FAIR_TESTNET_RPC_URL` override the testnet deployment; `GANG_FAIR_PAD` is for mainnet;
-  `GANG_ROUTER_TESTNET` / `GANG_ROUTER` the router.
+- Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` is the mainnet pad (shared
+  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The old names `GANG_FAIR_TESTNET_PAD` /
+  `GANG_FAIR_TESTNET_RPC_URL` / `GANG_FAIR_PAD` / `GANG_ROUTER_TESTNET` still work as aliases.
+- `NotReclaimable` / `NotLocked` on a withdraw: the token is not a 打新 token, or the sale already launched (sell-back
+  is over: trade on PancakeSwap). Both come back with a `hint`.
 
 ## Reading results
 

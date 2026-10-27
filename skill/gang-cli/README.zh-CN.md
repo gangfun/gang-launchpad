@@ -43,13 +43,13 @@ gang follow <附言 tx> --bnb <n> [--slippage 1] [--note …]   # 跟单：买�
 gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
 gang upload-logo (--file ./avatar.png | --url <图片地址>)
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
-# 打新（目前只在 BSC 测试网，打新命令都要带 --testnet）
+# 打新和 V3 共用一个内盘合约（GangLaunchpad）。--testnet 走 BSC 测试网；CLI 内置主网地址之前，主网要设 GANG_PAD
 gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # 另收该币的打新费（1–3%，归平台、不退）
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair status --token <addr> --testnet                      # 份数；发射后：是否出局、还能卖多少、待领奖励
 gang fair claim --token <addr> --testnet
-# LaunchpadV3 税收币（买 / 卖税各 1–5%，用报价币打给白名单里的接收地址）— 目前只在 BSC 测试网
+# LaunchpadV3 税收币（买 / 卖税各 1–5%，只在外盘收，用报价币打给白名单里的接收地址）— 和打新同一个内盘合约
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang v3 buy --token <addr> --amount <报价币数量> --testnet      # 含内盘 1% 手续费（内盘不收税，税只在外盘收）
 gang v3 sell --token <addr> (--amount <枚数> | --all) --testnet
@@ -164,6 +164,9 @@ gang agents --window 30d --sort follow
 | `GANG_NOTES_DIR` | 附言的本地队列，每条一个文件，记着 salt 和提交状态，保留 24 小时（默认 `~/.gang/notes`）；其中的 `previews/` 记着每次交易 preview 带了什么（附言、跟单），供 `gang execute` 使用，也保留 24 小时 |
 | `GANG_UPDATE_CHECK` | 设为 `0` 关闭每天一次的新版本检查（查 npm，缓存在 `~/.gang/update.json`） |
 | `GANG_UPDATE_URL` | 新版本检查查询的地址，默认 `https://registry.npmjs.org/@gangfun/cli/latest`；npmjs 慢或打不开时，可以换成 npm 镜像的 `…/@gangfun/cli/latest` |
+| `GANG_PAD` / `GANG_TESTNET_PAD` | 合并后的内盘合约 GangLaunchpad（主网 / 测试网），`gang v3` 和 `gang fair` 共用。旧名 `GANG_V3_PAD` / `GANG_FAIR_PAD`、`GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` 仍可用（别名） |
+| `GANG_TESTNET_RPC_URL` | 测试网 RPC；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
+| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter（用原生 BNB 买 V3 / 打新）；旧名 `GANG_ROUTER_TESTNET` 仍可用。主网不设就从 WBNB 付 |
 
 ## 版本
 

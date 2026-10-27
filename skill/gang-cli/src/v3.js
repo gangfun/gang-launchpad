@@ -1,31 +1,18 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
-import { bsc, bscTestnet } from 'viem/chains'
 import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
+import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
 
 /**
  * `gang v3 …` — LaunchpadV3 (tax recipient): a token with its own buy / sell tax (1–5% each), a dividend share and a
  * whitelisted recipient (e.g. a partner's treasury) paid in the quote token. The tax is charged only in the PancakeSwap
  * pool after graduation (the platform keeps 0.5% of that volume); curve trades pay only the 1% fee, no tax.
- * Contracts: gang-launchpad src/launchpad-v3.
- * Only on BSC testnet until the audit (--testnet); mainnet answers "not deployed" until there is a pad.
+ * Contracts: gang-launchpad GangLaunchpad (merged pad: V3 curves and 打新 sales on one address; see gangpad.js).
+ * Mainnet needs a pad address (GANG_PAD or the one shipped in gangpad.js); without it mainnet answers "no mainnet address".
  */
-export const V3_NETS = {
-  mainnet: {
-    chainId: '56', chain: bsc, pad: process.env.GANG_V3_PAD || null, // no mainnet pad before the audit
-    rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
-    wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
-    router: process.env.GANG_ROUTER || null,
-  },
-  testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_V3_TESTNET_PAD || '0x771b6dAA5240e3Cc0F0819535E8200774AFedEED',
-    router: process.env.GANG_ROUTER_TESTNET || '0x9dBb3D25Ff5c8107814fBD96A88D6eD015dfA279',
-    rpc: process.env.GANG_V3_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
-    wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
-  },
-}
+export const V3_NETS = padNets('v3')
 
 const TAX = '(uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)'
 const PAD_ABI = parseAbi([
@@ -103,7 +90,7 @@ const HINTS = {
 
 export function v3Ctx(testnet) {
   const net = V3_NETS[testnet ? 'testnet' : 'mainnet']
-  if (!net.pad) throw new Error('LaunchpadV3 is not deployed on BSC mainnet yet (audit first) — add --testnet to use the BSC testnet deployment')
+  if (!net.pad) throw new Error(NOT_ON_MAINNET)
   const client = createPublicClient({ chain: net.chain, transport: http(net.rpc) })
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
@@ -113,7 +100,7 @@ const pct = (bps) => Number(bps) / 100
 const VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667n
 
 /** Revert name (+ BadTaxConfig reason) of a failed call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI, TAX_ROUTER_ABI, GANG_ROUTER_ABI], HINTS)
+const revertOf = (e) => revertIn(e, [PAD_ABI, TAX_ROUTER_ABI, GANG_ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...HINTS })
 
 /** eth_call `data` from `from`: { result } when it passes, { failed } with the revert (or RPC error) otherwise. */
 async function simulate(ctx, from, to, abi, functionName, args, value = 0n) {
@@ -244,11 +231,16 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
 
   let ctx
   try { ctx = v3Ctx(testnet) } catch (e) { return fail(e.message) }
+  // not a curve on this pad: on the merged pad it may be a 打新 token (kindOf), so point at `gang fair`
+  const notV3 = async (token) => {
+    const { error, kind } = await notThisKind(ctx, token, 'v3', net)
+    return fail(error, { token, chainId: ctx.chainId, ...(kind && { kind }) })
+  }
 
   if (sub === 'info') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
+    if (!c) return notV3(token)
     const { owedRaw: _raw, priceRaw: _p, reserveTokenRaw: rT, ...pub } = c
     // in the pool the tax is held as tokens and sold in small chunks under a per-block budget
     const swapBack = c.graduated && c.pair ? await swapBackState(ctx, c.taxHandler, token, rT) : null
@@ -262,7 +254,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'status') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
+    if (!c) return notV3(token)
     const slippage = parseSlippage(fail, opt('slippage', '1'))
     const me = walletFor(ctx, opt('from'))
     const [vault, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
@@ -285,7 +277,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'claim') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!c) return notV3(token)
     if (!(c.dividendPct > 0)) return fail('this token pays no dividend (dividend 0%)', { token })
     const me = walletFor(ctx, opt('from'))
     const vault = await ctx.read(ctx.pad, PAD_ABI, 'dividendVault')
@@ -356,7 +348,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'buy') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!c) return notV3(token)
     if (c.graduated) return fail('token already graduated; trade it on PancakeSwap', { pair: c.pair })
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; curve trades are Agent-only', { wallet: me })
@@ -400,7 +392,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'sell') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!c) return notV3(token)
     if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
     const slippage = parseSlippage(fail, opt('slippage', '1'))
     if (c.graduated) {
@@ -448,7 +440,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
   if (sub === 'release') {
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
-    if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
+    if (!c) return notV3(token)
     if (c.owedRaw === 0n) return fail('nothing owed: every tax payment reached the recipient', { recipient: c.recipient })
     const me = walletFor(ctx, opt('from'))
     const sim = await simulate(ctx, me, c.router, TAX_ROUTER_ABI, 'release', [token])
