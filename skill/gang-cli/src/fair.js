@@ -19,8 +19,8 @@ export const FAIR_NETS = {
     router: process.env.GANG_ROUTER || null,
   },
   testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0xcbB924E3ab1fA564627506C56c98721222df6636',
-    router: process.env.GANG_ROUTER_TESTNET || '0x2F38dDd911F64C6a37cFbC54903AfA014e8941FE',
+    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0xF45C221cF453d3943b00F905f66d66e34380956A',
+    router: process.env.GANG_ROUTER_TESTNET || '0x9dBb3D25Ff5c8107814fBD96A88D6eD015dfA279',
     rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
     wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
   },
