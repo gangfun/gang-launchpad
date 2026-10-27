@@ -13,7 +13,7 @@ import {IV3FactoryLite, IV3PoolLite} from "../../src/launchpad-v2/PoolCheck.sol"
 import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 
 contract ForkAgent {
     mapping(address => uint256) public balanceOf;
@@ -59,7 +59,7 @@ contract FairMintForkTest is Test {
     QuoteRegistry reg;
     SharedDividendVault vault;
     PlatformFeeBucket bucket;
-    HolderRewardHandler handler;
+    GangTaxHandler handler;
     FairMintPad pad;
     SharedMigrator mig;
     ForkAgent agent;
@@ -80,7 +80,7 @@ contract FairMintForkTest is Test {
         vault = new SharedDividendVault(owner);
         TokenDeployer deployer = new TokenDeployer(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new HolderRewardHandler(owner, address(vault), address(bucket), V2_ROUTER);
+        handler = new GangTaxHandler(owner, address(vault), address(bucket), V2_ROUTER);
         agent = new ForkAgent();
         pad = new FairMintPad(
             owner, address(reg), address(vault), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
@@ -94,7 +94,7 @@ contract FairMintForkTest is Test {
         deployer.setLaunchpad(address(pad), true);
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(keeper);
         pad.setMigrator(address(mig));
         pad.setAgentGate(true, address(agent));

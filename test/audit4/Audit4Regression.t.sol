@@ -9,7 +9,7 @@ import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3Test} from "../launchpad-v3/LaunchpadV3.t.sol";
 import {SharedInfraTest} from "../common/SharedInfra.t.sol";
 
@@ -164,15 +164,15 @@ contract Audit4SharedRegressionTest is SharedInfraTest {
     /// @dev audit4-a F-3: the 打新 handler takes tax reports only from its own pad's tokens.
     function test_audit4_holderHandlerRefusesUnregisteredTokens() public {
         address fake = makeAddr("fakeToken");
-        HolderRewardHandler h = HolderRewardHandler(fair.taxHandler());
+        GangTaxHandler h = GangTaxHandler(fair.taxHandler());
         vm.prank(fake);
-        vm.expectRevert(HolderRewardHandler.UnknownToken.selector);
-        h.notifyTax(fake, address(1), address(2), 1e30);
+        vm.expectRevert(GangTaxHandler.UnknownToken.selector);
+        h.notifyTax(fake, address(1), address(2), 1e30, 100);
 
         address v3tok = _v3Token(10_000); // registered in the shared vault, but by the V3 core
         vm.prank(v3tok);
-        vm.expectRevert(HolderRewardHandler.UnknownToken.selector);
-        h.notifyTax(v3tok, address(1), address(2), 1);
+        vm.expectRevert(GangTaxHandler.UnknownToken.selector);
+        h.notifyTax(v3tok, address(1), address(2), 1, 100);
     }
 
     /// @dev audit4-c F-3 (打新 side): neither core's tokens can be a 打新 quote; nor a 打新 token a V3 quote.

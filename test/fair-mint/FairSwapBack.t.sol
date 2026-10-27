@@ -6,7 +6,7 @@ import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {FairMintTest} from "./FairMint.t.sol";
 
@@ -69,7 +69,7 @@ contract FairSwapBackTest is FairMintTest {
         (address t,) = _launched();
         _buyBacklog(t, 2);
         uint256 accrued = handler.accruedTax(t);
-        vm.mockCallRevert(address(handler), abi.encodeWithSelector(HolderRewardHandler.swapBack.selector), "x");
+        vm.mockCallRevert(address(handler), abi.encodeWithSelector(GangTaxHandler.swapBack.selector), "x");
         vm.expectEmit(false, false, false, false, t);
         emit FairToken.SwapBackFailed();
         _sell(t, _minter(3), 10 * TPS);
@@ -83,7 +83,7 @@ contract FairSwapBackTest is FairMintTest {
         handler.swapBack(t, 1 ether);
         address fake = makeAddr("fake");
         vm.prank(fake);
-        vm.expectRevert(HolderRewardHandler.UnknownToken.selector);
+        vm.expectRevert(GangTaxHandler.UnknownToken.selector);
         handler.swapBack(fake, 1 ether);
     }
 

@@ -18,17 +18,18 @@ import {SharedMigrator} from "../common/SharedMigrator.sol";
 import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
 import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "./TaxHandlerV3.sol";
+import {GangTaxHandler} from "../gang/GangTaxHandler.sol";
 import {ILaunchpadV3} from "./interfaces/ILaunchpadV3.sol";
-import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol";
+import {V3_PLATFORM_TAX_BPS} from "../gang/interfaces/IGangTaxHandler.sol";
 
 /// @title LaunchpadV3 (tax recipient)
 /// @notice V2 curve / BAW gate / walletCap 1% / ≈15 BNB graduation, unchanged. The `bool taxed` switch becomes a
-///         TaxConfig: a buy tax and a sell tax (1%–5% each, immutable, charged on the curve and on the pool), a holder
-///         dividend share, and a platform-listed tax recipient. Every tax payment is split by TaxHandlerV3: 0.5% of
-///         the trade's volume to the platform, then the dividend share, the rest to the recipient in quote.
-///         Bonding protocol fee (1% → PlatformFeeBucket) is unchanged and charged on top of the tax.
-/// @dev Spec: docs/SPEC-V3-TAX-RECIPIENT-2026-10-26.md. NO mainnet broadcast from this branch.
+///         TaxConfig: a buy tax and a sell tax (1%–5% each, immutable), a holder dividend share, and a platform-listed
+///         tax recipient. The tax is charged only on the Pancake pool after graduation (TaxLaunchTokenV3 →
+///         TaxHandlerV3: 0.5% of the trade's volume to the platform, then the dividend share, the rest to the
+///         recipient in quote). On the curve every token, taxed or not, pays only the 1% protocol fee
+///         (→ PlatformFeeBucket), as on V2; dividend shares are still kept in sync so the pool tax finds them.
+/// @dev Spec: docs/SPEC-V3-TAX-RECIPIENT-2026-10-26.md (§19: no curve tax, 2026-10-27).
 contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -39,9 +40,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     uint256 public constant MAX_PER_WALLET = 10_000_000 ether; // 1% of TOTAL_SUPPLY
     uint256 public constant BPS = 10_000;
 
-    /// @dev Bonding fee, all tokens: 1% → PlatformFeeBucket. The token's tax is charged on top.
+    /// @dev Bonding fee, all tokens: 1% → PlatformFeeBucket. The only charge on the curve (no tax there).
     uint256 public constant PROTOCOL_FEE_BPS = 100;
-    /// @dev Platform's part of every taxed trade (curve and pool), as a share of the trade's volume; out of the tax.
+    /// @dev Platform's part of every taxed pool trade (after graduation), as a share of the trade's volume; out of the
+    ///      tax. Applied by TaxHandlerV3; kept here for readers (CLI / indexer).
     uint256 public constant PLATFORM_TAX_BPS = V3_PLATFORM_TAX_BPS;
     uint16 public constant MIN_TAX_BPS = 100;
     uint16 public constant MAX_TAX_BPS = 500;
@@ -69,8 +71,8 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     QuoteRegistry public immutable quoteRegistry;
     SharedDividendVault public immutable dividendVault;
     PlatformFeeBucket public immutable platformBucket;
-    /// @notice Recipient whitelist, each token's route and split, the bonding tax and the pool tax after graduation.
-    TaxHandlerV3 public immutable taxHandler;
+    /// @notice Recipient whitelist, each token's route and split, and the pool tax after graduation.
+    GangTaxHandler public immutable taxHandler;
     TokenDeployer public immutable tokenDeployer;
     address public immutable wbnb;
     address public pairFactory;
@@ -159,7 +161,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         quoteRegistry = QuoteRegistry(quoteRegistry_);
         dividendVault = SharedDividendVault(dividendVault_);
         platformBucket = PlatformFeeBucket(platformBucket_);
-        taxHandler = TaxHandlerV3(taxHandler_);
+        taxHandler = GangTaxHandler(taxHandler_);
         tokenDeployer = TokenDeployer(tokenDeployer_);
         wbnb = wbnb_;
         pairFactory = pairFactory_;
@@ -270,7 +272,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             dividendVault.registerToken(token, quote);
         }
-        taxHandler.register(token, quote, tax.recipient, tax.dividendBps);
+        taxHandler.register(token, quote, tax.recipient, tax.dividendBps, 1);
     }
 
     /// @inheritdoc ILaunchpadV3
@@ -286,7 +288,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)
     {
         Curve storage c = curves[token];
-        (, recipient,) = taxHandler.routeOf(token);
+        (, recipient,,) = taxHandler.routeOf(token);
         return (c.buyTaxBps, c.sellTaxBps, c.dividendBps, recipient);
     }
 
@@ -314,13 +316,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     // ---------------------------------------------------------------- buy
     struct BuyVars {
         uint256 protocolFee;
-        uint256 tax;
-        uint256 platformTax;
         uint256 net;
         uint256 refundGross;
         uint256 gradAmt;
         uint256 tokensOut;
-        uint256 feeBps;
     }
 
     function buy(address token, uint256 quoteIn, uint256 minTokensOut)
@@ -368,8 +367,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         uint256 room = walletRoom(token, trader);
         if (walletCapEnabled && room == 0) revert WalletCapReached();
 
-        v.feeBps = _feeBps(c);
-        _applyFees(quoteIn, v);
+        _applyFee(quoteIn, v);
         v.gradAmt = c.gradAmt;
         uint256 remaining = v.gradAmt - c.realQuote;
 
@@ -387,28 +385,16 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         }
     }
 
-    function _feeBps(Curve storage c) internal view returns (uint256) {
-        return PROTOCOL_FEE_BPS + c.buyTaxBps;
-    }
-
-    function _applyFees(uint256 gross, BuyVars memory v) internal pure {
+    /// @dev The curve's only charge: 1% of the gross (no tax on the curve, 2026-10-27).
+    function _applyFee(uint256 gross, BuyVars memory v) internal pure {
         v.protocolFee = (gross * PROTOCOL_FEE_BPS) / BPS;
-        v.tax = (gross * v.feeBps) / BPS - v.protocolFee;
-        v.platformTax = _platformPart(gross, v.tax);
-        v.net = gross - v.protocolFee - v.tax;
-    }
-
-    /// @dev Platform's 0.5% of `volume`, out of `tax` (never more than the tax itself; untaxed → 0).
-    function _platformPart(uint256 volume, uint256 tax) internal pure returns (uint256 p) {
-        if (tax == 0) return 0;
-        p = (volume * PLATFORM_TAX_BPS) / BPS;
-        if (p > tax) p = tax;
+        v.net = gross - v.protocolFee;
     }
 
     function _recomputeFee(uint256 quoteIn, BuyVars memory v) internal pure {
-        uint256 spentGross = Math.ceilDiv(v.net * BPS, BPS - v.feeBps);
+        uint256 spentGross = Math.ceilDiv(v.net * BPS, BPS - PROTOCOL_FEE_BPS);
         if (spentGross > quoteIn) spentGross = quoteIn;
-        _applyFees(spentGross, v);
+        _applyFee(spentGross, v);
         v.refundGross = quoteIn - spentGross;
     }
 
@@ -423,9 +409,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         c.sold += v.tokensOut.toUint128();
 
         IERC20(token).safeTransfer(trader, v.tokensOut);
-        _syncShareAndTax(c, token, trader, quoteAddr, v.protocolFee, v.tax, v.platformTax, false);
+        _syncShareAndFee(c, token, trader, quoteAddr, v.protocolFee);
 
-        emit Buy(token, trader, v.net, v.protocolFee, v.tax, v.tokensOut, c.realQuote);
+        // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
+        emit Buy(token, trader, v.net, v.protocolFee, 0, v.tokensOut, c.realQuote);
 
         if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(msg.sender, v.refundGross);
         if (c.realQuote >= v.gradAmt) _graduate(token, c);
@@ -442,29 +429,15 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         if (quote.balanceOf(address(this)) - beforeBal != amount) revert FeeOnTransferQuote();
     }
 
-    /// @dev A buy's tax is distributed BEFORE the buyer's share grows: it rewards holders as of before this trade
-    ///      (a first buy with no eligible holders rolls the dividend leg to the recipient / platform). A sell syncs the
-    ///      seller's (now smaller) share FIRST, so the seller earns nothing of its own tax on what it just sold.
-    function _syncShareAndTax(
-        Curve storage c,
-        address token,
-        address account,
-        address quoteAddr,
-        uint256 protocolFee,
-        uint256 tax,
-        uint256 platformTax,
-        bool shareFirst
-    ) internal {
-        IERC20 quote = IERC20(quoteAddr);
-        bool dividends = c.dividendBps > 0;
-        if (dividends && shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
-        if (tax > 0) {
-            quote.forceApprove(address(taxHandler), tax);
-            taxHandler.distribute(token, tax, platformTax, ITaxHandlerV3.Phase.Bonding);
-        }
-        if (dividends && !shareFirst) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
+    /// @dev No tax on the curve: the trade pays only `protocolFee` (→ PlatformFeeBucket). A dividend token's share
+    ///      still follows the trader's balance (as V2's taxed track), so the pool tax after graduation is credited
+    ///      to the right holders; nothing is paid to holders or to the recipient here.
+    function _syncShareAndFee(Curve storage c, address token, address account, address quoteAddr, uint256 protocolFee)
+        internal
+    {
+        if (c.dividendBps > 0) dividendVault.setShare(token, account, IERC20(token).balanceOf(account));
         if (protocolFee > 0) {
-            quote.forceApprove(address(platformBucket), protocolFee);
+            IERC20(quoteAddr).forceApprove(address(platformBucket), protocolFee);
             platformBucket.notifyAccrual(quoteAddr, protocolFee);
         }
     }
@@ -481,9 +454,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
 
         uint256 quoteOut = _quoteOut(c, tokensIn);
         uint256 protocolFee = (quoteOut * PROTOCOL_FEE_BPS) / BPS;
-        uint256 tax = (quoteOut * c.sellTaxBps) / BPS;
-        uint256 platformTax = _platformPart(quoteOut, tax);
-        quoteToUser = quoteOut - protocolFee - tax;
+        quoteToUser = quoteOut - protocolFee;
         if (quoteToUser < minQuoteOut) revert Slippage();
 
         c.realQuote -= quoteOut.toUint128();
@@ -492,10 +463,11 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
 
         address quoteAddr = c.quote;
-        _syncShareAndTax(c, token, msg.sender, quoteAddr, protocolFee, tax, platformTax, true);
+        _syncShareAndFee(c, token, msg.sender, quoteAddr, protocolFee);
         IERC20(quoteAddr).safeTransfer(msg.sender, quoteToUser);
 
-        emit Sell(token, msg.sender, tokensIn, protocolFee, tax, quoteToUser, c.realQuote);
+        // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
+        emit Sell(token, msg.sender, tokensIn, protocolFee, 0, quoteToUser, c.realQuote);
     }
 
     // ---------------------------------------------------------------- views
