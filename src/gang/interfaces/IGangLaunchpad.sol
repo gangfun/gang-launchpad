@@ -200,7 +200,10 @@ interface IGangLaunchpad {
     error RefPoolRequired();
     error NoBridgePool();
     error BridgeNotWbnb();
+    /// @notice buyFor / sellFor / mintFor / withdrawFor: the caller is not a listed router.
     error OnlyRouter();
+    /// @notice buyFor / sellFor / mintFor / withdrawFor: `trader` is not the wallet that sent the tx (AUDIT-BRIEF §23).
+    error TraderNotOrigin();
     error QuoteNotAllowed();
     error FeeOnTransferQuote();
     error WrongMigrator();

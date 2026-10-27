@@ -29,8 +29,14 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.stopPrank();
         quoteTok.mintUnlimited(address(this), 1 ether);
         quoteTok.approve(address(pad), type(uint256).max);
+        address pair = makeAddr("pair");
+        // §23: the future pair is never tx.origin
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        pad.buyFor(pair, t, 0.01 ether, 0);
+        // and the A-2 check is still there behind it (even for the sender of the tx)
+        vm.prank(address(this), pair);
         vm.expectRevert(IGangLaunchpad.RouterNeedsGate.selector);
-        pad.buyFor(makeAddr("pair"), t, 0.01 ether, 0);
+        pad.buyFor(pair, t, 0.01 ether, 0);
     }
 
     /// @dev Quote rules (2026-10-27, V2 pricing kept): WBNB or any 18-decimal ERC-20; no fixed rate → a reference pool is

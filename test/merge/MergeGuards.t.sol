@@ -711,6 +711,10 @@ contract MergeGuardsTest is GangFixture {
         assertTrue(_hasMethod(P, "kindOf(address)"), "pad.kindOf");
         // 2026-10-27 (AUDIT-BRIEF §22): the creator-aware preflight is an addition; checkTaxConfig keeps 0x68c9f7e0
         _sel(P, "checkTaxConfigFor(address,(uint16,uint16,uint16,address))", 0x1020b11c);
+        // 2026-10-27 (AUDIT-BRIEF §23): aggregator sells / withdraws (listed router, trader == tx.origin, allowance)
+        _sel(P, "sellFor(address,address,uint256,uint256)", 0x9d10cdb1);
+        _sel(P, "withdrawFor(address,address,uint256,uint256)", 0x60382b4e);
+        _sel(T, "pullFor(address,address,uint256)", 0x7d18ac71);
         assertTrue(_hasMethod(H, "register(address,address,address,uint16,uint8)"), "handler.register(kind)");
         assertTrue(_hasMethod(T, "reclaimable()"), "token.reclaimable");
     }

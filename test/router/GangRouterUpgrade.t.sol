@@ -264,7 +264,7 @@ contract GangRouterUpgradeTest is GangFixture {
     function test_upgrade_keepsStateAndListing_newLogicLive() public {
         address t = _wbnbCurve();
         address buyer = _newAgent();
-        vm.prank(buyer);
+        vm.prank(buyer, buyer);
         uint256 before = router.v3BuyBNB{value: 0.01 ether}(t, 1, vm.getBlockTimestamp());
         // v1 has no version()
         (bool ok,) = address(router).call(abi.encodeCall(GangRouterV2Mock.version, ()));
@@ -291,7 +291,7 @@ contract GangRouterUpgradeTest is GangFixture {
         r2.initializeV2(8);
         // same address, still listed: no setRouter, the old approvals still work
         assertTrue(pad.routers(address(router)));
-        vm.prank(buyer);
+        vm.prank(buyer, buyer);
         uint256 again = router.v3Buy(t, 0.01 ether, 1, vm.getBlockTimestamp());
         assertGt(again, 0);
         assertEq(IERC20(t).balanceOf(buyer), before + again);
@@ -304,7 +304,7 @@ contract GangRouterUpgradeTest is GangFixture {
         address t = _createV3(_newAgent(), address(quoteTok), _tax(200, 200, 5000, treasury));
         address loose = _newAgent(); // approved max to the router (GangFixture does)
         address exact = _newAgent();
-        vm.startPrank(exact);
+        vm.startPrank(exact, exact);
         quoteTok.approve(address(router), 0);
         quoteTok.approve(address(router), 0.01 ether);
         router.v3Buy(t, 0.01 ether, 1, vm.getBlockTimestamp());
@@ -334,9 +334,9 @@ contract GangRouterUpgradeTest is GangFixture {
         address fq = _createFair(_newAgent(), address(quoteTok), 1);
         // one fresh Agent per call (the 1% wallet cap would stop a second buy of the same token)
         _call(abi.encodeCall(GangRouter.v3BuyBNB, (w, 1, vm.getBlockTimestamp())), 0.05 ether);
-        _call(abi.encodeCall(GangRouter.v3BuyBNB, (w, 1, vm.getBlockTimestamp())), 50 ether); // cap refund as BNB
+        _call(abi.encodeCall(GangRouter.v3BuyBNB, (w, 1, vm.getBlockTimestamp())), 50 ether); // cut: WBNB, pad → caller
         _call(abi.encodeCall(GangRouter.v3Buy, (q, 0.01 ether, 1, vm.getBlockTimestamp())), 0);
-        _call(abi.encodeCall(GangRouter.v3Buy, (q, 50 ether, 1, vm.getBlockTimestamp())), 0); // refund in the quote
+        _call(abi.encodeCall(GangRouter.v3Buy, (q, 50 ether, 1, vm.getBlockTimestamp())), 0); // cut: pad → caller
         _call(abi.encodeCall(GangRouter.fairMintBNB, (fw, 10, 1, vm.getBlockTimestamp())), 5 ether); // far too much
         _call(abi.encodeCall(GangRouter.fairMint, (fq, 500, 1, vm.getBlockTimestamp())), 0); // cut to the cap
         assertEq(IERC20(w).balanceOf(address(router)) + IERC20(q).balanceOf(address(router)), 0);
@@ -345,7 +345,7 @@ contract GangRouterUpgradeTest is GangFixture {
 
     function _call(bytes memory data, uint256 value) internal {
         address a = _newAgent();
-        vm.prank(a);
+        vm.prank(a, a);
         (bool ok, bytes memory err) = address(router).call{value: value}(data);
         if (!ok) {
             assembly {
@@ -359,7 +359,7 @@ contract GangRouterUpgradeTest is GangFixture {
         uint256 v = bound(uint256(value), 1e9, 30 ether);
         address w = _wbnbCurve();
         address a = _newAgent();
-        vm.prank(a);
+        vm.prank(a, a);
         router.v3BuyBNB{value: v}(w, 0, vm.getBlockTimestamp());
         _assertRouterEmpty();
     }
@@ -372,10 +372,10 @@ contract GangRouterUpgradeTest is GangFixture {
         assertEq(uint256(vm.load(routerStack.impl, bytes32(0))), 1, "impl's own storage: NOT_ENTERED");
         address w = _wbnbCurve();
         address a = _newAgent();
-        vm.prank(a);
+        vm.prank(a, a);
         router.v3BuyBNB{value: 0.01 ether}(w, 1, vm.getBlockTimestamp());
         assertEq(uint256(vm.load(address(router), bytes32(0))), 1, "NOT_ENTERED after a call");
-        vm.prank(a);
+        vm.prank(a, a);
         router.v3BuyBNB{value: 0.01 ether}(w, 1, vm.getBlockTimestamp());
     }
 
@@ -385,13 +385,18 @@ contract GangRouterUpgradeTest is GangFixture {
         vm.deal(address(b), 100 ether);
     }
 
-    function test_reentrancy_v3BuyBNB_refundCallback() public {
+    /// §23: a curve buy's cut is refunded by the pad straight to the trader in WBNB, so v3BuyBNB sends no BNB and
+    ///      there is no callback left to re-enter from. (The buyer contract plays tx.origin: the pad only lets a
+    ///      listed router buy for the wallet that sent the tx.)
+    function test_reentrancy_v3BuyBNB_noBnbCallback() public {
         address w = _wbnbCurve();
         ReenteringBuyer b = _reenterer();
         b.setTarget(w, 1);
-        b.buyBnb(50 ether); // past the cap: the refund calls back
-        assertEq(b.reentries(), 1, "callback ran");
-        assertEq(b.innerError(), abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
+        uint256 before = wbnb.balanceOf(address(b));
+        vm.prank(address(this), address(b));
+        b.buyBnb(50 ether); // past the cap
+        assertEq(b.reentries(), 0, "no BNB came back");
+        assertGt(wbnb.balanceOf(address(b)) - before, 49 ether, "the cut came back as WBNB from the pad");
         _assertRouterEmpty();
     }
 
@@ -399,18 +404,20 @@ contract GangRouterUpgradeTest is GangFixture {
         address f = _createFair(_newAgent(), address(0), 1);
         ReenteringBuyer b = _reenterer();
         b.setTarget(f, 2);
+        vm.prank(address(this), address(b));
         b.mintBnb(5, 5 ether);
         assertEq(b.reentries(), 1);
         assertEq(b.innerError(), abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
         _assertRouterEmpty();
     }
 
-    /// Cross-entry: inside a BNB refund, the ERC-20 entry is locked too.
+    /// Cross-entry: inside a BNB refund (fairMintBNB's unspent msg.value), the ERC-20 entry is locked too.
     function test_reentrancy_crossEntry() public {
-        address w = _wbnbCurve();
+        address f = _createFair(_newAgent(), address(0), 1);
         ReenteringBuyer b = _reenterer();
-        b.setTarget(w, 3);
-        b.buyBnb(50 ether);
+        b.setTarget(f, 3);
+        vm.prank(address(this), address(b));
+        b.mintBnb(5, 5 ether);
         assertEq(b.reentries(), 1);
         assertEq(b.innerError(), abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
         _assertRouterEmpty();
@@ -418,11 +425,12 @@ contract GangRouterUpgradeTest is GangFixture {
 
     /// The guard survives an upgrade (same slot), and the flag is back to NOT_ENTERED.
     function test_reentrancy_afterUpgrade() public {
-        address w = _wbnbCurve();
+        address f = _createFair(_newAgent(), address(0), 1);
         _upgrade(address(new GangRouterV2Mock()), "");
         ReenteringBuyer b = _reenterer();
-        b.setTarget(w, 1);
-        b.buyBnb(50 ether);
+        b.setTarget(f, 2);
+        vm.prank(address(this), address(b));
+        b.mintBnb(5, 5 ether);
         assertEq(b.innerError(), abi.encodeWithSelector(ReentrancyGuard.ReentrancyGuardReentrantCall.selector));
         _assertRouterEmpty();
     }

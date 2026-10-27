@@ -7,7 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
-import {IGangPadHandler, IGangTokenDeployer} from "./interfaces/IGangPadDeps.sol";
+import {IGangPadHandler, IGangPadToken, IGangTokenDeployer} from "./interfaces/IGangPadDeps.sol";
 import {PadCommon} from "./PadCommon.sol";
 
 /// @title CurveLogic — GangLaunchpad's bonding-curve (V3, tax recipient) path
@@ -16,8 +16,9 @@ import {PadCommon} from "./PadCommon.sol";
 ///         feat/v3-no-curve-tax: no tax on the curve, every trade pays only the 1% protocol fee (→ bucket, blocking);
 ///         `Buy` / `Sell` keep their `tax` field, always 0 (spec §19). Dividend shares still follow the trader's balance
 ///         (blocking write) so the pool tax after graduation finds them.
-/// @dev Reentrancy guard, the router list and the A-2 gate check of `buyFor` stay in the pad's wrappers. The gate here
-///      is the pad's current setting (V3), unlike 打新's per-sale snapshot.
+/// @dev Reentrancy guard, the caller check of `buyFor` / `sellFor` (listed router, trader == tx.origin, §23) and the
+///      A-2 gate check of `buyFor` stay in the pad's wrappers. The gate here is the pad's current setting (V3),
+///      unlike 打新's per-sale snapshot.
 ///      Not callable directly: every state-changing entry needs the delegatecall context (a direct call reads and
 ///      writes the library's own empty storage and reverts on the first lookup).
 library CurveLogic {
@@ -152,7 +153,8 @@ library CurveLogic {
     }
 
     // ---------------------------------------------------------------- buy
-    /// @dev msg.sender pays (the trader itself, or a router the pad checked); `trader` receives.
+    /// @dev msg.sender pays (the trader itself, or a router the pad checked); `trader` receives the tokens and any
+    ///      refund of the cut (in the quote ERC-20, §23).
     function buy(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
@@ -235,7 +237,9 @@ library CurveLogic {
         // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
         emit IGangLaunchpad.Buy(token, trader, v.net, v.protocolFee, 0, v.tokensOut, cv.realQuote);
 
-        if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(msg.sender, v.refundGross);
+        // §23: the cut (cap / graduation) goes back to the trader, not the caller — aggregators assume exact-in and
+        // may not forward or sweep a leftover. Direct `buy`: trader = msg.sender, as before.
+        if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(trader, v.refundGross);
         if (cv.realQuote >= v.gradAmt) _graduate(c, token, cv);
         tokensOut = v.tokensOut;
     }
@@ -258,18 +262,23 @@ library CurveLogic {
     }
 
     // ---------------------------------------------------------------- sell
-    /// @dev msg.sender sells (no router path: tokens are locked to the pad before graduation).
+    /// @dev `trader` sells; the quote goes to msg.sender. Direct `sell`: trader = msg.sender, `viaCaller` false, the
+    ///      tokens move with the trader's allowance to the pad (as before). `sellFor`: the pad checked the caller (a
+    ///      listed router) and trader == tx.origin, `viaCaller` true, the tokens move with the trader's allowance to
+    ///      the caller (`GangToken.pullFor`, locked tokens only — curve sells only exist before graduation).
     function sell(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
         IGangLaunchpad.Deps memory d,
+        address trader,
+        bool viaCaller,
         address token,
         uint256 tokensIn,
         uint256 minQuoteOut
     ) external returns (uint256 quoteToUser) {
         IGangLaunchpad.Curve storage cv = _live(curves, token);
         if (tokensIn == 0) revert IGangLaunchpad.ZeroAmount();
-        _requireAgent(c, msg.sender);
+        _requireAgent(c, trader);
 
         uint256 quoteOut = _quoteOut(cv, tokensIn);
         uint256 protocolFee = (quoteOut * PROTOCOL_FEE_BPS) / PadCommon.BPS;
@@ -279,14 +288,15 @@ library CurveLogic {
         cv.realQuote -= quoteOut.toUint128();
         cv.sold -= tokensIn.toUint128();
 
-        IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
+        if (viaCaller) IGangPadToken(token).pullFor(trader, msg.sender, tokensIn);
+        else IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
 
         address quoteAddr = cv.quote;
-        _syncShareAndFee(cv, d, token, msg.sender, quoteAddr, protocolFee);
+        _syncShareAndFee(cv, d, token, trader, quoteAddr, protocolFee);
         IERC20(quoteAddr).safeTransfer(msg.sender, quoteToUser);
 
         // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
-        emit IGangLaunchpad.Sell(token, msg.sender, tokensIn, protocolFee, 0, quoteToUser, cv.realQuote);
+        emit IGangLaunchpad.Sell(token, trader, tokensIn, protocolFee, 0, quoteToUser, cv.realQuote);
     }
 
     // ---------------------------------------------------------------- views
