@@ -53,7 +53,7 @@ contract RouterTestnetSmoke is Script {
             "",
             address(0),
             address(0),
-            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
+            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100}),
             1
         );
         uint256 accepted = router.fairMintBNB{value: 0.002 ether}(sale, 2, 2, block.timestamp + 1 days);

@@ -111,7 +111,7 @@ contract FairMintTest is Test {
 
     function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
         return
-            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _create() internal returns (address token) {
@@ -190,17 +190,17 @@ contract FairMintTest is Test {
         c.raiseBnb = 51 ether;
         _expectBadConfig(c, 1, "raiseBnb must be 5-50 BNB");
         c = _cfg();
-        c.capBps = 51;
-        _expectBadConfig(c, 1, "capBps must be 25-50 (0.25%-0.5%)");
+        c.capBps = 101; // 1.01%
+        _expectBadConfig(c, 1, "capBps must be 25-100 (0.25%-1%)");
         c = _cfg();
         c.capBps = 24;
-        _expectBadConfig(c, 1, "capBps must be 25-50 (0.25%-0.5%)");
+        _expectBadConfig(c, 1, "capBps must be 25-100 (0.25%-1%)");
         c = _cfg();
-        c.holdBps = 8001;
-        _expectBadConfig(c, 1, "holdBps must be 3000-8000");
+        c.holdBps = 9001; // 90.01%
+        _expectBadConfig(c, 1, "holdBps must be 6000-9000");
         c = _cfg();
-        c.holdBps = 2999;
-        _expectBadConfig(c, 1, "holdBps must be 3000-8000");
+        c.holdBps = 5999; // 59.99%
+        _expectBadConfig(c, 1, "holdBps must be 6000-9000");
         c = _cfg();
         c.mintFeeBps = 99;
         _expectBadConfig(c, 1, "mintFeeBps must be 100-300 (1%-3%)");
@@ -215,6 +215,170 @@ contract FairMintTest is Test {
         _expectBadConfig(c, 1, "exitFeeBps must be 100-200 (1%-2%)");
         _expectBadConfig(_cfg(), 0, "devShares must be 1..cap");
         _expectBadConfig(_cfg(), 101, "devShares must be 1..cap");
+    }
+
+    // ---------------------------------------------------------------- launch ranges (2026-10-27, AUDIT-BRIEF §22)
+    /// @notice Hold line 60% and 90% are the bounds and both create; 59.99% / 90.01% are refused (above).
+    function test_launchParams_holdLineBounds() public {
+        uint16[2] memory ok = [uint16(6_000), uint16(9_000)];
+        for (uint256 i; i < 2; i++) {
+            IGangLaunchpad.MintConfig memory c = _cfg();
+            c.holdBps = ok[i];
+            (bool good, string memory reason) = pad.checkConfig(c, 1);
+            assertTrue(good, reason);
+            vm.prank(dev);
+            address t = pad.create("H", "H", "", "", address(0), address(0), c, 1);
+            assertEq(pad.holdBpsOf(t), ok[i]);
+        }
+        assertEq(pad.MIN_HOLD_BPS(), 6_000);
+        assertEq(pad.MAX_HOLD_BPS(), 9_000);
+        // the vault floor stays below one share at the lowest hold line: 50,000 × 60% = 30,000 > 10,000
+        assertGt((TPS * pad.MIN_HOLD_BPS()) / 10_000, pad.MIN_SHARE_BALANCE());
+    }
+
+    /// @notice Cap 1% (100 bps) is the new top: 200 shares (10M tokens) per wallet; 0.25% stays 50 shares.
+    function test_launchParams_capBounds() public {
+        assertEq(pad.MIN_CAP_BPS(), 25);
+        assertEq(pad.MAX_CAP_BPS(), 100);
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.capBps = 100;
+        (bool good, string memory reason) = pad.checkConfig(c, 200);
+        assertTrue(good, reason);
+        (good, reason) = pad.checkConfig(c, 201);
+        assertFalse(good);
+        assertEq(reason, "devShares must be 1..cap");
+        vm.prank(dev);
+        address t = pad.create("C", "C", "", "", address(0), address(0), c, 200);
+        (uint256 cap,,,,,) = _sale(t);
+        assertEq(cap, 200, "1% = 200 shares");
+        assertEq(IERC20(t).balanceOf(dev), 200 * TPS);
+        assertEq(200 * TPS, pad.TOTAL_SUPPLY() / 100, "200 shares = 1% of supply");
+        vm.prank(dev);
+        vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
+        pad.mint(t, 1, 1);
+
+        c.capBps = 25;
+        vm.prank(dev);
+        t = pad.create("D", "D", "", "", address(0), address(0), c, 1);
+        (cap,,,,,) = _sale(t);
+        assertEq(cap, 50, "0.25% = 50 shares");
+    }
+
+    /// @notice At the 1% cap, 50 wallets of 200 shares each fill the sale and launch it.
+    function test_launchParams_fiftyWalletsAtOnePercentFill() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.capBps = 100;
+        c.holdBps = 9_000;
+        vm.prank(dev);
+        address t = pad.create("F", "F", "", "", address(0), address(0), c, 200);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            assertEq(pad.mint(t, 200, 200), 200);
+            assertEq(pad.baselineOf(t, m), 200 * TPS);
+        }
+        (, uint256 sold, bool launched,,, address pair) = _sale(t);
+        assertEq(sold, 10_000);
+        assertTrue(launched, "50 x 1% fills the sale");
+        assertTrue(pair != address(0));
+        assertEq(wbnb.balanceOf(address(pad)), 0, "the whole raise went to the pair");
+
+        // the 90% line: down to exactly 90% keeps the share, below it is out for good
+        address m0 = _minter(0);
+        _sell(t, m0, (200 * TPS) / 10);
+        assertFalse(handler.isOut(t, m0));
+        assertEq(vault.shares(t, m0), (200 * TPS * 9) / 10);
+        _sell(t, m0, 1 ether);
+        assertTrue(handler.isOut(t, m0));
+        assertEq(vault.shares(t, m0), 0);
+    }
+
+    function _cfg1pct() internal pure returns (IGangLaunchpad.MintConfig memory c) {
+        c = IGangLaunchpad.MintConfig({
+            raiseBnb: 15 ether, capBps: 100, holdBps: 9_000, mintFeeBps: 100, exitFeeBps: 100
+        });
+    }
+
+    /// @notice At the 1% cap the last fill is cut to the shares left and only those are charged.
+    function test_launchParams_lastFillTruncatedAtCap200() public {
+        vm.prank(dev);
+        address t = pad.create("T", "T", "", "", address(0), address(0), _cfg1pct(), 150);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            pad.mint(t, 200, 200);
+        }
+        (, uint256 sold,,,,) = _sale(t);
+        assertEq(sold, 9_950);
+        address last = _minter(49);
+        (uint256 acc, uint256 cost, uint256 fee) = pad.previewMint(t, last, 200);
+        assertEq(acc, 50);
+        vm.prank(last);
+        vm.expectRevert(IGangLaunchpad.Slippage.selector);
+        pad.mint(t, 200, 200);
+        uint256 before = wbnb.balanceOf(last);
+        vm.prank(last);
+        assertEq(pad.mint(t, 200, 50), 50);
+        assertEq(before - wbnb.balanceOf(last), cost + fee, "charged for 50 only");
+        (,, bool launched,,,) = _sale(t);
+        assertTrue(launched);
+    }
+
+    /// @notice At cap 200 a full withdraw-and-remint by one wallet still does not restart the stale clock.
+    function test_launchParams_staleNotRestartedByRemint200() public {
+        vm.prank(dev);
+        address t = pad.create("S", "S", "", "", address(0), address(0), _cfg1pct(), 1);
+        address a = _minter(0);
+        vm.prank(a);
+        pad.mint(t, 200, 200); // sold 201 >= 1 + 10: restart, mark 201
+        vm.warp(block.timestamp + 7 days);
+        assertEq(pad.exitFeeBpsOf(t), 0);
+        vm.prank(a);
+        pad.withdraw(t, 200, 0);
+        vm.prank(a);
+        pad.mint(t, 200, 200); // back to 201: not >= 211
+        assertEq(pad.exitFeeBpsOf(t), 0, "no restart");
+        address b = _minter(1);
+        vm.prank(b);
+        pad.mint(t, 10, 10); // 211: real progress restarts
+        assertEq(pad.exitFeeBpsOf(t), 100);
+    }
+
+    /// @notice The handler's eligibleShare matches the vault share on both sides of the 90% line.
+    function test_launchParams_eligibleShareAt90() public {
+        vm.prank(dev);
+        address t = pad.create("E", "E", "", "", address(0), address(0), _cfg1pct(), 200);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            pad.mint(t, 200, 200);
+        }
+        address m0 = _minter(0);
+        vm.prank(m0);
+        IERC20(t).transfer(stranger, 1_000_000 ether); // exactly 10% of 10M
+        assertEq(handler.eligibleShare(t, m0), 9_000_000 ether);
+        assertEq(vault.shares(t, m0), 9_000_000 ether);
+        vm.prank(m0);
+        IERC20(t).transfer(stranger, 1);
+        assertEq(handler.eligibleShare(t, m0), 0);
+        assertTrue(handler.isOut(t, m0));
+    }
+
+    /// @notice A 1-share minter at the 60% line holds 30,000 tokens: still above the vault floor, so it earns.
+    function test_launchParams_oneShareAtSixtyPercentStillEarns() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.holdBps = 6_000;
+        vm.prank(dev);
+        address t = pad.create("S", "S", "", "", address(0), address(0), c, 1);
+        _fill(t);
+        _sell(t, dev, (TPS * 40) / 100);
+        assertEq(IERC20(t).balanceOf(dev), 30_000 ether);
+        assertFalse(handler.isOut(t, dev));
+        assertEq(vault.shares(t, dev), 30_000 ether, "30,000 > 10,000 floor");
+        vm.prank(dev);
+        IERC20(t).transfer(stranger, 1); // one wei under the line
+        assertTrue(handler.isOut(t, dev));
+        assertEq(vault.shares(t, dev), 0);
     }
 
     function _expectBadConfig(IGangLaunchpad.MintConfig memory c, uint256 devShares, string memory reason) internal {

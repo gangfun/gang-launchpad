@@ -111,7 +111,7 @@ contract FairMintForkTest is Test {
     // ---------------------------------------------------------------- helpers
     function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
         return
-            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _minter(uint256 i) internal pure returns (address) {

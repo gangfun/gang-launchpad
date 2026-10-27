@@ -172,7 +172,7 @@ contract SharedInfraTest is GangRouterTest {
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
         v3.create("New", "NEW", "", "", address(0), address(0), _tax(5000));
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
@@ -206,7 +206,7 @@ contract SharedInfraTest is GangRouterTest {
         vm.prank(owner);
         v3Vault.setMinimumShareBalance(address(v3), 100_000_000 ether);
         IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 200
+            raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 200
         });
         vm.prank(agent);
         vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);

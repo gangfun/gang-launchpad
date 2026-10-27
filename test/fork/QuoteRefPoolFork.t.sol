@@ -138,7 +138,7 @@ contract QuoteRefPoolForkTest is Test {
 
     function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
         return
-            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     /// @dev NVDAB is not in QuoteRegistry: priced from the pool, the same number LaunchpadV2 locks.

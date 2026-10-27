@@ -83,6 +83,10 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
             address refPair
         );
     function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason);
+    function checkTaxConfigFor(address creator, TaxConfig calldata tax)
+        external
+        view
+        returns (bool ok, string memory reason);
     function walletRoom(address token, address buyer) external view returns (uint256);
     function gradAmtOf(address token) external view returns (uint256);
     function graduationRemaining(address token) external view returns (uint256);
@@ -159,4 +163,8 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
     function TOTAL_SHARES() external view returns (uint256);
     function TOKENS_PER_SHARE() external view returns (uint256);
     function MIN_SHARE_BALANCE() external view returns (uint256);
+    function MIN_CAP_BPS() external view returns (uint16);
+    function MAX_CAP_BPS() external view returns (uint16);
+    function MIN_HOLD_BPS() external view returns (uint16);
+    function MAX_HOLD_BPS() external view returns (uint16);
 }

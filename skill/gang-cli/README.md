@@ -54,12 +54,13 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … 
 gang upload-logo (--file ./avatar.png | --url <image URL>)   # → https://gang.fun/api/logos/<id>.png
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
 # 打新 (fair mint) and V3 share one pad (GangLaunchpad). --testnet = BSC testnet; mainnet needs GANG_PAD until the CLI ships the address
-gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+#   --cap 0.25–1% of supply per wallet (1% → at least 50 wallets), --hold 60–90% (the hold line)
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–3%, the platform's)
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair status --token <addr> --testnet                      # shares; after launch: reward on / out, sellable, to claim
 gang fair claim --token <addr> --testnet
-# LaunchpadV3 tax token (own buy / sell tax 1–5%, pool only, paid to a whitelisted recipient in the quote) — same pad as 打新
+# LaunchpadV3 tax token (own buy / sell tax 1–5%, pool only, paid to the creator itself or a whitelisted recipient, in the quote) — same pad as 打新
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee (no tax on the curve; the tax is pool-only)
 gang v3 sell --token <addr> (--amount <tokens> | --all) --testnet

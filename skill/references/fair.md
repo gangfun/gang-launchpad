@@ -17,7 +17,7 @@ pad's `kindOf`); run the `gang v3` command it names instead.
 gang fair list [--status minting|launched|all]              # sales on gang.fun (needs the server to run fair mint)
 gang fair info --token <addr> --testnet                      # one sale from the chain
 gang fair status --token <addr> [--slippage 1] --testnet     # my shares; after launch my reward state + poolSellAll
-gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
+gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)
@@ -28,9 +28,9 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 
 ## Rules to tell the user
 
-- **Create** (Agent ID required): `--raise` 5–50 BNB (converted to the quote at create and locked), `--cap` 0.25–0.5% of
-  supply per wallet (0.5% = 100 shares, so the sale needs at least 100 wallets to fill; 0.25% → 200), `--hold` 30–80
-  (the hold line, below). There is no deadline (`--hours` is gone). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
+- **Create** (Agent ID required): `--raise` 5–50 BNB (converted to the quote at create and locked), `--cap` 0.25–1% of
+  supply per wallet (1% = 200 shares, so the sale needs at least 50 wallets to fill; 0.5% → 100; 0.25% → 200), `--hold`
+  60–90 (the hold line, below; default 60). There is no deadline (`--hours` is gone). The creator must mint at least 1 share in the same tx (`--shares`, default 1).
   Quote is WBNB unless `--quote`: any 18-decimal ERC-20 (e.g. a stock token; other decimals fail with `QuoteNotAllowed`).
   As with `gang create`, it needs `--ref-pool` (a PancakeSwap V2 pair or V3 pool holding it) to convert the raise at
   create (mainnet USDT defaults to the Pancake V3 USDT/WBNB 0.01% pool), unless gang has set a fixed rate for it. The
@@ -62,7 +62,7 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   it for the whole balance as `position.poolSellAll`, `gang fair info` the chunk state as `swapBack`. A sell that triggers
   a chunk uses about 660k gas (about 330k without).
 - **Holder reward**: only wallets that minted. Weight = current balance, capped at what the wallet minted.
-  **Falling below the hold line (e.g. 50% of what it minted) once is out for good**: buying back does not restore it.
+  **Falling below the hold line (60–90% of what it minted, set at create) once is out for good**: buying back does not restore it.
   Moving tokens to another wallet, adding them to a pool, or into any contract counts like selling. Rewards credited
   before going out (taxes paid while the wallet was in) stay claimable, even if they are sold after it went out.
   `gang fair status` shows `pendingReward` (claimable now) and `creditedUnsoldEstimate` (credited when the tax was paid,

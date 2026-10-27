@@ -709,6 +709,8 @@ contract MergeGuardsTest is GangFixture {
 
         // new on purpose (merge plan §1.3 / §2.2 / §1.2)
         assertTrue(_hasMethod(P, "kindOf(address)"), "pad.kindOf");
+        // 2026-10-27 (AUDIT-BRIEF §22): the creator-aware preflight is an addition; checkTaxConfig keeps 0x68c9f7e0
+        _sel(P, "checkTaxConfigFor(address,(uint16,uint16,uint16,address))", 0x1020b11c);
         assertTrue(_hasMethod(H, "register(address,address,address,uint16,uint8)"), "handler.register(kind)");
         assertTrue(_hasMethod(T, "reclaimable()"), "token.reclaimable");
     }
@@ -773,14 +775,14 @@ contract MergeGuardsTest is GangFixture {
         assertEq(address(uint160(_word(ret, 3))), treasury);
 
         // ---- sales: 14 words
-        address tF = _createFair(alice, address(wbnb), _mintCfg(10 ether, 50, 5_000, 150, 120), 7);
+        address tF = _createFair(alice, address(wbnb), _mintCfg(10 ether, 50, 6_000, 150, 120), 7);
         (ok, ret) = address(pad).staticcall(abi.encodeWithSignature("sales(address)", tF));
         assertTrue(ok);
         assertEq(ret.length, 14 * 32, "sales: 14 words");
         assertEq(address(uint160(_word(ret, 0))), alice, "creator");
         assertEq(_word(ret, 1), block.timestamp, "progressAt");
         assertEq(_word(ret, 2), 100, "capShares (0.5% of supply / 50k)");
-        assertEq(_word(ret, 3), 5_000, "holdBps");
+        assertEq(_word(ret, 3), 6_000, "holdBps");
         assertEq(address(uint160(_word(ret, 4))), address(wbnb), "quote");
         assertEq(_word(ret, 5), 7, "sold");
         assertEq(_word(ret, 6), 0, "launched");
@@ -1166,7 +1168,7 @@ contract MergeGuardsTest is GangFixture {
         ss[0] = _createFair(alice, address(wbnb), 20);
         d = _checkPadBalance(address(wbnb), cs, ss, d);
         cs[1] = _createV3(bob, address(wbnb), _tax(0, 0, 0, address(0)));
-        ss[1] = _createFair(bob, address(wbnb), _mintCfg(5 ether, 25, 3_000, 300, 200), 10);
+        ss[1] = _createFair(bob, address(wbnb), _mintCfg(5 ether, 25, 6_000, 300, 200), 10);
         d = _checkPadBalance(address(wbnb), cs, ss, d);
 
         for (uint256 r = 0; r < 6; r++) {
@@ -1349,7 +1351,7 @@ contract MergeGuardsTest is GangFixture {
         pad.create("C", "C", "", "", address(wbnb), address(0), _tax(300, 300, 5000, treasury));
         vm.prank(alice);
         vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);
-        pad.create("F", "F", "", "", address(wbnb), address(0), _mintCfg(10 ether, 50, 5_000, 100, 100), 1);
+        pad.create("F", "F", "", "", address(wbnb), address(0), _mintCfg(10 ether, 50, 6_000, 100, 100), 1);
     }
 
     // ================================================================ the full round for the emitted-events check

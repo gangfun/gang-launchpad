@@ -90,6 +90,7 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 - pad：registry / vault / bucket / handler / tokenDeployer / WBNB / pairFactory 都是本次部署的；`migrator` 已设；Agent 准入开启且是真实 Agent ID；单地址上限开启；V3 factory、TWAP 窗口、USDT 中转池正确；路由已列入；两个门槛常量 `TAXED_MIN_SHARE == MIN_SHARE_BALANCE == 10,000 枚`。
 - 外部库：`graduationAmountOf(WBNB)` 走 `CurveLogic` 返回 15 BNB、`previewCreate(WBNB, 15 BNB)` 走 `FairLogic` 返回 15 BNB / 每份 0.0015，证明两个库都已部署并链接（库地址没有代码时 delegatecall 返回空，这两个调用会失败）；主网再走一遍 USDT：`graduationAmountOf(USDT, USDT_REF_POOL) > 0`、`previewCreate(USDT, USDT_REF_POOL, 5 BNB)` 不回滚，证明库里链接的 PoolCheck 可用。
 - 只有真 pad 才有的：`CURVE_SUPPLY() == 8 亿`、`MINT_SUPPLY() == 5 亿`、`checkTaxConfig` 对一个合法配置返回 `(true, "")`、对买税 6% 返回 `(false, 原因)`（旧的部署用 stub 过不了这几项；主网另核对 Agent ID 是 `0x60B9…022F`）。
+- 上线参数（审计说明 §22）：`MIN_CAP_BPS == 25`、`MAX_CAP_BPS == 100`、`MIN_HOLD_BPS == 6000`、`MAX_HOLD_BPS == 9000`；`checkTaxConfigFor(x, 买卖税各 3%、分红 0、接收地址 = x)` 返回 `(true, "")`，x 是一个没人列入白名单的地址（证明发币人自己当接收地址这条规则在线上合约里）。报 `WiringCheck("pad fair bounds")` / `WiringCheck("pad.checkTaxConfigFor")` 说明部署的不是本分支的代码。
 - 处理合约：`launchpad == pad`、vault / bucket 正确、keeper 正确且 `keeperSet`、换币路由是 Router02 且没有待生效的提议、接收地址已列入（设了 `RECIPIENT` 时）。
 - 分红金库：pad 在白名单、门槛 10k、operator 双向绑定、排除了自己 / migrator / bucket / pad / handler。
 - 手续费池：operator 是 pad 和 handler、keeper 正确且 `keeperSet`、金库和回购合约等于 `FEE_VAULT` / `BURNER`（不填时等于 V2 手续费池的；主网必须有回购合约）。
@@ -265,7 +266,8 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - 测试网第 8 套部署后，同一个文件里填 `TESTNET_SET8.pad` / `TESTNET_SET8.router`；没填时测试网仍用第 7 套。
 - `gang v3 info` 拿到打新币（或 `gang fair info` 拿到 V3 币）时，CLI 按内盘的 `kindOf` 提示改用另一个命令。
 - 更新文档里「只在测试网」的说法，升版本号，然后发布。
-- 打新的参数范围（合约强制，CLI 同样校验）：募集 5–50 BNB 等值、单地址上限 0.25%–0.5%、出局线 30%–80%、打新费 1%–3%、撤出费 1%–2%；没有截止时间。卖回是 `withdraw(token, shares, minPayout)`，CLI 用 `previewWithdraw` 减 0.1% 作 `minPayout`。
+- 打新的参数范围（合约强制，CLI 同样校验）：募集 5–50 BNB 等值、单地址上限 0.25%–1%（1% 时至少 50 个地址打满）、出局线 60%–90%（CLI 默认 60%）、打新费 1%–3%、撤出费 1%–2%；没有截止时间。卖回是 `withdraw(token, shares, minPayout)`，CLI 用 `previewWithdraw` 减 0.1% 作 `minPayout`。
+- V3 接收地址可以是发币人自己（不需要进白名单）或白名单里的合作方；CLI 用 `checkTaxConfigFor(发币钱包, tax)` 预检查（内盘没有这个函数时退回 `checkTaxConfig`）。服务端 / 网站做预检查时也要用带 creator 的版本，否则发币人自己当接收地址会被误报 `recipient not listed`。
 - 领取：`gang v3 claim` / `gang fair claim`；`gang v3 status` / `gang fair status` 显示「可领」和「已按交税时记账、还没卖出」的部分（按现价估算并标明）。
 - **CLI 发布的那一刻就是对公众开放创建的那一刻**（网站上的打新和税收币页面只能查看，发币和打新要通过 CLI）。如果要分阶段放开，前一两周先不发布 CLI，只让合作方和内部用 `GANG_*_PAD` 环境变量发币。合约本身挡不住别人直接调用，所以这只能降低早期的资金规模，不是硬限制。
 
