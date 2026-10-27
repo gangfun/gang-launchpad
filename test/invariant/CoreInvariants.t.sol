@@ -212,15 +212,16 @@ contract CoreHandler is GangFixture {
         bool native = q == address(wbnb) && path % 3 == 1;
         uint256 sinks0 = _sinks(q);
         uint256 fee0 = bucket.accruedQuote(q);
-        // the BNB path is paid from this handler's balance (prank sets only msg.sender); the refund goes to `who`
-        uint256 bal0 = native ? who.balance : IERC20(q).balanceOf(who);
+        // the BNB path: the value may come from this handler or from the pranked `who` (depends on the forge version);
+        // the refund goes to `who`, so count both balances
+        uint256 bal0 = native ? who.balance + address(this).balance : IERC20(q).balanceOf(who);
         vm.prank(who);
         uint256 paid;
         if (path % 3 == 0) {
             try pad.buy(t, amount, 0) {} catch {}
         } else if (native) {
             try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {
-                paid = amount - (who.balance - bal0);
+                paid = bal0 - (who.balance + address(this).balance);
             } catch {}
         } else {
             try router.v3Buy(t, amount, 0, block.timestamp) {} catch {}
@@ -231,8 +232,9 @@ contract CoreHandler is GangFixture {
     }
 
     function _sinks(address q) internal view returns (uint256) {
-        return IERC20(q).balanceOf(treasury) + IERC20(q).balanceOf(address(handler))
-            + IERC20(q).balanceOf(address(divVault));
+        return
+            IERC20(q).balanceOf(treasury) + IERC20(q).balanceOf(address(handler))
+                + IERC20(q).balanceOf(address(divVault));
     }
 
     /// @dev `gross` = what the buyer paid, or the curve's payout on a sell (to the seller + fee); 0 = no trade.

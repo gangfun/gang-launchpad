@@ -26,7 +26,7 @@ contract MergeGuardsTest is GangFixture {
         string canonical;
         string[] types;
         string[] names;
-        bool[] indexed;
+        bool[] isIdx;
         uint256 nIndexed;
     }
 
@@ -223,27 +223,36 @@ contract MergeGuardsTest is GangFixture {
         s = new string[](23);
         s[0] = "event AgentGateUpdated(bool enabled, address registry)"; // FairMintPad
         s[1] = "event BridgePoolSet(address indexed asset, address indexed pool)"; // FairMintPad
-        s[2] = "event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)"; // LaunchpadV3
-        s[3] = "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)"; // LaunchpadV3
-        s[4] = "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)"; // FairMintPad
+        s[2] =
+            "event Buy(address indexed token, address indexed buyer, uint256 quoteIn, uint256 protocolFee, uint256 tax, uint256 tokensOut, uint256 realQuote)"; // LaunchpadV3
+        s[3] =
+            "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)"; // LaunchpadV3
+        s[4] =
+            "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPool, uint256 raiseBnb, uint256 sharePrice, uint256 capShares, uint256 holdBps, uint256 mintFeeBps, uint256 exitFeeBps)"; // FairMintPad
         s[5] = "event FeeOwed(address indexed quote, uint256 amount)"; // FairMintPad
         s[6] = "event FeesFlushed(address indexed quote, uint256 amount)"; // FairMintPad
-        s[7] = "event Graduated(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)"; // LaunchpadV3
-        s[8] = "event Launched(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)"; // FairMintPad
+        s[7] =
+            "event Graduated(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)"; // LaunchpadV3
+        s[8] =
+            "event Launched(address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount)"; // FairMintPad
         s[9] = "event MigratorSet(address indexed migrator)"; // FairMintPad
-        s[10] = "event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)"; // FairMintPad
+        s[10] =
+            "event Minted(address indexed token, address indexed user, uint256 shares, uint256 cost, uint256 fee, uint256 userShares, uint256 sold)"; // FairMintPad
         s[11] = "event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)"; // FairMintPad
         s[12] = "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)"; // FairMintPad
         s[13] = "event PairFactorySet(address indexed factory)"; // LaunchpadV3
         s[14] = "event RouterSet(address indexed router, bool enabled)"; // FairMintPad
-        s[15] = "event Sell(address indexed token, address indexed seller, uint256 tokensIn, uint256 protocolFee, uint256 tax, uint256 quoteOut, uint256 realQuote)"; // LaunchpadV3
+        s[15] =
+            "event Sell(address indexed token, address indexed seller, uint256 tokensIn, uint256 protocolFee, uint256 tax, uint256 quoteOut, uint256 realQuote)"; // LaunchpadV3
         s[16] = "event ShareWriteFailed(address indexed token, address indexed user, uint256 share)"; // FairMintPad
-        s[17] = "event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)"; // LaunchpadV3
+        s[17] =
+            "event TaxConfigured(address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient)"; // LaunchpadV3
         s[18] = "event TwapWindowUpdated(uint32 window)"; // FairMintPad
         s[19] = "event V3FactorySet(address indexed factory)"; // FairMintPad
         s[20] = "event VirtualQuoteLocked(address indexed token, uint256 virtualQuote)"; // LaunchpadV3
         s[21] = "event WalletCapUpdated(bool enabled)"; // LaunchpadV3
-        s[22] = "event Withdrawn(address indexed token, address indexed user, uint256 shares, uint256 payout, uint256 fee, uint256 userShares, uint256 sold)"; // FairMintPad
+        s[22] =
+            "event Withdrawn(address indexed token, address indexed user, uint256 shares, uint256 payout, uint256 fee, uint256 userShares, uint256 sold)"; // FairMintPad
     }
 
     // HANDLER: TaxHandlerV3+HolderRewardHandler at origin/main, minus ['distribute(address,uint256,uint256,uint8)', 'notifyTax(address,address,address,uint256)', 'pad()', 'previewSplit(address,uint256,uint256)', 'register(address,address,address,uint16)', 'setPad(address)']
@@ -283,7 +292,7 @@ contract MergeGuardsTest is GangFixture {
         s[31] = "launchpad()";
         s[32] = "list(address,string)";
         s[33] = "maxChunk(address)";
-        s[34] = "notifyTax(address,address,address,uint256,uint16)";
+        s[34] = "notifyTax(address,address,address,uint256,uint256)"; // origin/main: rateBps uint16 (widened on purpose)
         s[35] = "owedOf(address)";
         s[36] = "owedPlatformOf(address)";
         s[37] = "owedTotalOf(address)";
@@ -325,17 +334,23 @@ contract MergeGuardsTest is GangFixture {
         s[8] = "event KeeperSet(address indexed keeper)"; // HolderRewardHandler
         s[9] = "event LaunchpadSet(address indexed launchpad)"; // TaxHandlerV3
         s[10] = "event Listed(address indexed recipient, string label)"; // TaxHandlerV3
-        s[11] = "event OuterTaxProcessed(address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 platformQuote)"; // TaxHandlerV3
-        s[12] = "event OuterTaxProcessed(address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 toHolders, uint256 toPlatform)"; // HolderRewardHandler
+        s[11] =
+            "event OuterTaxProcessed(address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 platformQuote)"; // TaxHandlerV3
+        s[12] =
+            "event OuterTaxProcessed(address indexed token, address indexed quote, uint256 taxTokens, uint256 quoteOut, uint256 toHolders, uint256 toPlatform)"; // HolderRewardHandler
         s[13] = "event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)"; // HolderRewardHandler
         s[14] = "event OwnershipTransferred(address indexed previousOwner, address indexed newOwner)"; // HolderRewardHandler
         s[15] = "event PlatformFlushed(address indexed quote, uint256 amount)"; // HolderRewardHandler
         s[16] = "event PlatformOwed(address indexed quote, uint256 amount)"; // HolderRewardHandler
-        s[17] = "event RouteRegistered(address indexed token, address quote, address indexed recipient, uint16 dividendBps)"; // TaxHandlerV3
+        s[17] =
+            "event RouteRegistered(address indexed token, address quote, address indexed recipient, uint16 dividendBps)"; // TaxHandlerV3
         s[18] = "event ShareWriteFailed(address indexed token, address indexed user, uint256 share)"; // HolderRewardHandler
-        s[19] = "event TaxAccrued(address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued)"; // HolderRewardHandler
-        s[20] = "event TaxChunkSold(address indexed token, uint256 taxTokens, uint256 quoteOut, uint256 holderUnits, bool swapBack)"; // HolderRewardHandler
-        s[21] = "event TaxDistributed(address indexed token, uint8 phase, uint256 amount, uint256 toPlatform, uint256 toDividend, uint256 toRecipient)"; // TaxHandlerV3
+        s[19] =
+            "event TaxAccrued(address indexed token, address indexed from, address indexed to, uint256 taxAmount, uint256 accrued)"; // HolderRewardHandler
+        s[20] =
+            "event TaxChunkSold(address indexed token, uint256 taxTokens, uint256 quoteOut, uint256 holderUnits, bool swapBack)"; // HolderRewardHandler
+        s[21] =
+            "event TaxDistributed(address indexed token, uint8 phase, uint256 amount, uint256 toPlatform, uint256 toDividend, uint256 toRecipient)"; // TaxHandlerV3
         s[22] = "event TaxOwed(address indexed token, address indexed recipient, address indexed quote, uint256 amount)"; // TaxHandlerV3
         s[23] = "event TaxPaid(address indexed token, address indexed recipient, address indexed quote, uint256 amount)"; // TaxHandlerV3
     }
@@ -397,7 +412,6 @@ contract MergeGuardsTest is GangFixture {
         s[11] = "event TokenRegistered(address indexed token, address indexed quote, address indexed launchpad)"; // SharedDividendVault
     }
 
-
     // ================================================================ parsing helpers
     /// @dev viem human-readable event ("event Name(type [indexed] name, ...)") → name, canonical signature, params.
     function _parse(string memory s) internal pure returns (Ev memory e) {
@@ -407,21 +421,21 @@ contract MergeGuardsTest is GangFixture {
         if (bytes(params).length == 0) {
             e.types = new string[](0);
             e.names = new string[](0);
-            e.indexed = new bool[](0);
+            e.isIdx = new bool[](0);
             e.canonical = string.concat(e.name, "()");
             return e;
         }
         string[] memory ps = vm.split(params, ",");
         e.types = new string[](ps.length);
         e.names = new string[](ps.length);
-        e.indexed = new bool[](ps.length);
+        e.isIdx = new bool[](ps.length);
         string memory canon = string.concat(e.name, "(");
         for (uint256 i = 0; i < ps.length; i++) {
             string[] memory w = vm.split(vm.trim(ps[i]), " ");
             e.types[i] = w[0];
             e.names[i] = w[w.length - 1];
-            e.indexed[i] = w.length == 3 && keccak256(bytes(w[1])) == keccak256("indexed");
-            if (e.indexed[i]) e.nIndexed++;
+            e.isIdx[i] = w.length == 3 && keccak256(bytes(w[1])) == keccak256("indexed");
+            if (e.isIdx[i]) e.nIndexed++;
             canon = string.concat(canon, i == 0 ? "" : ",", w[0]);
         }
         e.canonical = string.concat(canon, ")");
@@ -435,18 +449,28 @@ contract MergeGuardsTest is GangFixture {
         return vm.readFile(string.concat(vm.projectRoot(), rel));
     }
 
-    /// @dev True when the artifact's ABI has this event with the same parameter names, types and indexing, in order
-    ///      (any one of the overloads of that name).
-    function _abiHasEvent(string memory json, Ev memory e) internal pure returns (bool) {
-        string[] memory occ = vm.split(json, string.concat('{"type":"event","name":"', e.name, '","inputs":['));
-        for (uint256 k = 1; k < occ.length; k++) {
-            string memory body = vm.split(occ[k], '"anonymous"')[0];
-            string[] memory pieces = vm.split(body, '{"name":"');
+    /// @dev The ABI's event entries, each cut to `Name","inputs":[...]` (split once per artifact: the JSON is large).
+    function _eventEntries(string memory json) internal pure returns (string[] memory es) {
+        string memory abiPart = vm.split(json, '"bytecode":')[0];
+        string[] memory raw = vm.split(abiPart, '{"type":"event","name":"');
+        es = new string[](raw.length - 1);
+        for (uint256 k = 1; k < raw.length; k++) {
+            es[k - 1] = vm.split(raw[k], '"anonymous"')[0];
+        }
+    }
+
+    /// @dev True when the ABI has this event with the same parameter names, types and indexing, in order (any one of
+    ///      the overloads of that name).
+    function _abiHasEvent(string[] memory es, Ev memory e) internal pure returns (bool) {
+        string memory head = string.concat(e.name, '","inputs":[');
+        for (uint256 k = 0; k < es.length; k++) {
+            if (vm.indexOf(es[k], head) != 0) continue;
+            string[] memory pieces = vm.split(es[k], '{"name":"');
             if (pieces.length - 1 != e.types.length) continue;
             bool ok = true;
             for (uint256 i = 0; i < e.types.length; i++) {
                 string memory want = string.concat(
-                    e.names[i], '","type":"', e.types[i], '","indexed":', e.indexed[i] ? "true" : "false", ","
+                    e.names[i], '","type":"', e.types[i], '","indexed":', e.isIdx[i] ? "true" : "false", ","
                 );
                 if (vm.indexOf(pieces[i + 1], want) != 0) {
                     ok = false;
@@ -478,10 +502,10 @@ contract MergeGuardsTest is GangFixture {
         );
     }
 
-    function _checkEvents(string memory json, string[] memory list, string memory who) internal pure {
+    function _checkEvents(string[] memory es, string[] memory list, string memory who) internal pure {
         for (uint256 i = 0; i < list.length; i++) {
             Ev memory e = _parse(list[i]);
-            assertTrue(_abiHasEvent(json, e), string.concat(who, " ABI lacks / changed: ", list[i]));
+            assertTrue(_abiHasEvent(es, e), string.concat(who, " ABI lacks / changed: ", list[i]));
         }
     }
 
@@ -502,10 +526,10 @@ contract MergeGuardsTest is GangFixture {
     ///         contracts had: the merged contracts' ABIs must carry each one unchanged. (topic0 = keccak of the
     ///         canonical signature, which the ABI entry fixes; the names matter because viem decodes args by name.)
     function test_merge_eventTopics() public view {
-        string memory padJ = _art(PAD_ART);
-        string memory hJ = _art(HANDLER_ART);
-        string memory tJ = _art(TOKEN_ART);
-        string memory vJ = _art(VAULT_ART);
+        string[] memory padJ = _eventEntries(_art(PAD_ART));
+        string[] memory hJ = _eventEntries(_art(HANDLER_ART));
+        string[] memory tJ = _eventEntries(_art(TOKEN_ART));
+        string[] memory vJ = _eventEntries(_art(VAULT_ART));
 
         _checkEvents(padJ, _downstreamPadEvents(), "pad");
         _checkEvents(hJ, _downstreamHandlerEvents(), "handler");
@@ -518,7 +542,10 @@ contract MergeGuardsTest is GangFixture {
         _checkEvents(vJ, _oldVAULTEvents(), "vault (origin/main)");
 
         // the overloads keep their old topic0 (pinned, from origin/main logs)
-        assertEq(_topic0(_parse(_downstreamPadEvents()[0])), keccak256("Created(address,address,string,string,string,address,address,uint256)"));
+        assertEq(
+            _topic0(_parse(_downstreamPadEvents()[0])),
+            keccak256("Created(address,address,string,string,string,address,address,uint256)")
+        );
         assertEq(
             _topic0(_parse(_downstreamPadEvents()[6])),
             keccak256(
@@ -688,7 +715,9 @@ contract MergeGuardsTest is GangFixture {
         string memory T = _methods(_art(TOKEN_ART));
         // handler: 打新's 4-arg notifyTax / setPad / pad, the V3 4-arg register, the curve-tax path (§19)
         assertFalse(_hasMethod(H, "notifyTax(address,address,address,uint256)"), "4-arg notifyTax");
-        assertFalse(_hasMethod(H, "notifyTax(address,address,address,uint256,uint16)"), "uint16-rate notifyTax (old V3)");
+        assertFalse(
+            _hasMethod(H, "notifyTax(address,address,address,uint256,uint16)"), "uint16-rate notifyTax (old V3)"
+        );
         assertFalse(_hasMethod(H, "setPad(address)"), "setPad");
         assertFalse(_hasMethod(H, "pad()"), "pad()");
         assertFalse(_hasMethod(H, "register(address,address,address,uint16)"), "4-arg register");
@@ -860,8 +889,9 @@ contract MergeGuardsTest is GangFixture {
         assertEq(base, 100 * TOKENS_PER_SHARE);
 
         // alice receives more than her baseline: capped at it (the curve rule would give her the balance)
+        uint256 half = IERC20(tF).balanceOf(bob) / 2;
         vm.prank(bob);
-        IERC20(tF).transfer(alice, IERC20(tF).balanceOf(bob) / 2);
+        IERC20(tF).transfer(alice, half);
         assertGt(IERC20(tF).balanceOf(alice), base);
         assertEq(divVault.shares(tF, alice), base, "fair: capped at the baseline");
 
@@ -912,9 +942,10 @@ contract MergeGuardsTest is GangFixture {
         vm.expectRevert(GangTaxHandler.UnknownToken.selector);
         rogue.transfer(rp, 1 ether); // a taxed sell: the handler refuses the unregistered token
         // a token can only notify for itself
+        address fPair = _salePair(tF);
         vm.prank(tV);
         vm.expectRevert();
-        handler.notifyTax(tF, bob, _salePair(tF), 1 ether, 100);
+        handler.notifyTax(tF, bob, fPair, 1 ether, 100);
 
         // per sell: holders' units credited (vault DividendUnitsAccrued) vs the tax taken (handler TaxAccrued)
         uint256 platF0 = handler.accruedPlatformTax(tF);
@@ -1076,8 +1107,9 @@ contract MergeGuardsTest is GangFixture {
         uint256 out = _poolBuy(tU, address(wbnb), pair, bob, 1 ether);
         assertEq(IERC20(tU).balanceOf(bob), out, "untaxed pool buy: no tax");
         _poolSell(tU, pair, bob, out / 2);
+        uint256 rest = IERC20(tU).balanceOf(bob);
         vm.prank(bob);
-        IERC20(tU).transfer(alice, IERC20(tU).balanceOf(bob));
+        IERC20(tU).transfer(alice, rest);
         assertEq(IERC20(tU).balanceOf(address(handler)), 0);
     }
 
@@ -1194,8 +1226,12 @@ contract MergeGuardsTest is GangFixture {
             (bool ok,) = curveLib.call(abi.encodePacked(cSel[i], junk));
             assertFalse(ok, "CurveLogic callable directly");
         }
-        bytes4[4] memory fSel =
-            [FairLogic.create.selector, FairLogic.mint.selector, FairLogic.withdraw.selector, FairLogic.flushFees.selector];
+        bytes4[4] memory fSel = [
+            FairLogic.create.selector,
+            FairLogic.mint.selector,
+            FairLogic.withdraw.selector,
+            FairLogic.flushFees.selector
+        ];
         for (uint256 i = 0; i < fSel.length; i++) {
             (bool ok,) = fairLib.call(abi.encodePacked(fSel[i], junk));
             assertFalse(ok, "FairLogic callable directly");
@@ -1223,8 +1259,17 @@ contract MergeGuardsTest is GangFixture {
             tU,
             tF
         ];
-        string[9] memory n =
-            ["GangLaunchpad", "GangTaxHandler", "CurveLogic", "FairLogic", "GangRouter", "TokenDeployer", "GangToken V3 taxed", "GangToken V3 untaxed", "GangToken fair"];
+        string[9] memory n = [
+            "GangLaunchpad",
+            "GangTaxHandler",
+            "CurveLogic",
+            "FairLogic",
+            "GangRouter",
+            "TokenDeployer",
+            "GangToken V3 taxed",
+            "GangToken V3 untaxed",
+            "GangToken fair"
+        ];
         for (uint256 i = 0; i < a.length; i++) {
             emit log_named_uint(n[i], a[i].code.length);
             assertLt(a[i].code.length, SIZE_LIMIT, n[i]);
@@ -1320,7 +1365,9 @@ contract MergeGuardsTest is GangFixture {
         address[3] memory ts = [tV, tF, tB];
         for (uint256 i = 0; i < 3; i++) {
             uint256 c = handler.maxChunk(ts[i]);
-            if (c > 0) try handler.process(ts[i], c, 1) {} catch {}
+            if (c > 0) {
+                try handler.process(ts[i], c, 1) {} catch {}
+            }
         }
         blq.setBlocked(treasury, false);
         if (handler.owedOf(tB) > 0) handler.release(tB);
