@@ -196,9 +196,7 @@ contract GangRouterTest is Test {
     /// @dev The pad sees the trader (dividend weight, cap and gate are the trader's), never the router.
     function test_v3_padSeesTheTrader() public {
         address token = _v3Token(address(0));
-        vm.expectCall(
-            address(pad), abi.encodeCall(IGangPadEntry.buyFor, (agent2, token, 0.5 ether, 0)), uint64(1)
-        );
+        vm.expectCall(address(pad), abi.encodeCall(IGangPadEntry.buyFor, (agent2, token, 0.5 ether, 0)), uint64(1));
         vm.prank(agent2);
         router.v3BuyBNB{value: 0.5 ether}(token, 0, block.timestamp);
         assertGt(IERC20(token).balanceOf(agent2), 0, "trader holds");

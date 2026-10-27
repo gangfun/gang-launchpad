@@ -5,6 +5,7 @@ import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangTestnetRefs as T} from "../config/GangDeployRefs.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
+import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {GangRouter} from "../src/router/GangRouter.sol";
 
 interface IWBNBDeposit {
@@ -38,7 +39,7 @@ contract RouterTestnetSmoke is Script {
             "",
             address(0),
             address(0),
-            IGangPad.TaxConfig({buyTaxBps: 200, sellTaxBps: 200, dividendBps: 0, recipient: treasury})
+            IGangLaunchpad.TaxConfig({buyTaxBps: 200, sellTaxBps: 200, dividendBps: 0, recipient: treasury})
         );
         uint256 out = router.v3BuyBNB{value: 0.002 ether}(v3Token, 1, block.timestamp + 1 days);
 
@@ -52,7 +53,7 @@ contract RouterTestnetSmoke is Script {
             "",
             address(0),
             address(0),
-            IGangPad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
+            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
             1
         );
         uint256 accepted = router.fairMintBNB{value: 0.002 ether}(sale, 2, 2, block.timestamp + 1 days);

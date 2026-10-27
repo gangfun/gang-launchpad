@@ -113,7 +113,7 @@ contract DeployGang is Script {
     function _cfg(address deployer) internal view returns (Cfg memory c) {
         c.mainnet = block.chainid == 56;
         if (!c.mainnet && block.chainid != 97) revert WrongChain(block.chainid);
-        if (c.mainnet && _broadcasting() && !vm.envOr("GANG_MAINNET_OK", false)) revert MainnetNotAllowed();
+        _mainnetGate(c.mainnet, _broadcasting());
         c.deployer = deployer;
         c.owner = _owner(c.mainnet, deployer);
         c.keeper = _envAddr("KEEPER", c.mainnet ? M.KEEPER : deployer);
@@ -125,6 +125,11 @@ contract DeployGang is Script {
         c.burner = _burner(c.mainnet);
         c.feeVault = _feeVault(c.mainnet, deployer);
         c.label = vm.envOr("RECIPIENT_LABEL", string(c.mainnet ? "" : "testnet demo treasury"));
+    }
+
+    /// @dev No mainnet broadcast without GANG_MAINNET_OK=true (a dry run / fork simulation needs nothing).
+    function _mainnetGate(bool mainnet, bool broadcasting) internal view {
+        if (mainnet && broadcasting && !vm.envOr("GANG_MAINNET_OK", false)) revert MainnetNotAllowed();
     }
 
     /// @dev Mainnet: OWNER must be given; leaving every contract on the deploy key needs MAINNET_OWNER_IS_DEPLOYER=true
@@ -147,7 +152,9 @@ contract DeployGang is Script {
     /// @dev R5-5: FEE_VAULT if set (non-zero), else the V2 bucket's on mainnet, the deployer on testnet.
     function _feeVault(bool mainnet, address deployer) internal view returns (address feeVault) {
         feeVault = _envAddr("FEE_VAULT", address(0));
-        if (feeVault == address(0)) feeVault = mainnet ? V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).feeVault() : deployer;
+        if (feeVault == address(0)) {
+            feeVault = mainnet ? V2PlatformFeeBucket(M.V2_PLATFORM_BUCKET).feeVault() : deployer;
+        }
     }
 
     // ---------------------------------------------------------------- deploy
@@ -322,7 +329,9 @@ contract DeployGang is Script {
         if (h.dividendVault() != s.vault) revert WiringCheck("handler.dividendVault");
         if (h.platformBucket() != s.bucket) revert WiringCheck("handler.platformBucket");
         if (h.keeper() != c.keeper || !h.keeperSet()) revert WiringCheck("handler.keeper");
-        if (h.dexRouter() != c.dexRouter || h.pendingDexRouter() != address(0)) revert WiringCheck("handler.dexRouter");
+        if (h.dexRouter() != c.dexRouter || h.pendingDexRouter() != address(0)) {
+            revert WiringCheck("handler.dexRouter");
+        }
         if (s.recipient != address(0) && !h.isListed(s.recipient)) revert WiringCheck("recipient listed");
     }
 
@@ -330,7 +339,9 @@ contract DeployGang is Script {
         SharedDividendVault v = SharedDividendVault(s.vault);
         if (!v.launchpads(s.pad)) revert WiringCheck("vault launchpad");
         if (v.minimumShareBalanceOf(s.pad) != MIN_SHARE) revert WiringCheck("vault floor");
-        if (v.operatorFor(s.pad) != s.handler || v.operatorOf(s.handler) != s.pad) revert WiringCheck("vault operator");
+        if (v.operatorFor(s.pad) != s.handler || v.operatorOf(s.handler) != s.pad) {
+            revert WiringCheck("vault operator");
+        }
         if (!v.excluded(s.vault)) revert WiringCheck("vault excludes itself");
         if (!v.excluded(s.migrator)) revert WiringCheck("vault excludes migrator");
         if (!v.excluded(s.bucket)) revert WiringCheck("vault excludes bucket");
@@ -434,13 +445,12 @@ contract DeployGang is Script {
         if (s.recipient != address(0)) console.log("RECIPIENT", s.recipient);
         // GANG_PAD_BLOCK is the simulated block, at or before the mined one: a safe start block for indexer / keeper
         string memory pb = string.concat(vm.toString(s.pad), "@", vm.toString(s.padBlock));
-        console.log("--- server env (one pad for both tracks) ---");
+        console.log("--- server env (one pad for both tracks: indexer.env and keeper/.env) ---");
         console.log(string.concat("GANG_V3_PAD=", vm.toString(s.pad)));
         console.log(string.concat("GANG_FAIR_PAD=", vm.toString(s.pad)));
         console.log(string.concat("GANG_V3_START_BLOCK=", vm.toString(s.padBlock)));
         console.log(string.concat("GANG_FAIR_START_BLOCK=", vm.toString(s.padBlock)));
-        console.log(string.concat("V3_PADS=gang:", pb));
-        console.log(string.concat("FAIR_PADS=gang:", pb));
+        console.log(string.concat("PADS=gang:", pb, "   (keeper/.env; V3_PADS / FAIR_PADS stay empty)"));
         if (s.recipient == address(0)) {
             console.log("PENDING owner: handler.list(<partner vault>, <label>) before the partner creates taxed tokens");
         }

@@ -88,10 +88,7 @@ contract MockGangPad is IGangLaunchpad {
         return _buy(msg.sender, token, quoteIn, minTokensOut);
     }
 
-    function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
-        external
-        returns (uint256)
-    {
+    function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut) external returns (uint256) {
         if (!routers[msg.sender]) revert OnlyRouter();
         if (!agentGateEnabled) revert RouterNeedsGate();
         if (!isAgent(trader)) revert NotAgent();
