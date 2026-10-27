@@ -382,6 +382,7 @@ contract DeployGang is Script {
             revert WiringCheck("pad floor constants");
         }
         _checkRealPad(pad);
+        _checkOriginTrader(s);
     }
 
     /// @dev What only the real GangLaunchpad answers: a stand-in with the same setters and views (the old deploy-time
@@ -428,6 +429,34 @@ contract DeployGang is Script {
             pad.MIN_CAP_BPS() != 25 || pad.MAX_CAP_BPS() != 100 || pad.MIN_HOLD_BPS() != 6_000
                 || pad.MAX_HOLD_BPS() != 9_000
         ) revert WiringCheck("pad fair bounds");
+    }
+
+    /// @dev AUDIT-BRIEF §23: a pre-§23 pad or token deployer must not pass. TokenDeployer has no immutables, so its
+    ///      code is this build's exactly (it carries GangToken's creation code, hence `pullFor`). The pad has immutables
+    ///      and linked libraries, so its code is probed instead: its dispatcher must hold `sellFor` / `withdrawFor`
+    ///      (PUSH4 <selector>). A state-changing probe call can't run here (view; `nonReentrant` writes).
+    function _checkOriginTrader(Stack memory s) internal view {
+        if (s.tokenDeployer.codehash != keccak256(type(TokenDeployer).runtimeCode)) {
+            revert WiringCheck("tokenDeployer code");
+        }
+        bytes memory code = s.pad.code;
+        if (!_hasSelector(code, IGangPad.sellFor.selector) || !_hasSelector(code, IGangPad.withdrawFor.selector)) {
+            revert WiringCheck("pad sellFor / withdrawFor");
+        }
+    }
+
+    /// @dev True when `code` contains PUSH4 `sel` (0x63 followed by the 4 selector bytes), as a dispatcher does.
+    function _hasSelector(bytes memory code, bytes4 sel) internal pure returns (bool) {
+        uint256 want = (uint256(0x63) << 32) | uint256(uint32(sel));
+        uint256 n = code.length;
+        for (uint256 i = 0; i + 5 <= n; i++) {
+            uint256 word;
+            assembly ("memory-safe") {
+                word := shr(216, mload(add(add(code, 32), i)))
+            }
+            if (word == want) return true;
+        }
+        return false;
     }
 
     /// @dev Both external libraries are linked and live: a delegatecall into an address without code returns nothing,

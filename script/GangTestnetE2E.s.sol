@@ -28,10 +28,11 @@ interface IGangTokenPair {
     function pair() external view returns (address);
 }
 
-/// @dev A wallet aggregator's router, as small as it gets (AUDIT-BRIEF §23): listed on the pad for the E2E only, it
-///      buys for and sells for the wallet that sent the tx. The buy's cut refund goes from the pad to that wallet
-///      (WBNB); the sell pulls the wallet's tokens with the allowance it gave THIS contract and pays the proceeds here,
-///      unwrapped and passed on as BNB.
+/// @dev A wallet aggregator's router, as small as it gets (AUDIT-BRIEF §23): listed on the pad for the E2E only. It
+///      names ITS OWN msg.sender as `trader` (the pad then requires msg.sender == tx.origin) and never reads tx.origin
+///      itself; sell proceeds go only to that msg.sender. The buy's cut refund goes from the pad to the trader (WBNB);
+///      the sell pulls the trader's tokens with the allowance it gave THIS contract, unwraps the proceeds and pays them
+///      to msg.sender as BNB.
 contract E2EAggregator {
     IGangPad public immutable pad;
     address public immutable wbnb;
@@ -48,11 +49,11 @@ contract E2EAggregator {
     function buyBNB(address token, uint256 minOut) external payable returns (uint256 out) {
         IWBNB(wbnb).deposit{value: msg.value}();
         IERC20(wbnb).approve(address(pad), msg.value);
-        out = pad.buyFor(tx.origin, token, msg.value, minOut);
+        out = pad.buyFor(msg.sender, token, msg.value, minOut);
     }
 
     function sellForBNB(address token, uint256 amount, uint256 minOut) external returns (uint256 out) {
-        out = pad.sellFor(tx.origin, token, amount, minOut);
+        out = pad.sellFor(msg.sender, token, amount, minOut);
         IWBNB(wbnb).withdraw(out);
         (bool ok,) = msg.sender.call{value: out}("");
         require(ok, "BNB");
@@ -64,8 +65,8 @@ contract E2EAggregator {
 ///         A (test quote): curve buy + sell, 80 throwaway Agents fill the curve (graduation), then a pool buy + sell —
 ///           the sell sells one chunk of the accrued tax on its way in (swap-back) — and the keeper `process`es one more.
 ///         W (WBNB, optional): a router buy with native BNB (v3BuyBNB) and a direct curve sell; then (deployer = pad
-///           owner, not SKIP_AGG) an aggregator-like contract, listed for the step only, does buyFor(tx.origin) and
-///           sellFor(tx.origin) for the deployer (§23) and is delisted again.
+///           owner, not SKIP_AGG) an aggregator-like contract, listed for the step only, does buyFor / sellFor with
+///           trader = its msg.sender (the deployer, who is tx.origin; §23) and is delisted again.
 ///         B (blacklist quote): graduated the same way; with the treasury blocked, the pool sell's swap-back books the
 ///           treasury's part as owed (TaxOwed); the treasury is unblocked and `release` pushes it.
 ///         打新: a sale in the test quote, 100 throwaway Agents fill it (launch: pair + LP), then a pool buy, minter 0
@@ -305,7 +306,7 @@ contract GangTestnetE2E is Script {
         if (!vm.envOr("SKIP_AGG", false)) _aggregatorRound(w);
     }
 
-    /// @dev §23 on chain: a contract that is not GangRouter, listed, buys for and sells for the deployer (tx.origin).
+    /// @dev §23 on chain: a contract that is not GangRouter, listed, buys for and sells for its caller, the deployer.
     ///      Needs the deployer to own the pad (DeployGang's testnet default) for setRouter; skipped otherwise.
     function _aggregatorRound(address w) internal {
         if (Ownable(address(pad)).owner() != deployer) {

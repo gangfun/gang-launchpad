@@ -40,6 +40,47 @@ contract MockAggregator {
     }
 }
 
+/// @dev The integration pattern §23 asks for: `trader` is always this contract's own msg.sender (the pad then
+///      requires it to be tx.origin) and the proceeds go only to that msg.sender.
+contract SenderAggregator {
+    GangLaunchpad public immutable pad;
+
+    constructor(GangLaunchpad pad_) {
+        pad = pad_;
+    }
+
+    function sell(address token, uint256 tokensIn, address quote) external returns (uint256 out) {
+        out = pad.sellFor(msg.sender, token, tokensIn, 0);
+        IERC20(quote).transfer(msg.sender, out);
+    }
+}
+
+/// @dev The ANTI-pattern (§23.9 item 2 / 3): reads tx.origin itself and pays whoever called it.
+contract OriginReadingAggregator {
+    GangLaunchpad public immutable pad;
+
+    constructor(GangLaunchpad pad_) {
+        pad = pad_;
+    }
+
+    function sell(address token, uint256 tokensIn, address quote) external returns (uint256 out) {
+        out = pad.sellFor(tx.origin, token, tokensIn, 0);
+        IERC20(quote).transfer(msg.sender, out);
+    }
+}
+
+interface ISellEntry {
+    function sell(address token, uint256 tokensIn, address quote) external returns (uint256);
+}
+
+/// @dev A contract the victim is tricked into calling ("claim your airdrop"): it routes a sell of the victim's tokens
+///      through an aggregator the victim has a standing approval on, and keeps the proceeds.
+contract Phisher {
+    function claim(ISellEntry agg, address token, address quote) external returns (uint256) {
+        return agg.sell(token, IERC20(token).balanceOf(tx.origin), quote);
+    }
+}
+
 /// @notice AUDIT-BRIEF §23: buyFor / sellFor / mintFor / withdrawFor need a listed router AND trader == tx.origin;
 ///         sellFor / withdrawFor also spend the trader's token allowance to the router; buyFor's cut refund goes to the
 ///         trader. Gate and caps are the trader's, exactly as the direct entries.
@@ -393,6 +434,166 @@ contract OriginTraderTest is GangFixture {
         agg.withdrawFor(trader, t, 31, 0);
 
         assertEq(pad.positions(t, trader), 30, "untouched");
+    }
+
+    // ================================================================ wrong state / wrong kind
+    function test_sellFor_afterGraduation_alreadyGraduated() public {
+        address t = _v3(0);
+        uint256 held = _bought(t);
+        vm.prank(trader);
+        IERC20(t).approve(address(agg), type(uint256).max);
+        _graduate(t);
+        vm.prank(trader, trader);
+        vm.expectRevert(IGangLaunchpad.AlreadyGraduated.selector);
+        agg.sellFor(trader, t, held, 0);
+    }
+
+    function test_withdrawFor_afterLaunch_notMinting() public {
+        address t = _fair();
+        vm.prank(trader);
+        pad.mint(t, 10, 10);
+        vm.prank(trader);
+        IERC20(t).approve(address(agg), type(uint256).max);
+        _fill(t);
+        vm.prank(trader, trader);
+        vm.expectRevert(IGangLaunchpad.NotMinting.selector);
+        agg.withdrawFor(trader, t, 10, 0);
+    }
+
+    function test_wrongKind_unknownToken() public {
+        address v = _v3(0);
+        address f = _fair();
+        vm.prank(trader);
+        pad.mint(f, 10, 10);
+        _bought(v);
+        vm.startPrank(trader);
+        IERC20(v).approve(address(agg), type(uint256).max);
+        IERC20(f).approve(address(agg), type(uint256).max);
+        vm.stopPrank();
+
+        vm.prank(trader, trader);
+        vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
+        agg.sellFor(trader, f, TOKENS_PER_SHARE, 0);
+        vm.prank(trader, trader);
+        vm.expectRevert(IGangLaunchpad.UnknownToken.selector);
+        agg.withdrawFor(trader, v, 1, 0);
+    }
+
+    // ================================================================ gate off: origin + allowance still hold
+    function test_gateOff_sellFor_originAndAllowanceStillEnforced() public {
+        address t = _v3(0);
+        vm.prank(owner);
+        pad.setAgentGate(false, address(agents));
+        vm.prank(human);
+        uint256 held = pad.buy(t, 0.01 ether, 1);
+
+        vm.prank(human, human);
+        vm.expectRevert(abi.encodeWithSelector(IERC20Errors.ERC20InsufficientAllowance.selector, address(agg), 0, held));
+        agg.sellFor(human, t, held, 0);
+
+        vm.prank(human);
+        IERC20(t).approve(address(agg), held);
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker, attacker);
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        agg.sellFor(human, t, held, 0);
+        vm.prank(human, human);
+        vm.expectRevert(IGangLaunchpad.OnlyRouter.selector);
+        unlisted.sellFor(human, t, held, 0);
+
+        vm.prank(human, human);
+        assertGt(agg.sellFor(human, t, held, 0), 0, "works for the origin, gate off");
+        assertEq(IERC20(t).balanceOf(human), 0);
+    }
+
+    function test_gateOff_withdrawFor_originAndAllowanceStillEnforced() public {
+        vm.prank(owner);
+        pad.setAgentGate(false, address(agents));
+        address t = _fair(); // ungated sale (gate snapshot 0)
+        vm.prank(human);
+        pad.mint(t, 10, 10);
+
+        vm.prank(human, human);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IERC20Errors.ERC20InsufficientAllowance.selector, address(agg), 0, 10 * TOKENS_PER_SHARE
+            )
+        );
+        agg.withdrawFor(human, t, 10, 0);
+
+        vm.prank(human);
+        IERC20(t).approve(address(agg), type(uint256).max);
+        address attacker = makeAddr("attacker");
+        vm.prank(attacker, attacker);
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        agg.withdrawFor(human, t, 10, 0);
+
+        vm.prank(human, human);
+        assertGt(agg.withdrawFor(human, t, 10, 0), 0);
+        assertEq(pad.positions(t, human), 0);
+    }
+
+    // ================================================================ ERC-20 quote refund
+    function test_buyFor_erc20Quote_capRefundToTrader() public {
+        address t = _createV3(creator, address(quoteTok), _tax(200, 200, 0, treasury));
+        agg.approveQuote(address(quoteTok));
+        quoteTok.mintUnlimited(address(agg), 100 ether);
+        uint256 aggBefore = quoteTok.balanceOf(address(agg));
+        uint256 traderBefore = quoteTok.balanceOf(trader);
+
+        vm.prank(trader, trader);
+        uint256 out = agg.buyFor(trader, t, 5 ether, 1);
+
+        assertEq(out, pad.MAX_PER_WALLET(), "cut to the cap");
+        assertEq(quoteTok.balanceOf(address(agg)), aggBefore - 5 ether, "router delta = -quoteIn");
+        assertGt(quoteTok.balanceOf(trader) - traderBefore, 4 ether, "the cut came back to the trader in the quote");
+        assertEq(quoteTok.balanceOf(address(pad)), _curveRealQuote(t), "pad keeps only the curve's escrow");
+    }
+
+    // ================================================================ phishing (why the §23.9 checklist exists)
+    /// @dev An aggregator that reads tx.origin and pays msg.sender: a phishing contract the victim calls sells the
+    ///      victim's tokens through it (standing approval) and walks away with the proceeds. Listing such a contract
+    ///      is what §23.9 forbids.
+    function test_phishing_originReadingAggregator_isExploitable() public {
+        OriginReadingAggregator bad = new OriginReadingAggregator(pad);
+        vm.prank(owner);
+        pad.setRouter(address(bad), true);
+        address t = _v3(0);
+        uint256 held = _bought(t);
+        vm.prank(trader);
+        IERC20(t).approve(address(bad), type(uint256).max); // standing approval from an earlier, honest use
+
+        Phisher m = new Phisher();
+        vm.prank(trader, trader); // the victim's own tx: "claim airdrop"
+        uint256 stolen = m.claim(ISellEntry(address(bad)), t, address(wbnb));
+
+        assertEq(IERC20(t).balanceOf(trader), 0, "victim's tokens sold");
+        assertGt(stolen, 0);
+        assertEq(wbnb.balanceOf(address(m)), stolen, "proceeds with the phisher");
+    }
+
+    /// @dev The pattern §23 asks for (trader = msg.sender, proceeds → msg.sender) is not exploitable that way: through
+    ///      the phisher, trader = the phisher ≠ tx.origin.
+    function test_phishing_msgSenderAggregator_notExploitable() public {
+        SenderAggregator good = new SenderAggregator(pad);
+        vm.prank(owner);
+        pad.setRouter(address(good), true);
+        address t = _v3(0);
+        uint256 held = _bought(t);
+        vm.prank(trader);
+        IERC20(t).approve(address(good), type(uint256).max);
+
+        Phisher m = new Phisher();
+        vm.prank(trader, trader);
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        m.claim(ISellEntry(address(good)), t, address(wbnb));
+        assertEq(IERC20(t).balanceOf(trader), held, "untouched");
+
+        // the honest use still works: the victim calls the aggregator directly
+        uint256 before = wbnb.balanceOf(trader);
+        vm.prank(trader, trader);
+        uint256 out = good.sell(t, held, address(wbnb));
+        assertEq(wbnb.balanceOf(trader), before + out, "proceeds to the caller");
     }
 
     // ================================================================ GangToken.pullFor

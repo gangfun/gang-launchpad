@@ -23,6 +23,10 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
+interface IWBNBDeposit {
+    function deposit() external payable;
+}
+
 /// @dev Exposes DeployGang's config, self-check and mainnet gate to the tests.
 contract DeployGangHarness is DeployGang {
     function cfgFor(address deployer) external view returns (Cfg memory) {
@@ -447,7 +451,7 @@ contract DeployScriptsForkTest is Test {
         DeployGang.Stack memory s = _deploy();
         address buyer = address(0xB0B);
         vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSignature("balanceOf(address)"), abi.encode(uint256(1)));
-        vm.prank(buyer);
+        vm.prank(buyer, buyer);
         address t = IGangPad(s.pad)
             .create(
                 "R",
@@ -460,11 +464,75 @@ contract DeployScriptsForkTest is Test {
             );
         vm.deal(buyer, 10 ether);
         uint256 bal = buyer.balance;
-        vm.prank(buyer);
+        uint256 wbal = IERC20(M.WBNB).balanceOf(buyer);
+        vm.prank(buyer, buyer); // an EOA's own tx (§23: the pad only buys for tx.origin)
         uint256 out = GangRouter(payable(s.router)).v3BuyBNB{value: 5 ether}(t, 1, vm.getBlockTimestamp());
         assertEq(out, IGangPad(s.pad).MAX_PER_WALLET(), "capped");
-        assertLt(bal - buyer.balance, 5 ether, "refund unwrapped and paid through the proxy");
+        // §23: the cut goes from the pad straight to the buyer, in real WBNB; the router sends no BNB
+        assertEq(bal - buyer.balance, 5 ether, "all BNB in");
+        assertGt(IERC20(M.WBNB).balanceOf(buyer) - wbal, 4 ether, "the cut came back as WBNB");
         assertEq(s.router.balance + IERC20(M.WBNB).balanceOf(s.router), 0);
+
+        // the router's own BNB refund (fairMintBNB's unspent msg.value) still unwraps real WBNB through the proxy
+        vm.deal(buyer, 20 ether);
+        vm.startPrank(buyer, buyer);
+        IWBNBDeposit(M.WBNB).deposit{value: 1 ether}();
+        IERC20(M.WBNB).approve(s.pad, type(uint256).max);
+        address f = IGangPad(s.pad)
+            .create(
+                "F",
+                "F",
+                "",
+                "",
+                address(0),
+                address(0),
+                IGangLaunchpad.MintConfig({
+                    raiseBnb: 10 ether, capBps: 50, holdBps: 6_000, mintFeeBps: 100, exitFeeBps: 100
+                }),
+                1
+            );
+        bal = buyer.balance;
+        (, uint256 cost, uint256 fee) = IGangPad(s.pad).previewMint(f, buyer, 10);
+        GangRouter(payable(s.router)).fairMintBNB{value: 5 ether}(f, 10, 10, vm.getBlockTimestamp());
+        vm.stopPrank();
+        assertEq(bal - buyer.balance, cost + fee, "unspent BNB unwrapped and paid back through the proxy");
+        assertEq(s.router.balance + IERC20(M.WBNB).balanceOf(s.router), 0);
+    }
+
+    /// §23: a pre-§23 token deployer (tokens without `pullFor`) or pad (no sellFor / withdrawFor) fails the self-check,
+    /// in a fresh deploy and on a re-run alike (both end in `_check`).
+    function test_fork_deploy_checksOriginTraderCode() public {
+        if (!forked) {
+            vm.skip(true);
+            return;
+        }
+        _deploy();
+        h.check(st, cf); // as deployed
+
+        uint256 snap = vm.snapshotState();
+        bytes memory code = st.tokenDeployer.code;
+        code[code.length - 1] ^= 0x01; // any other build
+        vm.etch(st.tokenDeployer, code);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "tokenDeployer code"));
+        h.check(st, cf);
+        vm.revertToState(snap);
+
+        code = st.pad.code;
+        bytes4 sel = IGangPad.sellFor.selector;
+        uint256 hits;
+        for (uint256 i; i + 5 <= code.length; i++) {
+            if (
+                code[i] == 0x63 && code[i + 1] == sel[0] && code[i + 2] == sel[1] && code[i + 3] == sel[2]
+                    && code[i + 4] == sel[3]
+            ) {
+                code[i + 1] = 0xde; // the dispatcher no longer has sellFor: a pad without it
+                hits++;
+            }
+        }
+        assertGt(hits, 0, "found sellFor in the dispatcher");
+        vm.etch(st.pad, code);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad sellFor / withdrawFor"));
+        h.check(st, cf);
     }
 
     /// DeployGangRouterUpgradeable on an existing pad the deploy wallet owns: same shape as DeployGang's router,
