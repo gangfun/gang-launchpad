@@ -307,6 +307,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 | 打新卖回时分红合约拒写 | 出现 `ShareWriteFailed`（内盘或 handler 发出；按发出事件的合约过滤——任何人都能让 GangTaxHandler 发出这个事件；合并后两种币的 handler 事件来自同一个地址，再按币的 `kindOf` 分开） | 份额会在下次同步时纠正；发射后 keeper 对这些地址调 `syncShares` |
 | 改换币路由 | 需要时 | 多签 `proposeDexRouter(新路由)`，48 小时后 `acceptDexRouter()`；期间可 `cancelDexRouter()`；`address(0)` = 直接对池子卖 |
 | 停滞的 sale | 网站「停滞」标记（7 天新增不到 10 份） | 无需处理：卖回免撤出费，任何人仍可把它打满 |
+| **不要关 Agent 准入** | 任何时候（主网） | 多签**不要**调 `GangLaunchpad.setAgentGate(false, …)`。V3 和打新共用这一个开关：关闭期间新建的打新 sale 在创建时把「无准入」永久快照进 sale，之后再打开也改不回来；这些 sale 的 `mintFor`（网站经 GangRouter 用 BNB 打新）会一直回滚 `RouterNeedsGate`，只能直接 `mint`。关闭期间 V3 的 `buyFor`（经路由买）也会回滚 `RouterNeedsGate`（V3 按当下开关，重新打开后恢复）。要换 Agent ID 合约时用 `setAgentGate(true, 新地址)`，不要先关再开 |
 
 ---
 
