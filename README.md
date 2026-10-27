@@ -17,7 +17,7 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**Two pads are live on BSC mainnet.** **GangLaunchpad** (new, 2026-10-27) launches **V3 tax tokens** (`gang v3`) and **打新 fair mints** (`gang fair`) on one contract. **LaunchpadV2** (the older pad, still live) is what `gang create` uses. Soft / LaunchpadU / LaunchpadS are **not** create targets (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create, buy or sell on a curve, or mint. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
+**Every new token launches on GangLaunchpad** (BSC mainnet since 2026-10-27): bonding-curve tokens, untaxed or with their own tax (`gang create` = `gang v3 create`), and **打新 fair mints** (`gang fair`), on one contract. **LaunchpadV2** (the older pad) takes **no new tokens**; its existing tokens keep trading (`gang buy` / `gang sell`). Soft / LaunchpadU / LaunchpadS are **not** create targets either (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create, buy or sell on a curve, or mint. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
 
 ---
 
@@ -35,7 +35,7 @@
 
 Full list (router implementation, ProxyAdmin, migrator, deployer, QuoteRegistry, keeper) and the testnet set: [docs/MAINNET-GANG-2026-10-27.md](docs/MAINNET-GANG-2026-10-27.md). Rules: [docs/SPEC-GANG-MERGED-2026-10-27.md](docs/SPEC-GANG-MERGED-2026-10-27.md).
 
-- **V3 tax token**: bonding curve like V2 (Agent ID gate, 1% wallet cap, graduates at ≈15 BNB into PancakeSwap V2, LP burned). The curve charges only the **1% fee, no tax**. After graduation each pool buy / sell pays the token's own tax (**1–5%** each, fixed at create): the platform keeps **0.5% of the volume**, the rest goes to holders (`--dividend` %) and to the recipient (the creator itself or a whitelisted partner), paid in the quote token.
+- **V3 token** (untaxed unless `--buy-tax` / `--sell-tax` are given): bonding curve like V2 (Agent ID gate, 1% wallet cap, graduates at ≈15 BNB into PancakeSwap V2, LP burned). The curve charges only the **1% fee, no tax**. After graduation each pool buy / sell pays the token's own tax (**1–5%** each, fixed at create): the platform keeps **0.5% of the volume**, the rest goes to holders (`--dividend` %) and to the recipient (the creator itself or a whitelisted partner), paid in the quote token.
 - **打新 (fair mint)**: no curve. **50% of the supply is sold in 10,000 shares at one price**; the creator sets the raise (**5–50 BNB**), the per-wallet cap (**0.25–1%** of supply), the hold line (**60–90%**) and a 1–3% mint fee. No deadline, no refund: until it fills a minter can sell shares back at the mint price minus the exit fee. The mint that takes the last share **launches** it: the other 50% plus everything raised become the PancakeSwap V2 pool (opens at the mint price), LP burned. Then every pool buy / sell pays **1%**: half to minters who never fell below their hold line, half to the platform.
 - **Owner = the Safe multisig** above: it accepted ownership of the pad, handler, vault, fee bucket and the other core contracts on-chain; the router's ProxyAdmin belongs to the timelock. Platform income goes to the fee bucket: 80% GANG buyback and burn, 20% to the Safe.
 - **GangRouter** is how BNB curve buys / mints and all **PancakeSwap pool trades** (V3, 打新, and graduated V2 / Soft / U / S tokens) go. It is an upgradeable proxy whose upgrades wait **48 hours** in the public timelock, which only the Safe can schedule, execute or cancel; the CLI approves only each trade's exact amount.
@@ -72,7 +72,7 @@ Sign in: `baw auth signin`.
 gang preflight
 ```
 
-Expect `createPad` = LaunchpadV2, `isAgent: true`, empty `issues[]`.
+Expect `createPad` = GangLaunchpad (`0x15CFD2dc…4365`), `isAgent: true`, empty `issues[]`.
 
 ---
 
@@ -83,10 +83,12 @@ is preview → user confirms → `gang execute --request-id …`. A step such as
 first when needed: execute it, then run the same command again. Details: [skill/references/v3.md](skill/references/v3.md),
 [skill/references/fair.md](skill/references/fair.md).
 
-**V3 tax token** (`--recipient` = your own wallet or a whitelisted partner; rates and recipient are permanent):
+**V3 token** (`gang create` = `gang v3 create`). Untaxed unless `--buy-tax` / `--sell-tax` are given; with them,
+the tax goes to your own wallet unless `--recipient` names a whitelisted partner. Rates and recipient are permanent:
 
 ```bash
-gang v3 create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --recipient 0x<your wallet> --logo ./avatar.png
+gang create --name "My Token" --symbol MYT --logo ./avatar.png             # untaxed: no pool tax, no dividend, no recipient
+gang create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --logo ./avatar.png
 gang v3 buy  --token 0x… --amount 0.1      # curve: quote amount incl. the 1% fee; WBNB-quoted pays native BNB via GangRouter
 gang v3 info --token 0x…                   # tax setting, recipient, what is owed to it
 gang v3 claim --token 0x…                  # holder dividend, in the quote token
@@ -115,18 +117,18 @@ A pool sell first approves exactly that amount to the router; a taxed sell needs
 
 ## 4. Rules (short)
 
-| | V3 tax token (`gang v3`) | 打新 (`gang fair`) | LaunchpadV2 (`gang create`) |
+| | V3 token (`gang create` / `gang v3`) | 打新 (`gang fair`) | LaunchpadV2 (existing tokens only) |
 |---|---|---|---|
-| Gate | Agent ID (`.ai`) to create, buy / sell on the curve | Agent ID to create and mint (the gate is fixed per sale at create) | Agent ID to create, buy / sell |
+| Gate | Agent ID (`.ai`) to create, buy / sell on the curve | Agent ID to create and mint (the gate is fixed per sale at create) | Agent ID to buy / sell on the curve (no new creates) |
 | Wallet cap | 1% of supply on the curve; excess refunded in-tx | 0.25–1% of supply per wallet, set at create | 1% on the curve; excess refunded in-tx |
 | Fees before the pool | 1% curve fee, no tax | 1–3% mint fee; 1–2% exit fee on a sell-back | 1% curve fee |
 | Into the pool | ≈15 BNB raised + the 20% of supply left, LP burned | all raised + the other 50% of supply at the mint price, LP burned | ≈15 BNB, LP burned |
-| Pool tax | 1–5% buy / sell: 0.5% of volume to the platform, the rest to holders (`--dividend`) and the recipient | 1%: half to minters above their hold line, half to the platform | untaxed: none; taxed: 1% → holders / buyback / vault |
+| Pool tax | untaxed: none; taxed: 1–5% buy / sell: 0.5% of volume to the platform, the rest to holders (`--dividend`) and the recipient | 1%: half to minters above their hold line, half to the platform | untaxed: none; taxed: 1% → holders / buyback / vault |
 | Before graduation / launch | no transfers, curve only | no transfers, sell back to the pad only | no transfers, curve only |
 
 ---
 
-## 5. LaunchpadV2 (older pad, still live; `gang create`)
+## 5. LaunchpadV2 (older pad: existing tokens trade, no new tokens)
 
 | Contract | Address |
 |---|---|
@@ -143,40 +145,14 @@ A pool sell first approves exactly that amount to the router; a taxed sell needs
 | Owner: Safe multisig (since 2026-10-27) | `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
 
 - Graduation ≈ **15 BNB** (PoolCheck / `TARGET_GRAD_BNB`)
-- Dual track: **untaxed** / **taxed** via `create(..., bool taxed, …)`
+- Existing tokens are on two tracks: **untaxed** / **taxed** (1% pool tax)
 - BAW Agent gate + 1% walletCap on bonding
 - BscScan: all V2 contracts **Verified**
 
-### 5.1 Logo + create
+**No new tokens:** `gang create` launches on GangLaunchpad (section 3), and `--taxed` (the V2 tax track) is refused:
+use `--buy-tax 1 --sell-tax 1 --dividend 100` for the closest V3 setting. Soft / U / S create is refused too.
 
-ABI: `create(string name, string symbol, string logoURI, bool taxed, address quote, address refPool)` (selector `0x1abdc752`)
-
-```bash
-# Recommended: pass the logo file (≤512KB png/jpeg/webp/gif), create uploads it to gang.fun
-gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
-# optional: --taxed   --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>
-# optional (0.7.0+): --website mycoin.xyz   --twitter @mycoin   (written into the create tx, shown on gang.fun)
-
-# Or upload first (or use the site UI: https://gang.fun/dev/logo), then pass the URL
-gang upload-logo --file ./avatar.png
-# → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
-gang create --name "My Agent Coin" --symbol MAC --logo-uri https://gang.fun/api/logos/<id>.png
-
-gang execute --request-id …
-gang tx --hash 0x…          # read Created for token address
-```
-
-- Default: `taxed=false`, `quote=0x0` (WBNB), `refPool=0x0`. `--taxed` needs no pool.
-- Non-WBNB quote: `--quote <ERC-20>` plus `--ref-pool <Pancake V2 pair or V3 pool that holds it>`, used to price the ≈15 BNB graduation target (not needed when ops have set a QuoteRegistry amount for that quote).
-- The CLI dry-runs `create` from your wallet before preview and stops with the contract's error name (`RefPoolRequired`, `ThinReferencePool`, …) if it would revert.
-- `--pair-or-quote` is gone: CLI ≤0.3.0 encoded a 5-argument `create` that LaunchpadV2 does not have, so those creates could never succeed.
-- Empty `logoURI` allowed. Otherwise the logo must stay online for good: `logoURI` is on-chain and can't be changed after create.
-- `--logo-uri` with an image hosted outside gang.fun is downloaded and copied to gang.fun first, and the copy goes on-chain;
-  a gang.fun URL is checked to serve an image. Temporary hosts (litter.catbox.moe, tmpfiles.org, …) delete files within days:
-  never use them. `--keep-logo-uri` puts a permanent URL (e.g. `ipfs://…`) on-chain as is.
-- Soft/U/S **create is refused** by the CLI.
-
-### 5.2 Buy / sell on V2
+### 5.1 Buy / sell on V2
 
 V2 uses **quote ERC-20** (not payable BNB). Soft-style `--bnb` flag = quote amount for V2 tokens.
 
@@ -206,7 +182,6 @@ Legacy Soft/U/S tokens (if any appear in markets): buy/sell/claim only — **do 
 
 | Var | Meaning |
 |---|---|
-| `GANG_LAUNCHPAD` | Default LaunchpadV2 `0x1B8F3f69…966E` |
 | `GANG_RPC_URL` | BSC HTTP RPC |
 | `GANG_LOGO_API` | Default `https://gang.fun/api/logos` |
 | `GANG_API` | Discovery indexer, default `https://gang.fun/api` |
