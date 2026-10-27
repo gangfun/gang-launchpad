@@ -21,8 +21,8 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 ///         Everything is wired before setMigrator, the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless FAIR_MINT_MAINNET_OK=true (spec: no mainnet broadcast before audit).
 ///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
-///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
-///      TOKEN_DEPLOYER (reuse), AGENT_ID / TEST_QUOTE
+///      accept), optional KEEPER, FEE_VAULT, BURNER, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
+///      TOKEN_DEPLOYER + PEER_CORE (reuse), AGENT_ID / TEST_QUOTE
 ///      (testnet overrides), NEW_MOCKS.
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
@@ -117,7 +117,7 @@ contract DeployFairMint is SharedPlatform {
     function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
         HolderRewardHandler handler = HolderRewardHandler(s.handler);
         FairMintPad pad = FairMintPad(s.pad);
-        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
+        _checkCore(s.quoteRegistry, s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (address(pad.dividendVault()) != s.vault || address(pad.tokenDeployer()) != s.tokenDeployer) {
             revert WiringCheck("pad vault / deployer");
         }

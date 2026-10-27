@@ -11,7 +11,8 @@ import {TokenURI} from "./TokenURI.sol";
 /// @dev Bonding-phase tax is taken by LaunchpadV3 on quote, never here.
 ///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → TaxHandlerV3 (accrued there).
 ///      Before a sell's tokens move, the handler sells one small chunk of the accrued tax (`swapBack`, ≤ 0.5% of the
-///      pair's token side) — in a gas-capped try, so it can never fail the sell; a buy can't (the pair is locked).
+///      pair's token side) — in a gas-capped try, so it can never fail the sell (except a sell paid in from a flash
+///      swap's callback, which is refused: `SellDuringFlashSwap`); a buy can't (the pair is locked).
 ///      Every transfer syncs dividend shares (V2 Finding 3); the handler ignores tokens without dividends.
 ///      The launchpad's power is fixed and one-shot (2026-10-26): the handler is set at construction, graduation
 ///      calls `unlock(migrator)` and `setPair(pair)` once each, and after that the token has no admin function left.
@@ -40,6 +41,9 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
     error StillLocked();
     error ZeroAddress();
     error SwapBackOutOfGas();
+    /// @notice A sell paid in from a flash swap's callback (the pair already paid the quote out): refused, since it
+    ///         would skip the swap-back chunk for free (the handler's error, passed on).
+    error SellDuringFlashSwap();
 
     event Unlocked();
     event TaxHandlerSet(address indexed handler);
@@ -124,11 +128,13 @@ contract TaxLaunchTokenV3 is ERC20, TokenURI {
         _syncDividendShares(from, to);
     }
 
-    /// @dev The handler is tax-excluded, so its own chunk into the pair never comes back here.
+    /// @dev The handler is tax-excluded, so its own chunk into the pair never comes back here. Its failures are
+    ///      swallowed, except a flash-swap sell, which it refuses (`SellDuringFlashSwap`) and this passes on.
     function _swapBack(uint256 value) internal {
         uint256 g = gasleft();
         try IPostGradTaxHandlerV3(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
-        catch {
+        catch (bytes memory reason) {
+            if (bytes4(reason) == SellDuringFlashSwap.selector) revert SellDuringFlashSwap();
             if (g - g / 64 < SWAP_BACK_GAS && gasleft() <= g / 63) revert SwapBackOutOfGas();
             emit SwapBackFailed();
         }

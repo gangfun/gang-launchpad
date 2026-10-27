@@ -11,13 +11,20 @@ import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 
+/// @dev What both cores (LaunchpadV3, FairMintPad) expose about the platform contracts they were built on.
+interface IPeerCore {
+    function quoteRegistry() external view returns (address);
+    function platformBucket() external view returns (address);
+}
+
 /// @title SharedPlatform — the five contracts LaunchpadV3 and 打新 share: QuoteRegistry, SharedPlatformFeeBucket,
 ///        SharedDividendVault, SharedMigrator, TokenDeployer
 /// @notice Never the live V2 ones: their owner is an EOA that could freeze user exits (every curve trade, 打新
 ///         withdraw and launch calls the bucket) and decide which quotes the new pads take (2026-10-26 internal audit).
 ///         The first deploy creates all five; the second reuses them — all five env vars or none (internal audit 5
 ///         C-F1: two of five quietly deployed a second vault / migrator / deployer and split the cores) — plus
-///         PEER_CORE (the first core), checked to be wired on the same vault, migrator and deployer. Reuse works while
+///         PEER_CORE (the first core), checked to be wired on the same registry, bucket, vault, migrator and deployer.
+///         Reuse works while
 ///         the deployer still owns them (Ownable2Step: ownership stays with the deployer until the multisig accepts).
 ///         On mainnet the new bucket pays the same fee vault and buyback burner as the V2 bucket, read on-chain.
 abstract contract SharedPlatform is Script {
@@ -46,10 +53,11 @@ abstract contract SharedPlatform is Script {
 
         bucket = vm.envOr("PLATFORM_BUCKET", address(0));
         if (bucket == address(0)) {
-            address feeVault = vm.envOr("FEE_VAULT", mainnet ? PlatformFeeBucket(v2Bucket).feeVault() : deployer);
             // no collectPlatformSmart (C-F2): the keeper can only buy back along the burner's fixed path
-            SharedPlatformFeeBucket b = new SharedPlatformFeeBucket(deployer, feeVault);
-            if (mainnet) b.setBurner(address(PlatformFeeBucket(v2Bucket).burner()));
+            SharedPlatformFeeBucket b = new SharedPlatformFeeBucket(deployer, _feeVault(mainnet, deployer, v2Bucket));
+            // the same BURNER / FEE_VAULT overrides `_checkBucket` checks against (review: BURNER was check-only)
+            address burner = _burner(mainnet, v2Bucket);
+            if (burner != address(0)) b.setBurner(burner);
             b.setKeeper(keeper);
             bucket = address(b);
         } else if (Ownable2Step(bucket).owner() != deployer) {
@@ -118,6 +126,7 @@ abstract contract SharedPlatform is Script {
     }
 
     function _checkCore(
+        address registry,
         address vault,
         address migrator,
         address tokenDeployer,
@@ -137,9 +146,12 @@ abstract contract SharedPlatform is Script {
         if (!v.excluded(vault)) revert WiringCheck("vault excludes itself");
         if (!SharedMigrator(migrator).launchpads(core)) revert WiringCheck("migrator launchpad");
         if (!TokenDeployer(tokenDeployer).launchpads(core)) revert WiringCheck("deployer launchpad");
-        // reuse (C-F1): the first core must sit on the very same vault, migrator and deployer
+        // reuse (C-F1): the first core must sit on the very same registry, bucket, vault, migrator and deployer
         address peer = vm.envOr("PEER_CORE", address(0));
         if (peer != address(0)) {
+            if (IPeerCore(peer).quoteRegistry() != registry) revert WiringCheck("peer core registry");
+            if (IPeerCore(peer).platformBucket() != bucket) revert WiringCheck("peer core bucket");
+            if (!SharedPlatformFeeBucket(bucket).operators(peer)) revert WiringCheck("peer core on bucket");
             if (!v.launchpads(peer) || v.operatorFor(peer) == address(0)) revert WiringCheck("peer core on vault");
             if (!SharedMigrator(migrator).launchpads(peer)) revert WiringCheck("peer core on migrator");
             if (!TokenDeployer(tokenDeployer).launchpads(peer)) revert WiringCheck("peer core on deployer");
@@ -182,8 +194,22 @@ abstract contract SharedPlatform is Script {
         if (o.owner() == deployer && pending != owner) o.transferOwnership(owner);
     }
 
-    /// @dev C-F8: operators, keeper, and the fee legs' destinations (mainnet: the V2 bucket's burner and fee vault
-    ///      unless BURNER / FEE_VAULT say otherwise).
+    /// @dev The buyback burner a new bucket gets: BURNER if set (non-zero), else the V2 bucket's on mainnet, none on
+    ///      testnet (collectPlatform then reverts until the owner sets one).
+    function _burner(bool mainnet, address v2Bucket) internal view returns (address burner) {
+        burner = vm.envOr("BURNER", address(0));
+        if (burner == address(0) && mainnet) burner = address(PlatformFeeBucket(v2Bucket).burner());
+    }
+
+    /// @dev The fee vault a new bucket gets: FEE_VAULT if set (non-zero), else the V2 bucket's on mainnet, the
+    ///      deployer on testnet.
+    function _feeVault(bool mainnet, address deployer, address v2Bucket) internal view returns (address feeVault) {
+        feeVault = vm.envOr("FEE_VAULT", address(0));
+        if (feeVault == address(0)) feeVault = mainnet ? PlatformFeeBucket(v2Bucket).feeVault() : deployer;
+    }
+
+    /// @dev C-F8: operators, keeper, and the fee legs' destinations — the same `_burner` / `_feeVault` the deploy
+    ///      used (mainnet: the V2 bucket's unless BURNER / FEE_VAULT say otherwise, and a burner is required).
     function _checkBucket(bool mainnet, address v2Bucket, address bucket, address keeper, address a, address b)
         internal
         view
@@ -192,11 +218,13 @@ abstract contract SharedPlatform is Script {
         if (!pb.operators(a) || !pb.operators(b)) revert WiringCheck("bucket operators");
         if (pb.keeper() != keeper) revert WiringCheck("bucket keeper");
         if (pb.feeVault() == address(0)) revert WiringCheck("bucket feeVault");
-        if (mainnet) {
-            address burner = vm.envOr("BURNER", address(PlatformFeeBucket(v2Bucket).burner()));
-            address feeVault = vm.envOr("FEE_VAULT", PlatformFeeBucket(v2Bucket).feeVault());
-            if (address(pb.burner()) != burner || burner == address(0)) revert WiringCheck("bucket burner");
-            if (pb.feeVault() != feeVault) revert WiringCheck("bucket feeVault");
+        address burner = _burner(mainnet, v2Bucket);
+        // testnet: only an explicit BURNER is checked (a reused testnet bucket may have had one set by hand)
+        if ((mainnet || burner != address(0)) && (address(pb.burner()) != burner || burner == address(0))) {
+            revert WiringCheck("bucket burner");
+        }
+        if (mainnet && pb.feeVault() != _feeVault(mainnet, address(0), v2Bucket)) {
+            revert WiringCheck("bucket feeVault");
         }
     }
 

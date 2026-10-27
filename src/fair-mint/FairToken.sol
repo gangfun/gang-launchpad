@@ -12,7 +12,8 @@ import {TokenURI} from "../launchpad-v3/TokenURI.sol";
 ///         disables reclaim.
 ///         After launch: 1% tax on pair buys / sells → HolderRewardHandler; every transfer syncs reward shares.
 /// @dev The tax is accrued in the handler; before a sell's tokens move, the handler sells one small chunk of it
-///      (`swapBack`, ≤ 0.5% of the pair's token side) in a gas-capped try, so it can never fail the sell.
+///      (`swapBack`, ≤ 0.5% of the pair's token side) in a gas-capped try, so it can never fail the sell (except a
+///      sell paid in from a flash swap's callback, which is refused: `SellDuringFlashSwap`).
 ///      The pad's power is fixed and one-shot (2026-10-26): the handler is set at construction, `reclaim` works only
 ///      while locked, launch calls `unlock(migrator)` and `setPair(pair)` once each, and after that the token has no
 ///      admin function left. Tax and reward syncing start only once the pair is set.
@@ -40,6 +41,9 @@ contract FairToken is ERC20, TokenURI {
     error StillLocked();
     error ZeroAddress();
     error SwapBackOutOfGas();
+    /// @notice A sell paid in from a flash swap's callback (the pair already paid the quote out): refused, since it
+    ///         would skip the swap-back chunk for free (the handler's error, passed on).
+    error SellDuringFlashSwap();
 
     event Unlocked();
     event TaxHandlerSet(address indexed handler);
@@ -107,7 +111,9 @@ contract FairToken is ERC20, TokenURI {
             if (to == pair && tax > 0) {
                 uint256 g = gasleft();
                 try ISwapBack(taxHandler).swapBack{gas: SWAP_BACK_GAS}(address(this), value) {}
-                catch {
+                catch (bytes memory reason) {
+                    // a flash-swap sell, refused by the handler: passed on (it would skip the chunk for free)
+                    if (bytes4(reason) == SellDuringFlashSwap.selector) revert SellDuringFlashSwap();
                     if (g - g / 64 < SWAP_BACK_GAS && gasleft() <= g / 63) revert SwapBackOutOfGas();
                     emit SwapBackFailed();
                 }

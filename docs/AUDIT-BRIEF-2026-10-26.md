@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9
 - 读者：外部审计方
-- 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在提交 `98cab5c`：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
+- 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在 §18 的修复提交（父提交 `4857118`；`98cab5c` 之后到 `4857118` 没有改动 `src/`）：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复，§18 对第五轮修复的 review。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`、`98cab5c`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`，含 `src/common`）。
 
@@ -130,14 +130,14 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 |---|---|---|---|---|
 | FairMintPad | `setMigrator`（一次性，迁移合约须把本核心列入）、`setRouter`、`setAgentGate`、`setV3Factory`、`setTwapWindow`、`setBridgePool`。除 `setRouter` 外**都只影响之后创建的 sale** | — | 白名单路由：`mintFor`（只对有准入的 sale） | create、mint、withdraw、`flushFees` |
 | FairToken | — | — | 只有发射台：`reclaim`（只在发射前）、`unlock(migrator)`（一次）、`setPair`（解锁后一次）；之后没有任何管理函数 | 转账（发射后）、`contractURI` / `metaURI` |
-| HolderRewardHandler | `setPad`（一次性）、`setKeeper`（只能部署时设一次，之后 `proposeKeeper` → 48 小时 → `acceptKeeper`）、`proposeDexRouter` → 48 小时 → `acceptDexRouter` / `cancelDexRouter`；可代替 keeper 调 `process` | `process(token, amount, minQuoteOut)`（每次 ≤ `maxChunk`） | 代币：`notifyTax`、`swapBack` | `syncShares`、`flushHolders`、`flushPlatform` |
+| HolderRewardHandler | `setPad`（一次性）、`setKeeper`（合约一生只能调一次，之后 `proposeKeeper` → 48 小时 → `acceptKeeper`）、`proposeDexRouter` → 48 小时 → `acceptDexRouter` / `cancelDexRouter`；可代替 keeper 调 `process` | `process(token, amount, minQuoteOut)`（每次 ≤ `maxChunk`） | 代币：`notifyTax`、`swapBack` | `syncShares`、`flushHolders`、`flushPlatform` |
 | LaunchpadV3 | `setMigrator`（一次性，迁移合约须把本核心列入）、`setPairFactory`（只用于创建时的参考池定价）、`setRouter`、`setAgentGate`、`setWalletCapEnabled`、`setV3Factory`、`setTwapWindow`、`setBridgePool` | — | 白名单路由：`buyFor`（只在准入开启时） | create、buy、sell |
 | TaxLaunchTokenV3 / LaunchTokenV3 | — | — | 只有发射台：`unlock(migrator)`（一次）、`setPair`（有税币，解锁后一次）；之后没有任何管理函数 | 转账（毕业后）、`contractURI` / `metaURI` |
 | TaxHandlerV3 | `setLaunchpad`（一次性）、`list` / `delist`（接收地址白名单）、keeper 与换币路由时间锁（同上）；可代替 keeper 调 `process` | `process(token, amount, minQuoteOut)` | 发射台：`register`（每个币一次）、`distribute`（只能付钱进来）；代币：`notifyTax`、`swapBack` | `release`、`syncShares`、`flushHolders`、`flushPlatform` |
 | SharedDividendVault | `setLaunchpad(core, bool)`（移除只停新登记）、`setOperator(account, core)`（每个核心、每个地址只能绑定一次，不能解绑 / 更换）、`setExcluded`、`setMinimumShareBalance`（只影响之后登记的币） | — | 登记它的核心 / 绑定到该核心的 operator：`registerToken`（每个币一次）、`setShare`、`depositReward`、`accrueDividendUnits`、`convertDividend` | `claim`、`claimFor` |
 | SharedMigrator | `addLaunchpad`（只加不减） | — | 名单里的核心：`migrate` | — |
 | TokenDeployer | `setLaunchpad(core, bool)` | — | 名单里的核心：`deployPlain` / `deployTax` / `deployFair` | `isLaunchToken` 查询 |
-| SharedPlatformFeeBucket（共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`（只能设一次，之后 48 小时时间锁）、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（固定路径：80% 回购销毁 / 20% 金库；没有 `collectPlatformSmart`） | operator：`notifyAccrual`（按到账额记账） | — |
+| SharedPlatformFeeBucket（共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`（合约一生只能调一次，之后 48 小时时间锁）、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（固定路径：80% 回购销毁 / 20% 金库；没有 `collectPlatformSmart`） | operator：`notifyAccrual`（按到账额记账） | — |
 | QuoteRegistry（复用代码，共用一份新实例） | `setQuote`：给报价币设固定换算额（15 BNB 合多少该币），设了就优先于参考池；只影响之后创建的币。不再决定哪些币能用 | — | — | 查询 |
 | GangRouter | 无 | — | — | 全部函数 |
 
@@ -153,7 +153,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
    - LaunchpadV3 的 `setAgentGate` / `setWalletCapEnabled` 是全局开关，会影响正在曲线上的币（与 V2 一致）；打新则在创建时快照，不受影响。
    - 核心的 `setRouter`：列入的路由能调 `buyFor` / `mintFor`。
 3. **一个被列入白名单的恶意路由最坏只能「用自己的钱替别人买 / 打新」**——前提是准入开启。准入关闭时它能把代币打给未来的池子地址、分走发射流动性（§10 A-2），所以现在路由入口在准入关闭时直接 revert。核心对路由只开放 `buyFor` / `mintFor`，付款方是 `msg.sender`（路由）。测试 `test_v3_listedRouterOnlySpendsItsOwnQuote`、`test_fair_listedRouterOnlySpendsItsOwnQuote` 覆盖。
-4. **keeper 被信任设 `minQuoteOut`**：它可以给一个很低的值然后自己夹，损失的是这一块的价值（≤ 池子代币储备 0.5%）。`process` 拒绝 `minQuoteOut == 0`。`swapBack` 的最低成交额由合约按同一调用里的储备算（下限 1%）。
+4. **keeper 被信任设 `minQuoteOut` 和 `minGangOut`**：它可以给一个很低的值然后自己夹，损失的是这一块的价值（≤ 池子代币储备 0.5%）。`process` 拒绝 `minQuoteOut == 0`。`swapBack` 的最低成交额由合约按同一调用里的储备算（下限 1%）。手续费池 `collectPlatform` 的回购最低成交额 `minGangOut` 也由 keeper 给，合约不设下限（K-20）。keeper 的 48 小时时间锁约束的是**换 keeper**，不约束 owner：owner 本来就能直接调 `process` / `collectPlatform`。
 5. **发射台只能付钱进 TaxHandlerV3**：`distribute` 从 `msg.sender`（只能是发射台）拉 `amount`，再按登记的路由拆分。
 
 ---
@@ -212,6 +212,8 @@ GangRouter：
 | K-17 | **卖单前先卖一块会改变储备**：链下按旧储备预先算好输出、直接对池子先转账再 `swap` 的路由会失败；Pancake 的 `…SupportingFeeOnTransferTokens` 接口没问题（有税币本来也只能走它）。前端和 CLI 用 `previewSell` 报价。 |
 | K-18 | **卖出 gas 变高**：一笔带一块的卖出约 57–60 万 gas（原 27.6 万），见 §16。 |
 | K-19 | **持有人的分红要等这一批卖完才能领**：交税时就记了单位，但一批没卖完前它不会变成可领金额；长时间只有买单时早期持有人要等 keeper 把这批卖完。 |
+| K-20 | **回购的最低成交额由 keeper 给**（§17 C-F2 的残留，用户决定这次只关自定义路由）：`collectPlatform(quote, minGangOut)` 的 `minGangOut` 合约不设下限，keeper 可以填一个很小的值；keeper 热钱包被盗时，攻击者能在 `collectPlatform` 前后夹这一笔回购（80% 那部分），拿走的是这次回购的滑点。路径固定（回购合约的路由），钱不能被换到攻击者地址。缓解：keeper 按链上报价设 `minGangOut`、经私有 RPC 发交易；发现被盗后多签 `proposeKeeper` 换人，期间 owner 可以自己 `collectPlatform`。 |
+| K-21 | **闪电兑换写法的卖出被拒**（§18）：在 Pancake `pancakeCall` 回调里把税币付进池子的卖出（先取走报价币、后付代币）整笔回滚 `SellDuringFlashSwap`，不管这一刻有没有要卖的税。用这种写法的套利合约不能卖有税的 V3 / 打新币；经 Router02 的卖出、多跳路径、加流动性不受影响。会负 rebase 的报价币如果让池子的报价币余额低于储备，在有人 `sync` 之前所有收税的卖出都会回滚（K-12 的一种）。 |
 
 ### 6.1 V2 审计结论在新合约里的处理
 
@@ -227,9 +229,10 @@ GangRouter：
 
 ```sh
 forge build --sizes
-forge test                    # 98cab5c：593 个通过（审计回归套件继承基础套件，基础用例会再跑一遍）
-BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-contract Fork   # 主网分叉 25 个（publicnode 会丢历史状态）
+forge test                    # §18：641 个通过（审计回归套件继承基础套件，基础用例会再跑一遍；不设 BSC_RPC_URL 时分叉用例直接返回）
+BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-contract Fork   # 主网分叉（publicnode 会丢历史状态）
 BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/fork/*'   # 12 个
+BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --threads 1   # 150 个（部署脚本测试改进程环境变量，要单线程）
 ```
 
 | 测试文件 | 个数 | 覆盖 |
@@ -241,7 +244,7 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/fork/*'   # 12
 | `test/fair-mint/FairTokenAdmin.t.sol` | 35（含继承） | 代币收紧与元数据 URI（§12） |
 | `test/launchpad-v3/LaunchpadV3.t.sol` | 14 | 创建规则、下架只拦新币、内盘买卖分账（含不对称税率）、没有持有人时分红并入接收地址、推送失败记欠款 / 补发、外盘按每笔方向记账、无税币、门槛与上限、G-01、权限 |
 | `test/launchpad-v3/LaunchpadV3Audit.t.sol` | 24（含继承） | 内部审计回归：`buyFor` 须开准入、报价币规则、migrator 绑定、卖家拿不回自己的卖出税、伪造代币收税、pair 报价核对、欠款不会被 `process` 卖掉 |
-| `test/launchpad-v3/SwapBack.t.sol` | 31（含继承） | V3 卖出时自动换：每区块额度、≤ 卖单 25%、零头不触发、池子未同步时（像加流动性加到一半）跳过、1 wei 捐款不跳过、`previewSell`、冲击上限、只认代币、失败不影响卖出、按估算 gas 执行、keeper 分块卖完只有买单的积压、按交税时记账、bucket / 分红合约拒收、写份额被拒 |
+| `test/launchpad-v3/SwapBack.t.sol` | 35（含继承） | V3 卖出时自动换：每区块额度、≤ 卖单 25%、零头不触发、池子里未同步的报价币 ≥ 储备 0.1%（像加流动性加到一半）跳过且不动额度、不到 0.1% 被吸收、1 wei 捐款 + 零头卖单不占额度、`previewSell`、冲击上限、只认代币、失败不影响卖出、按估算 gas 执行、keeper 分块卖完只有买单的积压、按交税时记账、bucket / 分红合约拒收、写份额被拒 |
 | `test/launchpad-v3/LaunchpadV3Fuzz.t.sol` | 17（含继承） | fuzz（各 1000 轮）：每笔买 / 卖恰好拆成曲线、1% 手续费、税，平台拿成交额 0.5% |
 | `test/launchpad-v3/TokenAdmin.t.sol` | 17（含继承） | 代币收紧与元数据 URI（§12） |
 | `test/common/TaxTimeDividends.t.sol` | 6 | 按交税时记账：归属交税时的持有人、两批先进先出、隔很多批才动的持有人、只认核心 / 其 operator、超卖被拒；含与逐批暴力模型对照的 fuzz（1000 轮） |
@@ -249,12 +252,13 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/fork/*'   # 12
 | `test/audit4/Audit4Regression.t.sol` | 27 + 19（含继承） | 第四轮内部审计回归（§15） |
 | `test/router/GangRouter.t.sol` | 19 | BNB / 报价币两种路径、交易者拿币、门槛和上限按交易者、分红权重归交易者、截断退款、经路由毕业 / 发射、只有白名单路由能代买、流氓路由只能花自己的钱 |
 | `test/invariant/CoreInvariants.t.sol` | 9 条不变量 | V3、打新、共用合约、GangRouter 放在一起随机操作（发币、直接 / 经路由买卖、打新、卖回、跳时间、打满、毕业、池子交易、keeper 分块处理、拉黑接收地址、补发、领取），每步后检查 §5 的不变量。CI 跑 24 × 50；`6b5e03f` 上压力跑 200 轮 × 80 步全过 |
+| `test/audit5/review/` | 8 + 13 + 1 + 4（分叉用例另含继承的基础用例） | §18 review 的回归：keeper 只能 `setKeeper` 一次、EIP-7702 委托钱包不能排除（`ReviewUnit`）；闪电兑换写法的卖出被拒、零头 + 1 wei 不再占额度、0.1% 门槛、Router02 普通卖出 / 多跳 / `addLiquidity` 两种顺序 / `addLiquidityETH`（`ReviewFork`，真实 Pancake）；打新币的闪电兑换卖出（`ReviewFairFork`）；部署脚本核对 `PEER_CORE` 的报价币登记合约和手续费池、`BURNER` / `FEE_VAULT` 部署时生效（`DeployReview`，`--threads 1`） |
 | 主网分叉 | 25 + 12 | 真实 Pancake：打新整轮、USDT 按参考池换算、提前建池；V3 卖出时自动换（`V3SwapBackFork.t.sol`：`previewSell` 与实际到账一致、一块用完本区块额度、1 wei 不触发、单块冲击 ≤ 约 1%、估算 gas 下这一块会执行）；报价币按 V2 / V3 参考池换算与 LaunchpadV2 同口径（`QuoteRefPoolFork.t.sol`） |
 
 另外：
 
 - 本地 anvil（BSC 测试网 fork）上用 `ddce6b6` 之前的 `6b5e03f` 部署脚本部署过整套，keeper（gangfun-server `feat/keeper-ops`）实测：只填核心地址就自动接线；只有买单时 V3 8 块、打新 3 块卖完，每块约池子代币储备 0.5%、冲击约 0.75%；分红合约和 bucket 同时拒收时这一块照常卖出、恢复后 keeper 自动补兑现补交；真实卖出时 `previewSell` 与实际到账相差 0.05%。
-- 运行时字节码（98cab5c，§17）：TaxHandlerV3 20,465 B，TokenDeployer 20,044 B，LaunchpadV3 18,819 B，FairMintPad 16,803 B，HolderRewardHandler 16,474 B，SharedDividendVault 9,588 B，SharedPlatformFeeBucket 4,299 B，TaxLaunchTokenV3 4,309 B，FairToken 4,209 B，GangRouter 4,135 B，SharedMigrator 2,001 B，都 < 24,576 B。
+- 运行时字节码（§18 的修复提交，`forge build --sizes` 实测）：TokenDeployer 20,688 B，TaxHandlerV3 20,539 B，LaunchpadV3 18,819 B，FairMintPad 16,803 B，HolderRewardHandler 16,505 B，SharedDividendVault 9,799 B，TaxLaunchTokenV3 4,472 B，FairToken 4,372 B，SharedPlatformFeeBucket 4,365 B，GangRouter 4,135 B，SharedMigrator 2,001 B，都 < 24,576 B（最大的 TokenDeployer 余 3,888 B）。`98cab5c` 实测：TaxHandlerV3 20,508 B（§17 原写 20,465 B 有误），其余与 §17 所列一致。
 
 **测试的不足**：invariant 测试用的是仓库里简化的 MockPair（不检查 K、不收 0.25% 手续费）；池子相关的经济攻击（夹子、闪电贷）由第二轮审计员用仿真的 Pancake V2 池子验证过（§11），卖出时自动换在真实 Pancake 上有分叉测试，但没有系统的 MEV 仿真。
 
@@ -476,7 +480,7 @@ TaxRouterV3 不可升级：没有代理，LaunchpadV3 和 handler 里都是 immu
 
 - **卖出时自动换（`swapBack`）**：一笔收了税的卖单进池子前（池子未锁），代币调 `handler.swapBack(token, sellAmount)`，处理合约把攒下的税卖一块直接进池子，按同一调用里的储备计价（下限 1%）。单块 ≤ 池子代币侧 0.5%（`CHUNK_MAX_BPS = 50`）且 ≤ 这笔卖单的 25%（`SWAP_BACK_SELL_BPS = 2500`）；每个币每个区块最多一次（`lastSwapBackBlock`）；这笔转账不产生税（零头、被排除地址）时不触发；池子余额与储备不一致（有人加流动性到一半）时跳过。买入时池子已锁，只累计；钱包间转账不触发。
 - **失败不影响交易**：这一块自己失败被吞掉、代币发 `SwapBackFailed`；只有「调用方给的 gas 不够导致这一块耗尽」时整笔回滚（`SwapBackOutOfGas`），这样 `eth_estimateGas` 二分出的 gas 一定包含这一块（之前「gas 不够就跳过」会让钱包按估算发的交易永远跳过这一块）。
-- **keeper 补位**：`process(token, amount, minQuoteOut)`，数量截到 `maxChunk(token)`（只会少卖），同一区块可多次；只有买单时 keeper 分块卖完。`previewSell(token, amountIn)` 返回卖单含这一块之后实际能拿到的报价币。
+- **keeper 补位**：`process(token, amount, minQuoteOut)`，数量截到 `maxChunk(token)`（只会少卖），同一区块可多次（§17 起改为每个币每区块一个额度，见 V3 D）；只有买单时 keeper 分块卖完。`previewSell(token, amountIn)` 返回卖单含这一块之后实际能拿到的报价币。
 - **按税产生时记账**（`SharedDividendVault`）：持有人那份在 `notifyTax` 当场按当时份额记成税币单位（`accrueDividendUnits`）；卖出后按这一批实际换回的报价币兑现（`convertDividend`）。分批先进先出，同一个币最多两批未结算（`open` 在攒、`selling` 在卖），一批卖完才按它的报价币结算；每个持有人最多记两批未结算单位，跨很多已结算批次用累计指数一步算完；放大系数 1e36，单位字段两个 `uint128` 打包；取整一律向下。选分批先进先出而不选 Liquity 稳定池式的 epoch / scale：每卖一块几乎都会把一整批卖完，只需一个累计指数，状态少、好审计。两个 handler 共用同一套（打新仍是 `min(持仓, 打到的数量)` + 出局线，V3 仍是持仓 + 门槛）。
 - **下游拒收不卡住**：分红合约拒绝兑现时这批单位和报价币留在 handler（`pendingHolderUnits` / `pendingHolderQuote`，`HolderConversionDeferred`），下一块或任何人 `flushHolders` 补兑现；bucket 拒收时平台那份记 `owedPlatformOf`（`PlatformOwed`），任何人 `flushPlatform` 补交；分红合约拒绝记账时那份归接收地址 / 平台；V3 写份额也改为带保护（`ShareWriteFailed`）。
 
@@ -491,7 +495,7 @@ TaxRouterV3 不可升级：没有代理，LaunchpadV3 和 handler 里都是 immu
 | 打新 D4 / F2 | bucket 拒收或兑现失败时整块失败，持有人那份被平台那份连累 | `owedPlatformOf` / `pendingHolder*` + `flushPlatform` / `flushHolders`，这一块照常完成 |
 | 打新 D5 | 先记账再同步份额：卖家按卖出前份额分到自己这笔卖出的税 | 保留并写入注释（§3.2） |
 | V3 C | V3 写份额没有保护（K-7）；兑现失败会让 `process` revert、keeper 卡住 | 写份额带保护；`process` 遇兑现失败也能继续 |
-| V3 D | keeper 每次一块，10 分钟一次可能跟不上只有买单的拉盘 | keeper 每次运行对每个币循环到卖完或 20 块；合约允许同一区块多次 `process` |
+| V3 D | keeper 每次一块，10 分钟一次可能跟不上只有买单的拉盘 | keeper 每次运行对每个币循环到卖完或 20 块。（§16 当时合约允许同一区块多次 `process`；§17 B-F4 起每个币每区块只有一个额度，`swapBack` 和 `process` 共用，额度用完后同一区块的 `process` 回滚 `ZeroAmount`，所以 keeper 实际每个区块最多卖一块，20 块要跨 20 个区块） |
 
 **owner 权限收紧与卖回保护**（`f1c00b3`，来自打新流程审查 F3 / F4）
 
@@ -535,7 +539,7 @@ TaxRouterV3 不可升级：没有代理，LaunchpadV3 和 handler 里都是 immu
 |---|---|---|---|---|
 | B-F4 / C-F6 | 中 / 低 | keeper（或 owner；`setKeeper` 当时立即生效）同一区块连调 `process`、最低成交额 1 wei，一口气卖光积压再夹子（PoC：同伙多拿 17.2% 的币），48 小时换路由时间锁挡不住直接对池子卖 | 每个币每区块一个额度（区块内第一次尝试时池子代币储备的 0.5%），`swapBack` 和 `process` 共用、按卖出数量扣；任何一块都不在比区块参考价低 2% 以上的价格卖（`swapBack` 跳过、`process` 回滚 `PriceBelowReference`）；`setKeeper` 只能部署时设一次，之后 `proposeKeeper` → 48 小时 → `acceptKeeper` / `cancelKeeper`（两个处理合约和新手续费池都是） | `audit5b`：`test_F4_keeperDumpSandwichNoLongerPays`、`test_I1_keeperCanSellOneBudgetPerBlock` |
 | B-F1 / A L-1a | 低 | 一笔零头卖单抢在区块最前面，占掉「每区块一次」的名额，后面正常卖单都不换 | 额度按卖出数量扣，零头只用掉零头 | `audit5b`：`test_F1_dustSellNoLongerBurnsTheBlock`；`audit5a`：`test_dustSellNoLongerTakesTheBlocksSwapBack`；`SwapBack.t.sol`：`test_swapBack_blockBudgetSharedBySells` |
-| B-F2 / A L-1b | 低到中 | 卖出前往池子转 1 wei 报价币，余额与储备对不上，这一块就被跳过（卖家多拿 0.96%、省约 30 万 gas）；还能「捐 1 wei → 先砸 → 后换」 | 只有多出的余额相当于这笔卖单价值一半以上（像加流动性加到一半）才跳过，并且跳过会用掉这一区块的额度；零头被吸收；余额低于储备（闪电兑换回调中）不卖；再加上区块参考价，先砸后换不成立 | `audit5b`：`test_F2_oneWeiQuoteDonationNoLongerSkipsChunk`；`audit5a`：`test_donationNoLongerLetsTheChunkRunAfterADump`；`SwapBack.t.sol`：`test_swapBack_skippedWhilePairUnsynced`、`test_swapBack_dustDonationDoesNotSkip` |
+| B-F2 / A L-1b | 低到中 | 卖出前往池子转 1 wei 报价币，余额与储备对不上，这一块就被跳过（卖家多拿 0.96%、省约 30 万 gas）；还能「捐 1 wei → 先砸 → 后换」 | 只有多出的余额相当于这笔卖单价值一半以上（像加流动性加到一半）才跳过，并且跳过会用掉这一区块的额度；零头被吸收；余额低于储备（闪电兑换回调中）不卖；再加上区块参考价，先砸后换不成立 | `audit5b`：`test_F2_oneWeiQuoteDonationNoLongerSkipsChunk`；`audit5a`：`test_donationNoLongerLetsTheChunkRunAfterADump`；`SwapBack.t.sol`：`test_swapBack_skippedWhilePairUnsynced`、`test_swapBack_dustDonationDoesNotSkip`（这一处理在 §18 被 review 推翻并重做） |
 | B-F3 | 低 | `previewSell` 按当前区块算，钱包交易落在下一区块，实际到手比预览少约 1%，拿预览当最低到手会失败 | 新增 `previewSellNextBlock(token, amountIn)`（按新区块的满额度、当前储备算），前端 / CLI 用它算最低到手 | `audit5b`：`test_F3_previewSellNextBlockMatchesTheNextBlock` |
 | C-F1 | 中（部署） | 旧手册第二个脚本只传两个共用合约地址，脚本悄悄另建一套分红 / 迁移 / 部署合约，所有检查照过；「本平台发的币不能当报价币」随之失效 | 五个共用合约地址要么全传要么全不传（否则 `PartialShared`）；复用时必须给 `PEER_CORE`（第一个核心），并核对它挂在同一套分红 / 迁移 / 部署合约上 | `audit5c`：`test_fork_deploy_partialSharedEnvRefused`、`test_fork_deploy_shared_refusesCrossCoreQuote` |
 | C-F2 | 中（热钱包） | keeper 经 `collectPlatformSmart` 自拼路由，把回购那 80% 换给自己（PoC：8 WBNB 手续费变成 keeper 手里 5,927 USDT） | 新的 `src/common/SharedPlatformFeeBucket.sol`：V2 版去掉 `collectPlatformSmart`，只保留固定路径的 `collectPlatform`；`notifyAccrual` 按到账额记账；两个核心、两个处理合约和部署脚本改用它（V2 源码不动） | `audit5c`：`test_fork_keeperCanNoLongerStealBuybackLeg` |
@@ -563,4 +567,47 @@ TaxRouterV3 不可升级：没有代理，LaunchpadV3 和 handler 里都是 immu
 - V3 核心：新错误 `VaultFloorTooHigh`。
 - 部署脚本：复用时五个共用合约地址必须全给，外加 `PEER_CORE`；新错误 `PartialShared`、`PendingOwnerMismatch`；可选 `BURNER` / `FEE_VAULT` 覆盖。
 
-**结果**：`forge test` 593 个通过（含 `test/audit5/` 的回归，审计回归套件继承基础套件会再跑一遍基础用例）；主网分叉（48.club）`test/fork/*` 12 个通过，`--match-contract Fork` 31 个里 26 个一次通过，其余 5 个中 4 个单独重跑通过（节点偶发 `not supported`），`V2E2E.test_e2e_nvdab_taxed_v3ref` 在改动前的 `ddce6b6` 上同样失败（V2 代码、依赖当前链上状态，与本轮无关）；invariant：`CoreInvariants` 9 条与 `audit5a/VaultUnitsInvariant` 3 条在 200 × 80 下全过（各 200 runs × 80 depth、16,000 次调用）；两个部署脚本在 BSC 测试网与主网（带 OWNER、链接线上 PoolCheck）不广播模拟通过，链式复用由 `audit5c/DeployScriptsFork.t.sol` 覆盖。运行时字节码：TaxHandlerV3 20,465 B，TokenDeployer 20,044 B，LaunchpadV3 18,819 B，FairMintPad 16,803 B，HolderRewardHandler 16,474 B，SharedDividendVault 9,588 B，SharedPlatformFeeBucket 4,299 B，TaxLaunchTokenV3 4,309 B，FairToken 4,209 B，SharedMigrator 2,001 B，GangRouter 4,135 B，都 < 24,576 B。一笔带换币的路由卖出约 65.7 万 gas（之前 61 万：多了区块额度 / 参考价两个存储位和卖家同步），不带换币约 33 万。
+**结果**：`forge test` 593 个通过（含 `test/audit5/` 的回归，审计回归套件继承基础套件会再跑一遍基础用例）；主网分叉（48.club）`test/fork/*` 12 个通过，`--match-contract Fork` 31 个里 26 个一次通过，其余 5 个中 4 个单独重跑通过（节点偶发 `not supported`），`V2E2E.test_e2e_nvdab_taxed_v3ref` 在改动前的 `ddce6b6` 上同样失败（V2 代码、依赖当前链上状态，与本轮无关）；invariant：`CoreInvariants` 9 条与 `audit5a/VaultUnitsInvariant` 3 条在 200 × 80 下全过（各 200 runs × 80 depth、16,000 次调用）；两个部署脚本在 BSC 测试网与主网（带 OWNER、链接线上 PoolCheck）不广播模拟通过，链式复用由 `audit5c/DeployScriptsFork.t.sol` 覆盖。运行时字节码：TaxHandlerV3 20,508 B（原写 20,465 B，按实际编译改正，§18），TokenDeployer 20,044 B，LaunchpadV3 18,819 B，FairMintPad 16,803 B，HolderRewardHandler 16,474 B，SharedDividendVault 9,588 B，SharedPlatformFeeBucket 4,299 B，TaxLaunchTokenV3 4,309 B，FairToken 4,209 B，SharedMigrator 2,001 B，GangRouter 4,135 B，都 < 24,576 B。一笔带换币的路由卖出约 65.7 万 gas（之前 61 万：多了区块额度 / 参考价两个存储位和卖家同步），不带换币约 33 万。
+
+---
+
+## 18. 第五轮修复的 review（2026-10-27）
+
+对 §17 修复（`98cab5c`，冻结点之后到 `4857118` 没有改动 `src/`）做了一轮 review，在主网分叉上给出了 PoC（`ReviewPoC` / `DeployPoC`）。修复在本节的提交里，PoC 改成回归测试放在 `test/audit5/review/`；review 给的 6 个 PoC 在修复后全部失败（被挡住）。
+
+**发现与处理**
+
+| 编号 | 级别 | 问题 | 处理 | 回归测试 |
+|---|---|---|---|---|
+| R5-1a（B-F2） | 低到中 | 闪电兑换写法的卖出：先从池子取走报价币，在 `pancakeCall` 回调里把税币付进池子。这时池子的报价币余额低于储备，`swapBack` 按「交易中途」跳过，这一块被白白跳过（PoC：卖家多拿约 0.96%，不花任何成本） | 卖出转账时池子的报价币余额低于储备就整笔回滚 `SellDuringFlashSwap`：处理合约的 `swapBack` 先检查并 revert，代币在 try/catch 里只把这一个错误原样抛出（其余失败照旧吞掉、发 `SwapBackFailed`），不管这一刻有没有要卖的税（不能择时绕过）。代币一侧余额低于储备（只借代币）仍然只是跳过：池子在回调里是锁着的，这种卖出拿不到报价币 | `ReviewFork`：`test_review_flashSwapSellRefused`、`test_review_flashSwapSellRefusedWithoutBacklog`；`ReviewFairFork`：`test_review_fair_flashSwapSellRefused` |
+| R5-1b（B-F2） | 低到中 | 「池子有未同步的报价币」跳过时把本区块额度设成 `uint96.max`：1 wei 报价币 + 100 wei 代币的零头卖单就能让这个区块里所有卖单和 keeper 都不换（PoC `dustPlusOneWeiSpendsWholeBlock`），再接一笔真卖单就是白拿（PoC `BF2BypassViaSpend`） | 跳过不再动额度。区块内「先砸后换」由 2% 区块参考价兜住（§17 B-F4） | `ReviewFork`：`test_review_spendTrickNoLongerSkipsTheChunk`、`test_review_dustPlusOneWeiNoLongerSpendsTheBlock`、`test_review_keeperUnaffectedByDust`；`SwapBack.t.sol`：`test_swapBack_dustSellPlusOneWeiSpendsNothing` |
+| R5-1c（B-F2） | 低 | 「多出的余额算不算有人在加流动性」和这笔卖单比：卖单越小越容易成立，零头卖单 + 1 wei 就算 | 只看多出的**报价币**，和池子的报价币储备比：至少 `LP_ADD_MIN_BPS`（10 bps = 0.1%）才跳过；不到的被这一块吸收。多出的代币不再触发跳过（加流动性时代币的转账钩子只会在代币先转时触发，那时还没有多出的报价币） | `SwapBack.t.sol`：`test_swapBack_skippedWhilePairUnsynced`、`test_swapBack_justBelowLpAddThresholdDoesNotSkip`；`ReviewFork`：`test_review_quoteAtThresholdSkipsWithoutSpending`、`test_review_quoteJustBelowThresholdIsAbsorbed` |
+| R5-2（C-F5） | 低（owner） | EIP-7702 委托过的普通钱包有 23 字节的代码（`0xef0100` ‖ 地址），`setExcluded` 把它当合约放行，owner 又能排除普通钱包 | 代码恰好 23 字节且以 `0xef0100` 开头的按普通钱包处理，回滚 `NotAContract`（`0xef` 开头的代码不能被部署，EIP-3541，所以这个形状只可能是委托标记） | `ReviewUnit`：`test_review_eip7702DelegatedWalletCantBeExcluded`、`test_review_plainWalletStillRefused_contractsStillAllowed` |
+| R5-3（C-F1） | 低（部署） | 复用共用合约时只核对了 `PEER_CORE` 挂在同一套分红 / 迁移 / 部署合约上，换一个 `QUOTE_REGISTRY` + `PLATFORM_BUCKET` 所有检查照过（PoC `peerCoreDoesNotPinRegistryAndBucket`） | `_checkCore` 再核对 `PEER_CORE.quoteRegistry() == QUOTE_REGISTRY`、`PEER_CORE.platformBucket() == PLATFORM_BUCKET`、`bucket.operators(PEER_CORE)` 为真 | `DeployReview`：`test_review_deploy_peerRegistryMismatchRefused`、`test_review_deploy_peerBucketMismatchRefused` |
+| R5-4（C-F6） | 低（owner） | keeper 时间锁可以绕过：`setKeeper` 只在 `keeper == 0` 时可用，owner 先 `proposeKeeper(0)`，48 小时后 `acceptKeeper`，再 `setKeeper(任意地址)` 立即生效，观察者 48 小时里只看到「改成 0」 | 两个处理合约（基类）和 `SharedPlatformFeeBucket` 加 `keeperSet` 标记：`setKeeper` 一生只能调一次（设成 0 也算），`acceptKeeper` 也会置位；之后只能 `proposeKeeper` → 48 小时 → `acceptKeeper`。这个时间锁约束的是 keeper 的更换，不约束 owner：owner 本来就能直接 `process` / `collectPlatform` | `ReviewUnit`：`test_review_handlerKeeperZeroNoLongerReopensSetKeeper`、`test_review_handlerAcceptedKeeperClosesSetKeeper`、`test_review_handlerSetKeeperZeroUsesItUp`、`test_review_bucketKeeperZeroNoLongerReopensSetKeeper`、`test_review_bucketAcceptedKeeperClosesSetKeeper` |
+| R5-5（C-F8） | Info（脚本） | `BURNER` 覆盖项只在检查里用，部署时总是接 V2 手续费池的回购合约，设了 `BURNER` 的部署会被自己的检查打回（PoC `burnerEnvNotHonouredByDeploy`） | 部署和检查共用 `_burner` / `_feeVault`：`BURNER` / `FEE_VAULT` 设了（非 0）就用它，否则主网用 V2 手续费池的；测试网只在设了 `BURNER` 时接回购合约并核对 | `DeployReview`：`test_review_deploy_burnerAndFeeVaultOverridesUsed`、`test_review_deploy_defaultsAndKeeperFlags` |
+| R5-6 | Info（文档） | §16 的 V3 D 行写「合约允许同一区块多次 `process`」，与 §17 的每区块额度矛盾；§7 / §17 的 TaxHandlerV3 大小与实际编译不符（`98cab5c` 实际 20,508 B） | 改正，见 §16、§7 | — |
+
+**不能破坏的路径**（真实 Pancake，`ReviewFork`）：Router02 的普通卖出（到手 = `previewSell`，这一块照常执行）、多跳卖出 `token → WBNB → USDT` 与买入 `USDT → WBNB → token`、`addLiquidity` 代币在前（这一块在代币到账前执行，mint 照常）与报价币在前（≥ 0.1% 的加池被识别为加流动性，跳过这一块、额度不动，mint 拿到两边）、`addLiquidityETH`（代币先转，这一块照常执行）。
+
+**已知风险（不改）**
+
+- C-F2 的残留（K-20）：keeper 可以给 `collectPlatform` 的回购填很小的 `minGangOut`，热钱包被盗时这一笔回购可被夹。用户已决定这次只关自定义路由。
+- 闪电兑换写法的卖出一律回滚（K-21）。
+- 小额、报价币在前的加池（`addLiquidity(报价币, 代币, …)`，报价币不到池子报价币储备的 0.1%）：恰好有一块要卖时，这一块吸收掉已经转进池子的报价币，mint 时报价币一侧为 0，整笔回滚 `Pancake: INSUFFICIENT_LIQUIDITY_MINTED`（不亏钱）。换成代币在前、`addLiquidityETH`、或加大金额都能成功（`test_review_smallQuoteFirstAddReverts_tokenFirstWorks`）。
+
+**review 之后仍然开放、待决定的问题**
+
+- **R5-O1（B-F2 仍可绕过）**：0.1% 的门槛挡得住零头，挡不住「当场拿回」的捐款。一个合约卖家先往池子转 ≥ 0.1% 储备的报价币（可以闪电借来），再把税币直接转进池子（这一块被当成加流动性跳过），然后自己调 `pair.swap`，取出量里把刚才那笔报价币一并取回（池子把它算作输入，只收 0.25% 手续费）。主网分叉实测：15 BNB 级别的池子（储备 45 BNB）捐 0.045 BNB、成本约 0.0001 BNB，卖家比老实卖出多拿 96 bps（≈ 原 B-F2 的 0.96%）。经 Router02 卖出时捐款会被池子吸收、拿不回来，所以只有自己写合约直接对池子卖的人能用。PoC 不在仓库里（未提交）。可选的根治办法：不再按「多出的余额」跳过，而是在 `swapBack` 里遇到多出的余额时先 `pair.skim(handler)` 收走、卖完这一块再原样转回池子——卖家跳不过这一块，加流动性的人（两种顺序、任意金额）也不会被吸收；代价是有多出余额时多约 3–5 万 gas，转账扣费的报价币会在两次转账里各被扣一次。需要用户决定。
+
+**对外接口变化**（服务端 / CLI / 网站）
+
+- 处理合约（TaxHandlerV3、HolderRewardHandler）：新错误 `SellDuringFlashSwap`；新常量 `LP_ADD_MIN_BPS`（10）；新 getter `keeperSet()`；`setKeeper` 在 `keeperSet` 后回滚 `KeeperAlreadySet`（包括 keeper 已被改成 0 的情况）。
+- 代币（TaxLaunchTokenV3、FairToken）：新错误 `SellDuringFlashSwap`（闪电兑换写法的卖出）。
+- 手续费池 `SharedPlatformFeeBucket`：新 getter `keeperSet()`；`setKeeper` 同上。
+- 分红合约：`setExcluded(EIP-7702 委托钱包, true)` 回滚 `NotAContract`。
+- `windowOf` / `maxChunk` / `previewSell` / `previewSellNextBlock` 的签名不变；跳过不再把额度设成 `uint96.max`，所以「池子有未同步余额」之后 `maxChunk` 不再变成 0。
+- 部署脚本：复用时 `PEER_CORE` 的报价币登记合约、手续费池必须和传入的一致（新的 `WiringCheck("peer core registry" / "peer core bucket" / "peer core on bucket")`）；`BURNER` / `FEE_VAULT` 在部署时就生效，填 0 等于不填。
+- 服务端 keeper、CLI、网站：不需要改。keeper 只调 `process` / `collectPlatform`，错误处理不变；CLI 的报价用 `previewSellNextBlock` / `previewSell`，签名不变；网站不读这些字段。CLI 若要给出更清楚的报错，可以识别 `SellDuringFlashSwap`。
+
+**结果**：`forge test` 641 个通过（不设 `BSC_RPC_URL`）；主网分叉（48.club）`test/fork/*` 12 个通过，`test/audit5/**`（`--threads 1`）150 个里 148 个一次通过，另 2 个（`ReviewFairForkTest` 里继承的 `test_fork_usdt_raiseTracksBnbPrice` 和 `test_review_fair_flashSwapSellRefused`）因节点返回 `not supported` 失败，单独重跑这个套件 6 个全过；invariant：`CoreInvariants` 9 条与 `audit5a/VaultUnitsInvariant` 3 条在 200 × 80 下全过（各 200 runs、16,000 次调用）；两个部署脚本在 BSC 测试网与主网的本地分叉（anvil）上顺序跑通（第二个复用第一个的五个共用合约 + `PEER_CORE`；主网带 OWNER、链接线上 PoolCheck），没有往任何链广播。运行时字节码见 §7，都 < 24,576 B。gas（主网分叉、真实 Pancake，`test_gas_typical`，改动前 → 改动后）：路由卖出带一块 656,956 → 658,102（+1,146，多读一次池子的报价币余额），不带一块 329,553 → 330,795，直接转进池子带一块 387,083 → 388,229，路由买入 296,766 → 296,788，keeper `process` 313,790 → 313,856。

@@ -136,11 +136,21 @@ contract SharedDividendVault is Ownable2Step {
 
     /// @notice Exclude a contract (a pool, a locker, an exchange's contract wallet) from shares; un-excluding is
     ///         free. Internal audit 5 C-F5: only an address with code can be excluded, so the owner can't exclude every
-    ///         holder but chosen wallets and steer all future dividends to them.
+    ///         holder but chosen wallets and steer all future dividends to them. A wallet delegated under EIP-7702
+    ///         (its code is just the 23-byte designator 0xef0100 ‖ address) is a wallet, not a contract (review).
     function setExcluded(address account, bool isExc) external onlyOwner {
-        if (isExc && account.code.length == 0) revert NotAContract();
+        if (isExc && !_isContract(account)) revert NotAContract();
         excluded[account] = isExc;
         emit Excluded(account, isExc);
+    }
+
+    /// @dev Code that is not an EIP-7702 delegation designator. 0xef can't start deployed code (EIP-3541), so 23 bytes
+    ///      starting 0xef0100 is always a delegated wallet.
+    function _isContract(address account) internal view returns (bool) {
+        uint256 len = account.code.length;
+        if (len != 23) return len != 0;
+        bytes memory code = account.code;
+        return code[0] != 0xef || code[1] != 0x01 || code[2] != 0x00;
     }
 
     /// @notice The floor `launchpad`'s tokens registered from now on get; tokens already registered keep their own.

@@ -32,9 +32,11 @@ interface IHasPair {
 ///         of the token's reserve as it stood at the block's first chunk attempt, counted by tokens sold — so neither
 ///         a dust sell nor a keeper looping `process` with a 1-wei floor can sell more than one chunk's worth a block.
 ///         Every chunk also refuses to sell more than MAX_PRICE_DROP_BPS below that same block-start reference: a
-///         sell (or a keeper) can't first dump the price and then convert the holders' tax at it. Unsynced pair
-///         balances only skip the chunk when they look like a half-made LP add (not a 1-wei donation), and a skip
-///         spends the block's budget. `previewSell` / `previewSellNextBlock` quote a sell with its chunk included.
+///         sell (or a keeper) can't first dump the price and then convert the holders' tax at it. Unsynced quote in
+///         the pair only skips the chunk when it looks like a half-made LP add (at least LP_ADD_MIN_BPS of the quote
+///         reserve, not dust), and a skip leaves the block's budget alone; a sell paid in from a flash swap's callback
+///         (the pair's quote below its reserve) is refused (`SellDuringFlashSwap`), not skipped. `previewSell` /
+///         `previewSellNextBlock` quote a sell with its chunk included.
 ///         Each chunk's quote is split at once: the holders' units sold go to the vault (`convertDividend`), the rest to
 ///         the subclass (`_onProceeds`). Neither sink can make a chunk fail: a conversion the vault refuses waits here
 ///         (`pendingHolderUnits` / `pendingHolderQuote`, retried by the next chunk or `flushHolders`), and platform
@@ -57,10 +59,13 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     /// @notice Delay between proposing and accepting a new DEX router (flow review F4b: a router swap plus a keeper
     ///         `process` with a 1-wei floor would otherwise hand the whole chunk to the owner's router at once).
     uint256 public constant DEX_ROUTER_DELAY = 48 hours;
-    /// @notice Same delay for a new keeper (internal audit 5, C-F6); the first keeper is set at deploy.
+    /// @notice Same delay for a new keeper (internal audit 5, C-F6); the first keeper is set once, at deploy.
     uint256 public constant KEEPER_DELAY = 48 hours;
     /// @notice A chunk never sells at a price more than this below the block's reference price (bps).
     uint256 public constant MAX_PRICE_DROP_BPS = 200;
+    /// @notice Unsynced quote in the pair counts as a half-made LP add (and skips the swap-back chunk) only from this
+    ///         share of the pair's quote reserve (bps): dust can't skip it (audit 5 B-F2, review).
+    uint256 public constant LP_ADD_MIN_BPS = 10;
 
     SharedDividendVault public immutable dividendVault;
 
@@ -72,6 +77,8 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     address public keeper;
     address public pendingKeeper;
     uint256 public keeperEta;
+    /// @notice Whether a keeper was ever set (`setKeeper` or `acceptKeeper`): `setKeeper` works only before that.
+    bool public keeperSet;
     /// @notice Tax tokens of each token held here and not sold yet (the holders' part included).
     mapping(address => uint256) public accruedTax;
 
@@ -108,6 +115,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     error TooEarly();
     error KeeperAlreadySet();
     error PriceBelowReference();
+    error SellDuringFlashSwap();
 
     event DexRouterSet(address indexed router);
     event DexRouterProposed(address indexed router, uint256 eta);
@@ -160,10 +168,14 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         delete dexRouterEta;
     }
 
-    /// @notice The first keeper (deploy). Later changes go through `proposeKeeper` → KEEPER_DELAY → `acceptKeeper`
-    ///         (C-F6): an instant swap to a new key plus `process` would skip the router delay's warning period.
+    /// @notice The first keeper (deploy), once in the contract's life. Every later change goes through
+    ///         `proposeKeeper` → KEEPER_DELAY → `acceptKeeper` (C-F6): an instant swap to a new key plus `process` would
+    ///         skip the router delay's warning period. A flag, not `keeper == 0` (review): accepting a proposed 0 must
+    ///         not reopen the instant path. The delay governs who the keeper is, not the owner, who can call
+    ///         `process` itself at any time.
     function setKeeper(address keeper_) external onlyOwner {
-        if (keeper != address(0)) revert KeeperAlreadySet();
+        if (keeperSet) revert KeeperAlreadySet();
+        keeperSet = true;
         keeper = keeper_;
         emit KeeperSet(keeper_);
     }
@@ -179,6 +191,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (eta == 0) revert NoProposal();
         if (block.timestamp < eta) revert TooEarly();
         keeper = pendingKeeper;
+        keeperSet = true;
         delete pendingKeeper;
         delete keeperEta;
         emit KeeperSet(keeper);
@@ -266,15 +279,19 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
     }
 
     /// @dev The token is selling `sellAmount` into its pair (the seller's tokens not moved yet, pair unlocked): sell
-    ///      a chunk straight into the pair. Callers wrap this so it can never fail the trade.
+    ///      a chunk straight into the pair. Callers wrap this so it can never fail the trade — except for
+    ///      `SellDuringFlashSwap`, which the token passes on to refuse the sell.
     function _swapBack(address token, uint256 sellAmount) internal returns (uint256 quoteOut) {
         if (msg.sender != token) revert OnlyToken();
         address pair = IHasPair(token).pair();
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
+        // the pair's quote below its reserve: mid-swap, i.e. a flash-swap sell (quote taken out first, these tokens
+        // paid in from the callback, the pair locked). Skipping its chunk would be free, so the sell is refused (B-F2).
+        if (IERC20(_quoteOf(token)).balanceOf(pair) < rQ) revert SellDuringFlashSwap();
         _openWindow(token, rT, rQ);
-        (uint256 amount, uint256 out, bool spend) = _swapBackChunk(token, sellAmount, false);
-        // a skip for unsynced balances spends the block's budget: nothing can be dumped first and converted after
-        if (spend) windowOf[token].used = type(uint96).max;
+        // a skip (a half-made LP add) leaves the budget alone: the block's reference price already stops a
+        // "dump first, convert after" (B-F2 review: a skip that spent the budget let dust freeze every chunk)
+        (uint256 amount, uint256 out) = _swapBackChunk(token, sellAmount, false);
         if (amount == 0 || out == 0) return 0;
         windowOf[token].used += uint96(amount);
         return _sellChunk(token, amount, (out * (10_000 - SWAP_BACK_SLIPPAGE_BPS)) / 10_000, true);
@@ -282,28 +299,28 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
 
     /// @dev The chunk a sell of `sellAmount` would trigger and what it fetches (`fresh`: as the first chunk attempt of
     ///      a new block). None when the sell pays no tax, the budget is spent, the price is below the block's
-    ///      reference, or the pair holds unsynced balances that look like a half-made LP add (`spend` then: the
-    ///      caller spends the block's budget). A 1-wei donation is not that: it is simply absorbed.
+    ///      reference, the pair is mid-swap, or it holds unsynced quote that looks like a half-made LP add. Unsynced
+    ///      dust (below LP_ADD_MIN_BPS of the quote reserve, or any token excess) is simply absorbed by the chunk.
     function _swapBackChunk(address token, uint256 sellAmount, bool fresh)
         internal
         view
-        returns (uint256 amount, uint256 out, bool spend)
+        returns (uint256 amount, uint256 out)
     {
-        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0, false);
+        if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0);
         address pair = IHasPair(token).pair();
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         Ref memory ref = fresh || windowOf[token].blockNumber != block.number
             ? Ref(uint112(rT), uint112(rQ))
             : refOf[token];
-        if (_belowRef(rT, rQ, ref)) return (0, 0, false);
-        // someone mid-way adding liquidity (one side sent, not minted yet): a swap now would absorb it. Only an
-        // excess worth at least half the sell counts (B-F2: a 1-wei donation must not skip the chunk for free).
-        uint256 bT = IERC20(token).balanceOf(pair);
+        if (_belowRef(rT, rQ, ref)) return (0, 0);
+        // a balance below its reserve: mid-swap (the pair is locked) — never sell into that (`_swapBack` refuses a
+        // sell with the quote below its reserve outright)
         uint256 bQ = IERC20(_quoteOf(token)).balanceOf(pair);
-        // a balance below its reserve: mid-swap (a flash-swap callback) — never sell into that
-        if (bT < rT || bQ < rQ) return (0, 0, true);
-        (uint256 exT, uint256 exQ) = (bT - rT, bQ - rQ);
-        if ((exT > 0 || exQ > 0) && (exT * 2 >= sellAmount || exQ * rT * 2 >= sellAmount * rQ)) return (0, 0, true);
+        if (bQ < rQ || IERC20(token).balanceOf(pair) < rT) return (0, 0);
+        // someone mid-way adding liquidity with the quote sent first, not minted yet: a swap now would absorb it.
+        // Only unsynced quote of at least LP_ADD_MIN_BPS of the quote reserve counts (B-F2 review: measured against
+        // the pool, not the sell, so a dust sell can't count 1 wei as an LP add).
+        if (bQ != rQ && (bQ - rQ) * 10_000 >= rQ * LP_ADD_MIN_BPS) return (0, 0);
         amount = accruedTax[token];
         uint256 bal = _sellable(token);
         if (amount > bal) amount = bal;
@@ -311,7 +328,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (amount > left) amount = left;
         uint256 bySell = (sellAmount * SWAP_BACK_SELL_BPS) / 10_000;
         if (amount > bySell) amount = bySell;
-        if (amount == 0) return (0, 0, false);
+        if (amount == 0) return (0, 0);
         out = _amountOut(amount, rT, rQ);
     }
 
@@ -341,7 +358,7 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if (pair == address(0)) return (0, 0);
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         uint256 chunkOut;
-        (chunk, chunkOut,) = _swapBackChunk(token, amountIn, fresh);
+        (chunk, chunkOut) = _swapBackChunk(token, amountIn, fresh);
         uint256 net = amountIn - (amountIn * _sellTaxBps(token)) / 10_000;
         quoteOut = _amountOut(net, rT + chunk, rQ - chunkOut);
     }

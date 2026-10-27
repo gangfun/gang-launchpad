@@ -21,8 +21,8 @@ import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQ
 ///         the last call, which is what makes the pad usable.
 /// @dev Mainnet broadcast is refused unless LAUNCHPAD_V3_MAINNET_OK=true (spec: no mainnet broadcast before audit).
 ///      Env: DEPLOYER_PRIVATE_KEY; OWNER (the multisig, required on mainnet; gets ownership via Ownable2Step and must
-///      accept), optional KEEPER, FEE_VAULT, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
-///      TOKEN_DEPLOYER (reuse), RECIPIENT + RECIPIENT_LABEL
+///      accept), optional KEEPER, FEE_VAULT, BURNER, QUOTE_REGISTRY + PLATFORM_BUCKET + DIVIDEND_VAULT + MIGRATOR +
+///      TOKEN_DEPLOYER + PEER_CORE (reuse), RECIPIENT + RECIPIENT_LABEL
 ///      (listed in TaxHandlerV3; testnet default: a fixed demo treasury address).
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
@@ -131,7 +131,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
     function _check(Stack memory s, address keeper, address owner, bool mainnet) internal view {
         TaxHandlerV3 handler = TaxHandlerV3(s.handler);
         LaunchpadV3 pad = LaunchpadV3(s.pad);
-        _checkCore(s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
+        _checkCore(s.quoteRegistry, s.vault, s.migrator, s.tokenDeployer, s.bucket, s.pad, MIN_SHARE, _ops(s));
         if (handler.launchpad() != s.pad) revert WiringCheck("handler.launchpad");
         if (handler.keeper() != keeper) revert WiringCheck("handler.keeper");
         if (address(pad.migrator()) != s.migrator || address(pad.tokenDeployer()) != s.tokenDeployer) {

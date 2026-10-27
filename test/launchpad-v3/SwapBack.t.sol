@@ -106,19 +106,58 @@ contract SwapBackTest is LaunchpadV3Test {
         assertEq(windowBlock, 0, "no chunk attempt");
     }
 
-    /// @dev D2 / audit 5 B-F2: an unsynced balance worth at least half the sell (someone mid-way adding liquidity)
-    ///      skips the chunk and spends the block's budget; a dust donation is absorbed and the chunk runs.
+    /// @dev D2 / audit 5 B-F2 (review): unsynced quote of at least LP_ADD_MIN_BPS of the quote reserve (someone
+    ///      mid-way adding liquidity, quote first) skips the chunk, and the skip leaves the block's budget alone.
     function test_swapBack_skippedWhilePairUnsynced() public {
         (address t, MockPair pair) = _dividendToken();
         _buyBacklog(t, 12);
         uint256 sold = 1_000_000 ether;
-        (uint256 rT, uint256 rQ) = _reserves(t, pair);
-        quoteTok.mintUnlimited(address(pair), (sold * rQ) / rT); // one side sent, not minted: about the sell's value
+        (, uint256 rQ) = _reserves(t, pair);
+        quoteTok.mintUnlimited(address(pair), (rQ * handler.LP_ADD_MIN_BPS()) / BPS); // one side sent, not minted
         uint256 accrued = handler.accruedTax(t);
+        uint256 max0 = handler.maxChunk(t);
+        assertGt(max0, 0);
         vm.prank(address(uint160(0xC0000)));
         IERC20(t).transfer(address(pair), sold);
         assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "skipped");
-        assertEq(handler.maxChunk(t), 0, "and the block's budget is spent");
+        (, uint96 used) = handler.windowOf(t);
+        assertEq(used, 0, "and the block's budget is untouched");
+        assertGt(handler.maxChunk(t), 0, "the keeper can still sell this block");
+    }
+
+    /// @dev B-F2 (review): unsynced quote just below LP_ADD_MIN_BPS of the reserve, however large next to the sell,
+    ///      is not an LP add: absorbed, and the chunk runs.
+    function test_swapBack_justBelowLpAddThresholdDoesNotSkip() public {
+        (address t, MockPair pair) = _dividendToken();
+        _buyBacklog(t, 12);
+        (, uint256 rQ) = _reserves(t, pair);
+        quoteTok.mintUnlimited(address(pair), (rQ * handler.LP_ADD_MIN_BPS()) / BPS - 1);
+        uint256 accrued = handler.accruedTax(t);
+        uint256 sold = 1000 ether; // a small sell: the old rule (excess vs half the sell) would have skipped
+        uint256 chunk = _expectedChunk(t, sold);
+        assertGt(chunk, 0);
+        vm.prank(address(uint160(0xC0000)));
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "the chunk ran");
+    }
+
+    /// @dev B-F2 (review): a dust sell next to 1 wei of unsynced quote neither skips nor spends the block.
+    function test_swapBack_dustSellPlusOneWeiSpendsNothing() public {
+        (address t, MockPair pair) = _dividendToken();
+        _buyBacklog(t, 12);
+        quoteTok.mintUnlimited(address(pair), 1);
+        address seller = address(uint160(0xC0000));
+        vm.prank(seller);
+        IERC20(t).transfer(address(pair), 100);
+        (, uint96 used) = handler.windowOf(t);
+        assertLe(used, 25, "at most its own dust chunk");
+        uint256 accrued = handler.accruedTax(t);
+        uint256 sold = 1_000_000 ether;
+        uint256 chunk = _expectedChunk(t, sold);
+        assertGt(chunk, 0);
+        vm.prank(seller);
+        IERC20(t).transfer(address(pair), sold);
+        assertEq(handler.accruedTax(t), accrued - chunk + (sold * 300) / BPS, "the real sell still gets its chunk");
     }
 
     function test_swapBack_dustDonationDoesNotSkip() public {

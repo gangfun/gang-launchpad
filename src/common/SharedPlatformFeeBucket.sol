@@ -11,7 +11,9 @@ import {BuybackBurner} from "../launchpad-v2/BuybackBurner.sol";
 ///         - Only the fixed-path `collectPlatform` (80% BuybackBurner / 20% feeVault). There is no
 ///           `collectPlatformSmart`: it handed keeper-supplied router calldata to the burner, so the hot keeper key
 ///           could route the 80% leg to itself and pass `minGangOut` with dust.
-///         - The keeper is set once at deploy; changing it later takes KEEPER_DELAY (propose → accept).
+///         - The keeper is set once in the contract's life (deploy); changing it later takes KEEPER_DELAY
+///           (propose → accept). The delay governs who the keeper is, not the owner: the owner can call
+///           `collectPlatform` itself at any time.
 ///         `notifyAccrual` credits what actually arrived (a quote that charges on transfer can't over-credit).
 /// @dev flushStuck stays two-step (requestFlush + 7 days); a successful collect clears the request.
 contract SharedPlatformFeeBucket is Ownable2Step {
@@ -29,6 +31,8 @@ contract SharedPlatformFeeBucket is Ownable2Step {
     address public keeper;
     address public pendingKeeper;
     uint256 public keeperEta;
+    /// @notice Whether a keeper was ever set (`setKeeper` or `acceptKeeper`): `setKeeper` works only before that.
+    bool public keeperSet;
 
     mapping(address => uint256) public accruedQuote;
     mapping(address => uint256) public flushRequestedAt;
@@ -87,9 +91,11 @@ contract SharedPlatformFeeBucket is Ownable2Step {
         emit BurnerSet(burner_);
     }
 
-    /// @notice The first keeper (deploy); later changes go through `proposeKeeper` → KEEPER_DELAY → `acceptKeeper`.
+    /// @notice The first keeper (deploy), once; later changes go through `proposeKeeper` → KEEPER_DELAY →
+    ///         `acceptKeeper`. A flag, not `keeper == 0` (review): accepting a proposed 0 must not reopen the instant path.
     function setKeeper(address keeper_) external onlyOwner {
-        if (keeper != address(0)) revert KeeperAlreadySet();
+        if (keeperSet) revert KeeperAlreadySet();
+        keeperSet = true;
         keeper = keeper_;
         emit KeeperSet(keeper_);
     }
@@ -105,6 +111,7 @@ contract SharedPlatformFeeBucket is Ownable2Step {
         if (eta == 0) revert NoProposal();
         if (block.timestamp < eta) revert TooEarly();
         keeper = pendingKeeper;
+        keeperSet = true;
         delete pendingKeeper;
         delete keeperEta;
         emit KeeperSet(keeper);

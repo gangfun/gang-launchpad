@@ -1,7 +1,7 @@
 # 主网上线手册 · LaunchpadV3 税收币 + 打新 + GangRouter
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写（写于上线前，上线当天照着做，做完在每一步后面记下交易哈希和地址）
-- 代码：gang-launchpad，合约冻结在 `ddce6b6`（方案 A 合并 + 第四轮内部审计修复 + 外盘税卖出时自动小额换 + 按税产生时记账；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §15–§17）。合入 `main` 后以 `main` 为准
+- 代码：gang-launchpad，合约冻结在审计说明 §18 的修复提交（方案 A 合并 + 第四轮内部审计修复 + 外盘税卖出时自动小额换 + 按税产生时记账 + 第五轮内部审计修复及其 review；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §15–§18）。合入 `main` 后以 `main` 为准
 - 服务端 / keeper：gangfun-server，`keeper/` 以分支 `feat/keeper-ops` 为准（合入 `main` 后以 `main` 为准）
 - 链：BSC 主网（chainId 56）
 - 谁做：部署钱包跑脚本；多签签 §3 的交易；服务端 / keeper 由能上服务器的人改 env
@@ -34,8 +34,9 @@ cast call 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111 "burner()(address)" --rpc-u
 cast call 0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865 "getPool(address,address,uint24)(address)" \
   0x55d398326f99059fF775485246999027B3197955 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c 100 --rpc-url $R
 #   预期 0x172fcD41E0913e95784454622d1c3724f546f849
-forge test   # 全部通过（ddce6b6：487 个）
-BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-contract Fork   # 主网分叉（publicnode 会丢历史状态，用 48.club）
+forge test   # 全部通过（个数见审计说明 §18 的结果）
+BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/fork/*'   # 主网分叉（publicnode 会丢历史状态，用 48.club）
+BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --threads 1   # 审计回归（部署脚本测试改进程环境变量，要单线程）
 ```
 
 ---
@@ -46,6 +47,8 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-contract Fork   # 主网�
 export DEPLOYER_PRIVATE_KEY=0x…            # 只在这台机器的这个 shell 里
 export OWNER=0x<多签>
 export RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<合作方名称>"   # 可选：也可以之后由多签 list
+# 可选：BURNER=0x… / FEE_VAULT=0x…  新手续费池的回购合约 / 金库（不填或填 0 = 照抄 V2 手续费池的）。
+#   部署时就按它接线，脚本最后也按它核对；第 2 步复用时必须给和第 1 步相同的值（或都不填），否则 WiringCheck("bucket burner")
 L="--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3"
 G="--with-gas-price <当时主网 gas price，wei> --priority-gas-price <同上>"   # 必须显式给：公共节点偶尔估出 1 wei，交易会卡住
 R=https://bsc-dataseed1.defibit.io
@@ -57,7 +60,8 @@ LAUNCHPAD_V3_MAINNET_OK=true forge script script/DeployLaunchpadV3.s.sol --rpc-u
 #    TOKEN_DEPLOYER、AGENT_ID、USDT_REF_POOL，以及 V3_LAUNCHPAD 的部署区块
 
 # 2) 打新：五个共用合约全部复用上一步的，外加 PEER_CORE=第一步的 V3_LAUNCHPAD（脚本要求五个要么全传要么全不传，
-#    只传一部分直接回滚 PartialShared；PEER_CORE 用来核对 V3 核心挂在同一套分红 / 迁移 / 部署合约上）
+#    只传一部分直接回滚 PartialShared；PEER_CORE 用来核对 V3 核心用的是同一个 QUOTE_REGISTRY、PLATFORM_BUCKET，
+#    在这个手续费池里是 operator，并挂在同一套分红 / 迁移 / 部署合约上，任何一项不对报 WiringCheck("peer core …")）
 QUOTE_REGISTRY=0x… PLATFORM_BUCKET=0x… DIVIDEND_VAULT=0x… MIGRATOR=0x… TOKEN_DEPLOYER=0x… PEER_CORE=0x… \
 FAIR_MINT_MAINNET_OK=true forge script script/DeployFairMint.s.sol --rpc-url $R --broadcast --slow $L $G
 #    记下：FAIR_MINT_PAD、HOLDER_REWARD_HANDLER，以及 FAIR_MINT_PAD 的部署区块
@@ -69,7 +73,8 @@ V3_PAD=0x… FAIR_PAD=0x… GANG_ROUTER_MAINNET_OK=true \
 ```
 
 - 第 2 步复用时，脚本要求部署钱包仍是这五个合约的 owner（多签还没 accept），否则 `NotDeployerOwned` 直接退出；`MIGRATOR` 的 factory 不对会 `WiringCheck("MIGRATOR factory")`。
-- 两个脚本结束时都做接线自检（`_check` / `_checkCore` / `_checkBucket`），任何一项不对直接报错：核心在分红合约、迁移合约、代币部署合约的白名单里；分红合约的 operator 是本核心的 handler；分红合约排除了自己、迁移合约、手续费池；门槛 10,000 枚；bucket 的 operator 是核心和 handler、keeper 正确；Agent 准入开启；V3 单地址上限开启；接收地址已列入（若设了 `RECIPIENT`）。
+- 两个脚本结束时都做接线自检（`_check` / `_checkCore` / `_checkBucket`），任何一项不对直接报错：核心在分红合约、迁移合约、代币部署合约的白名单里；分红合约的 operator 是本核心的 handler；分红合约排除了自己、迁移合约、手续费池；门槛 10,000 枚；bucket 的 operator 是核心和 handler、keeper 正确、回购合约和金库等于 `BURNER` / `FEE_VAULT`（不填时等于 V2 手续费池的）；复用时 `PEER_CORE` 的报价币登记合约和手续费池与传入的一致；Agent 准入开启；V3 单地址上限开启；接收地址已列入（若设了 `RECIPIENT`）。
+- 处理合约和手续费池的 `setKeeper` 由脚本在部署时调用，**合约一生只能调一次**（`keeperSet()` 变为 true）；之后换 keeper 只能 `proposeKeeper` → 48 小时 → `acceptKeeper`，改成 0 再 `setKeeper` 的老路已经堵上（审计说明 §18 R5-4）。
 - 主网**不登记任何报价币**：USDT 发币时用 `USDT_REF_POOL`（Pancake V3 USDT/WBNB 0.01% 池 `0x172f…f849`，30 分钟 TWAP）换算毕业额 / 募集额；CLI 对主网 USDT 默认用这个池子（`--ref-pool` 可省）。其它 18 位报价币由发币人自带参考池（V2 池读储备、V3 池读 TWAP，没有观测历史时读现价，见审计说明 §4.2 R2-1 的已接受风险）。
 - 换币路由（Pancake V2 Router02 `0x10ED…024E`）在构造 handler 时传入；之后要改只能 `proposeDexRouter` → 48 小时 → `acceptDexRouter`（§8）。
 - 每个脚本跑完，检查 `broadcast/<脚本>/56/run-latest.json` 里所有 receipt 的 status 都是 `0x1`，并确认文件里没有私钥，再提交到仓库。
@@ -97,7 +102,8 @@ c $DIVIDEND_VAULT "minimumShareBalanceOf(address)(uint256)" $V3_LAUNCHPAD       
 c $MIGRATOR "launchpads(address)(bool)" $V3_LAUNCHPAD; c $MIGRATOR "launchpads(address)(bool)" $FAIR_MINT_PAD
 c $TOKEN_DEPLOYER "launchpads(address)(bool)" $V3_LAUNCHPAD; c $TOKEN_DEPLOYER "launchpads(address)(bool)" $FAIR_MINT_PAD
 # handler：keeper、换币路由、没有待生效的路由提议
-for h in $V3_TAX_HANDLER $HOLDER_REWARD_HANDLER; do c $h "keeper()(address)"; c $h "dexRouter()(address)"; done
+for h in $V3_TAX_HANDLER $HOLDER_REWARD_HANDLER; do c $h "keeper()(address)"; c $h "keeperSet()(bool)"; c $h "dexRouter()(address)"; done
+c $PLATFORM_BUCKET "keeperSet()(bool)"   # true：setKeeper 已用掉，之后换人只能走 48 小时时间锁
 # 路由、准入
 c $V3_LAUNCHPAD "routers(address)(bool)" $GANG_ROUTER; c $FAIR_MINT_PAD "routers(address)(bool)" $GANG_ROUTER
 c $V3_LAUNCHPAD "agentIdRegistry()(address)"   # 0x60B9…022F（真实 Agent ID）
@@ -116,7 +122,7 @@ c $V3_LAUNCHPAD "agentIdRegistry()(address)"   # 0x60B9…022F（真实 Agent ID
 | 3 | FairMintPad | `FAIR_MINT_PAD` | 路由名单、准入（只影响之后的 sale）、参考池相关设置 |
 | 4 | HolderRewardHandler | `HOLDER_REWARD_HANDLER` | keeper、换币路由（48 小时时间锁） |
 | 5 | QuoteRegistry（共用） | `QUOTE_REGISTRY` | 给某个报价币设固定换算额（可选；设了就优先于参考池） |
-| 6 | SharedPlatformFeeBucket（共用） | `PLATFORM_BUCKET` | operator、金库、回购合约、keeper（换人要 `proposeKeeper` → 48 小时 → `acceptKeeper`）、7 天应急出口；只有固定路径的 `collectPlatform`，没有 `collectPlatformSmart` |
+| 6 | SharedPlatformFeeBucket（共用） | `PLATFORM_BUCKET` | operator、金库、回购合约、keeper（换人要 `proposeKeeper` → 48 小时 → `acceptKeeper`）、7 天应急出口；只有固定路径的 `collectPlatform`，没有 `collectPlatformSmart`；多签自己也能直接 `collectPlatform` |
 | 7 | SharedDividendVault（共用） | `DIVIDEND_VAULT` | 核心白名单（移除只停新登记）、排除地址、新币的门槛；operator 已绑定，不能再改 |
 | 8 | SharedMigrator（共用） | `MIGRATOR` | 只能再加核心，不能移除 |
 | 9 | TokenDeployer（共用） | `TOKEN_DEPLOYER` | 能部署代币的核心名单 |
@@ -173,6 +179,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - crontab 用仓库里的 `keeper/crontab.txt`：所有任务都经 `cron-run.sh` 包一层（非零退出就报警）；外盘税 `*/10 * * * *`；健康检查 `keeper-health.sh` 每 30 分钟。
 - keeper 地址必须等于两个 handler 和新手续费池的 `keeper()`（部署脚本已按 `KEEPER` 设好）。
 - 后续建议：发交易单独用私有 RPC（`BSC_RPC_URL`），读和查日志用 `LOGS_RPC`，降低分块卖出被夹的风险。
+- `collectPlatform(quote, minGangOut)` 的 `minGangOut` 合约不设下限，完全靠 keeper 按链上报价给（审计说明 K-20）：keeper 热钱包被盗时，这一笔回购可被夹。keeper 钱包只放够付 gas 的 BNB；怀疑被盗时多签立即 `proposeKeeper(新地址)`（48 小时后 `acceptKeeper`），在此之前多签可以自己 `collectPlatform`，并在服务器上停掉 keeper 的 cron。时间锁约束的是**换 keeper**，不约束多签：多签本来就能直接 `process` / `collectPlatform`。
 
 ---
 
@@ -214,6 +221,8 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 | 分红兑现被拒（`HolderConversionDeferred`） | 健康检查报「pendingHolderQuote 卡住」 | 说明分红合约当时拒绝兑现。查清原因后任何人调 `handler.flushHolders(token)`；keeper 每次运行也会自动重试 |
 | 平台那份被拒（`PlatformOwed`） | 健康检查报「owedPlatformOf 卡住」 | 说明手续费池拒收（operator 被撤等）。恢复后任何人调 `handler.flushPlatform(quote)`；keeper 自动重试 |
 | `SwapBackFailed` | 健康检查报警 | 某个币卖单顺带的那一块失败了（卖单本身照常成交）。查池子状态（储备 / 余额不同步、报价币异常）；keeper 分块补位照常进行 |
+| 用户反馈卖出回滚 `SellDuringFlashSwap` | 用户 / 聚合器报错 | 有意为之（审计说明 §18 R5-1a、K-21）：在 Pancake 闪电兑换回调里付币的卖出一律拒绝。让用户经 Router02 或 CLI / 网站卖出。若池子的报价币余额长期低于储备（会负 rebase 的报价币），任何人对池子调一次 `sync()` 即可恢复 |
+| 有人反馈小额加池失败（`INSUFFICIENT_LIQUIDITY_MINTED`） | 用户报错 | 报价币在前的小额 `addLiquidity`（不到池子报价币储备的 0.1%）恰好赶上一块要卖时会失败（不亏钱，审计说明 §18）。让用户把代币放在前面（`addLiquidity(代币, 报价币, …)`，WBNB 池用 `addLiquidityETH`）或加大金额 |
 | 接收地址欠款 | keeper 日志 / 健康检查里出现 `owedOf > 0` | 联系合作方处理收款问题；能收款之后 keeper 或任何人都能 `TaxHandlerV3.release(token)` |
 | 接新合作方 | 需要时 | 多签 `TaxHandlerV3.list(地址, 名称)` |
 | 非官方池子分红 | 发现某个 V3 币在别的 DEX 或 V3 池子里有大额持仓 | 多签 `SharedDividendVault.setExcluded(pool, true)`，**同一批交易里** `TaxHandlerV3.syncShares(token, pool, 0)` |
@@ -241,5 +250,5 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - 撤掉核心在 SharedPlatformFeeBucket 的 operator：V3 内盘买卖、打新的打新和发射会全部 revert（审计说明 A-1）；打新卖回不受影响（撤出费记为 `owedFee`），外盘税照常卖出（平台那份记为 `owedPlatformOf`）。
 - 调高分红门槛 `setMinimumShareBalance`：只影响之后登记的新币（门槛在登记时按币快照），已有币不变，没必要改。
 - 指望「解绑 operator」来止损：分红合约的 operator 每个核心只能绑定一次，不能解绑、不能换。
-- 用 `setKeeper` 换 keeper：处理合约和手续费池的 `setKeeper` 只能在部署时设一次，之后换人走 `proposeKeeper` → 48 小时 → `acceptKeeper`，期间可以 `cancelKeeper`（审计说明 §17 C-F6）。
-- 把普通钱包设为分红排除：`setExcluded` 只接受有代码的地址（池子、锁仓合约等），排除钱包会回滚 `NotAContract`（§17 C-F5）。
+- 用 `setKeeper` 换 keeper：处理合约和手续费池的 `setKeeper` 一生只能调一次（部署脚本已经用掉），先 `proposeKeeper(0)` 再 `setKeeper` 也不行；换人走 `proposeKeeper` → 48 小时 → `acceptKeeper`，期间可以 `cancelKeeper`（审计说明 §17 C-F6、§18 R5-4）。
+- 把普通钱包设为分红排除：`setExcluded` 只接受有代码的地址（池子、锁仓合约等），排除钱包会回滚 `NotAContract`；EIP-7702 委托过的钱包（代码是 23 字节的 `0xef0100…`）也按普通钱包处理（§17 C-F5、§18 R5-2）。

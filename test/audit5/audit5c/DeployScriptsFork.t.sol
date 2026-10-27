@@ -45,9 +45,12 @@ contract DeployScriptsForkTest is Test {
     }
 
     function _clear() internal {
-        string[6] memory k =
-            ["QUOTE_REGISTRY", "PLATFORM_BUCKET", "DIVIDEND_VAULT", "MIGRATOR", "TOKEN_DEPLOYER", "PEER_CORE"];
-        for (uint256 i; i < 6; i++) vm.setEnv(k[i], vm.toString(address(0)));
+        // BURNER / FEE_VAULT: 0 = the default (the V2 bucket's on mainnet)
+        string[8] memory k = [
+            "QUOTE_REGISTRY", "PLATFORM_BUCKET", "DIVIDEND_VAULT", "MIGRATOR", "TOKEN_DEPLOYER", "PEER_CORE", "BURNER",
+            "FEE_VAULT"
+        ];
+        for (uint256 i; i < 8; i++) vm.setEnv(k[i], vm.toString(address(0)));
         vm.setEnv("OWNER", vm.toString(multisig));
     }
 
