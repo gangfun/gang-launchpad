@@ -199,9 +199,11 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          + the sale's mint fee (the platform's, not returned); WBNB sales pay native BNB
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
   gang fair withdraw --token <addr> (--shares <n> | --all)           sell back before it fills: mint price − exit fee (none once stale)
-  gang fair status --token <addr>        my shares; after launch: reward on / out, how much I can sell and stay in, to claim
+  gang fair status --token <addr> [--slippage 1]
+                                         my shares; after launch: reward on / out, how much I can sell and stay in, to claim
                                          (claimable now + reward credited when tax was paid, not sold yet), poolSellAll
-                                         (what selling my balance into the pool pays, as of the next block)
+                                         (what selling my balance into the pool pays, as of the next block: expectOut /
+                                         minOut for amountOutMin; also for a wallet that only bought in the pool)
   gang fair claim --token <addr>         claim the holder reward
   gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
                                          fair commands need --testnet for now (BSC testnet); --calldata prints the raw tx
@@ -220,11 +222,14 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang v3 buy --token <addr> --amount <quote> [--slippage 1] [--use-wbnb]
                                          amount includes the 1% fee and the buy tax; WBNB-quoted: native BNB via GangRouter
   gang v3 sell --token <addr> (--amount <tokens> | --all) [--slippage 1]
-                                         on the curve; graduated: no tx, a pool quote (expectOut / minOut for amountOutMin)
+                                         on the curve; graduated: no tx, a pool quote (expectOut / minOut for amountOutMin;
+                                         --amount needs no wallet)
   gang v3 info --token <addr>            curve, tax setting, recipient, what the router still owes it; graduated: swapBack
-                                         (tax not sold yet, the per-block chunk budget and what the latest block has left)
-  gang v3 status --token <addr>          my balance and dividend: claimable now + tax credited to me, not sold yet (estimate);
-                                         graduated: poolSellAll
+                                         (tax not sold yet, the per-block chunk budget, what the latest block has left of it
+                                         and the next chunk)
+  gang v3 status --token <addr> [--slippage 1]
+                                         my balance and dividend: claimable now + tax credited to me, not sold yet (estimate);
+                                         graduated: poolSellAll (expectOut / minOut for amountOutMin)
   gang v3 claim --token <addr>           claim my dividend (the quote token)
   gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
   gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>

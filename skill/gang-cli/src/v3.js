@@ -258,6 +258,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token, chainId: ctx.chainId })
+    const slippage = parseSlippage(fail, opt('slippage', '1'))
     const me = walletFor(ctx, opt('from'))
     const [vault, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
     const { claimableRaw: _r, ...dividend } = c.dividendPct > 0 ? await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw) : {}
@@ -266,7 +267,12 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     return out({
       success: true, chainId: Number(ctx.chainId), wallet: me, token, quote: c.quoteSymbol, graduated: c.graduated,
       balance: formatUnits(bal, 18), dividendPct: c.dividendPct,
-      ...(q && { poolSellAll: { expectOut: await units(ctx, c.quote, q.out), quotedWith: q.quotedWith } }),
+      ...(q && {
+        poolSellAll: {
+          expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)), slippagePct: slippage,
+          quotedWith: q.quotedWith, hint: POOL_SELL_HINT,
+        },
+      }),
       ...(c.dividendPct > 0 ? { dividend } : { note: 'this token pays no dividend (dividend 0%)' }),
     })
   }
@@ -390,27 +396,37 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const token = addrArg(opt, fail, 'token', 'a V3 token address')
     const c = await curveOf(ctx, token)
     if (!c) return fail('not a LaunchpadV3 token on this pad', { token })
-    const me = walletFor(ctx, opt('from'))
-    const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
-    if (c.graduated && bal === 0n) return fail('token already graduated; sell on PancakeSwap', { pair: c.pair })
-    if (bal === 0n) fail('no balance to sell')
     if (flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
-    const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
-    if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
     const slippage = parseSlippage(fail, opt('slippage', '1'))
     if (c.graduated) {
-      // no pool sell from this CLI yet: quote it (with the tax chunk sold first, as of the next block) for amountOutMin
+      // no pool sell from this CLI yet: quote it (with the tax chunk sold first, as of the next block) for amountOutMin.
+      // --amount needs no wallet (none configured, or an empty one, still gets the quote); --all needs the balance.
+      let me = null, bal = null
+      try { me = walletFor(ctx, opt('from')); bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me]) } catch { /* no wallet */ }
+      if (flag('all') && !bal) {
+        return fail('token already graduated; sell on PancakeSwap', {
+          pair: c.pair, ...(bal === 0n ? { balance: '0' } : { hint: '--all needs a wallet (or --from <addr>) whose balance can be read; pass --amount <tokens> for a quote without one' }),
+        })
+      }
+      const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
       const q = c.pair ? await poolSellQuote(ctx, c.taxHandler, token, amount) : null
       return fail('token already graduated; sell on PancakeSwap', {
         pair: c.pair, ...(q && {
           poolQuote: {
             amount: formatUnits(amount, 18), expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)),
-            quote: c.quoteSymbol, sellTaxPct: c.sellTaxPct, quotedWith: q.quotedWith,
+            slippagePct: slippage, quote: c.quoteSymbol, sellTaxPct: c.sellTaxPct, quotedWith: q.quotedWith,
           },
+          ...(bal != null && amount > bal && { warning: 'amount is more than this wallet holds', balance: formatUnits(bal, 18) }),
           hint: POOL_SELL_HINT,
         }),
+        ...(!q && c.pair && { note: 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
       })
     }
+    const me = walletFor(ctx, opt('from'))
+    const bal = await ctx.read(token, ERC20_ABI, 'balanceOf', [me])
+    if (bal === 0n) fail('no balance to sell')
+    const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
+    if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
     const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])

@@ -182,32 +182,51 @@ const tokenArg = (opt, fail) => {
   return t
 }
 
-/** Live position of `me` in a sale (reward fields once launched). */
-async function positionOf(ctx, token, me, sale) {
+/** `x` less `slippagePct`% (the pool quote's minOut, as `gang v3 sell`). */
+const minOf = (x, slippagePct) => (x * BigInt(Math.round((100 - slippagePct) * 100))) / 10_000n
+
+/**
+ * Live position of `me` in a sale (reward fields once launched). After launch any wallet holding the token — a minter
+ * or one that only bought in the pool — gets poolSellAll: what selling its whole balance pays, and the minOut for it at
+ * `slippage`%.
+ */
+async function positionOf(ctx, token, me, sale, slippage) {
   const shares = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
   const tps = await ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE')
   const baseline = BigInt(shares) * tps
   const pos = { shares: Number(shares), baselineTokens: formatUnits(baseline, 18) }
-  if (!sale.launched && shares) {
-    const [payout] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
-    pos.sellBackAll = await units(ctx, sale.quote, payout) // what `gang fair withdraw --all` pays now
+  if (!sale.launched) {
+    if (shares) {
+      const [payout] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
+      pos.sellBackAll = await units(ctx, sale.quote, payout) // what `gang fair withdraw --all` pays now
+    }
+    return pos
   }
-  if (!sale.launched || !shares) return pos
-  const [handler, vault] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), ctx.read(ctx.pad, PAD_ABI, 'dividendVault')])
-  const [out, weight, reward, total, bal] = await Promise.all([
+  const [handler, vault, bal] = await Promise.all([
+    ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), ctx.read(ctx.pad, PAD_ABI, 'dividendVault'), ctx.read(token, ERC20_ABI, 'balanceOf', [me]),
+  ])
+  // what selling the whole balance into the pool pays (the 1% tax and the chunk sold first included, as of the next block)
+  const q = sale.pair && bal > 0n ? await poolSellQuote(ctx, handler, token, bal) : null
+  const sellAll = q && {
+    poolSellAll: {
+      expectOut: await units(ctx, sale.quote, q.out), minOut: await units(ctx, sale.quote, minOf(q.out, slippage)), slippagePct: slippage,
+      quotedWith: q.quotedWith, hint: POOL_SELL_HINT,
+    },
+  }
+  if (!shares) {
+    return { ...pos, balance: formatUnits(bal, 18), ...sellAll, reward: 'none', note: 'did not mint in this sale: the holder reward is only for minters' }
+  }
+  const [out, weight, reward, total] = await Promise.all([
     ctx.read(handler, HANDLER_ABI, 'isOut', [token, me]),
     ctx.read(handler, HANDLER_ABI, 'eligibleShare', [token, me]),
     poolPriceRaw(ctx, token, sale.pair).then((p) => dividendOf(ctx, vault, token, me, sale.quote, p)),
     ctx.read(vault, VAULT_ABI, 'totalShares', [token]),
-    ctx.read(token, ERC20_ABI, 'balanceOf', [me]),
   ])
-  // what selling the whole balance into the pool pays (the 1% tax and the chunk sold first included, as of the next block)
-  const q = sale.pair && bal > 0n ? await poolSellQuote(ctx, handler, token, bal) : null
   const line = (baseline * BigInt(Math.round(sale.holdPct * 100))) / 10_000n
   return {
     ...pos,
     balance: formatUnits(bal, 18),
-    ...(q && { poolSellAll: { expectOut: await units(ctx, sale.quote, q.out), quotedWith: q.quotedWith } }),
+    ...sellAll,
     reward: out ? 'out' : 'earning',
     holdLineTokens: formatUnits(line, 18),
     sellableBeforeOut: !out && bal > line ? formatUnits(bal - line, 18) : '0',
@@ -263,8 +282,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
         : null
       return out({ success: true, chainId: Number(ctx.chainId), ...pub, ...(swapBack && { swapBack }) })
     }
+    const slippage = parseNum(fail, 'slippage', opt('slippage', '1'), 0, 50)
     const me = walletFor(ctx, opt('from'))
-    return out({ success: true, chainId: Number(ctx.chainId), wallet: me, sale: pub, position: await positionOf(ctx, token, me, sale) })
+    return out({ success: true, chainId: Number(ctx.chainId), wallet: me, sale: pub, position: await positionOf(ctx, token, me, sale, slippage) })
   }
 
   if (sub === 'create') {
@@ -368,7 +388,10 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!sale) return fail('not a fair-mint sale on this pad', { token })
     if (sale.status !== 'minting') {
       return fail(`sale is ${sale.status}: withdraw only while minting`, sale.launched ? {
-        pair: sale.pair, hint: `it launched: \`gang fair status --token ${token}${testnet ? ' --testnet' : ''}\` shows poolSellAll (what selling the balance into the pool pays); ${POOL_SELL_HINT}`,
+        pair: sale.pair,
+        hint: `it launched: \`gang fair status --token ${token}${testnet ? ' --testnet' : ''}${opt('from') ? ` --from ${opt('from')}` : ''} [--slippage 1]\``
+          + ' shows poolSellAll for the whole balance (expectOut, and minOut at --slippage, default 1%); '
+          + POOL_SELL_HINT,
       } : {})
     }
     const me = walletFor(ctx, opt('from'))

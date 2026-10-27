@@ -11,7 +11,7 @@ minter can sell shares back to the sale at the same fixed price (minus the exit 
 ```bash
 gang fair list [--status minting|launched|all]              # sales on gang.fun (needs the server to run fair mint)
 gang fair info --token <addr> --testnet                      # one sale from the chain
-gang fair status --token <addr> --testnet                    # my shares; after launch my reward state
+gang fair status --token <addr> [--slippage 1] --testnet     # my shares; after launch my reward state + poolSellAll
 gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
@@ -75,10 +75,15 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - `status.position` after launch: `reward` (`earning` / `out`), `balance`, `holdLineTokens`, `sellableBeforeOut`
   (how much can be sold and still earn), `poolSharePct`, `pendingReward`. **Before any sell or transfer of a fair-mint
   token, check `sellableBeforeOut` and warn the user if the trade goes past it** — it ends the reward for good.
-  `poolSellAll.expectOut` is what selling the whole balance into the pool pays (1% tax and the chunk sold first included);
-  the CLI builds no pool sell — sell on PancakeSwap with `swapExactTokensForTokensSupportingFeeOnTransferTokens`.
-- `info.swapBack` after launch: `unsoldTaxTokens`, `budgetPerBlockTokens` (0.5% of the pool's token side),
-  `leftInLatestBlockTokens` (a new block starts a fresh budget), `lastChunkBlock`. Older testnet handlers answer
+  `poolSellAll.expectOut` is what selling the whole balance into the pool pays (1% tax and the chunk sold first included),
+  `poolSellAll.minOut` the same less `--slippage` (default 1%); any wallet holding the token gets it, also one that only
+  bought in the pool (`shares: 0`, `reward: 'none'`). The CLI builds no pool sell — sell on PancakeSwap with
+  `swapExactTokensForTokensSupportingFeeOnTransferTokens` and `minOut` as `amountOutMin`. `gang fair withdraw` on a
+  launched sale points here.
+- `info.swapBack` after launch, read at `latestBlock`: `unsoldTaxTokens`, `budgetPerBlockTokens` (0.5% of the pool's
+  token side: what a new block allows), `budgetLeftInLatestBlockTokens` (what is left of the latest block's budget — the
+  whole of it when no chunk ran in that block), `nextChunkTokens` (the largest chunk the latest block still allows: unsold
+  tax and budget left, whichever is less), `lastChunkBlock`. Older testnet handlers answer
   `budget: 'one chunk per block (older handler)'`.
 - **WBNB sales**: `gang fair mint` pays native BNB through GangRouter in one tx (`via: 'router'`, `payBnb` = cost + mint
   fee); the shares are still this wallet's, and withdraw / claim stay direct. `--use-wbnb` pays from WBNB instead.
