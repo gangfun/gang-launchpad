@@ -84,12 +84,14 @@ export async function tokenInfo(token, me) {
   if (pad.kind === 'soft') {
     try { price = base.graduated ? 100000000000n : await read(pad.address, pad.abi, 'spotPrice', [token]) } catch { /* */ }
   } else if (base.virtualQuote && base.virtualQuote > 0n) {
-    // spot ≈ virtualQuote / (VIRTUAL_TOKEN - sold) * 1e18-ish; expose raised/grad instead
+    // spot = qReserve / tReserve where qReserve = virtualQuote + realQuote (constant-product curve).
+    // Dropping realQuote understates the price up to 4x near graduation (vq 5 vs vq+raised 20).
     const vq = BigInt(base.virtualQuote)
     const sold = BigInt(base.sold)
+    const raisedQ = BigInt(base.raised)
     const VIRTUAL_TOKEN = 1066666666666666666666666667n
     const tReserve = VIRTUAL_TOKEN - sold
-    if (tReserve > 0n) price = (vq * 10n ** 18n) / tReserve
+    if (tReserve > 0n) price = ((vq + raisedQ) * 10n ** 18n) / tReserve
   }
 
   const grad = base.gradAmt != null ? BigInt(base.gradAmt) : (pad.kind === 'soft' ? await read(pad.address, pad.abi, 'GRADUATION_BNB') : 15n * 10n ** 18n)
