@@ -54,6 +54,31 @@ contract TaxTimeDividendsTest is Test {
         assertEq(quote.balanceOf(users[0]), 3 ether);
     }
 
+    /// @dev §19 (only tax-time dividends left): a share change settles the units the old share earned first, so a
+    ///      holder who shrinks, claims mid-way and grows again gets exactly its share of each tax at that moment.
+    function test_shareChangeSettlesOldUnitsFirst_claimBetween() public {
+        _fresh();
+        vault.setShare(TOKEN, users[0], 100 ether);
+        vault.setShare(TOKEN, users[1], 100 ether);
+        vault.accrueDividendUnits(TOKEN, 1_000 ether); // A 500, B 500
+        vault.setShare(TOKEN, users[0], 25 ether); // A sells 75%
+        vault.accrueDividendUnits(TOKEN, 1_000 ether); // A 200, B 800
+        assertEq(vault.pendingUnits(TOKEN, users[0]), 700 ether, "A: 500 + 200");
+        _convert(2_000 ether, 4 ether); // 2 quote per 1,000 units
+        assertEq(vault.pending(TOKEN, users[0]), 1.4 ether);
+        vm.prank(users[0]);
+        vault.claim(TOKEN);
+        assertEq(quote.balanceOf(users[0]), 1.4 ether);
+        assertEq(vault.pending(TOKEN, users[0]), 0, "claimed");
+
+        vault.setShare(TOKEN, users[0], 300 ether); // A buys back: only later tax counts at the new share
+        vault.accrueDividendUnits(TOKEN, 1_000 ether); // A 750, B 250
+        _convert(1_000 ether, 1 ether);
+        assertEq(vault.pending(TOKEN, users[0]), 0.75 ether, "A: new share, new tax only");
+        assertEq(vault.pending(TOKEN, users[1]), 2.6 ether + 0.25 ether, "B: 500 + 800 units, then 250");
+        assertEq(vault.pendingUnits(TOKEN, users[0]) + vault.pendingUnits(TOKEN, users[1]), 0, "all settled");
+    }
+
     /// @dev Units turn into quote only when their whole batch is sold, at what the batch fetched; oldest first.
     function test_fifoBatchesSettleInOrder() public {
         _fresh();

@@ -216,7 +216,6 @@ contract FairMintAuditTest is FairMintTest {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         _sell(t, v, 10 * TPS); // the handler's setShare reverts (not out of gas) → swallowed, the sell goes through
         assertEq(IERC20(t).balanceOf(v), 90 * TPS);
         assertEq(vault.shares(t, v), 100 * TPS, "stale until the vault accepts writes again");

@@ -2,6 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9
 - 读者：外部审计方
+- **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
 - 代码：`gangfun/gang-launchpad`，分支 `feat/swapback`，合约冻结在 §18 的修复提交（父提交 `4857118`；`98cab5c` 之后到 `4857118` 没有改动 `src/`）：含 §10、§11 两轮内部审计的修复，§12 的代币收紧与元数据 URI，§13 的外盘税合约加固，§14 的打新去掉截止时间与第三轮内部审计，§15 的合约合并（方案 A）与第四轮内部审计，§16 的外盘税改为卖出时自动小额换 + 按税产生时记账，§17 的第五轮内部审计修复，§18 对第五轮修复的 review。之前的冻结点依次是 `5854a35`、`36d8a7e`、`47a063b`、`cf96281`、`a15b704`、`13da13b`、`1bcc84f`、`ddce6b6`、`98cab5c`。此后若有提交改动 `src/`，我们会单独列出 diff。§10–§14 是当时的记录，里面提到的 TaxRouterV3、RecipientRegistry、PostGradTaxHandlerV3、每个核心一份的 DividendVault / MigratorV2、「keeper 一次卖光」都已被 §15、§16 取代。
 - 链：BNB Chain（chainId 56），DEX 为 PancakeSwap V2。目前只部署在 BSC 测试网，部署脚本在审计前拒绝主网广播。
 - 工具链：Foundry 1.8.6，Solidity 0.8.28，EVM cancun，optimizer 200 runs；OpenZeppelin 5.1.0。范围内的目录都用 via-ir 编译（`foundry.toml` 的 `compilation_restrictions`，含 `src/common`）。
@@ -17,7 +18,7 @@ gang.fun 是 BNB Chain 上的发币平台，内盘只对持有 .ai Agent ID（SP
 | 模块 | 一句话 |
 |---|---|
 | 打新 FairMintPad | 没有价格曲线：所有人按同一价格一份一份打，打满 10,000 份就把 50% 代币和全部募集款加进 Pancake 池子开盘；没有截止时间和退款，打满前随时按同一价格卖回（扣撤出费，sale 7 天没有进展时免）。开盘后每笔池子交易收 1% 税，一半分给「打新时进来、而且一直没卖到出局线以下」的地址，一半给平台。 |
-| LaunchpadV3 | 在 V2 曲线（Agent 专属、单地址 1% 上限、约 15 BNB 毕业）的基础上，发币时可设买 / 卖税（各 1%–5%）和一个白名单里的税收接收地址（合作方金库）。平台从税里固定拿成交额的 0.5%，剩下按设定比例分给持币人和接收地址，接收地址收报价币。 |
+| LaunchpadV3 | 在 V2 曲线（Agent 专属、单地址 1% 上限、约 15 BNB 毕业）的基础上，发币时可设买 / 卖税（各 1%–5%）和一个白名单里的税收接收地址（合作方金库）。税只在毕业后的池子里收（§19：内盘和 V2 一样只收 1% 手续费，不收税）；平台从税里固定拿成交额的 0.5%，剩下按设定比例分给持币人和接收地址，接收地址收报价币。 |
 | GangRouter | 无状态、无 owner 的入口：把原生 BNB 换成 WBNB 后替调用者在两个核心上买入 / 打新，多付的部分退回。 |
 
 两个核心共用五个合约（QuoteRegistry、PlatformFeeBucket、SharedDividendVault、SharedMigrator、TokenDeployer）。毕业 / 发射后的池子税：每笔卖出顺带把攒下的税卖掉一小块、当场分配，没有卖单时 keeper 分块补位；持有人的分红在交税那一刻就按当时的份额记账（§16）。
@@ -88,9 +89,8 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 ### 3.2 LaunchpadV3
 
 ```
-内盘买入：quoteIn → 1% 平台手续费 + 买入税 → 剩余进曲线
-          税（TaxHandlerV3.distribute）：平台 = 成交额 × 0.5%；剩余 × dividendBps → 分红合约（没有合格持有人时并入接收地址）；其余 → 接收地址
-内盘卖出：同上，按卖出税率
+内盘买入：quoteIn → 1% 平台手续费（→ PlatformFeeBucket）→ 剩余 99% 进曲线；不收税（§19），有分红的币同步买家份额
+内盘卖出：曲线付出 quoteOut → 1% 平台手续费 → 其余给卖家；不收税，有分红的币同步卖家份额
 毕业：剩余代币 + realQuote → SharedMigrator → Pancake V2，LP → 0xdead；代币开始在池子买卖时收税
 外盘：税（代币）→ TaxHandlerV3，按每笔方向记平台部分；分红部分交税当场按当时份额记成税币单位
       卖出时 swapBack 卖一块 / 没有卖单时 keeper process(token, amount, minQuoteOut) 分块卖
@@ -102,7 +102,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 - 接收地址必须在 TaxHandlerV3 的白名单里；下架只影响之后新发的币。
 - 无税币等同 V2 无税轨（只收 1% 内盘手续费）。
 - 报价币规则与打新相同（§3.1）；毕业额按固定换算额或参考池在创建时锁定。V3 核心第一次拉报价币时按到账校验，转账扣费的报价币直接 `FeeOnTransferQuote`。
-- 内盘买入先分账、再更新买家份额（奖励的是交易前的持有人）；卖出先更新卖家份额、再分账（卖家拿不回自己的卖出税）。外盘同样按交易前的份额记账。
+- 内盘不收税（§19），只按成交后的余额写份额，毕业后外盘交税时按这些份额记账。外盘按交易前的份额记账：卖家拿不回自己的卖出税，买家分不到自己的买入税。
 - 分红合约拒收、bucket 拒收时外盘那一块照常卖出：持有人那份留在 handler（`pendingHolderUnits` / `pendingHolderQuote`），平台那份记 `owedPlatformOf`，任何人 `flushHolders` / `flushPlatform` 补上。
 
 ### 3.3 GangRouter
@@ -134,7 +134,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 | LaunchpadV3 | `setMigrator`（一次性，迁移合约须把本核心列入）、`setPairFactory`（只用于创建时的参考池定价）、`setRouter`、`setAgentGate`、`setWalletCapEnabled`、`setV3Factory`、`setTwapWindow`、`setBridgePool` | — | 白名单路由：`buyFor`（只在准入开启时） | create、buy、sell |
 | TaxLaunchTokenV3 / LaunchTokenV3 | — | — | 只有发射台：`unlock(migrator)`（一次）、`setPair`（有税币，解锁后一次）；之后没有任何管理函数 | 转账（毕业后）、`contractURI` / `metaURI` |
 | TaxHandlerV3 | `setLaunchpad`（一次性）、`list` / `delist`（接收地址白名单）、keeper 与换币路由时间锁（同上）；可代替 keeper 调 `process` | `process(token, amount, minQuoteOut)` | 发射台：`register`（每个币一次）、`distribute`（只能付钱进来）；代币：`notifyTax`、`swapBack` | `release`、`syncShares`、`flushHolders`、`flushPlatform` |
-| SharedDividendVault | `setLaunchpad(core, bool)`（移除只停新登记）、`setOperator(account, core)`（每个核心、每个地址只能绑定一次，不能解绑 / 更换）、`setExcluded`、`setMinimumShareBalance`（只影响之后登记的币） | — | 登记它的核心 / 绑定到该核心的 operator：`registerToken`（每个币一次）、`setShare`、`depositReward`、`accrueDividendUnits`、`convertDividend` | `claim`、`claimFor` |
+| SharedDividendVault | `setLaunchpad(core, bool)`（移除只停新登记）、`setOperator(account, core)`（每个核心、每个地址只能绑定一次，不能解绑 / 更换）、`setExcluded`、`setMinimumShareBalance`（只影响之后登记的币） | — | 登记它的核心 / 绑定到该核心的 operator：`registerToken`（每个币一次）、`setShare`、`accrueDividendUnits`、`convertDividend` | `claim`、`claimFor` |
 | SharedMigrator | `addLaunchpad`（只加不减） | — | 名单里的核心：`migrate` | — |
 | TokenDeployer | `setLaunchpad(core, bool)` | — | 名单里的核心：`deployPlain` / `deployTax` / `deployFair` | `isLaunchToken` 查询 |
 | SharedPlatformFeeBucket（共用一份新实例） | `setLaunchpad`、`setOperator`、`setFeeVault`、`setBurner`、`setKeeper`（合约一生只能调一次，之后 48 小时时间锁）、`requestFlush` + 7 天后 `flushStuckQuoteToTreasury` | `collectPlatform`（固定路径：80% 回购销毁 / 20% 金库；没有 `collectPlatformSmart`） | operator：`notifyAccrual`（按到账额记账） | — |
@@ -172,7 +172,7 @@ mint / mintFor ── 本金 ──▶ FairMintPad（托管本金）      打新
 LaunchpadV3：
 
 7. 对每个报价币：`balanceOf(pad) ≥ Σ_未毕业 realQuote`。
-8. 每笔内盘交易：平台部分 = 成交额 × 0.5%（税率不对称时也一样），平台 + 分红 + 接收地址 = 税，没有多收或少分。
+8. 每笔内盘交易（§19）：只收成交额的 1% 进 PlatformFeeBucket，接收地址、分红合约、TaxHandlerV3 都收不到任何报价币（税率多少都一样）。外盘每笔税：平台部分 = 成交额 × 0.5%（税率不对称时也一样），平台 + 分红 + 接收地址 = 税。
 9. TaxHandlerV3：对每个报价币 `balanceOf(handler) ≥ owedTotalOf[quote]`，`owedTotalOf == Σ owedOf`；`release` 只付该币自己的欠款；`process` 卖的数量 ≤ 余额 − 欠款。
 10. 税率、分红比例、接收地址在创建后不能被任何人改。
 
@@ -202,7 +202,7 @@ GangRouter：
 | K-7 | **转账钩子里写分红份额失败**：两个 handler 都带保护：分红合约真正拒绝时吞掉错误、发 `ShareWriteFailed`、不卡转账；调用方把 gas 卡到让这次调用耗尽时 revert（§10 A-5）。恢复后旧份额继续累计，直到有人为该地址 `syncShares`（keeper 处理）。分红合约的 operator 每个核心只能绑定一次、不能解绑，所以「owner 撤掉 operator 冻结 V3 转账」的路径已不存在。 |
 | K-8 | **G-01 的剩余窗口**：owner 在分红合约排除一个地址后，在该地址下次转账前它仍会按旧份额累计。运维规定：排除操作必须和 `handler.syncShares(token, user, 0)` 放在同一批交易里。 |
 | K-9 | **PlatformFeeBucket 的应急出口**（V2 审计 G-03）：owner 申请后 7 天可把卡住的报价币整笔转到金库，绕过 80/20 拆分。原样复用，知悉。 |
-| K-10 | **V3 的分红部分在没有合格持有人时并入接收地址**；打新发射后的分红部分在没有合格持有人时并入平台。两者不同是因为 V3 里剩余的税本来就归接收地址。 |
+| K-10 | **V3 的分红部分在没有合格持有人时并入接收地址**（只在外盘，内盘不收税，§19）；打新发射后的分红部分在没有合格持有人时并入平台。两者不同是因为 V3 里剩余的税本来就归接收地址。 |
 | K-11 | **路由不提供 sweep**：误转进 GangRouter 的代币 / 报价币会永远留在那里。 |
 | K-12 | **报价币不设白名单**：任意 18 位 ERC-20 都能做报价币；转账扣费的（入口与扣款时校验）和本平台发射的币（`isLaunchToken` / 已登记分红）被拒。会暂停、会拉黑、负 rebase 的报价币仍能进来：发行方暂停或拉黑核心 / handler / 分红合约 / bucket 时，用这个报价币的币可能无法交易、毕业或领取，打新本金可能取不出来。影响限于用这个报价币的币；网站和 CLI 只主推 WBNB / USDT。已毕业的 V2 发射币仍能做报价币（分红走 V2 的分红合约，影响很小）。 |
 | K-13 | **非官方池子也会累计 V3 分红份额**（迁移合约、分红合约、bucket 已排除）：只有官方池子被设为 0。别人另建的交易对持有代币就有份额，任何人都能用 `claimFor` 把分红推进去。运维：发现这类池子后，owner 在分红合约排除它，并在同一批交易里 `handler.syncShares(token, pool, 0)`。打新不受影响：非打新地址的基准为 0。 |
@@ -242,16 +242,16 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 | `test/fair-mint/FairSwapBack.t.sol` | 43（含继承） | 打新的卖出时自动换、每区块额度、零头不触发、失败不影响卖出、只认本核心的币、`previewSell`、按交税时记账、bucket / 分红合约拒收、按估算 gas 执行 |
 | `test/fair-mint/FlowReviewFixes.t.sol` | 37（含继承） | F3 `minPayout`、F4a operator 只能绑一次、F4c 门槛按币快照、F4b 换币路由时间锁 |
 | `test/fair-mint/FairTokenAdmin.t.sol` | 35（含继承） | 代币收紧与元数据 URI（§12） |
-| `test/launchpad-v3/LaunchpadV3.t.sol` | 14 | 创建规则、下架只拦新币、内盘买卖分账（含不对称税率）、没有持有人时分红并入接收地址、推送失败记欠款 / 补发、外盘按每笔方向记账、无税币、门槛与上限、G-01、权限 |
+| `test/launchpad-v3/LaunchpadV3.t.sol` | 14 | 创建规则、下架只拦新币、内盘只收 1% 不收税（买 / 卖、有税币与无税币同价、一路到毕业的对账，§19）、推送失败记欠款 / 补发（外盘）、外盘按每笔方向记账与分账、无税币、门槛与上限、G-01、权限 |
 | `test/launchpad-v3/LaunchpadV3Audit.t.sol` | 24（含继承） | 内部审计回归：`buyFor` 须开准入、报价币规则、migrator 绑定、卖家拿不回自己的卖出税、伪造代币收税、pair 报价核对、欠款不会被 `process` 卖掉 |
 | `test/launchpad-v3/SwapBack.t.sol` | 36（含继承） | V3 卖出时自动换：每区块额度、≤ 卖单 25%、零头不触发、池子里未同步的报价币 / 代币在这一块前后收走再原样退回（§18，etch 一个带 `skim` 的 MockPair）、没有 `skim` 的交易对不影响卖出、1 wei 捐款 + 零头卖单不占额度、`previewSell`、冲击上限、只认代币、失败不影响卖出、按估算 gas 执行、keeper 分块卖完只有买单的积压、按交税时记账、bucket / 分红合约拒收、写份额被拒 |
-| `test/launchpad-v3/LaunchpadV3Fuzz.t.sol` | 17（含继承） | fuzz（各 1000 轮）：每笔买 / 卖恰好拆成曲线、1% 手续费、税，平台拿成交额 0.5% |
+| `test/launchpad-v3/LaunchpadV3Fuzz.t.sol` | 17（含继承） | fuzz（各 1000 轮）：每笔买 / 卖恰好拆成曲线和 1% 手续费，接收地址 / 分红合约 / handler 收不到报价币（§19） |
 | `test/launchpad-v3/TokenAdmin.t.sol` | 17（含继承） | 代币收紧与元数据 URI（§12） |
 | `test/common/TaxTimeDividends.t.sol` | 6 | 按交税时记账：归属交税时的持有人、两批先进先出、隔很多批才动的持有人、只认核心 / 其 operator、超卖被拒；含与逐批暴力模型对照的 fuzz（1000 轮） |
 | `test/common/SharedInfra.t.sol` | 25（含继承） | 两个核心共用一套、各自毕业 / 发射分红不串、跨核心写入被拒、只认名单里的调用方、移除核心后已有币照常、门槛按核心 |
 | `test/audit4/Audit4Regression.t.sol` | 27 + 19（含继承） | 第四轮内部审计回归（§15） |
 | `test/router/GangRouter.t.sol` | 19 | BNB / 报价币两种路径、交易者拿币、门槛和上限按交易者、分红权重归交易者、截断退款、经路由毕业 / 发射、只有白名单路由能代买、流氓路由只能花自己的钱 |
-| `test/invariant/CoreInvariants.t.sol` | 9 条不变量 | V3、打新、共用合约、GangRouter 放在一起随机操作（发币、直接 / 经路由买卖、打新、卖回、跳时间、打满、毕业、池子交易、keeper 分块处理、拉黑接收地址、补发、领取），每步后检查 §5 的不变量。CI 跑 24 × 50；`6b5e03f` 上压力跑 200 轮 × 80 步全过 |
+| `test/invariant/CoreInvariants.t.sol` | 10 条不变量（§19 新增 `invariant_v3CurveNoTax`） | V3、打新、共用合约、GangRouter 放在一起随机操作（发币、直接 / 经路由买卖、打新、卖回、跳时间、打满、毕业、池子交易、keeper 分块处理、拉黑接收地址、补发、领取），每步后检查 §5 的不变量。CI 跑 24 × 50；`6b5e03f` 上压力跑 200 轮 × 80 步全过 |
 | `test/audit5/review/` | 8 + 15 + 2 + 4（分叉用例另含继承的基础用例） | §18 review 的回归：keeper 只能 `setKeeper` 一次、EIP-7702 委托钱包不能排除（`ReviewUnit`）；闪电兑换写法的卖出被拒、零头 + 1 wei 不再占额度、未同步的余额收走再退回、捐款当场拿回也跳不过这一块（R5-O1）、有未同步余额时的 gas 扫描、Router02 普通卖出 / 多跳 / `addLiquidity` 两种顺序与 `addLiquidityETH` 各 5 种金额（`ReviewFork`，真实 Pancake）；打新币的闪电兑换卖出与未同步余额（`ReviewFairFork`）；部署脚本核对 `PEER_CORE` 的报价币登记合约和手续费池、`BURNER` / `FEE_VAULT` 部署时生效（`DeployReview`，`--threads 1`） |
 | 主网分叉 | 25 + 12 | 真实 Pancake：打新整轮、USDT 按参考池换算、提前建池；V3 卖出时自动换（`V3SwapBackFork.t.sol`：`previewSell` 与实际到账一致、一块用完本区块额度、1 wei 不触发、单块冲击 ≤ 约 1%、估算 gas 下这一块会执行）；报价币按 V2 / V3 参考池换算与 LaunchpadV2 同口径（`QuoteRefPoolFork.t.sol`） |
 
@@ -272,7 +272,7 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 4. **任意报价币**：会回调、会暂停 / 拉黑、负 rebase、`decimals` 会变的报价币对核心、handler、分红合约、bucket、迁移合约的影响；参考池换算（K-1 已接受的部分之外）。
 5. **FairMintPad 的记账**：多个 sale 共用同一个报价币时的隔离（§5 #1，含 `owedFee`）；卖回取整；7 天计时边界和 `markSold`；`minPayout`。
 6. **最后一笔打满即发射**：`_mint` 里在同一笔交易中调用 `_launch` → SharedMigrator → Pancake。有没有办法让发射失败从而卡住 sale，或者在建池时重入。
-7. **LaunchpadV3 的费用计算**：`_prepBuy` / `_applyFees` / `_recomputeFee` 在单地址上限或毕业截断时重新算费用和退款，平台部分按成交额。
+7. **LaunchpadV3 的费用计算**：`_prepBuy` / `_applyFee` / `_recomputeFee` 在单地址上限或毕业截断时重新算 1% 手续费和退款（§19 起内盘没有税）。
 8. **TaxHandlerV3 的欠款与待卖的税**：`owedOf` / `owedTotalOf` / `release` 的隔离；报价币本身是被收税的币时 `process` 不会卖掉欠款；接收地址是会回调的合约时的重入。
 9. **GangRouter 与 `buyFor` / `mintFor` 的身份**：门槛、上限、分红权重、事件里的买家都用 `trader`，付款和退款用 `msg.sender`。
 
@@ -622,3 +622,53 @@ gas（主网分叉、真实 Pancake）：
 | 路由买入 / keeper `process` | 296,766 / 313,790 | 296,788 / 313,856 | 296,788 / 313,856 |
 
 池子有多出余额时（`test_review_gas_unsynced`，同一笔路由卖出、存储先 `vm.cool`、分红批次状态相同）：池子已同步 561,693；多出报价币（储备 0.1%）595,588（+33,895：一次 `skim` 和一次退回）；多出报价币和代币 606,681（+44,988）。有多出余额时，代币给 `swapBack` 的 60 万 gas 上限仍然够：gas 扫描里任何能成功的 gas 都会卖出这一块（直接转账最低 557,000，经路由 596,000）。
+
+---
+
+## 19. V3 内盘不收税（2026-10-27 用户决定）
+
+**决定**：V3 税收币在内盘（联合曲线）买卖不收税，和 V2 一样只收 1% 手续费（`PROTOCOL_FEE_BPS`，全部进 SharedPlatformFeeBucket，80% 回购 / 20% 金库）。买卖税（1%–5%）只在毕业后的 Pancake 池子里收，外盘规则完全不变：平台拿成交额的 0.5%，剩下按分红比例分给持有人，其余给白名单接收地址；卖出时自动小额换；交税时记账；卖家分不到自己这笔卖出的税。
+
+**为什么**：和 V2 有税轨保持一致，内盘价格对有税币和无税币一样，用户在内盘只认 1% 手续费；税是外盘（毕业后）的事。分支 `feat/v3-no-curve-tax`（基于 `main` `bad3142`）。
+
+**改了什么**
+
+| 合约 | 改动 |
+|---|---|
+| `LaunchpadV3` | `buy` / `buyFor` / `sell` 只扣 1% 手续费，不再算税、不再调 `TaxHandlerV3.distribute`。`BuyVars` 去掉 `tax` / `platformTax` / `feeBps`；`_feeBps`、`_platformPart` 删掉，`_applyFees` 改为 `_applyFee`（只算 1%），`_recomputeFee` 按 `BPS − PROTOCOL_FEE_BPS` 反推实付；`_syncShareAndTax` 改为 `_syncShareAndFee`：有分红的币照常按成交后的余额 `setShare`（毕业后外盘交税按这些份额记账），然后把 1% 交给手续费池。`Buy` / `Sell` 事件签名不变，`tax` 字段恒为 0。`PLATFORM_TAX_BPS` 常量保留（CLI 和服务端索引器从核心读它，现在表示外盘税里平台那份）。`create` 的参数和校验不变（税率、分红比例、接收地址照旧写进代币和 handler，只用于外盘）。 |
+| `TaxHandlerV3` | 删掉只给内盘用的 `distribute`、`_payOut`、`_split`、`previewSplit` 和错误 `BadPlatformAmount`。`TaxDistributed` 事件签名不变：`phase` 仍是 `ITaxHandlerV3.Phase`，只会发 `PostGrad`（1）；`Bonding`（0）留在枚举里，不再出现。`register`、白名单、欠款、外盘税（`notifyTax` / `swapBack` / `process` / `release`）不变。 |
+| `ITaxHandlerV3` | 删 `distribute`、`previewSplit`；其余与注释更新。 |
+| `TaxLaunchTokenV3`、`ILaunchpadV3`、`GangRouter` | 只改注释（字节码只有元数据哈希变化）。GangRouter 不自己算报价，`minTokensOut` 由调用方给（CLI 用 `eth_call` 模拟核心），不用改逻辑。 |
+| `SharedDividendVault` | **内盘分红路径整条删除，分红合约只剩外盘分红**（用户同意）。内盘不收税后，「按当下份额直接分报价币」这条路（V2 DividendVault 沿用来的 `depositReward` → `accRewardPerShare` / `rewardDebt` → `_harvest`）没有任何调用方：V3 的唯一调用点 `TaxHandlerV3._payOut` 已随 `distribute` 删掉；打新（`FairMintPad` / `HolderRewardHandler` / `PostGradHandlerBase`）和 `GangRouter` 从来没有调用它（逐个 grep 核对过）。删掉 `depositReward`、`accRewardPerShare`、`rewardDebt`、`_harvest` 和事件 `RewardDeposited`。保留的只有按交税时记账：`setShare`、`accrueDividendUnits`、`convertDividend`、批次（`pipeOf` / `batchOf` / `positionOf`）、`pending`、`pendingUnits`、`unsoldUnits`、`pendingCredit`、`claim` / `claimFor`。顺序：`setShare` 在改份额之前仍先 `_harvestUnits(旧份额)`，把旧份额到此为止的单位结清（已结算批次的报价币进 `pendingCredit`，未结算的记到持仓的两个批次里），再写新份额；`claimFor` 先 `_harvestUnits` 再付 `pendingCredit`；`pending` = `pendingCredit` + 自上次结算后已结算批次的那份。这些逻辑都没动，删掉的只是与之并列的 `_harvest` / `rewardDebt` 两行。新增 `test_shareChangeSettlesOldUnitsFirst_claimBetween`（份额缩小、中途领取、再加仓，每一笔税都按交税那一刻的份额精确到 wei）。 |
+
+**对外接口**
+
+- 事件：`Buy` / `Sell` / `TaxPaid` / `TaxOwed` / `TaxDistributed` / `TaxConfigured` / `Created` 签名都不变。变化只在取值：`Buy.tax` / `Sell.tax` 恒为 0；`TaxDistributed` 不再有 `phase = 0`；`TaxPaid` / `TaxOwed` 只来自外盘税（`swapBack` / `process`）和 `release`。
+- 函数：`TaxHandlerV3.distribute`、`TaxHandlerV3.previewSplit` 删除（CLI、服务端、网站都没有调用）；错误 `BadPlatformAmount` 删除。`SharedDividendVault.depositReward`、getter `accRewardPerShare(token)`、`rewardDebt(token, user)` 删除，事件 `RewardDeposited` 删除；`pending` / `pendingUnits` / `unsoldUnits` / `pendingCredit` / `shares` / `totalShares` / `claim` 签名不变。核心的 view（`curves`、`taxConfigOf`、`checkTaxConfig`、`PROTOCOL_FEE_BPS`、`PLATFORM_TAX_BPS`、`MIN_TAX_BPS`、`MAX_TAX_BPS`）不变。
+- 内盘价格：同样的买卖，有税币和无税币拿到的代币 / 报价币完全一样（`test_curve_taxedPricesLikeUntaxed`）。
+
+**不变量变化（§5）**：#8 改为「每笔内盘交易只收 1% 进手续费池，接收地址、分红合约、TaxHandlerV3 收不到任何报价币」；CoreInvariants 新增 `invariant_v3CurveNoTax`（直接买、经路由用报价币 / BNB 买、卖出，每笔都核对手续费恰好 1%、三个去处余额不变，并且没毕业的 V3 币在分红合约里没有任何记账单位）。分红合约的偿付和对账不变量（#11 `invariant_sinksSolvent`、#12 `invariant_taxTimeDividendsBacked`，以及 `VaultUnitsInvariant` 的精确性 / 偿付 / 清空三条）原样保留并通过：`pending` 现在只由交税时记账构成。#7 仍是 `≥`：毕业截断可能在核心留下 ≤ 1 wei。
+
+**测试**
+
+| 文件 | 改动 |
+|---|---|
+| `test/launchpad-v3/LaunchpadV3.t.sol` | 删掉断言内盘收税的 `test_bondingBuy_split_*`、`test_bondingSell_split_withDividends`、`test_firstBuy_noHolders_*`、`test_bondingAsymmetricRates_*`；新增 `test_curveBuy_onlyProtocolFee_noTax`、`test_curveSell_onlyProtocolFee_holdersAndRecipientGetNothing`、`test_curve_taxedPricesLikeUntaxed`、`test_curveToGraduation_onlyFee_thenPoolTaxSplitsAsBefore`；`test_delistedRecipient_*`、`test_failedPush_*` 改为在外盘验证（毕业后外盘税换币推送失败记欠款）；`test_router_accessControl` 去掉 `distribute` / `previewSplit` |
+| `test/launchpad-v3/LaunchpadV3Fuzz.t.sol` | 买：实付 = 进曲线 + 1%（+ ≤ 1 wei），手续费池恰好 + 1%，接收地址 / 分红合约 / handler 为 0；卖：卖家到手 = quoteOut − 1% |
+| `test/launchpad-v3/LaunchpadV3Audit.t.sol` | `test_audit_sellTaxStillPaysOtherHolders` 改为 `test_audit_curveSellPaysNoHolder`；`test_merge_owedQuoteNeverSoldByProcess` 的欠款改由 Y 毕业后的外盘税产生 |
+| `test/common/SharedInfra.t.sol` | 内盘买入不再产生分红；「移除核心后已有币照常分红」改为毕业后外盘税 → keeper 卖出 → 可领；跨核心写入被拒改为核对 `accrueDividendUnits` / `convertDividend`（原 `depositReward`），`accRewardPerShare` 断言改为 `unsoldUnits` / `pending` |
+| `test/common/TaxTimeDividends.t.sol` | 新增 `test_shareChangeSettlesOldUnitsFirst_claimBetween` |
+| `test/fair-mint/FairMint.t.sol`、`FairMintAudit.t.sol`、`FairSwapBack.t.sol`、`test/launchpad-v3/SwapBack.t.sol` | 「分红合约拒绝所有 operator 写入」的 mock 列表里去掉已不存在的 `depositReward` |
+| `test/invariant/CoreInvariants.t.sol` | 新增 `invariant_v3CurveNoTax`（见上） |
+| `test/audit5/audit5a/VaultUnitsInvariant.t.sol` | 不用改代码：它本来就只驱动 `setShare` / `accrueDividendUnits` / `convertDividend` / `claim`，模型里没有 `depositReward`；删掉那条路之后它覆盖的正是分红合约的全部记账 |
+| `script/LaunchpadV3TestnetE2E.s.sol` | 测试网整轮脚本：A 的内盘买卖改为核对接收地址**收不到**钱；B（拉黑接收地址）的内盘买入改为核对**没有**欠款 |
+
+**结果**：`forge fmt --check` 通过；`forge test` 646 个全过（不设 `BSC_RPC_URL`）；主网分叉（48.club）`test/fork/*` 12 个全过；`test/audit5/**`（`--threads 1`）153 个里 152 个一次通过，剩下 1 个（`ReviewFairForkTest.test_review_fair_unsyncedSetAsideAndReturned`）是 48.club 返回 `not supported`（节点只留最近约 100 个区块的状态），单独重跑这个套件 7 个全过（改用 blastapi 重跑时被限流 429，不算结果）；invariant：`CoreInvariants` 10 条（新增 `invariant_v3CurveNoTax`）与 `audit5a/VaultUnitsInvariant` 3 条在 200 × 80 下全过（各 200 runs、16,000 次调用；跑完已把 inline 配置还原为 24 × 50 / 48 × 120）；两个部署脚本（加上路由脚本）在 BSC 测试网与主网的本地 anvil 分叉上顺序跑通（打新复用 V3 的五个共用合约 + `PEER_CORE`；主网 `OWNER` = 部署地址、`MAINNET_OWNER_IS_DEPLOYER=true`、链接线上 PoolCheck），部署出的 TaxHandlerV3 字节码里没有 `distribute` 的选择器、分红合约里没有 `depositReward` / `accRewardPerShare`，没有往任何链广播（本地分叉写出的 `broadcast/` 文件已还原）。
+
+**运行时字节码**（`forge build --sizes`）：LaunchpadV3 16,948 B（原 18,819）、TaxHandlerV3 19,941 B（原 21,130）、SharedDividendVault 8,752 B（原 9,799），其余不变：TokenDeployer 20,688 B、HolderRewardHandler 18,041 B、FairMintPad 16,803 B、TaxLaunchTokenV3 4,472 B、FairToken 4,372 B、SharedPlatformFeeBucket 4,365 B、GangRouter 4,135 B、LaunchTokenV3 2,297 B、SharedMigrator 2,001 B，都 < 24,576 B（最大的 TokenDeployer 余 3,888 B）。
+
+**需要跟着改的地方**（服务端、网站、CLI；合约事件不变，所以没有会报错的地方）
+
+- CLI（本仓库 `skill/`，已改）：`v3 buy` / `v3 sell` 的提示和输出（`curveTaxPct: 0`，`poolBuyTaxPct` / `poolSellTaxPct` 表示外盘税），`v3 info` 新增 `taxNote`，`v3 create` 的 `split` / `note`，help、`references/v3.md`、`SKILL.md`、README。CLI 的报价本来就是对核心 `eth_call` 模拟，不用改算法。
+- 服务端（gangfun-server）：`feesIndexer.js` 会订阅主网 V3 / 打新核心的分红合约上的 `RewardDeposited`（以后不会再有这个事件，不报错，只是一直没有记录）；`burn.js` 的 `accRewardPerShare` 只对 V2 / S / U 的股票币读，读不到共用分红合约（股票币在共用分红合约里 `quoteOf` 为 0），不受影响。其余要点： `trackMarket.js` 里按 `phase='curve'` 连 `TaxDistributed` 的分账以后恒为空，`tax` 字段恒为 0，注释与 README 里「内盘收税」的说法过时；收入面板（`v3.js` income 汇总）和 `TaxPaid` 统计不受影响。
+- 网站（gang-web-legacy）：税率旁「内外盘都收」、交易步骤「已含 X% 买入税」、内盘交易表的「税」列（恒为 0）、`v3_lead` / `v3_tips` / `v3_rec_tips` 等文案要改成「内盘只收 1% 手续费，税只在外盘收」。
