@@ -13,9 +13,10 @@ import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that burns 1% on every transfer.
@@ -87,7 +88,7 @@ contract FairMintTest is Test {
         bucket.setOperator(address(handler), true);
         pad.setMigrator(address(migrator));
         pad.setAgentGate(true, address(agents));
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(owner);
         vm.stopPrank();
 
@@ -108,8 +109,9 @@ contract FairMintTest is Test {
         if (agents.balanceOf(who) == 0) _fund(who);
     }
 
-    function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+    function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
+        return
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _create() internal returns (address token) {
@@ -172,7 +174,7 @@ contract FairMintTest is Test {
         assertEq(IERC20(t).balanceOf(dev), TPS);
         assertEq(pad.baselineOf(t, dev), TPS);
         assertEq(vault.shares(t, dev), TPS);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Minting));
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Minting));
         assertEq(wbnb.balanceOf(address(pad)), SHARE_PRICE, "pad keeps only principal");
         assertEq(bucket.accruedQuote(address(wbnb)), SHARE_PRICE / 100, "mint fee to the platform at once");
         (,,,, uint256 last,) = _sale(t);
@@ -181,7 +183,7 @@ contract FairMintTest is Test {
     }
 
     function test_create_rejectsOutOfBounds() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.raiseBnb = 4 ether;
         _expectBadConfig(c, 1, "raiseBnb must be 5-50 BNB");
         c = _cfg();
@@ -215,15 +217,15 @@ contract FairMintTest is Test {
         _expectBadConfig(_cfg(), 101, "devShares must be 1..cap");
     }
 
-    function _expectBadConfig(FairMintPad.MintConfig memory c, uint256 devShares, string memory reason) internal {
+    function _expectBadConfig(IGangLaunchpad.MintConfig memory c, uint256 devShares, string memory reason) internal {
         vm.prank(dev);
-        vm.expectRevert(abi.encodeWithSelector(FairMintPad.BadConfig.selector, reason));
+        vm.expectRevert(abi.encodeWithSelector(IGangLaunchpad.BadConfig.selector, reason));
         pad.create("X", "X", "", "", address(0), address(0), c, devShares);
     }
 
     function test_create_rejectsNonAgent() public {
         vm.prank(stranger);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
@@ -231,7 +233,7 @@ contract FairMintTest is Test {
         vm.prank(owner);
         vault.setMinimumShareBalance(address(pad), 1_000_000 ether);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.VaultFloorTooHigh.selector);
+        vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);
         pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
@@ -282,7 +284,7 @@ contract FairMintTest is Test {
         address ref = _seedPair(address(q), address(usdt), 20_000 ether, 10_000 ether);
         address bridge = _seedPair(address(usdt), address(wbnb), 6_000 ether, 10 ether);
 
-        vm.expectRevert(FairMintPad.NoBridgePool.selector);
+        vm.expectRevert(IGangLaunchpad.NoBridgePool.selector);
         pad.previewCreate(address(q), ref, 15 ether);
 
         vm.prank(owner);
@@ -293,7 +295,7 @@ contract FairMintTest is Test {
 
     function test_create_refPoolRequiredAndDepthFloor() public {
         MockSPCXB q = new MockSPCXB();
-        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         pad.previewCreate(address(q), address(0), 15 ether);
 
         address thin = _seedPair(address(q), address(wbnb), 2 ether, 0.5 ether); // < 1 BNB of WBNB
@@ -315,7 +317,7 @@ contract FairMintTest is Test {
         vm.prank(m);
         assertEq(pad.mint(t, 500, 1), 100, "truncated to cap");
         vm.prank(m);
-        vm.expectRevert(FairMintPad.WalletCapReached.selector);
+        vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
         pad.mint(t, 1, 1);
     }
 
@@ -327,7 +329,7 @@ contract FairMintTest is Test {
         }
         address last = _minter(99);
         vm.prank(last);
-        vm.expectRevert(FairMintPad.Slippage.selector);
+        vm.expectRevert(IGangLaunchpad.Slippage.selector);
         pad.mint(t, 100, 100); // only 99 left
 
         uint256 before = wbnb.balanceOf(last);
@@ -338,20 +340,20 @@ contract FairMintTest is Test {
         assertEq(accepted, 99);
         uint256 cost = 99 * SHARE_PRICE;
         assertEq(before - wbnb.balanceOf(last), cost + cost / 100);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Launched));
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Launched));
     }
 
     /// @dev No deadline: a sale a year old still takes mints.
     function test_mint_rejectsNonAgent_noDeadline() public {
         address t = _create();
         vm.prank(stranger);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.mint(t, 1, 1);
 
         vm.warp(block.timestamp + 365 days);
         vm.prank(_minter(0));
         assertEq(pad.mint(t, 1, 1), 1);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Minting));
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Minting));
     }
 
     function test_mint_rejectsFeeOnTransferQuote() public {
@@ -361,7 +363,7 @@ contract FairMintTest is Test {
         fot.mint(dev, 10 ether);
         vm.startPrank(dev);
         fot.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.FeeOnTransferQuote.selector);
+        vm.expectRevert(IGangLaunchpad.FeeOnTransferQuote.selector);
         pad.create("X", "X", "", "", address(fot), address(0), _cfg(), 1);
         vm.stopPrank();
     }
@@ -404,7 +406,7 @@ contract FairMintTest is Test {
 
     /// @dev mint 1% / withdraw 2%: each leg uses its own rate; both go to the platform.
     function test_fees_separateMintAndExitRates() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.exitFeeBps = 200;
         vm.prank(dev);
         address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
@@ -430,7 +432,7 @@ contract FairMintTest is Test {
 
     /// @dev The mint fee (up to 3%) goes to the platform at mint; there is no refund to escrow it for.
     function test_fees_mintFeeToPlatformAtOnce() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.mintFeeBps = 300;
         vm.prank(dev);
         address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
@@ -450,7 +452,7 @@ contract FairMintTest is Test {
 
     /// @dev No mint for 7 days: withdraw pays the full principal (only the mint fee is lost); a new mint ends that.
     function test_withdraw_exitFeeWaivedWhenStale() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.exitFeeBps = 200;
         vm.prank(dev);
         address t = pad.create("Stale", "STL", "", "", address(0), address(0), c, 1);
@@ -519,7 +521,7 @@ contract FairMintTest is Test {
         _fill(t);
         (,, bool launched,,,) = _sale(t);
         assertTrue(launched);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Launched));
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Launched));
     }
 
     // ---------------------------------------------------------------- launch
@@ -567,7 +569,7 @@ contract FairMintTest is Test {
         vm.expectRevert(FairToken.NotLocked.selector);
         FairToken(t).reclaim(dev, 1);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.NotMinting.selector);
+        vm.expectRevert(IGangLaunchpad.NotMinting.selector);
         pad.withdraw(t, 1, 0);
     }
 
@@ -679,7 +681,7 @@ contract FairMintTest is Test {
         wbnb.mintUnlimited(stranger, 1 ether);
         vm.startPrank(stranger);
         wbnb.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.mint(t, 1, 1);
         address t2 = pad.create("Open", "OPEN", "", "", address(0), address(0), _cfg(), 1);
         vm.stopPrank();
@@ -697,7 +699,6 @@ contract FairMintTest is Test {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         address m = _minter(0);
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);
@@ -766,7 +767,7 @@ contract FairMintTest is Test {
 
     function test_handlerPadIsOneShot() public {
         vm.prank(owner);
-        vm.expectRevert(HolderRewardHandler.PadAlreadySet.selector);
-        handler.setPad(stranger);
+        vm.expectRevert(HolderRewardHandler.LaunchpadAlreadySet.selector);
+        handler.setLaunchpad(stranger);
     }
 }

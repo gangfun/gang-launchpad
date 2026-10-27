@@ -4,9 +4,10 @@ pragma solidity 0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LaunchpadV3TestnetRefs as T} from "../config/LaunchpadV3DeployRefs.sol";
-import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
-import {ILaunchpadV3} from "../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {FairMintPad} from "../src/fair-mint/FairMintPad.sol";
+import {GangLaunchpad as LaunchpadV3} from "../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangLaunchpad as FairMintPad} from "../src/gang/GangLaunchpad.sol";
 import {GangRouter} from "../src/router/GangRouter.sol";
 
 interface IWBNBDeposit {
@@ -54,7 +55,7 @@ contract RouterTestnetSmoke is Script {
             "",
             address(0),
             address(0),
-            FairMintPad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
+            IGangLaunchpad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}),
             1
         );
         uint256 accepted = router.fairMintBNB{value: 0.002 ether}(sale, 2, 2, block.timestamp + 1 days);

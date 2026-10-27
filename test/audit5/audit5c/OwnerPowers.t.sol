@@ -2,7 +2,8 @@
 pragma solidity 0.8.28;
 
 import {LaunchpadV3Test} from "../../launchpad-v3/LaunchpadV3.t.sol";
-import {LaunchpadV3} from "../../../src/launchpad-v3/LaunchpadV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../../src/gang/interfaces/IGangLaunchpad.sol";
 import {SharedDividendVault} from "../../../src/common/SharedDividendVault.sol";
 
 /// @notice Internal audit 5 C owner-power PoCs, turned into regressions.
@@ -13,7 +14,7 @@ contract Audit5cOwnerPowers is LaunchpadV3Test {
         vm.prank(owner);
         divVault.setMinimumShareBalance(address(pad), type(uint256).max);
         vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.VaultFloorTooHigh.selector);
+        vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);
         pad.create("T", "T", "", "", address(0), address(0), _tax(500, 500, 10_000, address(0)));
         // a token without dividends doesn't use the floor
         _create(_tax(500, 500, 0, treasury));

@@ -9,10 +9,10 @@ import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 
 contract V3ForkAgent {
     mapping(address => uint256) public balanceOf;

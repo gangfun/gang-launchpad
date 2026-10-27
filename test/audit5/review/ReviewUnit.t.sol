@@ -5,8 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {SharedDividendVault} from "../../../src/common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket} from "../../../src/common/SharedPlatformFeeBucket.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
-import {HolderRewardHandler} from "../../../src/fair-mint/HolderRewardHandler.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../../src/gang/GangTaxHandler.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../../src/gang/GangTaxHandler.sol";
 
 /// @notice Review of the audit 5 fixes (§18): the keeper's set-once flag and the EIP-7702 wallet check, without a fork.
 contract ReviewUnitTest is Test {

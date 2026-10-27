@@ -8,11 +8,11 @@ import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../../../src/common/
 import {SharedDividendVault} from "../../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../../src/common/TokenDeployer.sol";
-import {LaunchpadV3} from "../../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../../src/gang/GangLaunchpad.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {ILaunchpadV3} from "../../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../../src/gang/stub/GangToken.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../../src/gang/interfaces/IGangLaunchpad.sol";
 
 interface IRouterA {
     function getAmountsOut(uint256 amountIn, address[] calldata path) external view returns (uint256[] memory);

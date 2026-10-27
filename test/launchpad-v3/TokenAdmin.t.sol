@@ -2,8 +2,8 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken as LaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
 import {TokenURI} from "../../src/launchpad-v3/TokenURI.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
@@ -63,6 +63,9 @@ contract TokenAdminV3Test is LaunchpadV3Test {
         tok.unlock(stranger);
         vm.expectRevert(TaxLaunchTokenV3.PairAlreadySet.selector);
         tok.setPair(stranger);
+        // merge: a V3 token is never reclaimable (only 打新 tokens are, and only while locked)
+        vm.expectRevert(TaxLaunchTokenV3.NotReclaimable.selector);
+        tok.reclaim(stranger, 1);
         (bool ok,) = t.call(abi.encodeWithSignature("setTaxHandler(address)", stranger));
         assertFalse(ok, "no setTaxHandler");
         (ok,) = t.call(abi.encodeWithSignature("exclude(address,bool)", stranger, true));
@@ -81,13 +84,19 @@ contract TokenAdminV3Test is LaunchpadV3Test {
         assertFalse(tok.locked());
         vm.startPrank(address(pad));
         vm.expectRevert(LaunchTokenV3.AlreadyUnlocked.selector);
-        tok.unlock();
+        tok.unlock(stranger);
+        // untaxed: never a pair, so the handler is never called on a transfer (merge: one token contract)
+        vm.expectRevert(LaunchTokenV3.Untaxed.selector);
+        tok.setPair(stranger);
+        vm.expectRevert(LaunchTokenV3.NotReclaimable.selector);
+        tok.reclaim(stranger, 1);
         (bool ok,) = t.call(abi.encodeWithSignature("burn(uint256)", 1));
         assertFalse(ok, "no burn");
         vm.stopPrank();
-        // and it trades freely
+        // and it trades freely, without ever touching the handler
         address holder = address(uint160(0xB0000));
         uint256 bal = IERC20(t).balanceOf(holder);
+        vm.expectCall(address(handler), bytes(""), 0);
         vm.prank(holder);
         IERC20(t).transfer(stranger, bal);
         assertEq(IERC20(t).balanceOf(stranger), bal);

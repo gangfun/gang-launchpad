@@ -2,12 +2,13 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
-/// @notice Fuzzed curve accounting (from the 2026-10-26 internal audit): every buy and sell splits exactly into curve,
-///         1% fee and tax, the platform gets 0.5% of volume, truncation at the wallet cap / graduation only charges
-///         what is spent. The cross-curve solvency invariants live in test/invariant/CoreInvariants.t.sol.
+/// @notice Fuzzed curve accounting (from the 2026-10-26 internal audit; §19 no curve tax): every buy and sell of a taxed
+///         token splits exactly into curve and the 1% fee — no tax, nothing to the recipient, the vault or the
+///         handler; truncation at the wallet cap / graduation only charges what is spent. The cross-curve solvency invariants live in test/invariant/CoreInvariants.t.sol.
 contract LaunchpadV3FuzzTest is LaunchpadV3Test {
     function _realQuote(address t) internal view returns (uint256 rq) {
         (,, uint128 r,,,,,,,,,) = pad.curves(t);
@@ -18,7 +19,7 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         (,,,,,,,,,, p,) = pad.curves(t);
     }
 
-    /// @dev spent == net + 1% fee + tax (+ ≤ 1 wei pad dust); bucket += fee + 0.5% of spent; out ≤ wallet room.
+    /// @dev spent == net + 1% fee (+ ≤ 1 wei pad dust); bucket += exactly 1% of spent; no tax anywhere; out ≤ room.
     function testFuzz_buyAccounting(uint256 quoteIn, uint16 b, uint16 s, uint16 d, uint256 preIn) public {
         b = uint16(bound(b, 100, 500));
         s = uint16(bound(s, 100, 500));
@@ -47,18 +48,20 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
             assertGe(padDelta, net, "pad keeps >= net");
             assertLe(padDelta - net, 1, "pad dust <= 1 wei");
             uint256 fee = (spent * 100) / BPS;
-            uint256 tax = (spent * (100 + b)) / BPS - fee;
-            uint256 plat = (spent * 50) / BPS;
-            if (plat > tax) plat = tax;
-            assertEq(bucket.accruedQuote(address(quoteTok)) - bk, fee + plat, "bucket = 1% + 0.5%");
-            assertEq(spent, padDelta + fee + tax, "conservation");
+            assertEq(bucket.accruedQuote(address(quoteTok)) - bk, fee, "bucket = 1% only");
+            assertEq(spent, padDelta + fee, "conservation: curve + 1% fee, no tax");
+            assertEq(quoteTok.balanceOf(treasury), 0, "recipient: nothing on the curve");
+            assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders: nothing on the curve");
+            assertEq(quoteTok.balanceOf(address(handler)), 0, "handler: nothing on the curve");
         } catch (bytes memory err) {
             bytes4 sel = bytes4(err);
-            assertTrue(sel == LaunchpadV3.ZeroAmount.selector || sel == LaunchpadV3.WalletCapReached.selector, "revert");
+            assertTrue(
+                sel == IGangLaunchpad.ZeroAmount.selector || sel == IGangLaunchpad.WalletCapReached.selector, "revert"
+            );
         }
     }
 
-    /// @dev Sell: the pad pays exactly the curve's quoteOut; the seller gets quoteOut − 1% − sell tax.
+    /// @dev Sell: the pad pays exactly the curve's quoteOut; the seller gets quoteOut − 1% (no sell tax on the curve).
     function testFuzz_sellAccounting(uint256 inQ, uint256 frac, uint16 b, uint16 s) public {
         b = uint16(bound(b, 100, 500));
         s = uint16(bound(s, 100, 500));
@@ -80,10 +83,12 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         vm.stopPrank();
         uint256 quoteOut = rq - _realQuote(t);
         assertEq(pq - quoteTok.balanceOf(address(pad)), quoteOut, "pad pays exactly quoteOut");
-        assertEq(quoteTok.balanceOf(agent) - uq, quoteOut - (quoteOut * 100) / BPS - (quoteOut * s) / BPS, "seller net");
+        assertEq(quoteTok.balanceOf(agent) - uq, quoteOut - (quoteOut * 100) / BPS, "seller net: only the 1% fee");
+        assertEq(quoteTok.balanceOf(treasury), 0, "recipient: nothing on the curve");
+        assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders: nothing on the curve");
     }
 
-    /// @dev Graduation truncation (cap off): the graduating buy pays fee + tax only on what it spends; the pair gets
+    /// @dev Graduation truncation (cap off): the graduating buy pays the 1% fee only on what it spends; the pair gets
     ///      the locked graduation amount (+ ≤ 1 wei); the pad keeps ≤ 1 wei.
     function testFuzz_gradTruncation(uint256 pre, uint256 quoteIn, uint16 b) public {
         b = uint16(bound(b, 100, 500));

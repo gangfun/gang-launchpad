@@ -12,13 +12,14 @@ import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
@@ -75,18 +76,9 @@ contract CoreSystem is Test {
             address(wbnb),
             address(pairFactory)
         );
-
-        fairHandler = new HolderRewardHandler(owner, address(fairVault), address(bucket), address(0));
-        fair = new FairMintPad(
-            owner,
-            address(registry),
-            address(fairVault),
-            address(bucket),
-            address(fairHandler),
-            address(deployer),
-            address(wbnb),
-            address(pairFactory)
-        );
+        // one pad, one handler for both kinds (GangLaunchpad): the V3 and 打新 names below are the same contracts
+        fair = v3;
+        fairHandler = v3Handler;
         router = new GangRouter(address(v3), address(fair), address(wbnb));
 
         vm.startPrank(owner);
@@ -94,8 +86,6 @@ contract CoreSystem is Test {
         registry.setQuote(address(blq), true, 15 ether);
         bucket.setOperator(address(v3), true);
         bucket.setOperator(address(v3Handler), true);
-        bucket.setOperator(address(fair), true);
-        bucket.setOperator(address(fairHandler), true);
         v3Vault.setLaunchpad(address(v3), true);
         v3Vault.setMinimumShareBalance(address(v3), 10_000 ether);
         v3Vault.setOperator(address(v3Handler), address(v3));
@@ -107,16 +97,6 @@ contract CoreSystem is Test {
         v3.setAgentGate(true, address(agents));
         v3.setRouter(address(router), true);
         v3.setMigrator(address(mig));
-        fairVault.setLaunchpad(address(fair), true);
-        fairVault.setMinimumShareBalance(address(fair), 10_000 ether);
-        fairVault.setOperator(address(fairHandler), address(fair));
-        mig.addLaunchpad(address(fair));
-        deployer.setLaunchpad(address(fair), true);
-        fairHandler.setPad(address(fair));
-        fairHandler.setKeeper(keeper);
-        fair.setAgentGate(true, address(agents));
-        fair.setRouter(address(router), true);
-        fair.setMigrator(address(mig));
         vm.stopPrank();
     }
 }
@@ -144,6 +124,11 @@ contract CoreHandler is CoreSystem {
     uint256 public owedEvents;
     uint256 public blqTokens;
     uint256 public blockedSet;
+    /// @dev Spec §19 (no curve tax): curve trades that moved quote to the recipient / the vault / the tax handler, and
+    ///      curve trades whose bucket accrual was not exactly 1% of the trade. Both must stay 0.
+    uint256 public curveTaxLeaks;
+    uint256 public curveFeeOff;
+    uint256 public curveTrades;
 
     constructor() {
         _deploySystem(address(this));
@@ -299,15 +284,39 @@ contract CoreHandler is CoreSystem {
         (address q, bool graduated,) = _curve(t);
         if (graduated) return;
         amount = bound(amount, 1e12, 3 ether);
+        bool native = q == address(wbnb) && path % 3 == 1;
+        uint256 sinks0 = _sinks(q);
+        uint256 fee0 = bucket.accruedQuote(q);
+        // the BNB path is paid from this handler's balance (prank sets only msg.sender); the refund goes to `who`
+        uint256 bal0 = native ? who.balance : IERC20(q).balanceOf(who);
         vm.prank(who);
+        uint256 paid;
         if (path % 3 == 0) {
             try v3.buy(t, amount, 0) {} catch {}
-        } else if (q == address(wbnb) && path % 3 == 1) {
-            try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {} catch {}
+        } else if (native) {
+            try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {
+                paid = amount - (who.balance - bal0);
+            } catch {}
         } else {
             try router.v3Buy(t, amount, 0, block.timestamp) {} catch {}
         }
+        if (!native) paid = bal0 - IERC20(q).balanceOf(who);
+        _checkCurveTrade(q, sinks0, bucket.accruedQuote(q) - fee0, paid);
         _afterV3(t);
+    }
+
+    function _sinks(address q) internal view returns (uint256) {
+        return
+            IERC20(q).balanceOf(treasury) + IERC20(q).balanceOf(address(v3Handler))
+                + IERC20(q).balanceOf(address(v3Vault));
+    }
+
+    /// @dev `gross` = what the buyer paid, or the curve's payout on a sell (to the seller + fee); 0 = no trade.
+    function _checkCurveTrade(address q, uint256 sinks0, uint256 fee, uint256 gross) internal {
+        if (gross == 0) return;
+        curveTrades++;
+        if (_sinks(q) != sinks0) curveTaxLeaks++;
+        if (fee != (gross * 100) / 10_000) curveFeeOff++;
     }
 
     function v3Sell(uint256 seed, uint256 fracBps) external {
@@ -320,10 +329,17 @@ contract CoreHandler is CoreSystem {
         uint256 bal = IERC20(t).balanceOf(who);
         uint256 amount = (bal * bound(fracBps, 1, 10_000)) / 10_000;
         if (amount == 0) return;
+        (address q,,) = _curve(t);
+        uint256 sinks0 = _sinks(q);
+        uint256 fee0 = bucket.accruedQuote(q);
+        uint256 got0 = IERC20(q).balanceOf(who);
         vm.startPrank(who);
         IERC20(t).approve(address(v3), amount);
         try v3.sell(t, amount, 0) {} catch {}
         vm.stopPrank();
+        uint256 fee = bucket.accruedQuote(q) - fee0;
+        uint256 got = IERC20(q).balanceOf(who) - got0;
+        _checkCurveTrade(q, sinks0, fee, got == 0 ? 0 : got + fee);
         _afterV3(t);
     }
 
@@ -410,7 +426,7 @@ contract CoreHandler is CoreSystem {
         if (sales.length >= 4) return;
         address creator = _actor(seed);
         address q = _pick(seed, 6, 2) == 0 ? address(wbnb) : address(quoteTok);
-        FairMintPad.MintConfig memory cfg = FairMintPad.MintConfig({
+        IGangLaunchpad.MintConfig memory cfg = IGangLaunchpad.MintConfig({
             raiseBnb: bound(raise, 5 ether, 50 ether),
             capBps: uint16(bound(capBps, 25, 50)),
             holdBps: uint16(bound(holdBps, 3_000, 8_000)),
@@ -460,7 +476,7 @@ contract CoreHandler is CoreSystem {
         if (sales.length == 0) return;
         address t = _sale(seed);
         (, bool launched,) = _saleState(t);
-        if (launched || fair.status(t) != FairMintPad.Status.Minting) return;
+        if (launched || fair.status(t) != IGangLaunchpad.Status.Minting) return;
         for (uint256 i = 0; i < 600 && !launched; i++) {
             address w = _newAgent();
             vm.prank(w);
@@ -581,9 +597,11 @@ contract CoreInvariantsTest is Test {
     }
 
     // ---------------------------------------------------------------- 打新 (§5 #1–#4, #6)
-    /// @dev #1: per quote, the pad holds exactly Σ over not-launched sales of the principal of live positions, plus exit
-    ///      fees the bucket refused (mint fees go to the platform at mint: nothing else is escrowed).
-    function invariant_fairEscrowExact() public view {
+    /// @dev #1 + #7 merged (MERGE-PLAN §5.4): curves and sales share the one pad's balance of each quote. Per quote it
+    ///      holds Σ over not-launched sales of the principal of live positions + exit fees the bucket refused + Σ
+    ///      realQuote of live curves + dust (≥ 0: curve rounding only). A sale's withdraw / launch never eats a curve's
+    ///      reserve, a graduation never eats a sale's escrow.
+    function invariant_padEscrowIsolated() public view {
         FairMintPad fair = h.fair();
         address[3] memory qs = _quotes();
         for (uint256 k = 0; k < 3; k++) {
@@ -598,7 +616,15 @@ contract CoreInvariantsTest is Test {
                 }
             }
             owed += fair.owedFee(qs[k]);
-            assertEq(IERC20(qs[k]).balanceOf(address(fair)), owed, "fair pad quote == live principal + owed fees");
+            uint256 live;
+            for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+                (, address q, uint128 realQuote,,,, bool graduated,,,,,) = fair.curves(h.v3Tokens(i));
+                if (q == qs[k] && !graduated) live += realQuote;
+            }
+            uint256 bal = IERC20(qs[k]).balanceOf(address(fair));
+            assertGe(bal, owed + live, "pad quote >= sale principal + owed fees + live realQuote");
+            // dust is curve-side rounding only: with no curve on this quote the 打新 escrow is exact
+            if (h.v3TokenCount() == 0) assertEq(bal, owed, "pad quote == live principal + owed fees");
         }
     }
 
@@ -638,18 +664,9 @@ contract CoreInvariantsTest is Test {
     }
 
     // ---------------------------------------------------------------- LaunchpadV3 (§5 #7, #9, #10)
-    /// @dev #7: per quote, the pad holds at least Σ realQuote of the live curves; and all unsold supply.
+    /// @dev #7 (token side; the quote side is in invariant_padEscrowIsolated): the pad holds all unsold supply.
     function invariant_v3Reserves() public view {
         LaunchpadV3 v3 = h.v3();
-        address[3] memory qs = _quotes();
-        for (uint256 k = 0; k < 3; k++) {
-            uint256 live;
-            for (uint256 i = 0; i < h.v3TokenCount(); i++) {
-                (, address q, uint128 realQuote,,,, bool graduated,,,,,) = v3.curves(h.v3Tokens(i));
-                if (q == qs[k] && !graduated) live += realQuote;
-            }
-            assertGe(IERC20(qs[k]).balanceOf(address(v3)), live, "pad quote >= live realQuote");
-        }
         for (uint256 i = 0; i < h.v3TokenCount(); i++) {
             address t = h.v3Tokens(i);
             (,,, uint128 sold,,, bool graduated,,,,,) = v3.curves(t);
@@ -668,11 +685,24 @@ contract CoreInvariantsTest is Test {
             uint256 owed;
             for (uint256 i = 0; i < h.v3TokenCount(); i++) {
                 address t = h.v3Tokens(i);
-                (address q,,) = r.routeOf(t);
+                (address q,,,) = r.routeOf(t);
                 if (q == qs[k]) owed += r.owedOf(t);
             }
             assertGe(IERC20(qs[k]).balanceOf(address(r)), owed, "handler quote >= owed");
             assertEq(r.owedTotalOf(qs[k]), owed, "owedTotalOf == sum of owedOf");
+        }
+    }
+
+    /// @dev Spec §19: a curve trade (buy direct / via the router / with BNB, or sell) pays exactly the 1% protocol fee
+    ///      to the bucket and moves nothing to the recipient, the dividend vault or the tax handler.
+    function invariant_v3CurveNoTax() public view {
+        assertEq(h.curveTaxLeaks(), 0, "curve trade paid a tax");
+        assertEq(h.curveFeeOff(), 0, "curve fee != 1%");
+        for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+            // holders earn only from the pool tax: before graduation nothing is credited to a V3 token's holders
+            address t = h.v3Tokens(i);
+            (,,,,,, bool graduated,,,,,) = h.v3().curves(t);
+            if (!graduated) assertEq(h.v3Vault().unsoldUnits(t), 0, "no curve dividend");
         }
     }
 
@@ -778,5 +808,6 @@ contract CoreInvariantsTest is Test {
         console2.log("calls / v3 tokens / graduations / owed seen", h.calls(), h.v3TokenCount(), h.v3Graduations());
         console2.log("  owed events / sales / launches / failures", h.owedEvents(), h.saleCount(), h.fairLaunches());
         console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
+        console2.log("  curve trades checked for no tax", h.curveTrades());
     }
 }

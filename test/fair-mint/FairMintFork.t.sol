@@ -11,9 +11,10 @@ import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {IV3FactoryLite, IV3PoolLite} from "../../src/launchpad-v2/PoolCheck.sol";
 import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 
 contract ForkAgent {
     mapping(address => uint256) public balanceOf;
@@ -94,7 +95,7 @@ contract FairMintForkTest is Test {
         deployer.setLaunchpad(address(pad), true);
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(keeper);
         pad.setMigrator(address(mig));
         pad.setAgentGate(true, address(agent));
@@ -108,8 +109,9 @@ contract FairMintForkTest is Test {
     }
 
     // ---------------------------------------------------------------- helpers
-    function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+    function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
+        return
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _minter(uint256 i) internal pure returns (address) {

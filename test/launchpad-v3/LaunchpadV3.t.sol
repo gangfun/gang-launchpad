@@ -2,7 +2,7 @@
 pragma solidity 0.8.28;
 
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -11,14 +11,14 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
-import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
+import {GangToken as LaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {ITaxHandlerV3} from "../../src/launchpad-v3/interfaces/ITaxHandlerV3.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that refuses transfers to blacklisted addresses (USDT-style), to make a recipient push fail.
@@ -26,6 +26,10 @@ contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
     mapping(address => bool) public blocked;
 
     function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function mintUnlimited(address to, uint256 amount) external {
         _mint(to, amount);
     }
 
@@ -39,8 +43,13 @@ contract BlacklistQuote is ERC20("Blacklist USD", "BUSD") {
     }
 }
 
-/// @notice LaunchpadV3 (tax recipient) on mocks: create rules, buy / sell tax on the curve and on the pool, the
-///         0.5%-of-volume platform part, dividend share, recipient pushes, owed + release, TaxPaid events, G-01.
+interface IMintableQuote {
+    function mintUnlimited(address to, uint256 amount) external;
+}
+
+/// @notice LaunchpadV3 (tax recipient) on mocks: create rules, no tax on the curve (only the 1% protocol fee, §19),
+///         buy / sell tax on the pool, the 0.5%-of-volume platform part, dividend share, recipient pushes,
+///         owed + release, TaxPaid events, G-01.
 contract LaunchpadV3Test is Test {
     QuoteRegistry internal quoteRegistry;
     SharedDividendVault internal divVault;
@@ -67,6 +76,24 @@ contract LaunchpadV3Test is Test {
 
     event TaxPaid(address indexed token, address indexed recipient, address indexed quote, uint256 amount);
     event TaxOwed(address indexed token, address indexed recipient, address indexed quote, uint256 amount);
+    event Buy(
+        address indexed token,
+        address indexed buyer,
+        uint256 quoteIn,
+        uint256 protocolFee,
+        uint256 tax,
+        uint256 tokensOut,
+        uint256 realQuote
+    );
+    event Sell(
+        address indexed token,
+        address indexed seller,
+        uint256 tokensIn,
+        uint256 protocolFee,
+        uint256 tax,
+        uint256 quoteOut,
+        uint256 realQuote
+    );
 
     function setUp() public {
         quoteTok = new MockSPCXB();
@@ -112,10 +139,18 @@ contract LaunchpadV3Test is Test {
 
     // ---------------------------------------------------------------- helpers
     function _agent(address who) internal {
+        _agent(who, address(quoteTok));
+    }
+
+    function _agent(address who, address quote) internal {
         if (agents.balanceOf(who) == 0) agents.mint(who, nextId++);
-        quoteTok.mintUnlimited(who, 1_000 ether);
+        IMintableQuote(quote).mintUnlimited(who, 1_000 ether);
         vm.prank(who);
-        quoteTok.approve(address(pad), type(uint256).max);
+        IERC20(quote).approve(address(pad), type(uint256).max);
+    }
+
+    function _quoteOf(address token) internal view returns (address q) {
+        (, q,,,,,,,,,,) = pad.curves(token);
     }
 
     function _tax(uint16 buyBps, uint16 sellBps, uint16 dividendBps, address recipient)
@@ -135,7 +170,7 @@ contract LaunchpadV3Test is Test {
 
     function _expectBad(ILaunchpadV3.TaxConfig memory t, string memory reason) internal {
         vm.prank(agent);
-        vm.expectRevert(abi.encodeWithSelector(LaunchpadV3.BadTaxConfig.selector, reason));
+        vm.expectRevert(abi.encodeWithSelector(IGangLaunchpad.BadTaxConfig.selector, reason));
         pad.create("X", "X", "", "", address(quoteTok), address(0), t);
     }
 
@@ -147,7 +182,7 @@ contract LaunchpadV3Test is Test {
     function _graduate(address token) internal {
         for (uint256 i = 0; i < 400 && !_graduated(token); i++) {
             address w = address(uint160(0xB0000 + i));
-            _agent(w);
+            _agent(w, _quoteOf(token));
             vm.prank(w);
             pad.buy(token, 1 ether, 0);
         }
@@ -156,7 +191,7 @@ contract LaunchpadV3Test is Test {
 
     function _poolBuy(address token, address who, uint256 quoteIn) internal {
         MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
-        quoteTok.mintUnlimited(address(pair), quoteIn);
+        IMintableQuote(_quoteOf(token)).mintUnlimited(address(pair), quoteIn);
         (uint256 rT, uint256 rQ) = _reserves(token, pair);
         uint256 out = (quoteIn * rT) / (rQ + quoteIn) / 2; // well inside the curve; MockPair checks no K
         if (pair.token0() == token) pair.swap(out, 0, who, "");
@@ -209,57 +244,138 @@ contract LaunchpadV3Test is Test {
         handler.delist(treasury);
         _expectBad(_tax(200, 200, 0, treasury), "recipient not listed");
 
-        uint256 before = quoteTok.balanceOf(treasury);
-        vm.prank(agent);
-        pad.buy(t, 0.01 ether, 0);
-        assertGt(quoteTok.balanceOf(treasury), before, "existing token keeps paying its recipient");
+        _graduate(t);
+        _poolBuy(t, stranger, 1 ether);
+        vm.prank(keeper);
+        handler.process(t, type(uint256).max, 1);
+        assertGt(quoteTok.balanceOf(treasury), 0, "existing token keeps paying its recipient (pool tax)");
     }
 
-    // ---------------------------------------------------------------- 2 / 3 / 4 / 6: curve tax split
-    /// @dev buy 2%: 1% protocol fee + 2% tax; of the tax 0.5% of volume → platform, 1.5% → recipient (dividend 0).
-    function test_bondingBuy_split_platformHalfPercent_restToRecipient() public {
-        address t = _create(_tax(200, 200, 0, treasury));
+    // ---------------------------------------------------------------- §19: no tax on the curve
+    /// @dev A taxed token's curve buy pays only the 1% protocol fee (→ bucket); the recipient, the vault and the
+    ///      handler get nothing, and `Buy.tax` is 0.
+    function test_curveBuy_onlyProtocolFee_noTax() public {
+        address t = _create(_tax(500, 500, 4_000, treasury));
         uint256 gross = 0.01 ether;
-        vm.expectEmit(true, true, true, true, address(handler));
-        emit TaxPaid(t, treasury, address(quoteTok), (gross * 150) / BPS);
+        uint256 fee = (gross * 100) / BPS;
+        vm.expectEmit(true, true, false, false, address(pad));
+        emit Buy(t, agent, gross - fee, fee, 0, 0, 0);
+        vm.recordLogs();
         vm.prank(agent);
         pad.buy(t, gross, 0);
-        assertEq(quoteTok.balanceOf(treasury), (gross * 150) / BPS, "recipient 1.5%");
-        assertEq(bucket.accruedQuote(address(quoteTok)), (gross * 100) / BPS + (gross * 50) / BPS, "1% fee + 0.5% tax");
+        _assertNoHandlerLogs();
+
+        assertEq(quoteTok.balanceOf(agent), 1_000 ether - gross, "pays exactly the gross");
+        assertEq(bucket.accruedQuote(address(quoteTok)), fee, "only the 1% protocol fee");
+        assertEq(quoteTok.balanceOf(treasury), 0, "recipient gets nothing on the curve");
+        assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders get nothing on the curve");
+        assertEq(quoteTok.balanceOf(address(handler)), 0, "nothing reaches the handler");
+        (,, uint128 realQuote,,,,,,,,,) = pad.curves(t);
+        assertEq(realQuote, gross - fee, "99% enters the curve");
+        assertEq(divVault.shares(t, agent), IERC20(t).balanceOf(agent), "share still synced on the curve");
     }
 
-    /// @dev sell 3% with dividend 40%: platform 0.5%, rest 2.5% → 1% dividends / 1.5% recipient.
-    function test_bondingSell_split_withDividends() public {
-        address t = _create(_tax(100, 300, 4_000, treasury));
+    /// @dev Curve sell with dividends 40%: only 1% of the curve's payout → bucket; holders and the recipient get
+    ///      nothing; the seller's share drops to what it still holds; `Sell.tax` is 0.
+    function test_curveSell_onlyProtocolFee_holdersAndRecipientGetNothing() public {
+        address t = _create(_tax(100, 500, 4_000, treasury));
         vm.prank(agent);
         pad.buy(t, 0.01 ether, 0);
         vm.prank(agent2);
-        pad.buy(t, 0.01 ether, 0); // agent now holds dividend shares
+        pad.buy(t, 0.02 ether, 0);
+        assertGt(divVault.shares(t, agent), 0, "agent holds dividend shares");
         uint256 bal = IERC20(t).balanceOf(agent2);
-        uint256 vaultBefore = quoteTok.balanceOf(address(divVault));
-        uint256 recBefore = quoteTok.balanceOf(treasury);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        uint256 quoteBefore = quoteTok.balanceOf(agent2);
 
         vm.startPrank(agent2);
-        IERC20(t).approve(address(pad), bal);
-        uint256 toUser = pad.sell(t, bal, 0);
+        IERC20(t).approve(address(pad), bal / 2);
+        vm.expectEmit(true, true, false, false, address(pad));
+        emit Sell(t, agent2, bal / 2, 0, 0, 0, 0);
+        vm.recordLogs();
+        uint256 toUser = pad.sell(t, bal / 2, 0);
         vm.stopPrank();
-        uint256 quoteOut = (toUser * BPS) / (BPS - 100 - 300); // what the curve paid before fee + tax
+        _assertNoHandlerLogs();
 
-        uint256 rest = (quoteOut * 300) / BPS - (quoteOut * 50) / BPS;
-        assertApproxEqAbs(
-            quoteTok.balanceOf(address(divVault)) - vaultBefore, (rest * 4_000) / BPS, 2, "40% to holders"
-        );
-        assertApproxEqAbs(quoteTok.balanceOf(treasury) - recBefore, rest - (rest * 4_000) / BPS, 2, "60% to recipient");
-        assertApproxEqAbs(bucket.accruedQuote(address(quoteTok)) - bucketBefore, (quoteOut * 150) / BPS, 2, "1% + 0.5%");
+        uint256 fee = bucket.accruedQuote(address(quoteTok)) - bucketBefore;
+        uint256 quoteOut = toUser + fee; // what the curve paid out
+        assertEq(fee, (quoteOut * 100) / BPS, "only the 1% protocol fee");
+        assertEq(quoteTok.balanceOf(agent2) - quoteBefore, toUser);
+        assertEq(quoteTok.balanceOf(treasury), 0, "recipient gets nothing on the curve");
+        assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders get nothing on the curve");
+        assertEq(divVault.pending(t, agent), 0, "no curve dividend");
+        assertEq(quoteTok.balanceOf(address(handler)), 0);
+        assertEq(divVault.shares(t, agent2), IERC20(t).balanceOf(agent2), "seller's share follows its balance");
     }
 
-    function test_firstBuy_noHolders_dividendLegGoesToRecipient() public {
-        address t = _create(_tax(200, 200, 5_000, treasury));
-        vm.prank(agent);
-        pad.buy(t, 0.01 ether, 0);
-        assertEq(quoteTok.balanceOf(address(divVault)), 0);
-        assertEq(quoteTok.balanceOf(treasury), (0.01 ether * 150) / BPS, "whole 1.5% to recipient");
+    /// @dev Same trades on a 5%/5% taxed token and an untaxed one: same tokens out, same quote back.
+    function test_curve_taxedPricesLikeUntaxed() public {
+        address taxed = _create(_tax(500, 500, 0, treasury));
+        address plain = _create(_tax(0, 0, 0, address(0)));
+        vm.startPrank(agent);
+        uint256 outT = pad.buy(taxed, 0.05 ether, 0);
+        uint256 outP = pad.buy(plain, 0.05 ether, 0);
+        assertEq(outT, outP, "same tokens out");
+        IERC20(taxed).approve(address(pad), outT);
+        IERC20(plain).approve(address(pad), outP);
+        assertEq(pad.sell(taxed, outT, 0), pad.sell(plain, outP, 0), "same quote back");
+        vm.stopPrank();
+    }
+
+    /// @dev Graduating a taxed dividend token through the curve: every quote the buyers spent is the pair's liquidity
+    ///      plus the 1% protocol fee; nothing went to the recipient or holders. After graduation the pool tax pays
+    ///      holders by the shares the curve wrote, the platform 0.5% of volume, the recipient the rest.
+    function test_curveToGraduation_onlyFee_thenPoolTaxSplitsAsBefore() public {
+        address t = _create(_tax(200, 400, 5_000, treasury));
+        uint256 supplyBefore = quoteTok.totalSupply();
+        _graduate(t);
+        address pair = TaxLaunchTokenV3(t).pair();
+        uint256 spent = quoteTok.totalSupply() - supplyBefore - _quoteHeldByBuyers();
+        uint256 fees = bucket.accruedQuote(address(quoteTok));
+        uint256 dust = quoteTok.balanceOf(address(pad)); // graduation truncation leaves ≤ 1 wei on the pad
+        assertLe(dust, 1, "pad dust");
+        assertEq(quoteTok.balanceOf(pair) + fees + dust, spent, "spent = liquidity + 1% fee");
+        assertApproxEqAbs(fees, quoteTok.balanceOf(pair) / 99, 400, "fee is 1% of the gross");
+        assertEq(quoteTok.balanceOf(treasury), 0, "no curve tax to the recipient");
+        assertEq(quoteTok.balanceOf(address(divVault)), 0, "no curve tax to holders");
+        assertEq(quoteTok.balanceOf(address(handler)), 0);
+
+        address holder = address(uint160(0xB0000));
+        assertEq(divVault.shares(t, holder), IERC20(t).balanceOf(holder), "curve wrote the holder's share");
+        assertEq(divVault.pendingUnits(t, holder), 0, "nothing earned on the curve");
+
+        // pool buy 2%: platform 0.5% of volume (a quarter of the tax), half of the rest to holders, half to recipient
+        _poolBuy(t, stranger, 1 ether);
+        uint256 taxTokens = handler.accruedTax(t);
+        assertGt(taxTokens, 0, "pool buy taxed");
+        assertEq(handler.accruedPlatformTax(t), taxTokens / 4, "0.5 of 2%");
+        assertGt(divVault.pendingUnits(t, holder), 0, "curve holder credited at tax time");
+        assertEq(divVault.pendingUnits(t, stranger), 0, "buyer earns nothing of its own buy tax");
+
+        uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        vm.prank(keeper);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
+        uint256 toPlatform = bucket.accruedQuote(address(quoteTok)) - bucketBefore;
+        uint256 toRecipient = quoteTok.balanceOf(treasury);
+        uint256 toHolders = quoteOut - toPlatform - toRecipient;
+        assertApproxEqRel(toPlatform, quoteOut / 4, 0.01e18, "platform 0.5% of volume");
+        assertApproxEqRel(toHolders, toRecipient, 0.01e18, "rest split 50/50");
+        assertGt(divVault.pending(t, holder), 0, "holder can claim pool dividends");
+    }
+
+    /// @dev Sum of the quote still held by the graduating buyers (`_graduate` mints each 1_000; the setUp agents don't buy).
+    function _quoteHeldByBuyers() internal view returns (uint256 held) {
+        for (uint256 i = 0; i < 400; i++) {
+            held += quoteTok.balanceOf(address(uint160(0xB0000 + i)));
+        }
+    }
+
+    /// @dev The recorded logs hold nothing from the tax handler (no TaxDistributed / TaxPaid / TaxOwed on the curve).
+    function _assertNoHandlerLogs() internal view {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(logs[i].emitter != address(handler), "no handler event on a curve trade");
+        }
     }
 
     // ---------------------------------------------------------------- 5 / 6: failed push → owed → release by anyone
@@ -267,19 +383,27 @@ contract LaunchpadV3Test is Test {
         BlacklistQuote bq = new BlacklistQuote();
         vm.prank(owner);
         quoteRegistry.setQuote(address(bq), true, 15 ether);
-        bq.mint(agent, 10 ether);
-        vm.prank(agent);
-        bq.approve(address(pad), type(uint256).max);
         bq.setBlocked(treasury, true);
 
         vm.prank(agent);
         address t = pad.create("B", "B", "", "", address(bq), address(0), _tax(200, 200, 0, treasury));
-        uint256 owedAmt = (0.01 ether * 150) / BPS;
-        vm.expectEmit(true, true, true, true, address(handler));
-        emit TaxOwed(t, treasury, address(bq), owedAmt);
-        vm.prank(agent);
-        pad.buy(t, 0.01 ether, 0); // does not revert
+        _graduate(t); // the curve pays the recipient nothing, so a blocked recipient never matters there
+        _poolBuy(t, stranger, 1 ether);
+        uint256 bucketBefore = bucket.accruedQuote(address(bq));
+        vm.recordLogs();
+        vm.prank(keeper);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1); // does not revert
+        uint256 owedAmt = quoteOut - (bucket.accruedQuote(address(bq)) - bucketBefore);
+        assertGt(owedAmt, 0);
         assertEq(handler.owedOf(t), owedAmt);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool owedSeen;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(handler) && logs[i].topics[0] == TaxOwed.selector) {
+                owedSeen = abi.decode(logs[i].data, (uint256)) == owedAmt;
+            }
+        }
+        assertTrue(owedSeen, "TaxOwed");
 
         vm.prank(stranger);
         vm.expectRevert(bytes("blacklisted"));
@@ -348,7 +472,7 @@ contract LaunchpadV3Test is Test {
         quoteTok.mintUnlimited(stranger, 1 ether);
         vm.startPrank(stranger);
         quoteTok.approve(address(pad), type(uint256).max);
-        vm.expectRevert(LaunchpadV3.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.buy(t, 0.01 ether, 0);
         vm.stopPrank();
 
@@ -356,7 +480,7 @@ contract LaunchpadV3Test is Test {
         pad.buy(t, 5 ether, 0);
         assertEq(IERC20(t).balanceOf(agent), pad.MAX_PER_WALLET(), "1% cap");
         vm.prank(agent);
-        vm.expectRevert(LaunchpadV3.WalletCapReached.selector);
+        vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
         pad.buy(t, 0.01 ether, 0);
         assertEq(pad.TARGET_GRAD_BNB(), 15 ether);
     }
@@ -378,57 +502,20 @@ contract LaunchpadV3Test is Test {
         assertEq(divVault.shares(t, holder), 0, "excluded holder no longer earns");
     }
 
-    // ---------------------------------------------------------------- curve sell with buy 1% / sell 3%
-    /// @dev Asymmetric rates on the curve: the platform part of a sell is 0.5% of the sell's volume, not of its tax.
-    function test_bondingAsymmetricRates_platformFromVolume() public {
-        address t = _create(_tax(100, 300, 0, treasury));
-        uint256 gross = 0.01 ether;
-        vm.prank(agent);
-        pad.buy(t, gross, 0);
-        assertEq(quoteTok.balanceOf(treasury), (gross * 50) / BPS, "buy 1%: half to platform, half to recipient");
-
-        uint256 bal = IERC20(t).balanceOf(agent);
-        uint256 recBefore = quoteTok.balanceOf(treasury);
-        uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
-        vm.startPrank(agent);
-        IERC20(t).approve(address(pad), bal);
-        uint256 toUser = pad.sell(t, bal, 0);
-        vm.stopPrank();
-        uint256 quoteOut = (toUser * BPS) / (BPS - 100 - 300);
-        assertApproxEqAbs(
-            quoteTok.balanceOf(treasury) - recBefore, (quoteOut * 250) / BPS, 2, "sell 3%: 2.5% to recipient"
-        );
-        assertApproxEqAbs(
-            bucket.accruedQuote(address(quoteTok)) - bucketBefore, (quoteOut * 150) / BPS, 2, "1% fee + 0.5%"
-        );
-    }
-
     // ---------------------------------------------------------------- access control
     function test_router_accessControl() public {
         address t = _create(_tax(200, 200, 0, treasury));
 
         vm.expectRevert(TaxHandlerV3.OnlyLaunchpad.selector);
-        handler.register(address(0xBEEF), address(quoteTok), treasury, 0);
+        handler.register(address(0xBEEF), address(quoteTok), treasury, 0, 1);
 
         vm.prank(address(pad));
         vm.expectRevert(TaxHandlerV3.AlreadyRegistered.selector);
-        handler.register(t, address(quoteTok), treasury, 0);
+        handler.register(t, address(quoteTok), treasury, 0, 1);
 
         vm.prank(address(pad));
         vm.expectRevert(TaxHandlerV3.BadDividendBps.selector);
-        handler.register(address(0xBEEF), address(quoteTok), address(0), 5_000);
-
-        vm.prank(stranger);
-        vm.expectRevert(TaxHandlerV3.OnlyLaunchpad.selector);
-        handler.distribute(t, 1 ether, 0, ITaxHandlerV3.Phase.Bonding);
-
-        vm.prank(address(pad));
-        vm.expectRevert(TaxHandlerV3.BadPlatformAmount.selector);
-        handler.distribute(t, 1, 2, ITaxHandlerV3.Phase.Bonding);
-
-        vm.prank(address(pad));
-        vm.expectRevert(TaxHandlerV3.UnknownToken.selector);
-        handler.distribute(address(0xBEEF), 1, 0, ITaxHandlerV3.Phase.Bonding);
+        handler.register(address(0xBEEF), address(quoteTok), address(0), 5_000, 1);
 
         vm.startPrank(stranger);
         vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", stranger));
@@ -438,11 +525,6 @@ contract LaunchpadV3Test is Test {
         vm.prank(owner);
         vm.expectRevert(TaxHandlerV3.LaunchpadAlreadySet.selector);
         handler.setLaunchpad(stranger);
-
-        (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = handler.previewSplit(t, 200, 50);
-        assertEq(toPlatform, 50);
-        assertEq(toDividend, 0);
-        assertEq(toRecipient, 150);
     }
 
     function test_recipientRegistry_accessControl() public {

@@ -13,11 +13,12 @@ import {IV3FactoryLite} from "../../src/launchpad-v2/PoolCheck.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
-import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
+import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 
 interface IV3PoolSlot0 {
     function slot0() external view returns (uint160, int24, uint16, uint16, uint16, uint32, bool);
@@ -121,7 +122,7 @@ contract QuoteRefPoolForkTest is Test {
         deployer.setLaunchpad(address(fair), true);
         bucket.setOperator(address(fair), true);
         bucket.setOperator(address(fh), true);
-        fh.setPad(address(fair));
+        fh.setLaunchpad(address(fair));
         fair.setMigrator(address(mig));
         fair.setAgentGate(true, address(agent));
         fair.setV3Factory(V3_FACTORY);
@@ -135,8 +136,9 @@ contract QuoteRefPoolForkTest is Test {
         return ILaunchpadV3.TaxConfig({buyTaxBps: 0, sellTaxBps: 0, dividendBps: 0, recipient: address(0)});
     }
 
-    function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
+    function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
+        return
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     /// @dev NVDAB is not in QuoteRegistry: priced from the pool, the same number LaunchpadV2 locks.
@@ -184,9 +186,9 @@ contract QuoteRefPoolForkTest is Test {
     /// @dev Without a fixed rate a pool is required; with one, the rate wins over any pool (both cores).
     function test_fork_fixedRateWinsAndNoPoolRefused() public forkOnly {
         vm.startPrank(dev);
-        vm.expectRevert(LaunchpadV3.RefPoolRequired.selector);
+        vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         v3.create("X", "X", "", "", NVDAB, address(0), _untaxed());
-        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         fair.previewCreate(NVDAB, address(0), 15 ether);
         vm.stopPrank();
 
