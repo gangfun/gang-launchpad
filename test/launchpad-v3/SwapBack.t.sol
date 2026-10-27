@@ -423,9 +423,6 @@ contract SwapBackTest is LaunchpadV3Test {
         vm.mockCallRevert(
             address(divVault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(
-            address(divVault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused"
-        );
         address a = address(uint160(0xB0000));
         vm.expectEmit(true, true, false, false, address(handler));
         emit PostGradHandlerBase.ShareWriteFailed(t, a, 0);

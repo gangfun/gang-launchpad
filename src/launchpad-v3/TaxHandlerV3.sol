@@ -10,13 +10,12 @@ import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol
 import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
 
 /// @title TaxHandlerV3 (LaunchpadV3 · everything about the tax)
-/// @notice The tax recipients the platform allows, each token's route (quote, recipient, dividend share), the split of
-///         every tax payment, and the pool tax after graduation:
-///         - Bonding: LaunchpadV3 hands each curve trade's tax over (`distribute`).
-///         - Post-grad: the token's transfer hook accrues the tax in tokens (`notifyTax`); the holders' share of it is
-///           credited to holders right then (tax-time units in the vault). It is sold in small chunks — one before
-///           every sell into the pair (`swapBack`), or by the keeper when no sells come (`process`) — and each
-///           chunk's quote is split the same way.
+/// @notice The tax recipients the platform allows, each token's route (quote, recipient, dividend share), and the
+///         pool tax after graduation — the only tax a V3 token pays (the bonding curve charges just the 1% protocol
+///         fee, no tax: 2026-10-27, spec §19):
+///         - The token's transfer hook accrues the tax in tokens (`notifyTax`); the holders' share of it is credited to
+///           holders right then (tax-time units in the vault). It is sold in small chunks — one before every sell into
+///           the pair (`swapBack`), or by the keeper when no sells come (`process`) — and each chunk's quote is split.
 ///         Split: the platform's part (0.5% of the trade's volume, counted per trade since buys and sells may be taxed
 ///         at different rates) → `dividendBps` of the rest to the shared dividend vault → the remainder to the
 ///         recipient, in quote.
@@ -80,7 +79,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     error AlreadyRegistered();
     error UnknownToken();
     error BadDividendBps();
-    error BadPlatformAmount();
     error NothingOwed();
     error AlreadyListed();
     error NotListed();
@@ -94,7 +92,7 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     }
 
     // ---------------------------------------------------------------- admin
-    /// @notice One-shot: the LaunchpadV3 that registers routes and pays in the bonding tax.
+    /// @notice One-shot: the LaunchpadV3 that registers routes.
     function setLaunchpad(address launchpad_) external onlyOwner {
         if (launchpad_ == address(0)) revert ZeroAddress();
         if (launchpad != address(0)) revert LaunchpadAlreadySet();
@@ -142,24 +140,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     }
 
     /// @inheritdoc ITaxHandlerV3
-    function distribute(address token, uint256 amount, uint256 platformAmount, Phase phase) external nonReentrant {
-        if (msg.sender != launchpad) revert OnlyLaunchpad();
-        Route memory r = routeOf[token];
-        if (r.quote == address(0)) revert UnknownToken();
-        if (platformAmount > amount) revert BadPlatformAmount();
-        if (amount == 0) return;
-
-        IERC20 quote = IERC20(r.quote);
-        uint256 beforeBal = quote.balanceOf(address(this));
-        quote.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 received = quote.balanceOf(address(this)) - beforeBal;
-        // fee-on-transfer quote: every leg shrinks in proportion
-        if (received != amount) platformAmount = (platformAmount * received) / amount;
-
-        _payOut(token, r, received, platformAmount, phase);
-    }
-
-    /// @inheritdoc ITaxHandlerV3
     /// @dev Reverts while the recipient still cannot receive, so nothing owed is ever lost.
     function release(address token) external nonReentrant returns (uint256 amount) {
         amount = owedOf[token];
@@ -169,18 +149,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         owedTotalOf[r.quote] -= amount;
         IERC20(r.quote).safeTransfer(r.recipient, amount);
         emit TaxPaid(token, r.recipient, r.quote, amount);
-    }
-
-    /// @inheritdoc ITaxHandlerV3
-    function previewSplit(address token, uint256 amount, uint256 platformAmount)
-        external
-        view
-        returns (uint256 toPlatform, uint256 toDividend, uint256 toRecipient)
-    {
-        Route memory r = routeOf[token];
-        if (r.quote == address(0)) revert UnknownToken();
-        if (platformAmount > amount) revert BadPlatformAmount();
-        return _split(token, r, amount, platformAmount);
     }
 
     // ---------------------------------------------------------------- token hooks
@@ -287,17 +255,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         emit OuterTaxProcessed(token, quote, amount, quoteOut, toPlatform);
     }
 
-    /// @dev `amount` of the route's quote is held here (a bonding-curve tax): split it and send each leg.
-    function _payOut(address token, Route memory r, uint256 amount, uint256 platformAmount, Phase phase) internal {
-        (uint256 toPlatform, uint256 toDividend, uint256 toRecipient) = _split(token, r, amount, platformAmount);
-        if (toDividend > 0) {
-            _allow(r.quote, address(dividendVault), toDividend);
-            dividendVault.depositReward(token, toDividend);
-        }
-        _send(token, r, toPlatform, toRecipient);
-        emit TaxDistributed(token, phase, amount, toPlatform, toDividend, toRecipient);
-    }
-
     /// @dev The platform's and the recipient's legs (a failed push is booked as owed).
     function _send(address token, Route memory r, uint256 toPlatform, uint256 toRecipient) internal {
         _payPlatform(r.quote, toPlatform);
@@ -309,23 +266,6 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
                 owedTotalOf[r.quote] += toRecipient;
                 emit TaxOwed(token, r.recipient, r.quote, toRecipient);
             }
-        }
-    }
-
-    function _split(address token, Route memory r, uint256 amount, uint256 platformAmount)
-        internal
-        view
-        returns (uint256 toPlatform, uint256 toDividend, uint256 toRecipient)
-    {
-        toPlatform = platformAmount;
-        uint256 rest = amount - platformAmount;
-        toDividend = (rest * r.dividendBps) / BPS;
-        toRecipient = rest - toDividend;
-
-        if (toDividend > 0 && dividendVault.totalShares(token) == 0) {
-            if (r.recipient != address(0)) toRecipient += toDividend;
-            else toPlatform += toDividend;
-            toDividend = 0;
         }
     }
 

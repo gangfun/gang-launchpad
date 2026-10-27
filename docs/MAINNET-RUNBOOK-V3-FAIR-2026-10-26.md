@@ -1,6 +1,7 @@
 # 主网上线手册 · LaunchpadV3 税收币 + 打新 + GangRouter
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写（写于上线前，上线当天照着做，做完在每一步后面记下交易哈希和地址）
+- **2026-10-27 下午：V3 内盘不收税（§19，审计说明 §19）**。部署的是含这项改动的合约（分支 `feat/v3-no-curve-tax`，合入 `main` 后以 `main` 为准）；部署步骤、接线、参数都不变。
 - 代码：gang-launchpad，合约冻结在审计说明 §18 的修复提交（方案 A 合并 + 第四轮内部审计修复 + 外盘税卖出时自动小额换 + 按税产生时记账 + 第五轮内部审计修复及其 review；审计说明 `docs/AUDIT-BRIEF-2026-10-26.md` §15–§18）。合入 `main` 后以 `main` 为准
 - 服务端 / keeper：gangfun-server，`keeper/` 以分支 `feat/keeper-ops` 为准（合入 `main` 后以 `main` 为准）
 - 链：BSC 主网（chainId 56）
@@ -204,7 +205,7 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - [ ] `/v3/config`、`/fair/config`、`/burn`、`/health?strict=1` 都正常（§4）
 
 **第一批真实交易后**：
-- [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件、接收地址收到第一笔 `TaxPaid`
+- [ ] 合作方发第一个币（小额）：`TaxConfigured` 事件；内盘买卖只扣 1%（`Buy` / `Sell` 里 `tax` = 0，接收地址这时收不到钱，§19）；毕业后第一笔外盘税卖出后接收地址收到第一笔 `TaxPaid`
 - [ ] 一个打新 sale 跑通：打新、卖回（到手 = 打新价 × 份数 − 撤出费，与 `previewWithdraw` 一致）、打满发射、池子开盘价等于打新价
 - [ ] 经 GangRouter 用 BNB 买和打新各一笔，结束后路由余额为 0
 - [ ] 毕业 / 发射后第一笔池子卖出：日志里有 `TaxChunkSold(…, swapBack = true)`，卖家实际到手与 `previewSell` 一致；持有人 `pendingUnits` 在交税时增加、这批卖完后转成可领 `pending`
@@ -254,3 +255,15 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 - 指望「解绑 operator」来止损：分红合约的 operator 每个核心只能绑定一次，不能解绑、不能换。
 - 用 `setKeeper` 换 keeper：处理合约和手续费池的 `setKeeper` 一生只能调一次（部署脚本已经用掉），先 `proposeKeeper(0)` 再 `setKeeper` 也不行；换人走 `proposeKeeper` → 48 小时 → `acceptKeeper`，期间可以 `cancelKeeper`（审计说明 §17 C-F6、§18 R5-4）。
 - 把普通钱包设为分红排除：`setExcluded` 只接受有代码的地址（池子、锁仓合约等），排除钱包会回滚 `NotAContract`；EIP-7702 委托过的钱包（代码是 23 字节的 `0xef0100…`）也按普通钱包处理（§17 C-F5、§18 R5-2）。
+
+---
+
+## 19. V3 内盘不收税（2026-10-27 用户决定）
+
+审计说明 §19。部署步骤、脚本、环境变量、接线自检都不变；变化在上线后的核对和对外说明：
+
+- 内盘买卖只扣 1% 手续费（进 SharedPlatformFeeBucket），`Buy` / `Sell` 事件里 `tax` 恒为 0；接收地址、分红合约、TaxHandlerV3 在毕业前收不到任何报价币。合作方要知道：**收入从毕业后的第一笔外盘税开始**。
+- 外盘税不变（卖出时自动小额换、keeper 分块补位、交税时记账），§5 的 keeper 和 §8 的日常运维照旧。
+- 分红合约只剩外盘分红：`depositReward` / `accRewardPerShare` / `rewardDebt` / `RewardDeposited` 已删除。索引器里订阅共用分红合约 `RewardDeposited` 的地方不会再收到事件（不报错）。
+- §7「第一批真实交易后」的第一条已按此改：内盘只看 1% 手续费，`TaxPaid` 要等毕业后第一笔外盘税。
+- 测试网第 8 套按这版合约部署（用户来做），239 再切一次。

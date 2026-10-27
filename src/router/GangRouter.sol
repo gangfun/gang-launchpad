@@ -62,8 +62,8 @@ interface IWBNB {
 }
 
 /// @title GangRouter — stateless entry for LaunchpadV3 buys and 打新 mints
-/// @notice The cores (LaunchpadV3, FairMintPad) hold every reserve and enforce every rule: price, fee, tax and its
-///         split, wallet cap, Agent gate (on the trader this router names), graduation / launch. This contract only
+/// @notice The cores (LaunchpadV3, FairMintPad) hold every reserve and enforce every rule: price, fee (a V3 curve
+///         trade pays only the 1% protocol fee, no tax), wallet cap, Agent gate (on the trader this router names), graduation / launch. This contract only
 ///         moves the caller's own money into one core call: native BNB in (wrapped to WBNB) and back out, a deadline,
 ///         and whatever the core refunds (cap / fill truncation) returned to the caller in what they paid with.
 ///         No owner, no storage: a new version is a new deployment that the core owner lists with setRouter, and that

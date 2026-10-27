@@ -7,8 +7,9 @@ import { walletFor } from './fair.js'
 
 /**
  * `gang v3 …` — LaunchpadV3 (tax recipient): a token with its own buy / sell tax (1–5% each), a dividend share and a
- * whitelisted recipient (e.g. a partner's treasury) paid in the quote token. The platform keeps 0.5% of volume; the
- * curve's 1% fee is on top. Contracts: gang-launchpad src/launchpad-v3.
+ * whitelisted recipient (e.g. a partner's treasury) paid in the quote token. The tax is charged only in the PancakeSwap
+ * pool after graduation (the platform keeps 0.5% of that volume); curve trades pay only the 1% fee, no tax.
+ * Contracts: gang-launchpad src/launchpad-v3.
  * Only on BSC testnet until the audit (--testnet); mainnet answers "not deployed" until there is a pad.
  */
 export const V3_NETS = {
@@ -186,7 +187,7 @@ export async function curveOf(ctx, token) {
 const fundingStep = (ctx, me, token, need, sym, approveStep, rawOnly, summarize) =>
   fund(ctx, { me, token, need, spender: ctx.pad, sym, approveStep }, rawOnly, summarize)
 
-/** The pad's fee constants: the curve fee on every curve trade, the platform's part of every tax (bps of volume). */
+/** The pad's fee constants: the curve fee (the only charge on a curve trade), the platform's part of every pool tax (bps of volume). */
 async function feesOf(ctx) {
   ctx.fees ??= Promise.all([ctx.read(ctx.pad, PAD_ABI, 'PROTOCOL_FEE_BPS'), ctx.read(ctx.pad, PAD_ABI, 'PLATFORM_TAX_BPS')])
     .then(([curve, platform]) => ({ curveFeePct: pct(curve), platformTaxPct: pct(platform) }))
@@ -251,7 +252,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const { owedRaw: _raw, priceRaw: _p, reserveTokenRaw: rT, ...pub } = c
     // in the pool the tax is held as tokens and sold in small chunks under a per-block budget
     const swapBack = c.graduated && c.pair ? await swapBackState(ctx, c.taxHandler, token, rT) : null
-    return out({ success: true, chainId: Number(ctx.chainId), ...(await feesOf(ctx)), ...pub, ...(swapBack && { swapBack }) })
+    const fees = await feesOf(ctx)
+    const taxNote = c.buyTaxPct > 0 || c.sellTaxPct > 0
+      ? `buy ${c.buyTaxPct}% / sell ${c.sellTaxPct}% tax only in the PancakeSwap pool after graduation (${fees.platformTaxPct}% of volume to the platform, then ${c.dividendPct}% of the rest to holders, the remainder to the recipient); curve trades pay only the ${fees.curveFeePct}% fee, no tax`
+      : `untaxed; curve trades pay the ${fees.curveFeePct}% fee`
+    return out({ success: true, chainId: Number(ctx.chainId), ...fees, ...pub, taxNote, ...(swapBack && { swapBack }) })
   }
 
   if (sub === 'status') {
@@ -342,9 +347,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ...(refPool !== zeroAddress && quote.toLowerCase() !== String(ctx.wbnb).toLowerCase() && { refPool }),
       buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: label, tokenIfNext: dry.result,
-      split: `of each ${buyTax}% buy / ${sellTax}% sell tax: ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
-        + (dividend > 0 ? '; while no holder has 10,000+ tokens (e.g. the first buys), the holders\' part goes to the recipient too' : ''),
-      note: `tax rates and recipient are fixed at create. The curve also takes its ${fees.curveFeePct}% fee on every trade. tokenIfNext changes if another create lands first: the real address is the Created event from \`gang v3 tx --hash …\`.`,
+      split: `of each ${buyTax}% buy / ${sellTax}% sell tax in the PancakeSwap pool (after graduation; the curve charges no tax): ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
+        + (dividend > 0 ? '; if no holder has 10,000+ tokens when a tax is paid, the holders\' part goes to the recipient too' : ''),
+      note: `tax rates and recipient are fixed at create. Curve trades pay only the ${fees.curveFeePct}% fee, no tax: the tax starts in the pool after graduation. tokenIfNext changes if another create lands first: the real address is the Created event from \`gang v3 tx --hash …\`.`,
     }, rawOnly, summarize))
   }
 
@@ -356,13 +361,13 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; curve trades are Agent-only', { wallet: me })
     if ((await ctx.read(ctx.pad, PAD_ABI, 'walletRoom', [token, me])) === 0n) fail(HINTS.WalletCapReached)
-    if (!flag('amount') && !flag('bnb')) fail('--amount <quote to spend> required (fee and tax included)')
+    if (!flag('amount') && !flag('bnb')) fail('--amount <quote to spend> required (the 1% curve fee included; no tax on the curve)')
     const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
     const quoteIn = parseUnits(raw, await decimalsOf(ctx, c.quote))
     const slippage = parseSlippage(fail, opt('slippage', '1'))
     const extra = (tokensOut, minOut) => ({
       step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(tokensOut, 18),
-      minTokensOut: formatUnits(minOut, 18), buyTaxPct: c.buyTaxPct,
+      minTokensOut: formatUnits(minOut, 18), curveTaxPct: 0, ...(c.buyTaxPct > 0 && { poolBuyTaxPct: c.buyTaxPct }),
     })
     // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet, refunds come back as BNB)
     if (viaRouter(ctx, c.quote, flag)) {
@@ -378,7 +383,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const data = encodeFunctionData({ abi: GANG_ROUTER_ABI, functionName: 'v3BuyBNB', args: [token, minOut, routerDeadline()] })
       return out(step(ctx, { from: me, to: ctx.router, data, value: quoteIn }, {
         ...extra(sim.result, minOut), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
-        note: 'paid in BNB through GangRouter; spend includes the curve fee and the buy tax; at the 1% wallet cap the excess comes back as BNB',
+        note: 'paid in BNB through GangRouter; spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap the excess comes back as BNB',
       }, rawOnly, summarize))
     }
     const pre = await fundingStep(ctx, me, c.quote, quoteIn, c.quoteSymbol, 'approve-quote', rawOnly, summarize)
@@ -388,7 +393,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const minOut = minOf(sim.result, slippage)
     return out(step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'buy', args: [token, quoteIn, minOut] }) }, {
       ...extra(sim.result, minOut), curveFeePct: (await feesOf(ctx)).curveFeePct,
-      note: 'spend includes the curve fee and the buy tax; at the 1% wallet cap the excess is refunded',
+      note: 'spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap the excess is refunded',
     }, rawOnly, summarize))
   }
 
@@ -434,8 +439,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const minOut = minOf(sim.result, slippage)
     return out(step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'sell', args: [token, amount, minOut] }) }, {
       step: 'sell', chainId: Number(ctx.chainId), token, amount: formatUnits(amount, 18), quote: c.quoteSymbol,
-      expectOut: await units(ctx, c.quote, sim.result), minOut: await units(ctx, c.quote, minOut), sellTaxPct: c.sellTaxPct,
-      curveFeePct: (await feesOf(ctx)).curveFeePct, note: 'expectOut is after the curve fee and the sell tax',
+      expectOut: await units(ctx, c.quote, sim.result), minOut: await units(ctx, c.quote, minOut), curveTaxPct: 0,
+      ...(c.sellTaxPct > 0 && { poolSellTaxPct: c.sellTaxPct }),
+      curveFeePct: (await feesOf(ctx)).curveFeePct, note: 'expectOut is after the 1% curve fee only (no tax on the curve; the sell tax applies only in the pool after graduation)',
     }, rawOnly, summarize))
   }
 

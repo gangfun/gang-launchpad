@@ -8,7 +8,7 @@ import {TokenURI} from "./TokenURI.sol";
 /// @title TaxLaunchTokenV3 (LaunchpadV3 taxed track)
 /// @notice Fixed-supply launch token. Locked until graduation. Same as V2 TaxLaunchToken except the pool tax rates
 ///         are chosen at create, one for buys and one for sells (immutable for the token's life).
-/// @dev Bonding-phase tax is taken by LaunchpadV3 on quote, never here.
+/// @dev No tax during bonding (the curve charges only LaunchpadV3's 1% protocol fee, in quote).
 ///      Post-grad: buys from the pair pay `buyTaxBps`, sells into it `sellTaxBps` → TaxHandlerV3 (accrued there).
 ///      Before a sell's tokens move, the handler sells one small chunk of the accrued tax (`swapBack`, ≤ 0.5% of the
 ///      pair's token side) — in a gas-capped try, so it can never fail the sell (except a sell paid in from a flash

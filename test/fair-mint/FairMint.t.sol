@@ -697,7 +697,6 @@ contract FairMintTest is Test {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         address m = _minter(0);
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);

@@ -19,10 +19,12 @@ interface ITestnetAgentId {
 
 /// @title LaunchpadV3TestnetE2E — the partner flow on BSC testnet with the stack from DeployLaunchpadV3
 /// @notice A: buy 2% / sell 2%, dividend 0, tax recipient = the listed demo treasury, in the test quote:
-///         curve buy + sell (TaxPaid), then 80 throwaway agents fill the curve (graduation), then a pool buy + sell
-///         that leave tax on the handler for the keeper (keeper-tax-process.sh in gangfun-server).
-///         B: same tax in the blacklist quote with the treasury blocked: the curve buy books TaxOwed; the treasury is
-///         unblocked afterwards so the keeper's release (or anyone) can push it.
+///         curve buy + sell (only the 1% fee: no tax on the curve, the treasury gets nothing — spec §19), then 80
+///         throwaway agents fill the curve (graduation), then a pool buy + sell that leave tax on the handler for the
+///         keeper (keeper-tax-process.sh in gangfun-server).
+///         B: same tax in the blacklist quote with the treasury blocked: the curve buy goes through and books nothing
+///         owed (the curve never pays the recipient); owed + release is a pool-tax path now (unit tests). The
+///         treasury is unblocked afterwards.
 /// @dev TESTNET ONLY. Resumable: TOKEN_A / TOKEN_B skip their create; minters that already hold A are skipped; the
 ///      fill stops once A graduates. Minter keys derive from DEPLOYER_PRIVATE_KEY (recoverable, worthless off testnet).
 ///      Env: DEPLOYER_PRIVATE_KEY, PAD, BLACKLIST_QUOTE; optional TEST_QUOTE, RECIPIENT, TOKEN_A, TOKEN_B,
@@ -70,7 +72,7 @@ contract LaunchpadV3TestnetE2E is Script {
         if (a == address(0)) a = _createA();
         console.log("token A", a);
 
-        // ---- B: failed push → owed
+        // ---- B: a blocked recipient never touches curve trades
         address b = vm.envOr("TOKEN_B", address(0));
         if (b == address(0)) b = _createB();
         console.log("token B", b, "owed", router.owedOf(b));
@@ -110,7 +112,7 @@ contract LaunchpadV3TestnetE2E is Script {
         IERC20(a).approve(address(pad), bal);
         pad.sell(a, bal / 2, 0);
         vm.stopBroadcast();
-        if (quote.balanceOf(treasury) <= before) revert Check("treasury got nothing from curve trades");
+        if (quote.balanceOf(treasury) != before) revert Check("treasury got paid from curve trades");
     }
 
     function _createB() internal returns (address b) {
@@ -127,10 +129,10 @@ contract LaunchpadV3TestnetE2E is Script {
             ILaunchpadV3.TaxConfig({buyTaxBps: 200, sellTaxBps: 200, dividendBps: 0, recipient: treasury})
         );
         blq.setBlocked(treasury, true);
-        pad.buy(b, 0.05 ether, 0); // the push to the treasury fails: booked as owed, the buy goes through
-        blq.setBlocked(treasury, false); // the keeper (or anyone) can now release it
+        pad.buy(b, 0.05 ether, 0); // no tax on the curve: nothing is pushed to the treasury, nothing owed
+        blq.setBlocked(treasury, false);
         vm.stopBroadcast();
-        if (pad.taxHandler().owedOf(b) == 0) revert Check("nothing owed on B");
+        if (pad.taxHandler().owedOf(b) != 0) revert Check("curve buy booked owed tax on B");
     }
 
     function _graduate(address a, uint256 gasPerMinter) internal {

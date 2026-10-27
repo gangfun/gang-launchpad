@@ -8,15 +8,15 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title SharedDividendVault (LaunchpadV3 + 打新 · one dividend vault for both cores)
-/// @notice launchpad-v2/DividendVault's accounting, shared by several cores. Each token belongs to the core that
-///         registered it, and only that core — or an operator bound to that core — can write its shares or deposit
+/// @notice One dividend vault shared by several cores (pool-tax dividends only). Each token belongs to the core that
+///         registered it, and only that core — or an operator bound to that core — can write its shares or credit
 ///         its rewards: a handler of one core can't touch another core's tokens (syncShares is permissionless).
 ///         The share floor is kept per core, so one core raising its floor never changes another core's holders.
 /// @dev Removing a core (`setLaunchpad(core, false)`) only stops new registrations: writes for its existing tokens keep
 ///      working, so retiring a core can't freeze dividends already promised. Claims never depend on any core.
 ///
-///      Two ways rewards come in:
-///      - `depositReward`: quote paid in now (the bonding-curve tax), split over the shares of this moment.
+///      One way rewards come in (spec §19, 2026-10-27: no curve tax, so V2's pay-now `depositReward` /
+///      `accRewardPerShare` / `rewardDebt` path is gone):
 ///      - Pool tax after graduation is taken in the token and sold later. Its holders' part is credited the moment it
 ///        is taxed (`accrueDividendUnits`, in tax-token units, over the shares of that moment) and turned into quote
 ///        when sold (`convertDividend`), so who held when the tax was paid is who gets it — not who holds when it is
@@ -39,9 +39,8 @@ contract SharedDividendVault is Ownable2Step {
     mapping(address token => address launchpad) public launchpadOf;
     mapping(address token => address quote) public quoteOf;
     mapping(address token => uint256) public totalShares;
-    mapping(address token => uint256) public accRewardPerShare; // 1e18 scaled
     mapping(address token => mapping(address user => uint256)) public shares;
-    mapping(address token => mapping(address user => uint256)) public rewardDebt;
+    /// @notice Quote from settled batches already moved to `user` (claimable), not yet claimed.
     mapping(address token => mapping(address user => uint256)) public pendingCredit;
     mapping(address => bool) public excluded;
 
@@ -84,7 +83,6 @@ contract SharedDividendVault is Ownable2Step {
     event LaunchpadSet(address indexed launchpad, bool enabled);
     event OperatorSet(address indexed account, address indexed launchpad);
     event TokenRegistered(address indexed token, address indexed quote, address indexed launchpad);
-    event RewardDeposited(address indexed token, uint256 amount);
     event ShareUpdated(address indexed token, address indexed user, uint256 share);
     event DividendClaimed(address indexed token, address indexed user, uint256 amount);
     event Excluded(address indexed account, bool excluded);
@@ -120,7 +118,7 @@ contract SharedDividendVault is Ownable2Step {
     }
 
     /// @notice Bind `account` (the core's tax handler) as the core's one operator. Once per core and per account,
-    ///         with no unbind or rebind: an operator writes every share and deposits every reward of the core's tokens,
+    ///         with no unbind or rebind: an operator writes every share and credits every reward of the core's tokens,
     ///         so a rebindable slot would let the owner install a contract that pays itself the holders' part
     ///         (flow review F4a). No emergency unbind is needed: the handlers' code is immutable, and their share writes
     ///         are guarded, so a vault refusal never freezes token transfers.
@@ -181,32 +179,16 @@ contract SharedDividendVault is Ownable2Step {
         emit TokenRegistered(token, quote, msg.sender);
     }
 
-    function depositReward(address token, uint256 amount) external {
-        _onlyFor(token);
-        if (amount == 0) return;
-        // audit 4 (A-F1 / C-F2): credit what arrived, not what was asked — one balance per quote is shared by every
-        // token on it, so an over-credit would be paid out of the other tokens' rewards
-        IERC20 quote = IERC20(quoteOf[token]);
-        uint256 before = quote.balanceOf(address(this));
-        quote.safeTransferFrom(msg.sender, address(this), amount);
-        amount = quote.balanceOf(address(this)) - before;
-        uint256 ts = totalShares[token];
-        if (ts > 0) {
-            accRewardPerShare[token] += (amount * 1e18) / ts;
-        }
-        emit RewardDeposited(token, amount);
-    }
-
     /// @dev Strict `>` floor (the token's floor, snapshotted at registration): `newShare <= floor` → 0 shares.
+    ///      The units the old share earned up to now are settled first (`_harvestUnits` with the old share), so a
+    ///      share change only affects tax credited from here on.
     function setShare(address token, address user, uint256 newShare) external {
         _onlyFor(token);
         if (excluded[user] || newShare <= tokenMinimumShareBalance[token]) newShare = 0;
-        _harvest(token, user);
         uint256 old = shares[token][user];
         if (old != 0 || newShare != 0) _harvestUnits(token, user, old);
         totalShares[token] = totalShares[token] - old + newShare;
         shares[token][user] = newShare;
-        rewardDebt[token][user] = (newShare * accRewardPerShare[token]) / 1e18;
         emit ShareUpdated(token, user, newShare);
     }
 
@@ -271,7 +253,6 @@ contract SharedDividendVault is Ownable2Step {
 
     function claimFor(address token, address user) public returns (uint256 amount) {
         if (quoteOf[token] == address(0)) revert UnknownToken();
-        _harvest(token, user);
         _harvestUnits(token, user, shares[token][user]);
         amount = pendingCredit[token][user];
         if (amount == 0) revert NothingToClaim();
@@ -281,13 +262,11 @@ contract SharedDividendVault is Ownable2Step {
     }
 
     // ---------------------------------------------------------------- views
+    /// @notice Claimable quote now: what settled batches already paid `user`, plus its units of batches that settled
+    ///         since its last touch.
     function pending(address token, address user) external view returns (uint256) {
-        uint256 s = shares[token][user];
-        uint256 accumulated = (s * accRewardPerShare[token]) / 1e18;
-        uint256 debt = rewardDebt[token][user];
-        uint256 accrued = accumulated > debt ? accumulated - debt : 0;
-        (uint256 fromUnits,) = _unitsView(token, user, s);
-        return pendingCredit[token][user] + accrued + fromUnits;
+        (uint256 fromUnits,) = _unitsView(token, user, shares[token][user]);
+        return pendingCredit[token][user] + fromUnits;
     }
 
     /// @notice Tax-time units `user` holds whose batch has not settled yet (they turn into quote when it does; part of
@@ -393,14 +372,5 @@ contract SharedDividendVault is Ownable2Step {
             uO += units; // id == p.open: ids only move forward (open → selling → settled)
         }
         return (quote, uS, uO);
-    }
-
-    function _harvest(address token, address user) internal {
-        uint256 accumulated = (shares[token][user] * accRewardPerShare[token]) / 1e18;
-        uint256 debt = rewardDebt[token][user];
-        if (accumulated > debt) {
-            pendingCredit[token][user] += accumulated - debt;
-        }
-        rewardDebt[token][user] = accumulated;
     }
 }

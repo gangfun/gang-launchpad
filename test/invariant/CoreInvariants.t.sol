@@ -144,6 +144,11 @@ contract CoreHandler is CoreSystem {
     uint256 public owedEvents;
     uint256 public blqTokens;
     uint256 public blockedSet;
+    /// @dev Spec §19 (no curve tax): curve trades that moved quote to the recipient / the vault / the tax handler, and
+    ///      curve trades whose bucket accrual was not exactly 1% of the trade. Both must stay 0.
+    uint256 public curveTaxLeaks;
+    uint256 public curveFeeOff;
+    uint256 public curveTrades;
 
     constructor() {
         _deploySystem(address(this));
@@ -299,15 +304,39 @@ contract CoreHandler is CoreSystem {
         (address q, bool graduated,) = _curve(t);
         if (graduated) return;
         amount = bound(amount, 1e12, 3 ether);
+        bool native = q == address(wbnb) && path % 3 == 1;
+        uint256 sinks0 = _sinks(q);
+        uint256 fee0 = bucket.accruedQuote(q);
+        // the BNB path is paid from this handler's balance (prank sets only msg.sender); the refund goes to `who`
+        uint256 bal0 = native ? who.balance : IERC20(q).balanceOf(who);
         vm.prank(who);
+        uint256 paid;
         if (path % 3 == 0) {
             try v3.buy(t, amount, 0) {} catch {}
-        } else if (q == address(wbnb) && path % 3 == 1) {
-            try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {} catch {}
+        } else if (native) {
+            try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {
+                paid = amount - (who.balance - bal0);
+            } catch {}
         } else {
             try router.v3Buy(t, amount, 0, block.timestamp) {} catch {}
         }
+        if (!native) paid = bal0 - IERC20(q).balanceOf(who);
+        _checkCurveTrade(q, sinks0, bucket.accruedQuote(q) - fee0, paid);
         _afterV3(t);
+    }
+
+    function _sinks(address q) internal view returns (uint256) {
+        return
+            IERC20(q).balanceOf(treasury) + IERC20(q).balanceOf(address(v3Handler))
+                + IERC20(q).balanceOf(address(v3Vault));
+    }
+
+    /// @dev `gross` = what the buyer paid, or the curve's payout on a sell (to the seller + fee); 0 = no trade.
+    function _checkCurveTrade(address q, uint256 sinks0, uint256 fee, uint256 gross) internal {
+        if (gross == 0) return;
+        curveTrades++;
+        if (_sinks(q) != sinks0) curveTaxLeaks++;
+        if (fee != (gross * 100) / 10_000) curveFeeOff++;
     }
 
     function v3Sell(uint256 seed, uint256 fracBps) external {
@@ -320,10 +349,17 @@ contract CoreHandler is CoreSystem {
         uint256 bal = IERC20(t).balanceOf(who);
         uint256 amount = (bal * bound(fracBps, 1, 10_000)) / 10_000;
         if (amount == 0) return;
+        (address q,,) = _curve(t);
+        uint256 sinks0 = _sinks(q);
+        uint256 fee0 = bucket.accruedQuote(q);
+        uint256 got0 = IERC20(q).balanceOf(who);
         vm.startPrank(who);
         IERC20(t).approve(address(v3), amount);
         try v3.sell(t, amount, 0) {} catch {}
         vm.stopPrank();
+        uint256 fee = bucket.accruedQuote(q) - fee0;
+        uint256 got = IERC20(q).balanceOf(who) - got0;
+        _checkCurveTrade(q, sinks0, fee, got == 0 ? 0 : got + fee);
         _afterV3(t);
     }
 
@@ -676,6 +712,19 @@ contract CoreInvariantsTest is Test {
         }
     }
 
+    /// @dev Spec §19: a curve trade (buy direct / via the router / with BNB, or sell) pays exactly the 1% protocol fee
+    ///      to the bucket and moves nothing to the recipient, the dividend vault or the tax handler.
+    function invariant_v3CurveNoTax() public view {
+        assertEq(h.curveTaxLeaks(), 0, "curve trade paid a tax");
+        assertEq(h.curveFeeOff(), 0, "curve fee != 1%");
+        for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+            // holders earn only from the pool tax: before graduation nothing is credited to a V3 token's holders
+            address t = h.v3Tokens(i);
+            (,,,,,, bool graduated,,,,,) = h.v3().curves(t);
+            if (!graduated) assertEq(h.v3Vault().unsoldUnits(t), 0, "no curve dividend");
+        }
+    }
+
     /// @dev #10: tax config never changes after create.
     function invariant_v3ConfigImmutable() public view {
         for (uint256 i = 0; i < h.v3TokenCount(); i++) {
@@ -778,5 +827,6 @@ contract CoreInvariantsTest is Test {
         console2.log("calls / v3 tokens / graduations / owed seen", h.calls(), h.v3TokenCount(), h.v3Graduations());
         console2.log("  owed events / sales / launches / failures", h.owedEvents(), h.saleCount(), h.fairLaunches());
         console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
+        console2.log("  curve trades checked for no tax", h.curveTrades());
     }
 }

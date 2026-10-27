@@ -161,7 +161,6 @@ contract FairSwapBackTest is FairMintTest {
         vm.mockCallRevert(
             address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
         );
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         uint256 unsold0 = vault.unsoldUnits(t);
         _buy(t, buyer, 2 ether);
         _sell(t, buyer, IERC20(t).balanceOf(buyer) / 2);
