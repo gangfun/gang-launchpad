@@ -1,30 +1,17 @@
 import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
-import { bsc, bscTestnet } from 'viem/chains'
 import { bawAddress } from './baw.js'
 import { defaultRefPool, dividendOf, fundingStep as fund, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
+import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
 
 /**
  * `gang fair …` — 打新 (fair mint): one fixed price per share both ways (mint buys at it, withdraw sells back at it);
  * the last share launches the token on PancakeSwap at that price. No deadline, no refund: a sale stays open until it
- * fills. Contracts: gang-launchpad src/fair-mint.
- * Only on BSC testnet for now (--testnet); mainnet answers "not deployed" until there is a pad.
+ * fills. Contracts: gang-launchpad GangLaunchpad (merged pad: 打新 sales and V3 curves on one address; see gangpad.js).
+ * Mainnet needs a pad address (GANG_PAD or the one shipped in gangpad.js); without it mainnet answers "no mainnet address".
  */
-export const FAIR_NETS = {
-  mainnet: {
-    chainId: '56', chain: bsc, pad: process.env.GANG_FAIR_PAD || null, // no mainnet pad yet
-    rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
-    wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', explorer: 'https://bscscan.com',
-    router: process.env.GANG_ROUTER || null,
-  },
-  testnet: {
-    chainId: '97', chain: bscTestnet, pad: process.env.GANG_FAIR_TESTNET_PAD || '0xF45C221cF453d3943b00F905f66d66e34380956A',
-    router: process.env.GANG_ROUTER_TESTNET || '0x9dBb3D25Ff5c8107814fBD96A88D6eD015dfA279',
-    rpc: process.env.GANG_FAIR_TESTNET_RPC_URL || 'https://bsc-testnet-rpc.publicnode.com',
-    wbnb: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', explorer: 'https://testnet.bscscan.com',
-  },
-}
+export const FAIR_NETS = padNets('fair')
 
 const PAD_ABI = parseAbi([
   'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
@@ -116,9 +103,7 @@ const HINTS = {
 
 export function fairCtx(testnet) {
   const net = FAIR_NETS[testnet ? 'testnet' : 'mainnet']
-  if (!net.pad) {
-    throw new Error('fair mint is not deployed on BSC mainnet yet — add --testnet to use the BSC testnet deployment')
-  }
+  if (!net.pad) throw new Error(NOT_ON_MAINNET)
   const client = createPublicClient({ chain: net.chain, transport: http(net.rpc) })
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
@@ -132,7 +117,7 @@ export function walletFor(ctx, from) {
 }
 
 /** Revert name (+ BadConfig reason) of a failed eth_call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI], HINTS)
+const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...HINTS })
 
 /** Dry-run `data` from `from`; null when it would pass. */
 async function dryRun(ctx, from, to, data, value = 0n) {
@@ -269,11 +254,16 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
 
   let ctx
   try { ctx = fairCtx(testnet) } catch (e) { return fail(e.message) }
+  // not a sale on this pad: on the merged pad it may be a V3 token (kindOf), so point at `gang v3`
+  const notFair = async (token) => {
+    const { error, kind } = await notThisKind(ctx, token, 'fair', testnet ? ' --testnet' : '')
+    return fail(error, { token, chainId: ctx.chainId, ...(kind && { kind }) })
+  }
 
   if (sub === 'info' || sub === 'status') {
     const token = tokenArg(opt, fail)
     const sale = await saleOf(ctx, token)
-    if (!sale) return fail('not a fair-mint sale on this pad', { token, chainId: ctx.chainId })
+    if (!sale) return notFair(token)
     const { sharePriceRaw: _raw, exitFeeBps: _exit, ...pub } = sale
     if (sub === 'info') {
       // after launch the 1% tax is held as tokens and sold in small chunks under a per-block budget
@@ -343,7 +333,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const token = tokenArg(opt, fail)
     const want = parseIntIn(fail, 'shares', opt('shares'), 1, 10_000)
     const sale = await saleOf(ctx, token)
-    if (!sale) return fail('not a fair-mint sale on this pad', { token })
+    if (!sale) return notFair(token)
     if (sale.status !== 'minting') return fail(`sale is ${sale.status}, not minting`, { hint: 'it launched: trade the token on PancakeSwap' })
     const me = walletFor(ctx, opt('from'))
     if (sale.gate !== zeroAddress && (await ctx.read(sale.gate, ERC721_ABI, 'balanceOf', [me])) === 0n) {
@@ -385,7 +375,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   if (sub === 'withdraw') {
     const token = tokenArg(opt, fail)
     const sale = await saleOf(ctx, token)
-    if (!sale) return fail('not a fair-mint sale on this pad', { token })
+    if (!sale) return notFair(token)
     if (sale.status !== 'minting') {
       return fail(`sale is ${sale.status}: withdraw only while minting`, sale.launched ? {
         pair: sale.pair,
@@ -419,7 +409,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   if (sub === 'claim') {
     const token = tokenArg(opt, fail)
     const sale = await saleOf(ctx, token)
-    if (!sale) return fail('not a fair-mint sale on this pad', { token })
+    if (!sale) return notFair(token)
     const me = walletFor(ctx, opt('from'))
     const vault = await ctx.read(ctx.pad, PAD_ABI, 'dividendVault')
     const r = await dividendOf(ctx, vault, token, me, sale.quote, await poolPriceRaw(ctx, token, sale.pair))

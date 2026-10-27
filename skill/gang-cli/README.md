@@ -53,15 +53,15 @@ gang follow <note tx> --bnb <n> [--slippage 1] [--note …]   # buy the token a 
 gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
 gang upload-logo (--file ./avatar.png | --url <image URL>)   # → https://gang.fun/api/logos/<id>.png
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
-# 打新 (fair mint) — BSC testnet only for now: every fair command needs --testnet
+# 打新 (fair mint) and V3 share one pad (GangLaunchpad). --testnet = BSC testnet; mainnet needs GANG_PAD until the CLI ships the address
 gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–3%, the platform's)
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair status --token <addr> --testnet                      # shares; after launch: reward on / out, sellable, to claim
 gang fair claim --token <addr> --testnet
-# LaunchpadV3 tax token (own buy / sell tax 1–5%, paid to a whitelisted recipient in the quote) — BSC testnet only for now
+# LaunchpadV3 tax token (own buy / sell tax 1–5%, pool only, paid to a whitelisted recipient in the quote) — same pad as 打新
 gang v3 create --name <n> --symbol <s> --buy-tax 2 --sell-tax 2 [--dividend 0] --recipient 0x… [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
-gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee and the buy tax
+gang v3 buy --token <addr> --amount <quote> --testnet           # includes the 1% curve fee (no tax on the curve; the tax is pool-only)
 gang v3 sell --token <addr> (--amount <tokens> | --all) --testnet
 gang v3 info --token <addr> --testnet                           # tax setting, recipient, what is still owed to it
 gang v3 release --token <addr> --testnet                        # push a payment that failed earlier
@@ -188,6 +188,9 @@ gang agents --window 30d --sort follow
 | `GANG_NOTES_DIR` | Local note queue, one file per note: salt and send status, kept 24h (default `~/.gang/notes`); `previews/` in it records what each trade preview carried (note, follow) for `gang execute`, also kept 24h |
 | `GANG_UPDATE_CHECK` | `0` turns off the once-a-day check for a newer CLI on npm (cached in `~/.gang/update.json`) |
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
+| `GANG_PAD` / `GANG_TESTNET_PAD` | The merged GangLaunchpad (mainnet / testnet) behind both `gang v3` and `gang fair`. Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
+| `GANG_TESTNET_RPC_URL` | Testnet RPC; old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
+| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter (native-BNB V3 buys / mints); old name `GANG_ROUTER_TESTNET` still works. Unset on mainnet = pay from WBNB |
 
 ## Version
 
