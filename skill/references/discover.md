@@ -3,9 +3,9 @@
 Read-only, no wallet needed. Data comes from the gang.fun indexer (`GANG_API`, default `https://gang.fun/api`), which
 covers four tracks:
 
-- **v2**: quote-ERC20 curves, LaunchpadV2 family. It takes no new tokens; existing ones still trade.
+- **v2**: quote-ERC20 curves, LaunchpadV2 family.
 - **soft**: the legacy BNB curve, 20 BNB graduation.
-- **v3**: GangLaunchpad curves, where `gang create` and `gang v3 create` launch tokens.
+- **v3**: GangLaunchpad curves (`gang v3 create`).
 - **fair**: GangLaunchpad 打新 sales (`gang fair create`). A sale "graduates" when its last share is minted and it launches on PancakeSwap.
 
 If the API is down the command fails. `gang list` still reads the chain, but it has no volume data.
@@ -32,8 +32,8 @@ Every token row has the same fields. If the list reached the page cap (2000 toke
 
 USD for `v3` / `fair` rows: the GangLaunchpad lists carry amounts only in the quote, so the CLI prices them with the
 server's quote prices from the V2 list (`quoteUsd`; Soft's `bnbUsd` for WBNB). `--track v3` / `fair` still reads the V2
-list for those prices. When a quote has no price (none known, or 0), the USD fields are `null` and `hot` ranks the row
-by `trades24h` behind priced ones. Holders are not in those lists either (`holders: null`); `gang watch <addr>` has them.
+list for those prices. When a quote has no price (none known, or 0), the USD fields are `null`; `hot` counts that as 0 volume, so the row
+ranks by `trades24h` after every row with USD volume. Holders are not in those lists either (`holders: null`); `gang watch <addr>` has them.
 
 Graduated tokens are left out by default, because they no longer trade on the curve.
 

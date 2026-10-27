@@ -100,7 +100,7 @@ preview 之前 CLI 会先模拟一次 `create`，如果会回滚，就直接报�
 ### 发现（0.3.0+）
 
 `hot` / `new` / `near-grad` / `watch` 读 gang.fun indexer（`GANG_API`），覆盖四条 track：`v2`、`soft`，以及 GangLaunchpad 的
-`v3` 曲线和 `fair` 打新（新币都发在这里），`--track` 可只看其中一条。每行带 `track`、`quote`（各金额的单位）、
+`v3` 曲线（`gang v3 create`）和 `fair` 打新（`gang fair create`），`--track` 可只看其中一条。每行带 `track`、`quote`（各金额的单位）、
 `progressPct`、`remaining`/`remainingUsd`、`volume24hUsd`、`holders`、`ageMin` 和 `next` 命令：V2 / Soft 是 `gang quote`，
 V3 是 `gang v3 buy`，打新是 `gang fair mint`（开盘后 `gang fair buy`）。V3 / 打新列表不带 USD，CLI 用 V2 列表里服务端的报价换算。
 已毕业默认隐藏（`--include-graduated` 显示）。

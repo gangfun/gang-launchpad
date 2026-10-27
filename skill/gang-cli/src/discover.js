@@ -13,6 +13,7 @@ const MARKET_PAGES = 10 // × 200 rows per track
 const TRADE_PAGE = 50
 const TRADE_PAGES = 4
 const SEEN_CAP = 2000
+const PRICE_TTL = 300 // s: how long `gang watch --track v3|fair` reuses quote prices before re-reading the V2 list
 const num = (v) => (v == null || v === '' ? 0 : Number(v))
 const usd = (v) => (Number.isFinite(v) ? Math.round(v * 100) / 100 : null)
 const now = () => Math.floor(Date.now() / 1000)
@@ -159,20 +160,27 @@ function quotePrices(v2Rows, softRows) {
   return m
 }
 
-/** All indexed tokens, normalized and de-duplicated. track: all | v2 | soft | v3 | fair */
-export async function fetchMarket(track = 'all', stop) {
+/**
+ * All indexed tokens, normalized and de-duplicated. track: all | v2 | soft | v3 | fair.
+ * `priceCache` (optional, `gang watch`): keeps the --track v3 / fair quote prices for PRICE_TTL seconds,
+ * so a poll does not re-page the whole V2 list just for them.
+ */
+export async function fetchMarket(track = 'all', stop, priceCache = null) {
   if (!TRACKS.includes(track)) throw new Error(`--track must be one of ${TRACKS.join(', ')} (got ${track})`)
   const want = (k) => track === 'all' || track === k
   const none = { rows: [], truncated: false }
   // --track v3 / fair still reads the V2 list, only for quote prices; without it those rows just have no USD
   const priceOnly = !want('v2') && (want('v3') || want('fair'))
+  const cached = priceOnly && priceCache?.map && now() - priceCache.at < PRICE_TTL ? priceCache.map : null
   const [v2, soft, v3, fair] = await Promise.all([
-    want('v2') ? pages(LISTS.v2, stop) : priceOnly ? pages(LISTS.v2, stop).catch(() => none) : none,
+    want('v2') ? pages(LISTS.v2, stop) : priceOnly && !cached ? pages(LISTS.v2, stop).catch(() => none) : none,
     want('soft') ? pages(LISTS.soft, stop) : none,
     want('v3') ? pages(LISTS.v3, stop) : none,
     want('fair') ? pages(LISTS.fair, stop) : none,
   ])
-  const prices = quotePrices(v2.rows, soft.rows)
+  const prices = cached || quotePrices(v2.rows, soft.rows)
+  // an empty map = the price read failed: not cached, so the next poll retries it
+  if (priceOnly && priceCache && !cached && prices.size) Object.assign(priceCache, { map: prices, at: now() })
   const seen = new Map()
   for (const r of [...(priceOnly ? [] : v2.rows), ...soft.rows, ...v3.rows, ...fair.rows]) {
     const t = normalize(r, prices)
@@ -321,7 +329,8 @@ export async function watch({ token, intervalSec = 10, minPct = 50, track = 'all
     }
   }
 
-  const first = await fetchMarket(track, stop)
+  const priceCache = {}
+  const first = await fetchMarket(track, stop, priceCache)
   // only grows: a token missing from one poll must not come back as new_token
   const known = new Map(first.tokens.map((t) => [t.address, t]))
   emit({ event: 'watching', mode: 'market', track, tokens: known.size, minPct, intervalSec }, { meta: true })
@@ -336,7 +345,7 @@ export async function watch({ token, intervalSec = 10, minPct = 50, track = 'all
     await sleep(intervalSec)
     if (shouldStop()) return
     try {
-      const { tokens, truncated } = await fetchMarket(track, stop)
+      const { tokens, truncated } = await fetchMarket(track, stop, priceCache)
       warnTruncated(truncated)
       for (const t of tokens) {
         const prev = known.get(t.address)

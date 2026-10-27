@@ -115,7 +115,7 @@ Buy / sell / create: **preview → you confirm → execute**. `requestId` expire
 ### Discovery (0.3.0+)
 
 `hot` / `new` / `near-grad` / `watch` read the gang.fun indexer (`GANG_API`). They cover four tracks: `v2` and `soft`,
-plus GangLaunchpad's `v3` curves and `fair` 打新 sales, where new tokens launch. `--track` picks one. Each row has `track`,
+plus GangLaunchpad's `v3` curves (`gang v3 create`) and `fair` 打新 sales (`gang fair create`). `--track` picks one. Each row has `track`,
 `quote` (the unit of the amounts), `progressPct`, `remaining`/`remainingUsd`, `volume24hUsd`, `holders`, `ageMin` and a `next` command:
 `gang quote` for V2 / Soft, `gang v3 buy` for V3, and `gang fair mint` (or `gang fair buy` once launched) for 打新.
 The V3 / 打新 lists carry no USD, so the CLI prices their quote with the server's prices from the V2 list. Graduated tokens are hidden unless `--include-graduated` is passed.
