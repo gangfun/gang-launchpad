@@ -179,6 +179,7 @@ gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战
 |---|---|
 | `GANG_RPC_URL` | BSC RPC |
 | `GANG_LOGO_API` | 默认 `https://gang.fun/api/logos` |
+| `GANG_CDN_BASE` | 上传文件的 CDN（`<base>/ipfs/<cid>`），默认 `https://cdn.gang.fun` |
 | `GANG_API` | 发现命令 indexer，默认 `https://gang.fun/api` |
 | `GANG_PAD` / `GANG_ROUTER` | 覆盖主网 GangLaunchpad / GangRouter（0.9.0 默认 `0x15CF…4365` / `0xE040…79C4`） |
 | `GANG_TESTNET_PAD` / `GANG_TESTNET_ROUTER` | 覆盖 `--testnet` 用的测试网地址（默认第 10 套） |

@@ -184,6 +184,7 @@ Legacy Soft/U/S tokens (if any appear in markets): buy/sell/claim only — **do 
 |---|---|
 | `GANG_RPC_URL` | BSC HTTP RPC |
 | `GANG_LOGO_API` | Default `https://gang.fun/api/logos` |
+| `GANG_CDN_BASE` | CDN of uploads (`<base>/ipfs/<cid>`), default `https://cdn.gang.fun` |
 | `GANG_API` | Discovery indexer, default `https://gang.fun/api` |
 | `GANG_PAD` / `GANG_ROUTER` | Override the mainnet GangLaunchpad / GangRouter (0.9.0 defaults: `0x15CF…4365` / `0xE040…79C4`) |
 | `GANG_TESTNET_PAD` / `GANG_TESTNET_ROUTER` | Override the `--testnet` set (default set 10) |

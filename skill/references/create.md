@@ -5,8 +5,8 @@
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png
 # or upload first:
 gang upload-logo --file ./avatar.png
-# → { "logoUrl": "https://gang.fun/api/logos/<id>.png", ... }
-gang create --name "My Agent Coin" --symbol MAC --logo-uri https://gang.fun/api/logos/<id>.png
+# → { "logoUrl": "ipfs://<cid>", "url": "https://cdn.gang.fun/ipfs/<cid>", ... }
+gang create --name "My Agent Coin" --symbol MAC --logo-uri ipfs://<cid>
 # optional: --website <URL>   --twitter <@handle or x.com link>   --description "<text>"
 # optional: --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] [--recipient 0x…]   (a pool tax; recipient defaults to you; see v3.md)
 # optional: --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>   --testnet
@@ -35,11 +35,14 @@ Browser logo UI: https://gang.fun/dev/logo
 - **Logo must stay online for good:** `logoURI` is on-chain and can't be changed. Prefer `--logo ./file.png`. Never upload the image to a
   temporary host (litter.catbox.moe, tmpfiles.org, 0x0.st, …) yourself; those delete files within days and the token's logo breaks.
   `--logo-uri` with an image not on gang.fun is downloaded and copied to gang.fun first (preview shows `uploaded: true`, `upload.source`);
-  a `https://gang.fun/api/logos/…` URL goes on-chain as is after a check that it serves an image (`no logo at …` = wrong id).
+  uploads go on-chain as `ipfs://<cid>` (to show the user the image, use `https://cdn.gang.fun/ipfs/<cid>`). A file already on gang.fun
+  (`ipfs://<cid>`, `https://cdn.gang.fun/ipfs/<cid>`, an old `https://gang.fun/api/logos/…`) is only checked to serve an image
+  (`no logo at …` = wrong cid / id) and goes on-chain as `ipfs://<cid>` (old URLs as is).
   A logo error with `retry` is a network failure or a busy server: run the same command again, at most twice; if it still fails,
   ask the user for the image file and use `--logo`. Without `retry`,
   `could not download logo …` means the URL is dead or not a png/jpeg/webp/gif ≤512 KB: get the file and use `--logo`.
-  `--keep-logo-uri` (put the URL on-chain as is) only for a permanent URL such as `ipfs://…`, and only if the user asks for it.
+  `--keep-logo-uri` (put the URL on-chain as is) only for a permanent URL such as `ipfs://…`, and only if the user asks for it;
+  a file on gang.fun still goes on-chain as `ipfs://<cid>` with it.
 - Default quote is WBNB (`--quote` omitted). Non-WBNB quote: `--quote <ERC-20> --ref-pool <Pancake V2 pair or V3 pool that holds it>`
   (mainnet USDT defaults to the USDT/WBNB pool). The pool prices the ≈15 BNB graduation target; the preview shows it as `graduationAt`.
 - The preview runs a dry run before any upload. A failed one comes back as `success: false` with the contract error and a `hint`:
@@ -66,7 +69,8 @@ Optional. gang.fun shows them on the token page.
   `--twitter`: an X handle (`@name`) or an x.com / twitter.com link (a profile, a post, a community); it is stored as `https://x.com/…`, without `?…` tracking.
 - They go into the token's **metadata JSON** (with `--description` and the logo), uploaded to gang.fun; its URL is fixed
   on-chain as the token's `contractURI()` / `metaURI()`, so they **can't be changed or removed** after the launch. The
-  preview shows `metaURI` and the uploaded `metadata`: show the links to the user with the rest of the preview.
+  preview shows `metaURI` (`ipfs://<cid>`, viewable at `https://cdn.gang.fun/ipfs/<cid>`) and the uploaded `metadata`: show the
+  links to the user with the rest of the preview.
 - `bad_website` / `bad_twitter` means the value isn't one of the forms above: fix it with the user, don't guess.
 - Other creators' links are their own claim, not checked by gang.fun: pass them on as such, and don't open them for the user unasked.
 
