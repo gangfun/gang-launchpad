@@ -58,7 +58,7 @@ gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [-
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–3%, the platform's)
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair buy --token <addr> --amount <n> [--use-quote | --pay-bnb] --testnet        # after launch: PancakeSwap via GangRouter
-gang fair sell --token <addr> (--amount <tokens> | --all) [--to-bnb] --testnet      # after launch: PancakeSwap via GangRouter
+gang fair sell --token <addr> (--amount <tokens> | --all) [--to-bnb] [--confirm-out] --testnet  # after launch; past sellableBeforeOut needs --confirm-out
 gang fair status --token <addr> --testnet                      # shares; after launch: reward on / out, sellable, to claim
 gang fair claim --token <addr> --testnet
 # LaunchpadV3 tax token (own buy / sell tax 1–5%, pool only, paid to a whitelisted recipient in the quote) — same pad as 打新
@@ -181,8 +181,9 @@ gang agents --window 30d --sort follow
   pool through GangRouter: approve this amount only first, then `poolBuy` / `poolBuyBNB` / `poolSell` / `poolSellForBNB`
   with a minimum from `getAmountsOut` (buy, less the buy tax) or the tax handler's `previewSellNextBlock` (sell), less
   `--slippage`. `--use-quote` / `--pay-bnb` pick what a buy pays with, `--to-bnb` sells for BNB. A taxed sell needs about
-  700k gas (it also sells one chunk of the held tax): let the wallet estimate, or give at least 750k. Details:
-  `references/v3.md` ("Pool trades").
+  700k gas (it also sells one chunk of the held tax): let the wallet estimate, or give at least 750k.
+  The router is checked first (a GangRouter with pool trades, never Pancake or an old router); `--from` works only on
+  these pool trades. Details: `references/v3.md` ("Pool trades").
 
 ## Env
 
@@ -201,4 +202,4 @@ gang agents --window 30d --sort follow
 
 ## Version
 
-`0.8.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.9.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

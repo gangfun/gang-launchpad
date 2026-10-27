@@ -352,7 +352,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (!c) return notV3(token)
     if (c.graduated) {
       // graduated: buy in the PancakeSwap pool through GangRouter (the buy tax applies; no Agent gate, no wallet cap)
-      if (!c.pair) return fail('token graduated but has no pool on record', { token })
+      if (!c.pair) return fail('the pad marks this token graduated but has no PancakeSwap pair on record: nothing to trade it on', { token })
       if (!flag('amount') && !flag('bnb')) fail('--amount <quote (or BNB) to spend> required')
       const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
       return out(await poolTrade(ctx, {
@@ -410,9 +410,10 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (c.graduated) {
       // graduated: sell into the PancakeSwap pool through GangRouter, minOut from the handler's previewSellNextBlock
       // (sell tax and the chunk of held tax sold first included). No wallet: the quote alone, as before.
+      if (!c.pair) return fail('the pad marks this token graduated but has no PancakeSwap pair on record: nothing to sell it into', { token })
       let me = null
       try { me = walletFor(ctx, opt('from')) } catch { /* no wallet configured */ }
-      if (me && c.pair) {
+      if (me) {
         return out(await poolTrade(ctx, {
           side: 'sell', token, quote: c.quote, me, amount: flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: flag('all'),
           slippage, buyTaxBps: Math.round(c.buyTaxPct * 100), sellTaxBps: Math.round(c.sellTaxPct * 100), handler: c.taxHandler,
@@ -421,7 +422,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }
       if (flag('all')) return fail('--all needs a wallet (or --from <addr>) whose balance can be read', { pair: c.pair })
       const amount = parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
-      const q = c.pair ? await poolSellQuote(ctx, c.taxHandler, token, amount) : null
+      const q = await poolSellQuote(ctx, c.taxHandler, token, amount)
       return fail('no wallet to build the pool sell for: pass --from <addr> (quote only)', {
         pair: c.pair, ...(q && {
           poolQuote: {
@@ -430,7 +431,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
           },
           hint: POOL_SELL_HINT,
         }),
-        ...(!q && c.pair && { note: 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
+        ...(!q && { note: 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
       })
     }
     const me = walletFor(ctx, opt('from'))

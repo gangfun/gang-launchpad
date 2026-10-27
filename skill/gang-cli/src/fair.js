@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bawAddress } from './baw.js'
 import { defaultRefPool, dividendOf, fundingStep as fund, parseAmount, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, ROUTER_HINTS, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
@@ -423,16 +423,44 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const slippage = parseNum(fail, 'slippage', opt('slippage', '1'), 0, 50)
     if (sub === 'sell' && flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
     if (sub === 'buy' && !flag('amount')) fail('--amount <quote (or BNB) to spend> required')
-    const [buyTaxBps, sellTaxBps, handler] = await Promise.all([
-      ctx.read(token, TAX_ABI, 'buyTaxBps').catch(() => 0), ctx.read(token, TAX_ABI, 'sellTaxBps').catch(() => 0),
-      ctx.read(ctx.pad, PAD_ABI, 'taxHandler'),
-    ])
+    let buyTaxBps, sellTaxBps, handler
+    try {
+      ;[buyTaxBps, sellTaxBps, handler] = await Promise.all([
+        ctx.read(token, TAX_ABI, 'buyTaxBps'), ctx.read(token, TAX_ABI, 'sellTaxBps'), ctx.read(ctx.pad, PAD_ABI, 'taxHandler'),
+      ])
+    } catch (e) {
+      // never guess 0%: the minimum would ignore the tax
+      return fail('cannot read the token\'s pool tax rates (buyTaxBps / sellTaxBps) or the tax handler: no minimum is built without them', { token, detail: e.shortMessage || e.message.split('\n')[0], hint: 're-run' })
+    }
     const me = walletFor(ctx, opt('from'))
+    // a minter still earning: selling past sellableBeforeOut drops it below the hold line and ends the reward for good
+    let outWarning = null
+    if (sub === 'sell') {
+      const shares = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
+      if (shares && !(await ctx.read(handler, HANDLER_ABI, 'isOut', [token, me]))) {
+        const [tps, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
+        const line = (BigInt(shares) * tps * BigInt(Math.round(sale.holdPct * 100))) / 10_000n
+        const sellable = bal > line ? bal - line : 0n
+        const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
+        if (amount <= bal && amount > sellable) {
+          outWarning = {
+            warning: `WARNING: selling ${formatUnits(amount, 18)} tokens goes past sellableBeforeOut (${formatUnits(sellable, 18)}): this wallet drops below its hold line (${formatUnits(line, 18)} tokens) and loses the holder reward FOR GOOD — buying back does not restore it`,
+            sellableBeforeOut: formatUnits(sellable, 18), holdLineTokens: formatUnits(line, 18), balance: formatUnits(bal, 18),
+          }
+          if (!flag('confirm-out')) {
+            return fail(outWarning.warning, {
+              ...outWarning, token, wallet: me,
+              hint: `sell at most sellableBeforeOut to keep the reward, or re-run with --confirm-out once the user accepts losing it`,
+            })
+          }
+        }
+      }
+    }
     return out(await poolTrade(ctx, {
       side: sub, token, quote: sale.quote, me, slippage, buyTaxBps: Number(buyTaxBps), sellTaxBps: Number(sellTaxBps), handler,
       amount: sub === 'sell' && flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: sub === 'sell' && flag('all'),
       swapBackGas: Number(sellTaxBps) > 0, payBnb: sub === 'buy' && poolPayBnb(ctx, sale.quote, flag), toBnb: flag('to-bnb'),
-      base: { kind: 'fair', pair: sale.pair },
+      base: { kind: 'fair', pair: sale.pair, ...(outWarning && { ...outWarning, confirmedOut: true }) },
     }, { rawOnly, summarize, revertOf }))
   }
 

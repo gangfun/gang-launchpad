@@ -22,7 +22,7 @@ gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)
 gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb] --testnet    # after launch: in the pool
-gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] --testnet  # after launch: in the pool
+gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out] --testnet  # after launch: in the pool
 gang fair claim --token <addr> --testnet
 gang execute --request-id …
 gang fair tx --hash 0x… --testnet                            # decode Created / Minted / Launched / … on the fair chain
@@ -82,8 +82,10 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - **After launch, trade with `gang fair buy` / `gang fair sell`**: the PancakeSwap pool through GangRouter, exactly as a
   graduated V3 token ([v3.md](v3.md), "Pool trades"): approve this amount only first (re-run after it), `minOut` from
   `previewSellNextBlock` less `--slippage`, `--to-bnb` to receive BNB, a taxed sell needs about 700k gas (give at least
-  750k). Before a minter sells, compare `--amount` with `sellableBeforeOut` from `gang fair status`: past it the holder
-  reward ends for good. Before launch both commands refuse and point at `mint` / `withdraw`; `mint` / `withdraw` on a
+  750k). **A minter still earning cannot sell past `sellableBeforeOut` by accident**: `gang fair sell` (also `--all`)
+  then fails with a `WARNING: … loses the holder reward FOR GOOD` and builds nothing; tell the user, and only with their
+  yes re-run with `--confirm-out` (the output keeps the `warning`, `confirmedOut: true`). The tax rates are read from the
+  token; if they can't be read the trade fails instead of assuming 0%. Before launch both commands refuse and point at `mint` / `withdraw`; `mint` / `withdraw` on a
   launched sale point at `buy` / `sell`.
 
 ## Reading results

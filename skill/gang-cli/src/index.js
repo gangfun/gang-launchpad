@@ -84,7 +84,7 @@ const GAS_RESERVE = parseEther('0.002')
  * (mainnet only, like every V2 pad). Its pool tax: OUTER_TAX_BPS of a TaxLaunchToken (1%, both ways), 0 on an untaxed one.
  */
 const v2PoolCtx = () => ({
-  chainId: CONFIG.chainId, client, wbnb: ADDR.wbnb, router: padNets('v3').mainnet.router,
+  chainId: CONFIG.chainId, client, wbnb: ADDR.wbnb, router: padNets('v3').mainnet.router, pad: padNets('v3').mainnet.pad,
   read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }),
 })
 const V2_TAX_ABI = [{ type: 'function', name: 'OUTER_TAX_BPS', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }]
@@ -104,13 +104,15 @@ async function v2PoolTrade(side, token, info, me, note, { amount, all = false })
     revertOf: (e) => revertIn(e, [ROUTER_ABI, V2_ABI, MERGED_ERRORS_ABI], ROUTER_HINTS),
   }))
 }
-/** --from <addr> builds for that wallet (e.g. with --calldata); else the Agentic Wallet. */
-const walletArg = () => {
-  if (!flag('from')) return bawAddress()
+/** --from <addr> (pool trades only: builds for that wallet, e.g. with --calldata); null when not given. */
+const fromArg = () => {
+  if (!flag('from')) return null
   const a = opt('from')
   if (!isAddress(a ?? '')) fail('--from must be a 0x address', { got: a ?? null })
   return a
 }
+const FROM_CURVE = '--from only applies to a graduated token (a PancakeSwap trade through GangRouter); curve trades are previewed for the Agentic Wallet: leave --from out'
+const NOT_TESTNET = 'gang buy / gang sell trade the mainnet V2 / Soft / U / S pads only (no testnet deployment): leave --testnet out, or use gang v3 … / gang fair … --testnet'
 
 // --note is validated before any RPC / preview, so a bad note never reaches calldata
 const parseNote = () => {
@@ -240,9 +242,10 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          through GangRouter in one tx (--use-wbnb: from WBNB, wrap / approve first)
   gang fair withdraw --token <addr> (--shares <n> | --all)           sell back before it fills: mint price − exit fee (none once stale)
   gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb]
-  gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb]
+  gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out]
                                          after launch: trade in the PancakeSwap pool through GangRouter (POOL below);
-                                         selling past status.sellableBeforeOut ends the holder reward for good
+                                         a sell past status.sellableBeforeOut (ends the holder reward for good) is refused
+                                         unless --confirm-out
   gang fair status --token <addr> [--slippage 1]
                                          my shares; after launch: reward on / out, how much I can sell and stay in, to claim
                                          (claimable now + reward credited when tax was paid, not sold yet), poolSellAll
@@ -286,7 +289,10 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          → BNB; minOut = the tax handler's previewSellNextBlock (V2 / untaxed: getAmountsOut −
                                          sell tax) − --slippage. Approves only this trade's amount first (re-run after it;
                                          --calldata: all txs in steps[] in order). A taxed sell needs about 700k gas (it also
-                                         sells one chunk of the held tax): let the wallet estimate, or give at least 750k
+                                         sells one chunk of the held tax): let the wallet estimate, or give at least 750k.
+                                         The router is checked first (a GangRouter with pool trades, not Pancake / an old one);
+                                         a reverted simulation with --calldata is doNotSend: true, no tx. gang buy|sell:
+                                         --from only on graduated tokens, mainnet only
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -484,9 +490,12 @@ async function resolveMetaUri({ name, symbol, logoURI }) {
  * its check already done).
  */
 async function buy(token, bnb, note, followTx, checked = null) {
+  if (flag('testnet')) fail(NOT_TESTNET)
   const slippage = parseSlippage(opt('slippage', '1'))
-  const me = walletArg()
+  const from = fromArg()
+  const me = from || bawAddress()
   const info = await tokenInfo(token, me)
+  if (from && !info.graduated) fail(FROM_CURVE)
   if (info.graduated) {
     // graduated: buy in the PancakeSwap pool through GangRouter (--bnb = the amount to spend, in BNB or the quote)
     if (followTx) fail('--follow only counts on curve buys before graduation; this token trades on PancakeSwap now', { pair: info.pair })
@@ -775,8 +784,11 @@ async function main() {
       const token = opt('token'); if (!token) fail('--token required')
       const note = parseNote()
       parseFollow() // refuses --follow: only buys follow a note
-      const me = walletArg()
+      if (flag('testnet')) fail(NOT_TESTNET)
+      const from = fromArg()
+      const me = from || bawAddress()
       const info = await tokenInfo(token, me)
+      if (from && !info.graduated) fail(FROM_CURVE)
       if (!flag('all') && !opt('amount')) fail('pass --amount <tokens> or --all (full sell is no longer the default)')
       if (flag('all') && opt('amount')) fail('use either --all or --amount, not both')
       // graduated: sell into the PancakeSwap pool through GangRouter

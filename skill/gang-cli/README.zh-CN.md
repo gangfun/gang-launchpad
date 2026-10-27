@@ -48,7 +48,7 @@ gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [-
 gang fair mint --token <addr> --shares <n> --testnet           # 另收该币的打新费（1–3%，归平台、不退）
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
 gang fair buy --token <addr> --amount <数量> [--use-quote | --pay-bnb] --testnet     # 发射后：经 GangRouter 在 PancakeSwap 买
-gang fair sell --token <addr> (--amount <枚数> | --all) [--to-bnb] --testnet       # 发射后：经 GangRouter 在 PancakeSwap 卖
+gang fair sell --token <addr> (--amount <枚数> | --all) [--to-bnb] [--confirm-out] --testnet  # 发射后；卖过 sellableBeforeOut 须加 --confirm-out
 gang fair status --token <addr> --testnet                      # 份数；发射后：是否出局、还能卖多少、待领奖励
 gang fair claim --token <addr> --testnet
 # LaunchpadV3 税收币（买 / 卖税各 1–5%，只在外盘收，用报价币打给白名单里的接收地址）— 和打新同一个内盘合约
@@ -156,7 +156,7 @@ gang agents --window 30d --sort follow
 - 毕业前不可转账；毕业后走 PancakeSwap：`gang buy` / `gang sell`（以及 `gang v3 buy|sell`、发射后的 `gang fair buy|sell`）
   经 GangRouter 在外盘成交。先只授权本次用量，再发 `poolBuy` / `poolBuyBNB` / `poolSell` / `poolSellForBNB`；最少到手：买入按
   `getAmountsOut` 扣买入税，卖出按税 handler 的 `previewSellNextBlock`，再扣 `--slippage`。`--use-quote` / `--pay-bnb` 选买入用什么付，
-  `--to-bnb` 卖成 BNB。带税的卖出约需 70 万 gas（会顺带换一块税）：让钱包自动估算，或者至少给 75 万。详见 `references/v3.md`「Pool trades」。
+  `--to-bnb` 卖成 BNB。带税的卖出约需 70 万 gas（会顺带换一块税）：让钱包自动估算，或者至少给 75 万。生成任何步骤前先核对路由是带外盘功能的 GangRouter（不会是 Pancake 或旧路由）；`--from` 只对外盘交易生效。详见 `references/v3.md`「Pool trades」。
 
 ## 环境变量
 
@@ -175,4 +175,4 @@ gang agents --window 30d --sort follow
 
 ## 版本
 
-`0.8.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.9.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

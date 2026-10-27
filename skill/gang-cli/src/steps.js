@@ -28,22 +28,19 @@ export const ROUTER_ABI = parseAbi([
   'function poolBuy(address token, address quote, uint256 quoteIn, uint256 minTokensOut, uint256 deadline) returns (uint256)',
   'function poolSell(address token, address quote, uint256 amountIn, uint256 minQuoteOut, uint256 deadline) returns (uint256)',
   'function poolSellForBNB(address token, address quote, uint256 amountIn, uint256 minBnbOut, uint256 deadline) returns (uint256)',
+  'function pad() view returns (address)', 'function wbnb() view returns (address)', 'function pancakeRouter() view returns (address)',
+  // errors as in gang-launchpad src/router/GangRouter.sol (feat/upgradeable-router)
   'error Expired()', 'error NotDeployed()', 'error UnknownToken()', 'error NotWbnbQuote()', 'error NotEnoughValue()',
-  'error OnlyWbnb()', 'error BnbTransferFailed()',
-  // pool* errors — TODO(router): names taken before the router branch wrote them; check against GangRouter.sol.
-  // Decoding goes by selector, so an entry the router does not have costs nothing (but a renamed one is not decoded).
-  'error InsufficientOutput()', 'error ZeroAmount()', 'error NoPool()', 'error NotGraduated()', 'error BadQuote()',
-  'error SameToken()',
+  'error OnlyWbnb()', 'error BnbTransferFailed()', 'error ZeroAmount()',
+  'error TooLittleReceived(uint256 received, uint256 minimum)',
 ])
 /** What to tell the agent for each router error. */
 export const ROUTER_HINTS = {
   Expired: 'the tx landed after its deadline (30 min after the preview): re-run the command for a fresh one',
-  InsufficientOutput: 'the pool moved past --slippage (or the tax chunk sold first took more): re-run to re-quote, or raise --slippage',
-  ZeroAmount: 'the amount is 0',
-  NoPool: 'PancakeSwap has no pool for this token and quote (not graduated / launched yet?)',
-  NotGraduated: 'the token has not graduated / launched yet: trade it on the curve / in the sale',
-  BadQuote: 'the quote passed is not the token\'s pool quote',
+  TooLittleReceived: 'the pool pays less than the minimum (args: [received, minimum], raw units): the price moved, or the tax chunk sold first took more. Re-run to re-quote, or raise --slippage',
+  ZeroAmount: 'the amount is 0 (or nothing arrived from the wallet)',
   NotEnoughValue: 'the BNB sent does not cover the amount',
+  UnknownToken: 'the router does not know this token on its pad (the other kind of token, or not a gang token)',
 }
 /** Router deadline: half an hour, for a preview that is executed a few minutes later. */
 export const routerDeadline = () => BigInt(Math.floor(Date.now() / 1000) + 1800)
@@ -72,7 +69,10 @@ export function revertOf(e, abis, hints = {}) {
     for (const abi of abis) {
       try {
         const d = decodeErrorResult({ abi, data: raw })
-        return { error: d.errorName, ...(d.args?.length && { reason: d.args[0] }), hint: hints[d.errorName] }
+        return {
+          error: d.errorName, ...(d.args?.length && { reason: d.args[0] }),
+          ...(d.args?.length > 1 && { args: d.args.map((a) => (typeof a === 'bigint' ? a.toString() : a)) }), hint: hints[d.errorName],
+        }
       } catch { /* not this contract */ }
     }
   }

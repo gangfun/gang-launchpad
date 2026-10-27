@@ -28,8 +28,9 @@ token unless `--use-quote`; the quote ERC-20 otherwise, `--pay-bnb` for BNB rout
 approves this amount only first, then pays the quote (`--to-bnb`: BNB). Minimums: Pancake `getAmountsOut` less the
 token's 1% pool tax (taxed V2 tokens; 0 untaxed), less `--slippage`. No Agent gate, no wallet cap. A `--note` is not
 attached to a pool trade (`agentNote.reason`); `--follow` is refused. `--from <addr>` builds for another wallet, with
-`--calldata` for the raw txs (`steps[]` in order). Mainnet only; until this CLI ships the GangRouter mainnet address it
-needs `GANG_ROUTER`.
+`--calldata` for the raw txs (`steps[]` in order) — on a pool trade only: on a curve token `--from` is refused. Mainnet
+only (`--testnet` is refused); until this CLI ships the GangRouter mainnet address it needs `GANG_ROUTER`, and the
+router is checked first as in v3.md. S-track (LaunchpadS) tokens resolve too; they all carry the 1% pool tax.
 
 ## `gang execute --request-id <id>` / `gang tx --hash <0x..>`
 
