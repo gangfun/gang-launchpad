@@ -16,7 +16,8 @@ gang tx --hash 0x…
 
 Browser logo UI: https://gang.fun/dev/logo
 
-- **Create target:** LaunchpadV2 only. Soft / LaunchpadU / LaunchpadS create is refused.
+- **Create target:** `gang create` = LaunchpadV2 only. Soft / LaunchpadU / LaunchpadS create is refused. A token with its
+  own buy / sell tax, or a 打新 fair mint, is `gang v3 create` / `gang fair create` on GangLaunchpad ([v3.md](v3.md), [fair.md](fair.md)).
 - No creation fee; only gas.
 - Fixed supply 1,000,000,000. 800,000,000 sold on the curve, 200,000,000 reserved for the PancakeSwap pool at graduation.
 - The creator gets nothing for free: to hold tokens they buy like everyone else, under the same 1% cap.

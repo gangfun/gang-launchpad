@@ -5,9 +5,10 @@ the other half plus every share's principal goes into a PancakeSwap V2 pool when
 **opens at the mint price**. LP is burned. **No deadline, no refund**: a sale stays open until it fills. Until then a
 minter can sell shares back to the sale at the same fixed price (minus the exit fee), so the price is flat both ways.
 
-**Mainnet needs the pad address**: until this CLI version ships it, mainnet `gang fair` commands need `GANG_PAD` set to the
-mainnet GangLaunchpad; without it the CLI answers `… has no mainnet address in this CLI version yet` — then use
-`--testnet` (BSC testnet). Testnet tokens and quotes have no value; say so if the user asks.
+**Mainnet by default**: CLI 0.9.0 has the mainnet GangLaunchpad (`0x15CFD2dc8278Fb87a1783ef42111618E20874365`) and
+GangRouter (`0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`) built in, so `gang fair` runs on BSC mainnet; `--testnet` uses
+BSC testnet (set 10). `… has no mainnet address in this CLI version yet` means an older build: install 0.9.0
+([SKILL.md](../SKILL.md)). Testnet tokens and quotes have no value; say so if the user asks.
 
 **One pad for 打新 and V3**: sales and V3 tax tokens live on the same GangLaunchpad. Given a V3 token, `gang fair
 info|status|mint|withdraw|buy|sell|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
@@ -15,17 +16,17 @@ pad's `kindOf`); run the `gang v3` command it names instead.
 
 ```bash
 gang fair list [--status minting|launched|all]              # sales on gang.fun (needs the server to run fair mint)
-gang fair info --token <addr> --testnet                      # one sale from the chain
-gang fair status --token <addr> [--slippage 1] --testnet     # my shares; after launch my reward state + poolSellAll
-gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
-gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
-gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
+gang fair info --token <addr> [--testnet]                      # one sale from the chain
+gang fair status --token <addr> [--slippage 1] [--testnet]     # my shares; after launch my reward state + poolSellAll
+gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] [--testnet]
+gang fair mint --token <addr> --shares <n> [--min-shares <n>] [--testnet]
+gang fair withdraw --token <addr> (--shares <n> | --all) [--testnet]   # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)
-gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb] --testnet    # after launch: in the pool
-gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out] --testnet  # after launch: in the pool
-gang fair claim --token <addr> --testnet
+gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb] [--testnet]    # after launch: in the pool
+gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out] [--testnet]  # after launch: in the pool
+gang fair claim --token <addr> [--testnet]
 gang execute --request-id …
-gang fair tx --hash 0x… --testnet                            # decode Created / Minted / Launched / … on the fair chain
+gang fair tx --hash 0x… [--testnet]                            # decode Created / Minted / Launched / … on the fair chain
 ```
 
 ## Rules to tell the user
@@ -74,8 +75,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.
 - **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
   Tell the user why in words instead.
-- Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` is the mainnet pad (shared
-  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The router address is fixed: it is an upgradeable proxy whose
+- Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` overrides the built-in mainnet pad (shared
+  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` override the router. The router address is fixed: it is an upgradeable proxy whose
   upgrades go through a public 48-hour timelock held by the platform Safe (AUDIT-BRIEF §21). Buys and mints through it pay native BNB; a pool buy in a quote token or a pool sell first approves the router for exactly that call's amount (never unlimited) — keep it that way. The old names `GANG_FAIR_TESTNET_PAD` /
   `GANG_FAIR_TESTNET_RPC_URL` / `GANG_FAIR_PAD` / `GANG_ROUTER_TESTNET` still work as aliases.
 - `NotReclaimable` / `NotLocked` on a withdraw: the token is not a 打新 token, or the sale already launched (sell-back
@@ -113,4 +114,4 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   raw tx (`tx: { chainId, to, data, value }`) instead of a baw preview, for a wallet that can.
 
 Flow: preview → show the user shares, cost **including the sale's mint fee** (`feePct`), the rules above that apply (fee not returned / exit fee / hold line) →
-confirm → `gang execute` → `gang fair tx --hash … --testnet`. Link the sale: `https://gang.fun/token/<token>`.
+confirm → `gang execute` → `gang fair tx --hash … [--testnet]`. Link the sale: `https://gang.fun/token/<token>`.

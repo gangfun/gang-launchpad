@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20LaunchpadV2-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
+  <img src="https://img.shields.io/badge/BNB%20Chain-BSC%20·%20GangLaunchpad%20%2B%20LaunchpadV2-FCD535?style=flat-square&labelColor=0E0E0E" alt="BNB Chain" />
   <img src="https://img.shields.io/badge/gate-Agent%20ID%20only-FCD535?style=flat-square&labelColor=0E0E0E" alt="Agent ID" />
   <img src="https://img.shields.io/badge/graduation-≈15%20BNB-FCD535?style=flat-square&labelColor=0E0E0E" alt="15 BNB" />
 </p>
@@ -12,16 +12,38 @@
 
 <pre align="center">
 ╔══════════════════════════════════════════════════════════╗
-║  GANG · LaunchpadV2 on BNB Chain                         ║
+║  GANG · GangLaunchpad + LaunchpadV2 on BNB Chain         ║
 ║  Binance Agentic Wallet · gang.fun                       ║
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**Create path = LaunchpadV2 only.** Soft / LaunchpadU / LaunchpadS are **not** create targets (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create/buy/sell on the curve. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
+**Two pads are live on BSC mainnet.** **GangLaunchpad** (new, 2026-10-27) launches **V3 tax tokens** (`gang v3`) and **打新 fair mints** (`gang fair`) on one contract. **LaunchpadV2** (the older pad, still live) is what `gang create` uses. Soft / LaunchpadU / LaunchpadS are **not** create targets (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create, buy or sell on a curve, or mint. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
 
 ---
 
-## Mainnet — LaunchpadV2
+## Mainnet — GangLaunchpad (V3 tax tokens + 打新)
+
+| Contract | Address |
+|---|---|
+| **GangLaunchpad** (V3 and 打新, one pad) | `0x15CFD2dc8278Fb87a1783ef42111618E20874365` (block 130104322) |
+| **GangRouter** (proxy: the address users approve) | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
+| GangTaxHandler (pool tax) | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
+| SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
+| SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
+| TimelockController (48h, router upgrades) | `0x3911996E2F6c5636d6b1b32f75cf94d0aF4604C5` |
+| Owner: Safe multisig | `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
+
+Full list (router implementation, ProxyAdmin, migrator, deployer, QuoteRegistry, keeper) and the testnet set: [docs/MAINNET-GANG-2026-10-27.md](docs/MAINNET-GANG-2026-10-27.md). Rules: [docs/SPEC-GANG-MERGED-2026-10-27.md](docs/SPEC-GANG-MERGED-2026-10-27.md).
+
+- **V3 tax token**: bonding curve like V2 (Agent ID gate, 1% wallet cap, graduates at ≈15 BNB into PancakeSwap V2, LP burned). The curve charges only the **1% fee, no tax**. After graduation each pool buy / sell pays the token's own tax (**1–5%** each, fixed at create): the platform keeps **0.5% of the volume**, the rest goes to holders (`--dividend` %) and to the recipient (the creator itself or a whitelisted partner), paid in the quote token.
+- **打新 (fair mint)**: no curve. **50% of the supply is sold in 10,000 shares at one price**; the creator sets the raise (**5–50 BNB**), the per-wallet cap (**0.25–1%** of supply), the hold line (**60–90%**) and a 1–3% mint fee. No deadline, no refund: until it fills a minter can sell shares back at the mint price minus the exit fee. The mint that takes the last share **launches** it: the other 50% plus everything raised become the PancakeSwap V2 pool (opens at the mint price), LP burned. Then every pool buy / sell pays **1%**: half to minters who never fell below their hold line, half to the platform.
+- **Owner = the Safe multisig** above: it accepted ownership of the pad, handler, vault, fee bucket and the other core contracts on-chain; the router's ProxyAdmin belongs to the timelock. Platform income goes to the fee bucket: 80% GANG buyback and burn, 20% to the Safe.
+- **GangRouter** is how BNB curve buys / mints and all **PancakeSwap pool trades** (V3, 打新, and graduated V2 / Soft / U / S tokens) go. It is an upgradeable proxy whose upgrades wait **48 hours** in the public timelock, which only the Safe can schedule, execute or cancel; the CLI approves only each trade's exact amount.
+- **Aggregator routers** can trade on the pad (`buyFor` / `sellFor` / `mintFor` / `withdrawFor`), only for the wallet that sent the tx (`trader == tx.origin`), once the Safe whitelists them with `setRouter` after the checklist in [AUDIT-BRIEF §23 / §23.9](docs/AUDIT-BRIEF-2026-10-26.md). Today only GangRouter is whitelisted.
+
+---
+
+## Mainnet — LaunchpadV2 (older pad, still live)
 
 | Contract | Address |
 |---|---|
@@ -51,7 +73,7 @@
 2. Claim a **SPACE ID Agent ID** (`.ai`) — soulbound NFT on BSC.
 3. Enable **Developer Mode** and **Trade all tokens** (sells need the latter).
 
-### B. Install skills + CLI (`@gangfun/cli` on npm, ≥0.8.0)
+### B. Install skills + CLI (`@gangfun/cli`: ≥0.8.0 for V2, **≥0.9.0** for `gang v3` / `gang fair` / pool trades)
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -60,6 +82,15 @@ npx skills add gangfun/gang-launchpad/skill
 npm i -g @binance/agentic-wallet
 npm i -g @gangfun/cli@latest
 # alternate (git tip): npm i -g github:gangfun/cli
+```
+
+0.9.0 (the GangLaunchpad mainnet addresses built in) publishes to npm shortly; npm and the `gangfun/cli` git tip still
+have 0.8.0, which has no `gang v3` / `gang fair`. Check with `npm view @gangfun/cli version`; until it says 0.9.0,
+install it from this repo:
+
+```bash
+git clone --depth 1 https://github.com/gangfun/gang-launchpad
+cd gang-launchpad/skill/gang-cli && npm pack && npm i -g ./gangfun-cli-0.9.0.tgz
 ```
 
 Sign in: `baw auth signin`.
@@ -133,7 +164,44 @@ Legacy Soft/U/S tokens (if any appear in markets): buy/sell/claim only — **do 
 
 ---
 
-## 5. Rules (short)
+## 5. GangLaunchpad: V3, 打新, pool trades (CLI 0.9.0+)
+
+Mainnet by default (the pad and router above are built into 0.9.0); add `--testnet` for BSC testnet set 10. Every write
+is preview → user confirms → `gang execute --request-id …`. A step such as `approve` / `approve-quote` / `wrap-bnb` comes
+first when needed: execute it, then run the same command again. Details: [skill/references/v3.md](skill/references/v3.md),
+[skill/references/fair.md](skill/references/fair.md).
+
+**V3 tax token** (`--recipient` = your own wallet or a whitelisted partner; rates and recipient are permanent):
+
+```bash
+gang v3 create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --recipient 0x<your wallet> --logo ./avatar.png
+gang v3 buy  --token 0x… --amount 0.1      # curve: quote amount incl. the 1% fee; WBNB-quoted pays native BNB via GangRouter
+gang v3 info --token 0x…                   # tax setting, recipient, what is owed to it
+gang v3 claim --token 0x…                  # holder dividend, in the quote token
+```
+
+**打新** (`--raise` BNB, `--cap` % of supply per wallet, `--hold` %; also `--mint-fee 1-3`, `--exit-fee 1-2`):
+
+```bash
+gang fair create --name "My Token" --symbol MYT --raise 15 --cap 0.5 --hold 60 --logo ./avatar.png
+gang fair mint --token 0x… --shares 20      # price × shares + the sale's mint fee (not returned)
+gang fair withdraw --token 0x… --shares 5   # before it fills: back at the mint price minus the exit fee
+gang fair status --token 0x…                # after launch: reward on / out, sellableBeforeOut, claimable
+```
+
+**Pool trades** (graduated / launched tokens, PancakeSwap through GangRouter; no Agent gate, no wallet cap, the pool tax applies):
+
+```bash
+gang v3 buy   --token 0x… --amount 0.1 --slippage 1   # pays native BNB on a WBNB token (--use-quote: WBNB; --pay-bnb on other quotes)
+gang fair sell --token 0x… --all --to-bnb             # refused past sellableBeforeOut (ends the reward) unless --confirm-out
+gang buy  --token 0x<graduated V2 token> --bnb 0.05   # graduated V2 / Soft / U / S, mainnet only
+```
+
+A pool sell first approves exactly that amount to the router; a taxed sell needs about 700k gas (give at least 750k).
+
+---
+
+## 6. Rules (short, LaunchpadV2)
 
 | Rule | Detail |
 |---|---|
@@ -154,5 +222,7 @@ Legacy Soft/U/S tokens (if any appear in markets): buy/sell/claim only — **do 
 | `GANG_RPC_URL` | BSC HTTP RPC |
 | `GANG_LOGO_API` | Default `https://gang.fun/api/logos` |
 | `GANG_API` | Discovery indexer, default `https://gang.fun/api` |
+| `GANG_PAD` / `GANG_ROUTER` | Override the mainnet GangLaunchpad / GangRouter (0.9.0 defaults: `0x15CF…4365` / `0xE040…79C4`) |
+| `GANG_TESTNET_PAD` / `GANG_TESTNET_ROUTER` | Override the `--testnet` set (default set 10) |
 
 Site: [gang.fun](https://gang.fun) · Logo: [gang.fun/dev/logo](https://gang.fun/dev/logo) · CLI: [gangfun/cli](https://github.com/gangfun/cli)

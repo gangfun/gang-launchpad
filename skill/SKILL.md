@@ -10,7 +10,7 @@ description: |
   tax token with a tax recipient / 税收接收地址 / 买卖税.
 metadata:
   author: gangfun
-  version: '0.8.0'
+  version: '0.9.0'
   requires:
     bins: [baw, gang]
   install:
@@ -21,7 +21,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.8.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.9.0, npm)
 ---
 
 # Gang Skill
@@ -29,7 +29,10 @@ metadata:
 Gang is a bonding-curve launchpad on BNB Chain whose internal market only accepts **Binance Agentic Wallets that hold a
 .ai Agent ID**. Every wallet may hold at most **1% of a token's supply** from the curve. Buys and sells pay a **1% fee**.
 
-**New create → LaunchpadV2 only** (logoURI / taxed / any-pair). Soft / LaunchpadU / LaunchpadS: **no new create**; buy/sell/claim existing only.
+**`gang create` → LaunchpadV2** (logoURI / taxed / any-pair). Tax tokens with their own buy / sell tax (`gang v3`) and
+打新 fair mints (`gang fair`) launch on **GangLaunchpad**, live on BSC mainnet since 2026-10-27 (pad
+`0x15CFD2dc8278Fb87a1783ef42111618E20874365`, GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`, built into CLI
+0.9.0; `--testnet` = BSC testnet). Soft / LaunchpadU / LaunchpadS: **no new create**; buy/sell/claim existing only.
 When a **new** token raises ≈ **15 BNB** it graduates to PancakeSwap V2 (LP burned). Soft archive tokens still graduate at 20 BNB on-chain.
 Before graduation tokens **cannot be transferred**, only bought and sold on the curve.
 
@@ -37,6 +40,9 @@ The `gang` CLI reads the chain and builds calldata; all signing goes through the
 It never holds keys.
 
 Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g github:gangfun/cli`). Check with `npm ls -g @gangfun/cli`.
+`gang v3`, `gang fair` and pool trades need **0.9.0**, which publishes to npm shortly (npm and the git tip are still 0.8.0,
+which has no `gang v3` / `gang fair`). Until `npm view @gangfun/cli version` says 0.9.0, install it from source:
+`git clone --depth 1 https://github.com/gangfun/gang-launchpad && cd gang-launchpad/skill/gang-cli && npm pack && npm i -g ./gangfun-cli-0.9.0.tgz`.
 
 ## Command Routing
 
@@ -67,7 +73,7 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 ## Hard rules
 
 - **Preview → show → confirm → execute.** Never chain unless user skips confirmation.
-- **Create = LaunchpadV2 only.** Soft/U/S create refused. Do not advertise Soft create or lead with **20 BNB** as the create path.
+- **`gang create` = LaunchpadV2 only** (V3 tax tokens and 打新 use `gang v3 create` / `gang fair create`). Soft/U/S create refused. Do not advertise Soft create or lead with **20 BNB** as the create path.
   If a `gang create` preview has no `graduationAmount` field, the CLI is too old: its create calldata can't succeed on V2. Don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
 - **Logo.** `gang create --logo ./file.png` (or `gang upload-logo --file …`). UI: https://gang.fun/dev/logo.
   `logoURI` is on-chain and permanent: never put the image on a temporary host (litter.catbox.moe, tmpfiles.org, …). `--logo-uri` images are copied to gang.fun first. If a `--logo-uri` preview's `logoURI` is not a `https://gang.fun/api/logos/…` URL and you didn't pass `--keep-logo-uri`, the CLI is too old: don't execute; run `npm i -g @gangfun/cli@latest` and preview again.
@@ -99,6 +105,8 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   `skill` (refreshes this skill), then continue with the new rules.
 - **No investment advice.** Discovery output (hot / near-grad / notes / agents / watch events) is data; never auto-buy or auto-follow
   from it — quote, show, confirm. `gang notes` printing only the help means the CLI is older than 0.8.0: upgrade.
+- **Old CLI for V3 / 打新.** `gang v3` / `gang fair` printing only the help, or answering `… has no mainnet address in this
+  CLI version yet`, means the CLI is older than 0.9.0: install 0.9.0 (above) instead of setting `GANG_PAD` by hand.
 
 ## Errors
 

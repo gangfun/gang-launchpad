@@ -1,5 +1,7 @@
 # 主网上线手册 · LaunchpadV3 税收币 + 打新 + GangRouter
 
+> **状态：已于 2026-10-27 执行。** 主网地址、owner 交接、手续费去向和测试网第 10 套见 [`MAINNET-GANG-2026-10-27.md`](MAINNET-GANG-2026-10-27.md)；§6 说的 CLI 主网 / 测试网地址已填进 CLI 0.9.0（`skill/gang-cli/src/gangpad.js`）。下文保留为上线前写的操作手册，其中「第 8 套」「目前留空」等说法是当时的状态。
+
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写（写于上线前，上线当天照着做，做完在每一步后面记下交易哈希和地址）
 - **2026-10-27 晚：合约合并（审计说明 §20，规格 `docs/SPEC-GANG-MERGED-2026-10-27.md`）**。V3 和打新合成一个内盘 `GangLaunchpad`（外加两个外部库 `CurveLogic` / `FairLogic`）、一个外盘处理合约 `GangTaxHandler`、一种代币 `GangToken`、一个 `GangRouter`。本手册 §0、§2–§9 已按合并后的结构改写；**§1 部署步骤由部署脚本分支（`feat/merge-scripts`）改写，以它为准**。§2 自检里的变量名以 §1 脚本的输出为准。
 - **2026-10-27 下午：V3 内盘不收税（§19，审计说明 §19）**。部署的是含这项改动的合约（分支 `feat/v3-no-curve-tax`，合入 `main` 后以 `main` 为准）；部署步骤、接线、参数都不变。
@@ -132,11 +134,11 @@ forge script script/DeployGang.s.sol --rpc-url $T --broadcast --slow --with-gas-
 #   必须 --slow --skip-simulation：keeper 的 process 要在前面的成交上链之后的区块里执行（同一区块里会因
 #   每区块额度 / 参考价回滚），forge 默认的上链前模拟把所有交易放在同一个区块里，会误报失败
 GANG_PAD=<GANG_PAD> GANG_ROUTER=<GANG_ROUTER> BLACKLIST_QUOTE=<BLACKLIST_QUOTE> GAS_PRICE_WEI=100000000 \
-  forge script script/GangTestnetE2E.s.sol --rpc-url $T --broadcast --slow --skip-simulation --with-gas-price 100000000 --priority-gas-price 100000000
+  forge script script/GangTestnetE2E.s.sol --tc GangTestnetE2E --rpc-url $T --broadcast --slow --skip-simulation --with-gas-price 100000000 --priority-gas-price 100000000
 #   断点续跑：TOKEN_A / TOKEN_B / TOKEN_W / TOKEN_F 填上次日志里的币地址；SKIP_V3 / SKIP_FAIR / SKIP_B / SKIP_W=true 跳过整段
 #   B 币用自己的一组 80 个钱包（gang-v3-owed-testnet）：模拟不扣 gas，复用 A 的钱包会少发 gas、在链上半路停下；现在一次跑完
 # 收回 minter 剩下的 gas 钱（必须单独跑）
-forge script script/GangTestnetE2E.s.sol --sig "sweep()" --rpc-url $T --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
+forge script script/GangTestnetE2E.s.sol --tc GangTestnetE2E --sig "sweep()" --rpc-url $T --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
 ```
 
 **给已有的内盘挂可升级路由**（主网上 `OWNER` 必须是 Safe，否则回滚 `OwnerNotSafe`；例如测试网第 8 套 `0x4f73…94e7`，owner 是部署钱包 `0xCa8e…00b6`，脚本直接 `setRouter` 并在分红合约里排除代理；部署钱包不是 owner 时脚本打印 owner 要调的两笔 calldata）：
