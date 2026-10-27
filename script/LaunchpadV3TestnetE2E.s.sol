@@ -7,7 +7,7 @@ import {LaunchpadV3TestnetRefs as T} from "../config/LaunchpadV3DeployRefs.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {LaunchpadV3} from "../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../src/gang/GangToken.sol";
 import {TaxHandlerV3} from "../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {TestnetBlacklistQuote} from "../src/launchpad-v3/mocks/TestnetBlacklistQuote.sol";
@@ -77,7 +77,7 @@ contract LaunchpadV3TestnetE2E is Script {
 
         // ---- A: fill the curve with agents (1% cap each) until it graduates
         _graduate(a, vm.envOr("GAS_PER_MINTER", MINTER_GAS * _gasPrice()));
-        address pair = TaxLaunchTokenV3(a).pair();
+        address pair = GangToken(a).pair();
         console.log("pair", pair);
 
         // ---- A: pool buy + sell, leaving tax on the handler for the keeper

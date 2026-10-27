@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../../src/gang/GangToken.sol";
 import {LaunchpadV3Test} from "../../launchpad-v3/LaunchpadV3.t.sol";
 import {SkimMockPair} from "../../mocks/SkimMockPair.sol";
 
@@ -16,7 +16,7 @@ contract SwapBackTimingTest is LaunchpadV3Test {
     function _setup() internal {
         t = _create(_tax(100, 100, 10_000, address(0))); // 1% / 1%, all of the rest to holders
         _graduate(t);
-        pair = MockPair(TaxLaunchTokenV3(t).pair());
+        pair = MockPair(GangToken(t).pair());
         for (uint256 i = 0; i < 12; i++) {
             _poolBuy(t, address(uint160(0xC0000 + i)), 20 ether); // backlog
         }

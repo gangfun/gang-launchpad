@@ -14,7 +14,7 @@ import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
@@ -34,7 +34,7 @@ contract FeeOnTransferQuote is ERC20("FoT", "FOT") {
     }
 }
 
-/// @notice FairMintPad + FairToken + HolderRewardHandler on mocks. No broadcast.
+/// @notice FairMintPad + GangToken + HolderRewardHandler on mocks. No broadcast.
 contract FairMintTest is Test {
     QuoteRegistry internal registry;
     SharedDividendVault internal vault;
@@ -137,7 +137,7 @@ contract FairMintTest is Test {
     }
 
     function _sell(address token, address who, uint256 amount) internal {
-        MockPair pair = MockPair(FairToken(token).pair());
+        MockPair pair = MockPair(GangToken(token).pair());
         vm.prank(who);
         IERC20(token).transfer(address(pair), amount);
         (uint256 rT, uint256 rQ) = _reserves(token, pair);
@@ -148,7 +148,7 @@ contract FairMintTest is Test {
     }
 
     function _buy(address token, address who, uint256 quoteIn) internal {
-        MockPair pair = MockPair(FairToken(token).pair());
+        MockPair pair = MockPair(GangToken(token).pair());
         vm.prank(who);
         wbnb.transfer(address(pair), quoteIn);
         (uint256 rT, uint256 rQ) = _reserves(token, pair);
@@ -369,7 +369,7 @@ contract FairMintTest is Test {
     function test_tokensLockedBeforeLaunch() public {
         address t = _create();
         vm.prank(dev);
-        vm.expectRevert(FairToken.TransfersLocked.selector);
+        vm.expectRevert(GangToken.TransfersLocked.selector);
         IERC20(t).transfer(stranger, 1);
     }
 
@@ -528,9 +528,9 @@ contract FairMintTest is Test {
         _fill(t);
         (,, bool launched,,, address pair) = _sale(t);
         assertTrue(launched);
-        assertFalse(FairToken(t).locked());
-        assertEq(FairToken(t).pair(), pair);
-        assertEq(FairToken(t).taxHandler(), address(handler));
+        assertFalse(GangToken(t).locked());
+        assertEq(GangToken(t).pair(), pair);
+        assertEq(GangToken(t).taxHandler(), address(handler));
 
         (uint256 rT, uint256 rQ) = _reserves(t, MockPair(pair));
         assertEq(rT, 500_000_000 ether);
@@ -549,7 +549,7 @@ contract FairMintTest is Test {
         wbnb.mintUnlimited(early, 1 ether);
 
         vm.prank(dev);
-        vm.expectRevert(FairToken.TransfersLocked.selector);
+        vm.expectRevert(GangToken.TransfersLocked.selector);
         IERC20(t).transfer(early, TPS); // no way to seed the token side
 
         _fill(t);
@@ -564,8 +564,8 @@ contract FairMintTest is Test {
         address t = _create();
         _fill(t);
         vm.prank(address(pad));
-        vm.expectRevert(FairToken.NotLocked.selector);
-        FairToken(t).reclaim(dev, 1);
+        vm.expectRevert(GangToken.NotLocked.selector);
+        GangToken(t).reclaim(dev, 1);
         vm.prank(dev);
         vm.expectRevert(FairMintPad.NotMinting.selector);
         pad.withdraw(t, 1, 0);
@@ -596,7 +596,7 @@ contract FairMintTest is Test {
         _buy(t, buyer, 1 ether);
         assertGt(IERC20(t).balanceOf(buyer), 0);
         assertEq(vault.shares(t, buyer), 0, "post-launch buyer");
-        assertEq(vault.shares(t, FairToken(t).pair()), 0);
+        assertEq(vault.shares(t, GangToken(t).pair()), 0);
 
         address a = _minter(1);
         address b = _minter(2);

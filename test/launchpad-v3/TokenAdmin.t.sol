@@ -2,8 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {TokenURI} from "../../src/launchpad-v3/TokenURI.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
@@ -38,17 +37,17 @@ contract TokenAdminV3Test is LaunchpadV3Test {
 
     function test_taxed_handlerFixedAtCreate_noAdminLeftAfterGraduation() public {
         address t = _createWithUri(200);
-        TaxLaunchTokenV3 tok = TaxLaunchTokenV3(t);
+        GangToken tok = GangToken(t);
         assertEq(tok.taxHandler(), address(handler), "handler set at construction");
         assertTrue(tok.isExcluded(address(handler)));
         assertEq(tok.pair(), address(0));
 
         // before graduation: setPair needs the unlock first; only the pad can call either
         vm.prank(address(pad));
-        vm.expectRevert(TaxLaunchTokenV3.StillLocked.selector);
+        vm.expectRevert(GangToken.StillLocked.selector);
         tok.setPair(makeAddr("p"));
         vm.prank(stranger);
-        vm.expectRevert(TaxLaunchTokenV3.OnlyLaunchpad.selector);
+        vm.expectRevert(GangToken.OnlyLaunchpad.selector);
         tok.unlock(stranger);
 
         _graduate(t);
@@ -59,10 +58,12 @@ contract TokenAdminV3Test is LaunchpadV3Test {
 
         // after graduation even the pad cannot change anything
         vm.startPrank(address(pad));
-        vm.expectRevert(TaxLaunchTokenV3.AlreadyUnlocked.selector);
+        vm.expectRevert(GangToken.AlreadyUnlocked.selector);
         tok.unlock(stranger);
-        vm.expectRevert(TaxLaunchTokenV3.PairAlreadySet.selector);
+        vm.expectRevert(GangToken.PairAlreadySet.selector);
         tok.setPair(stranger);
+        vm.expectRevert(GangToken.NotReclaimable.selector);
+        tok.reclaim(stranger, 1);
         (bool ok,) = t.call(abi.encodeWithSignature("setTaxHandler(address)", stranger));
         assertFalse(ok, "no setTaxHandler");
         (ok,) = t.call(abi.encodeWithSignature("exclude(address,bool)", stranger, true));
@@ -76,15 +77,20 @@ contract TokenAdminV3Test is LaunchpadV3Test {
 
     function test_untaxed_unlockOnce_noBurn() public {
         address t = _createWithUri(0);
-        LaunchTokenV3 tok = LaunchTokenV3(t);
+        GangToken tok = GangToken(t);
         _graduate(t);
         assertFalse(tok.locked());
         vm.startPrank(address(pad));
-        vm.expectRevert(LaunchTokenV3.AlreadyUnlocked.selector);
-        tok.unlock();
+        vm.expectRevert(GangToken.AlreadyUnlocked.selector);
+        tok.unlock(stranger);
+        vm.expectRevert(GangToken.Untaxed.selector);
+        tok.setPair(stranger);
+        vm.expectRevert(GangToken.NotReclaimable.selector);
+        tok.reclaim(stranger, 1);
         (bool ok,) = t.call(abi.encodeWithSignature("burn(uint256)", 1));
         assertFalse(ok, "no burn");
         vm.stopPrank();
+        assertEq(tok.pair(), address(0), "untaxed: never a pair");
         // and it trades freely
         address holder = address(uint160(0xB0000));
         uint256 bal = IERC20(t).balanceOf(holder);

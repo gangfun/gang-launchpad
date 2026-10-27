@@ -16,7 +16,7 @@ import {IMigratorV2} from "../launchpad-v2/interfaces/IMigratorV2.sol";
 import {SharedMigrator} from "../common/SharedMigrator.sol";
 import {TokenDeployer} from "../common/TokenDeployer.sol";
 import {PoolCheck} from "../launchpad-v2/PoolCheck.sol";
-import {FairToken} from "./FairToken.sol";
+import {GangToken} from "../gang/GangToken.sol";
 
 /// @title FairMintPad (打新发射 · 铭文式打进度)
 /// @notice No bonding curve: half the supply is sold in 10,000 equal shares at one fixed price, both ways — mint buys
@@ -289,7 +289,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert PriceTooSmall();
 
-        token = tokenDeployer.deployFair(name, symbol, taxHandler, metaURI);
+        token = tokenDeployer.deploy(name, symbol, metaURI, taxHandler, 100, 100, true);
         dividendVault.ensureMinimumShareBalance(MIN_SHARE_BALANCE);
         dividendVault.registerToken(token, quote);
 
@@ -365,7 +365,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
         p.shares -= shares.toUint16();
         s.sold -= shares.toUint16();
 
-        FairToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
+        GangToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
         _setShareOnExit(token, msg.sender, uint256(p.shares) * TOKENS_PER_SHARE);
         IERC20(s.quote).safeTransfer(msg.sender, payout);
         _exitFeeToPlatform(s.quote, exitFee);
@@ -510,7 +510,7 @@ contract FairMintPad is Ownable2Step, ReentrancyGuard {
     /// @dev Pad holds exactly LP_SUPPLY of the token here (all mint shares are out with minters).
     function _launch(address token, Sale storage s) internal {
         s.launched = true;
-        FairToken t = FairToken(token);
+        GangToken t = GangToken(token);
         address quote = s.quote;
         uint256 quoteAmount = TOTAL_SHARES * s.sharePrice;
 

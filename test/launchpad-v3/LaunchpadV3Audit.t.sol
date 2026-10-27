@@ -7,7 +7,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 
@@ -128,11 +128,11 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         assertEq(divVault.shares(t, agent2), 0);
     }
 
-    /// @dev Anyone can deploy a TaxLaunchTokenV3 bound to themselves with our handler and a 1 bps rate (its "platform
+    /// @dev Anyone can deploy a GangToken bound to themselves with our handler and a 1 bps rate (its "platform
     ///      part" would be 50× its tax). Only route-registered tokens may accrue: the fake one's taxed transfer reverts.
     function test_audit_unregisteredTokenCannotAccrue() public {
         // the token contract itself is permissionless to deploy (TokenDeployer only lists our cores)
-        TaxLaunchTokenV3 fake = new TaxLaunchTokenV3("Fake", "FAKE", 1, 1, address(this), address(handler), "");
+        GangToken fake = new GangToken("Fake", "FAKE", "", address(this), address(handler), 1, 1, false);
         address fakePair = makeAddr("fakePair");
         fake.unlock(makeAddr("fakeMigrator"));
         fake.setPair(fakePair);

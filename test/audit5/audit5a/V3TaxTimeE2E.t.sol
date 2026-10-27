@@ -3,7 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../../src/gang/GangToken.sol";
 import {LaunchpadV3Test} from "../../launchpad-v3/LaunchpadV3.t.sol";
 
 /// @notice audit5a: end-to-end tax-time dividends on V3 (real token + handler + shared vault, mock pair).
@@ -15,7 +15,7 @@ contract V3TaxTimeE2E is LaunchpadV3Test {
     function _setupToken(uint16 buy, uint16 sell, uint16 div, address rec) internal {
         t = _create(_tax(buy, sell, div, rec));
         _graduate(t);
-        pair = MockPair(TaxLaunchTokenV3(t).pair());
+        pair = MockPair(GangToken(t).pair());
         delete holders;
         for (uint256 i = 0; i < 400; i++) {
             address w = address(uint160(0xB0000 + i));

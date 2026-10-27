@@ -5,7 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {FairMintTest} from "./FairMint.t.sol";
@@ -17,7 +17,7 @@ contract FairSwapBackTest is FairMintTest {
     function _launched() internal returns (address t, MockPair pair) {
         t = _create();
         _fill(t);
-        pair = MockPair(FairToken(t).pair());
+        pair = MockPair(GangToken(t).pair());
     }
 
     function _buyBacklog(address t, uint256 n) internal {
@@ -71,7 +71,7 @@ contract FairSwapBackTest is FairMintTest {
         uint256 accrued = handler.accruedTax(t);
         vm.mockCallRevert(address(handler), abi.encodeWithSelector(HolderRewardHandler.swapBack.selector), "x");
         vm.expectEmit(false, false, false, false, t);
-        emit FairToken.SwapBackFailed();
+        emit GangToken.SwapBackFailed();
         _sell(t, _minter(3), 10 * TPS);
         assertEq(handler.accruedTax(t), accrued + (10 * TPS) / 100, "nothing sold, tax kept");
     }

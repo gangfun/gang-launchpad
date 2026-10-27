@@ -11,7 +11,7 @@ import {TokenDeployer} from "../../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxHandlerV3} from "../../../src/launchpad-v3/TaxHandlerV3.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {TaxLaunchTokenV3} from "../../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../../src/gang/GangToken.sol";
 import {ILaunchpadV3} from "../../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 
 interface IRouterA {
@@ -139,7 +139,7 @@ contract SwapBackAudit5bTest is Test {
             address(0),
             ILaunchpadV3.TaxConfig({buyTaxBps: 300, sellTaxBps: SELL_TAX, dividendBps: 5000, recipient: treasury})
         );
-        for (uint256 i = 0; i < 400 && TaxLaunchTokenV3(t).pair() == address(0); i++) {
+        for (uint256 i = 0; i < 400 && GangToken(t).pair() == address(0); i++) {
             address w = address(uint160(0xA11CE000 + i));
             agent.set(w, 1);
             deal(WBNB, w, 1 ether);
@@ -148,7 +148,7 @@ contract SwapBackAudit5bTest is Test {
             pad.buy(t, 1 ether, 0);
             vm.stopPrank();
         }
-        pair = TaxLaunchTokenV3(t).pair();
+        pair = GangToken(t).pair();
         require(pair != address(0), "not graduated");
         // backlog: buys only (no chunk on buys)
         for (uint256 i = 0; i < 10; i++) {

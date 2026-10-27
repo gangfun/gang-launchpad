@@ -11,7 +11,7 @@ import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 
 contract V3ForkAgent {
@@ -109,7 +109,7 @@ contract V3SwapBackForkTest is Test {
             vm.stopPrank();
         }
         assertTrue(_graduated(t), "graduated");
-        pair = TaxLaunchTokenV3(t).pair();
+        pair = GangToken(t).pair();
     }
 
     function _swap(address who, address tokenIn, address tokenOut, uint256 amountIn) internal returns (uint256 got) {

@@ -6,7 +6,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {ISwapBack} from "../common/interfaces/ISwapBack.sol";
 import {PostGradHandlerBase} from "../common/PostGradHandlerBase.sol";
-import {FairToken} from "./FairToken.sol";
+import {GangToken} from "../gang/GangToken.sol";
 
 interface IFairMintPadView {
     function baselineOf(address token, address user) external view returns (uint256);
@@ -63,8 +63,8 @@ contract HolderRewardHandler is ISwapBack, PostGradHandlerBase {
         emit PadSet(pad_);
     }
 
-    /// @notice FairToken's hook after taking the pool tax (`taxAmount` already sent here).
-    function notifyTax(address token, address from, address to, uint256 taxAmount) external nonReentrant {
+    /// @notice The token's hook after taking the pool tax (`taxAmount` already sent here).
+    function notifyTax(address token, address from, address to, uint256 taxAmount, uint256) external nonReentrant {
         _checkHook(token, taxAmount);
         // audit 4 A-F3: only this pad's tokens (any contract can name itself as `token`; the vault is shared); before
         // setPad nothing is (audit 5 C-F10: an unset pad would match every unregistered token's launchpadOf of 0)
@@ -72,18 +72,18 @@ contract HolderRewardHandler is ISwapBack, PostGradHandlerBase {
         // internal audit 5 C-F7: nobody gets a part of its own trade's tax — a seller's share is synced to its
         // post-sell holding first (the token already moved the tokens; this may take it out), a buyer's share is only
         // written after this call
-        if (to == FairToken(token).pair()) _sync(token, from);
+        if (to == GangToken(token).pair()) _sync(token, from);
         _creditHolders(token, (taxAmount * HOLDER_SHARE_BPS) / BPS);
         _accrue(token, from, to, taxAmount);
     }
 
-    /// @notice FairToken's hook on every transfer.
+    /// @notice The token's hook on every transfer.
     /// @dev Permissionless: it only applies the rule to true balances. Never reverts for unknown / locked tokens
     ///      (runs inside token transfers). Pre-launch shares are written by the pad.
     function syncShares(address token, address from, address to) external {
-        // The vault is shared with LaunchpadV3: only tokens this pad registered are FairTokens of this handler.
+        // The vault is shared with LaunchpadV3: only tokens this pad registered are 打新 tokens of this handler.
         if (address(pad) == address(0) || dividendVault.launchpadOf(token) != address(pad)) return;
-        if (FairToken(token).locked()) return;
+        if (GangToken(token).locked()) return;
         _sync(token, from);
         _sync(token, to);
     }
@@ -119,7 +119,7 @@ contract HolderRewardHandler is ISwapBack, PostGradHandlerBase {
     }
 
     function _sellTaxBps(address) internal pure override returns (uint256) {
-        return 100; // FairToken.TAX_BPS
+        return 100; // the 打新 token's rate (buy = sell = 1%)
     }
 
     function _bucket() internal view override returns (PlatformFeeBucket) {

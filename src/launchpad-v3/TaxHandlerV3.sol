@@ -7,7 +7,7 @@ import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlat
 import {PostGradHandlerBase} from "../common/PostGradHandlerBase.sol";
 import {IPostGradTaxHandlerV3} from "./interfaces/IPostGradTaxHandlerV3.sol";
 import {ITaxHandlerV3, V3_PLATFORM_TAX_BPS} from "./interfaces/ITaxHandlerV3.sol";
-import {TaxLaunchTokenV3} from "./TaxLaunchTokenV3.sol";
+import {GangToken} from "../gang/GangToken.sol";
 
 /// @title TaxHandlerV3 (LaunchpadV3 · everything about the tax)
 /// @notice The tax recipients the platform allows, each token's route (quote, recipient, dividend share), the split of
@@ -185,13 +185,13 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
 
     // ---------------------------------------------------------------- token hooks
     /// @inheritdoc IPostGradTaxHandlerV3
-    function notifyTax(address token, address from, address to, uint256 taxAmount, uint16 rateBps)
+    function notifyTax(address token, address from, address to, uint256 taxAmount, uint256 rateBps)
         external
         nonReentrant
     {
         _checkHook(token, taxAmount);
         // only tokens the launchpad registered (write-once route; their rates were checked to 1%–5% at create): anyone
-        // can deploy a TaxLaunchTokenV3 pointing at this handler, and it must not accrue here
+        // can deploy a GangToken pointing at this handler, and it must not accrue here
         if (routeOf[token].quote == address(0)) revert UnknownToken();
         // the token taxed this trade at `rateBps` (its buy or sell tax): the platform's 0.5% of volume is that share,
         // never more than the tax itself
@@ -205,7 +205,7 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
         // on a sell the seller's share is synced to what it holds after the sell before the credit (the token has
         // already moved the tokens), and a buyer's share is only written after this call.
         Route memory r = routeOf[token];
-        if (r.dividendBps > 0 && to == TaxLaunchTokenV3(token).pair()) _syncShare(token, from);
+        if (r.dividendBps > 0 && to == GangToken(token).pair()) _syncShare(token, from);
         uint256 toHolders = ((taxAmount - platform) * r.dividendBps) / BPS;
         if (!_creditHolders(token, toHolders) && r.recipient == address(0)) platform += toHolders;
         accruedPlatformTax[token] += platform;
@@ -242,7 +242,7 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     }
 
     function _sellTaxBps(address token) internal view override returns (uint256) {
-        return TaxLaunchTokenV3(token).sellTaxBps();
+        return GangToken(token).sellTaxBps();
     }
 
     function _bucket() internal view override returns (PlatformFeeBucket) {
@@ -332,7 +332,7 @@ contract TaxHandlerV3 is ITaxHandlerV3, IPostGradTaxHandlerV3, PostGradHandlerBa
     function _syncShare(address token, address user) internal {
         if (user == address(0)) return;
         if (user == address(this)) return;
-        address pair = TaxLaunchTokenV3(token).pair();
+        address pair = GangToken(token).pair();
         // runs inside token transfers: a vault-side failure (e.g. operator revoked, K-7) must not freeze trading, so
         // every write is guarded (ShareWriteFailed; retried by the holder's next sync)
         if (user == pair) {

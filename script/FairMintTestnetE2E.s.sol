@@ -9,7 +9,7 @@ import {PlatformFeeBucket} from "../src/launchpad-v2/PlatformFeeBucket.sol";
 import {MockSPCXB} from "../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {IPancakeRouter02} from "../src/launchpad-v2/interfaces/IPancake.sol";
 import {FairMintPad} from "../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../src/fair-mint/FairToken.sol";
+import {GangToken} from "../src/gang/GangToken.sol";
 import {HolderRewardHandler} from "../src/fair-mint/HolderRewardHandler.sol";
 import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 
@@ -47,7 +47,7 @@ contract FairMintTestnetE2E is Script {
         address token = vm.envOr("TOKEN", address(0));
         if (token == address(0)) token = _createAndFill(deployer, gasPerMinter);
         if (pad.status(token) != FairMintPad.Status.Launched) revert Check("not launched");
-        address pair = FairToken(token).pair();
+        address pair = GangToken(token).pair();
         console.log("pair", pair);
 
         // 3. trading: deployer buys, minter 0 sells 55% (out), keeper processes, minter 5 claims

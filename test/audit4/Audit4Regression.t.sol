@@ -7,7 +7,7 @@ import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {LaunchpadV3Test} from "../launchpad-v3/LaunchpadV3.t.sol";
@@ -104,7 +104,7 @@ contract Audit4V3RegressionTest is LaunchpadV3Test {
         assertTrue(_graduated(t));
 
         // pool buy → tax accrues on the handler (fee still off)
-        MockPair pair = MockPair(TaxLaunchTokenV3(t).pair());
+        MockPair pair = MockPair(GangToken(t).pair());
         swf.mint(address(pair), 5 ether);
         (uint256 rT, uint256 rQ) = _reserves(t, pair);
         uint256 out = (5 ether * rT) / (rQ + 5 ether) / 2;
@@ -167,12 +167,12 @@ contract Audit4SharedRegressionTest is SharedInfraTest {
         HolderRewardHandler h = HolderRewardHandler(fair.taxHandler());
         vm.prank(fake);
         vm.expectRevert(HolderRewardHandler.UnknownToken.selector);
-        h.notifyTax(fake, address(1), address(2), 1e30);
+        h.notifyTax(fake, address(1), address(2), 1e30, 100);
 
         address v3tok = _v3Token(10_000); // registered in the shared vault, but by the V3 core
         vm.prank(v3tok);
         vm.expectRevert(HolderRewardHandler.UnknownToken.selector);
-        h.notifyTax(v3tok, address(1), address(2), 1);
+        h.notifyTax(v3tok, address(1), address(2), 1, 100);
     }
 
     /// @dev audit4-c F-3 (打新 side): neither core's tokens can be a 打新 quote; nor a 打新 token a V3 quote.

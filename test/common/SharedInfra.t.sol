@@ -105,11 +105,11 @@ contract SharedInfraTest is GangRouterTest {
         vm.expectRevert(SharedDividendVault.OnlyLaunchpad.selector);
         v3Vault.ensureMinimumShareBalance(1);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
-        tokenDeployer.deployFair("X", "X", stranger, "");
+        tokenDeployer.deploy("X", "X", "", stranger, 100, 100, true);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
-        tokenDeployer.deployTax("X", "X", 100, 100, stranger, "");
+        tokenDeployer.deploy("X", "X", "", stranger, 100, 100, false);
         vm.expectRevert(TokenDeployer.OnlyLaunchpad.selector);
-        tokenDeployer.deployPlain("X", "X", "");
+        tokenDeployer.deploy("X", "X", "", address(0), 0, 0, false);
         vm.expectRevert(SharedMigrator.OnlyLaunchpad.selector);
         sharedMig.migrate(b, address(wbnb), 1, 1);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));

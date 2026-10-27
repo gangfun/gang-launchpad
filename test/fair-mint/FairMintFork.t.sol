@@ -12,7 +12,7 @@ import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {IV3FactoryLite, IV3PoolLite} from "../../src/launchpad-v2/PoolCheck.sol";
 import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 
 contract ForkAgent {
@@ -187,7 +187,7 @@ contract FairMintForkTest is Test {
         uint256 lastGas = _fill(t, WBNB);
         console.log("gas: filling mint incl. Pancake createPair + mint", lastGas);
 
-        address pair = FairToken(t).pair();
+        address pair = GangToken(t).pair();
         assertEq(pair, IPancakeFactoryLite(V2_FACTORY).getPair(t, WBNB), "real Pancake pair");
         (uint256 rT, uint256 rQ) = _reserves(t, pair);
         assertEq(rT, 500_000_000 ether);
@@ -239,7 +239,7 @@ contract FairMintForkTest is Test {
     function test_fork_swapBack_realPancake() public forkOnly {
         address t = _create(WBNB, address(0));
         _fill(t, WBNB);
-        address pair = FairToken(t).pair();
+        address pair = GangToken(t).pair();
         for (uint256 i = 0; i < 12; i++) {
             address b = address(uint160(0xB0B000 + i));
             deal(WBNB, b, 3 ether);
@@ -326,7 +326,7 @@ contract FairMintForkTest is Test {
         address t = _create(USDT, USDT_REF_POOL);
         _fill(t, USDT);
         (,,,,,,,,,, uint128 price,,,) = pad.sales(t);
-        (uint256 rT, uint256 rQ) = _reserves(t, FairToken(t).pair());
+        (uint256 rT, uint256 rQ) = _reserves(t, GangToken(t).pair());
         assertEq(rT, 500_000_000 ether);
         assertEq(rQ, uint256(price) * 10_000);
 
@@ -356,7 +356,7 @@ contract FairMintForkTest is Test {
         IPancakePairFull(early).sync();
 
         _fill(t, WBNB);
-        assertEq(FairToken(t).pair(), early);
+        assertEq(GangToken(t).pair(), early);
         (uint256 rT, uint256 rQ) = _reserves(t, early);
         assertEq(rT, 500_000_000 ether);
         assertEq(rQ, 16 ether, "donation stays in the pool");

@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
@@ -19,7 +19,7 @@ contract SwapBackTest is LaunchpadV3Test {
     function _dividendToken() internal returns (address t, MockPair pair) {
         t = _create(_tax(300, 300, 5000, treasury));
         _graduate(t);
-        pair = MockPair(TaxLaunchTokenV3(t).pair());
+        pair = MockPair(GangToken(t).pair());
     }
 
     /// @dev Pool buys only (no sell, so no swap-back): tax piles up past one chunk.
@@ -258,7 +258,7 @@ contract SwapBackTest is LaunchpadV3Test {
         uint256 sold = IERC20(t).balanceOf(seller) / 2;
         uint256 got0 = quoteTok.balanceOf(seller);
         vm.expectEmit(false, false, false, false, t);
-        emit TaxLaunchTokenV3.SwapBackFailed();
+        emit GangToken.SwapBackFailed();
         _poolSell(t, seller, sold);
         assertGt(quoteTok.balanceOf(seller), got0, "the sell went through");
         assertEq(handler.accruedTax(t), accrued + (sold * 300) / BPS, "nothing sold, tax kept");

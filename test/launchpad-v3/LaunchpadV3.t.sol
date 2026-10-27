@@ -11,11 +11,10 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
-import {LaunchTokenV3} from "../../src/launchpad-v3/LaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {ITaxHandlerV3} from "../../src/launchpad-v3/interfaces/ITaxHandlerV3.sol";
@@ -155,7 +154,7 @@ contract LaunchpadV3Test is Test {
     }
 
     function _poolBuy(address token, address who, uint256 quoteIn) internal {
-        MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
+        MockPair pair = MockPair(GangToken(token).pair());
         quoteTok.mintUnlimited(address(pair), quoteIn);
         (uint256 rT, uint256 rQ) = _reserves(token, pair);
         uint256 out = (quoteIn * rT) / (rQ + quoteIn) / 2; // well inside the curve; MockPair checks no K
@@ -164,7 +163,7 @@ contract LaunchpadV3Test is Test {
     }
 
     function _poolSell(address token, address who, uint256 amount) internal {
-        MockPair pair = MockPair(TaxLaunchTokenV3(token).pair());
+        MockPair pair = MockPair(GangToken(token).pair());
         vm.prank(who);
         IERC20(token).transfer(address(pair), amount);
         (uint256 rT, uint256 rQ) = _reserves(token, pair);
@@ -195,11 +194,14 @@ contract LaunchpadV3Test is Test {
         assertEq(s, 200);
         assertEq(d, 0);
         assertEq(r, treasury, "recipient fixed at create");
-        assertEq(TaxLaunchTokenV3(t).buyTaxBps(), 200);
-        assertEq(TaxLaunchTokenV3(t).sellTaxBps(), 200);
+        assertEq(GangToken(t).buyTaxBps(), 200);
+        assertEq(GangToken(t).sellTaxBps(), 200);
 
         address u = _create(_tax(0, 0, 0, address(0)));
-        assertEq(LaunchTokenV3(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = LaunchTokenV3");
+        assertEq(GangToken(u).TOTAL_SUPPLY(), 1_000_000_000 ether, "untaxed = GangToken");
+        assertEq(GangToken(u).buyTaxBps() + GangToken(u).sellTaxBps(), 0, "0 / 0");
+        assertEq(GangToken(u).taxHandler(), address(0), "no handler");
+        assertFalse(GangToken(u).reclaimable());
         _create(_tax(100, 500, 10_000, address(0))); // holder-dividend only, no recipient
     }
 

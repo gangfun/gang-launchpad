@@ -13,11 +13,10 @@ import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {LaunchpadV3} from "../../src/launchpad-v3/LaunchpadV3.sol";
-import {TaxLaunchTokenV3} from "../../src/launchpad-v3/TaxLaunchTokenV3.sol";
+import {GangToken} from "../../src/gang/GangToken.sol";
 import {TaxHandlerV3} from "../../src/launchpad-v3/TaxHandlerV3.sol";
 import {ILaunchpadV3} from "../../src/launchpad-v3/interfaces/ILaunchpadV3.sol";
 import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken} from "../../src/fair-mint/FairToken.sol";
 import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
@@ -282,7 +281,7 @@ contract CoreHandler is CoreSystem {
             dividendBps: dividendBps,
             recipient: noRecipient ? address(0) : treasury
         });
-        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (LaunchTokenV3)
+        if (_pick(seed, 5, 5) == 0) tax = ILaunchpadV3.TaxConfig(0, 0, 0, address(0)); // untaxed (GangToken)
         vm.prank(creator);
         address t = v3.create("T", "T", "", "", q, address(0), tax);
         v3Tokens.push(t);
