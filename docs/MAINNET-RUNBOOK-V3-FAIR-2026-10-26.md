@@ -116,16 +116,17 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 
 ```sh
 T=https://data-seed-prebsc-1-s1.bnbchain.org:8545
-forge script script/DeployGang.s.sol --rpc-url $T --broadcast --slow --with-gas-price 100000000
+# 测试网节点要求优先费 ≥ 0.1 gwei：只给 --with-gas-price 时 forge 按 1 wei 的优先费发，交易全部被拒（gas tip cap 1）
+forge script script/DeployGang.s.sol --rpc-url $T --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
 # 整轮：V3（测试报价币有税币内盘买卖 → 80 个 Agent 打满毕业 → 外盘买卖顺带换块 → keeper process；WBNB 币经路由买；
 #       黑名单报价币欠款 → release）+ 打新（100 个地址打满发射 → 外盘买入 → 有人卖到出局线以下 → keeper process → 领取）
 #   必须 --slow --skip-simulation：keeper 的 process 要在前面的成交上链之后的区块里执行（同一区块里会因
 #   每区块额度 / 参考价回滚），forge 默认的上链前模拟把所有交易放在同一个区块里，会误报失败
 GANG_PAD=<GANG_PAD> GANG_ROUTER=<GANG_ROUTER> BLACKLIST_QUOTE=<BLACKLIST_QUOTE> GAS_PRICE_WEI=100000000 \
-  forge script script/GangTestnetE2E.s.sol --rpc-url $T --broadcast --slow --skip-simulation --with-gas-price 100000000
+  forge script script/GangTestnetE2E.s.sol --rpc-url $T --broadcast --slow --skip-simulation --with-gas-price 100000000 --priority-gas-price 100000000
 #   断点续跑：TOKEN_A / TOKEN_B / TOKEN_W / TOKEN_F 填上次日志里的币地址；SKIP_V3 / SKIP_FAIR / SKIP_B / SKIP_W=true 跳过整段
 # 收回 minter 剩下的 gas 钱（必须单独跑）
-forge script script/GangTestnetE2E.s.sol --sig "sweep()" --rpc-url $T --broadcast --slow --with-gas-price 100000000
+forge script script/GangTestnetE2E.s.sol --sig "sweep()" --rpc-url $T --broadcast --slow --with-gas-price 100000000 --priority-gas-price 100000000
 ```
 
 部署脚本测试（主网和测试网 fork，不广播；进程级环境变量，必须单线程）：
