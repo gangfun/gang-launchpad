@@ -10,7 +10,7 @@ mainnet GangLaunchpad; without it the CLI answers `… has no mainnet address in
 `--testnet` (BSC testnet). Testnet tokens and quotes have no value; say so if the user asks.
 
 **One pad for 打新 and V3**: sales and V3 tax tokens live on the same GangLaunchpad. Given a V3 token, `gang fair
-info|status|mint|withdraw|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
+info|status|mint|withdraw|buy|sell|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the
 pad's `kindOf`); run the `gang v3` command it names instead.
 
 ```bash
@@ -21,6 +21,8 @@ gang fair create --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold
 gang fair mint --token <addr> --shares <n> [--min-shares <n>] --testnet
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet   # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)
+gang fair buy --token <addr> --amount <n> [--slippage 1] [--use-quote | --pay-bnb] --testnet    # after launch: in the pool
+gang fair sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [--confirm-out] --testnet  # after launch: in the pool
 gang fair claim --token <addr> --testnet
 gang execute --request-id …
 gang fair tx --hash 0x… --testnet                            # decode Created / Minted / Launched / … on the fair chain
@@ -76,7 +78,15 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The old names `GANG_FAIR_TESTNET_PAD` /
   `GANG_FAIR_TESTNET_RPC_URL` / `GANG_FAIR_PAD` / `GANG_ROUTER_TESTNET` still work as aliases.
 - `NotReclaimable` / `NotLocked` on a withdraw: the token is not a 打新 token, or the sale already launched (sell-back
-  is over: trade on PancakeSwap). Both come back with a `hint`.
+  is over: `gang fair sell`). Both come back with a `hint`.
+- **After launch, trade with `gang fair buy` / `gang fair sell`**: the PancakeSwap pool through GangRouter, exactly as a
+  graduated V3 token ([v3.md](v3.md), "Pool trades"): approve this amount only first (re-run after it), `minOut` from
+  `previewSellNextBlock` less `--slippage`, `--to-bnb` to receive BNB, a taxed sell needs about 700k gas (give at least
+  750k). **A minter still earning cannot sell past `sellableBeforeOut` by accident**: `gang fair sell` (also `--all`)
+  then fails with a `WARNING: … loses the holder reward FOR GOOD` and builds nothing; tell the user, and only with their
+  yes re-run with `--confirm-out` (the output keeps the `warning`, `confirmedOut: true`). The tax rates are read from the
+  token; if they can't be read the trade fails instead of assuming 0%. Before launch both commands refuse and point at `mint` / `withdraw`; `mint` / `withdraw` on a
+  launched sale point at `buy` / `sell`.
 
 ## Reading results
 
@@ -85,9 +95,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
   token, check `sellableBeforeOut` and warn the user if the trade goes past it** — it ends the reward for good.
   `poolSellAll.expectOut` is what selling the whole balance into the pool pays (1% tax and the chunk sold first included),
   `poolSellAll.minOut` the same less `--slippage` (default 1%); any wallet holding the token gets it, also one that only
-  bought in the pool (`shares: 0`, `reward: 'none'`). The CLI builds no pool sell — sell on PancakeSwap with
-  `swapExactTokensForTokensSupportingFeeOnTransferTokens` and `minOut` as `amountOutMin`. `gang fair withdraw` on a
-  launched sale points here.
+  bought in the pool (`shares: 0`, `reward: 'none'`). `gang fair sell --all` builds that sell (same minimum).
+  `gang fair withdraw` on a launched sale points there.
 - `info.swapBack` after launch, read at `latestBlock`: `unsoldTaxTokens`, `budgetPerBlockTokens` (0.5% of the pool's
   token side: what a new block allows), `budgetLeftInLatestBlockTokens` (what is left of the latest block's budget — the
   whole of it when no chunk ran in that block), `nextChunkTokens` (the largest chunk the latest block still allows: unsold

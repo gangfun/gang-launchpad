@@ -1,9 +1,10 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseEther, parseUnits, isAddress, zeroAddress } from 'viem'
 import { bawAddress } from './baw.js'
-import { defaultRefPool, dividendOf, fundingStep as fund, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
+import { defaultRefPool, dividendOf, fundingStep as fund, parseAmount, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, ROUTER_HINTS, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
+import { poolPayBnb, poolTrade } from './pool.js'
 
 /**
  * `gang fair …` — 打新 (fair mint): one fixed price per share both ways (mint buys at it, withdraw sells back at it);
@@ -57,6 +58,8 @@ const ERC20_ABI = parseAbi([
   'function balanceOf(address) view returns (uint256)',
   'function symbol() view returns (string)',
 ])
+// GangToken's pool tax rates (immutable; 0 / 0 on an untaxed token)
+const TAX_ABI = parseAbi(['function buyTaxBps() view returns (uint16)', 'function sellTaxBps() view returns (uint16)'])
 const ERC721_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'])
 const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)'])
 
@@ -78,7 +81,7 @@ const STATUS = ['none', 'minting', 'launched']
 const HINTS = {
   BadConfig: 'a rule is out of bounds: see reason',
   NotAgent: 'this wallet holds no Agent ID; fair mint is Agent-only',
-  NotMinting: 'the sale already launched: trade the token on PancakeSwap',
+  NotMinting: 'the sale already launched: trade the token in the pool with gang fair buy / gang fair sell',
   WalletCapReached: 'this wallet already holds the per-wallet cap of shares',
   Slippage: 'fewer shares are left than --min-shares (someone filled first)',
   BadAmount: '--shares is more than this wallet holds in the sale',
@@ -117,7 +120,7 @@ export function walletFor(ctx, from) {
 }
 
 /** Revert name (+ BadConfig reason) of a failed eth_call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...HINTS })
+const revertOf = (e) => revertIn(e, [PAD_ABI, ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...ROUTER_HINTS, ...HINTS })
 
 /** Dry-run `data` from `from`; null when it would pass. */
 async function dryRun(ctx, from, to, data, value = 0n) {
@@ -227,10 +230,10 @@ async function positionOf(ctx, token, me, sale, slippage) {
  * Entry for `gang fair <sub>`. io: { args, opt, flag, out, fail, summarize } from index.js
  * (summarize = summarizePreview, so previews look like every other command's).
  */
-const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'claim', 'tx']
+const SUBS = ['list', 'info', 'status', 'create', 'mint', 'withdraw', 'buy', 'sell', 'claim', 'tx']
 /** withdraw reverts below the preview minus this (bps): it catches an exit fee coming back (≥ 1%). */
 const WITHDRAW_TOLERANCE_BPS = 10n
-const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|claim|tx> [--testnet] — see gang help'
+const USAGE = 'usage: gang fair <list|info|status|create|mint|withdraw|buy|sell|claim|tx> [--testnet] — see gang help'
 
 export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
@@ -334,7 +337,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     const want = parseIntIn(fail, 'shares', opt('shares'), 1, 10_000)
     const sale = await saleOf(ctx, token)
     if (!sale) return notFair(token)
-    if (sale.status !== 'minting') return fail(`sale is ${sale.status}, not minting`, { hint: 'it launched: trade the token on PancakeSwap' })
+    if (sale.status !== 'minting') {
+      return fail(`sale is ${sale.status}, not minting`, { hint: `it launched: buy in the pool with gang fair buy --token ${token} --amount <quote>${testnet ? ' --testnet' : ''}` })
+    }
     const me = walletFor(ctx, opt('from'))
     if (sale.gate !== zeroAddress && (await ctx.read(sale.gate, ERC721_ABI, 'balanceOf', [me])) === 0n) {
       return fail('this wallet holds no Agent ID; fair mint is Agent-only', { wallet: me })
@@ -379,9 +384,8 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (sale.status !== 'minting') {
       return fail(`sale is ${sale.status}: withdraw only while minting`, sale.launched ? {
         pair: sale.pair,
-        hint: `it launched: \`gang fair status --token ${token}${testnet ? ' --testnet' : ''}${opt('from') ? ` --from ${opt('from')}` : ''} [--slippage 1]\``
-          + ' shows poolSellAll for the whole balance (expectOut, and minOut at --slippage, default 1%); '
-          + POOL_SELL_HINT,
+        hint: `it launched: sell in the pool with \`gang fair sell --token ${token} (--amount <tokens> | --all)${testnet ? ' --testnet' : ''}${opt('from') ? ` --from ${opt('from')}` : ''} [--slippage 1] [--to-bnb]\``
+          + ' (through GangRouter; minOut from the tax handler\'s previewSellNextBlock)',
       } : {})
     }
     const me = walletFor(ctx, opt('from'))
@@ -404,6 +408,60 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
         ? `no progress for 7 days: no exit fee, the full mint price back; the ${sale.mintFeePct}% paid at mint is not returned`
         : `mint price − ${sale.exitFeeNowPct}% exit fee (none after 7 days without 10 new shares); the ${sale.mintFeePct}% paid at mint is not returned`,
     }, rawOnly, summarize))
+  }
+
+  if (sub === 'buy' || sub === 'sell') {
+    // after launch: trade the token in its PancakeSwap pool through GangRouter (the 打新 pool tax applies both ways)
+    const token = tokenArg(opt, fail)
+    const sale = await saleOf(ctx, token)
+    if (!sale) return notFair(token)
+    if (!sale.launched || !sale.pair) {
+      return fail(`sale is ${sale.status}: gang fair ${sub} trades the token in its pool after launch`, {
+        hint: sub === 'buy' ? 'while minting, buy shares with gang fair mint --shares <n>' : 'while minting, sell shares back with gang fair withdraw (--shares <n> | --all)',
+      })
+    }
+    const slippage = parseNum(fail, 'slippage', opt('slippage', '1'), 0, 50)
+    if (sub === 'sell' && flag('all') === !!opt('amount')) fail('pass exactly one of --amount <tokens> or --all')
+    if (sub === 'buy' && !flag('amount')) fail('--amount <quote (or BNB) to spend> required')
+    let buyTaxBps, sellTaxBps, handler
+    try {
+      ;[buyTaxBps, sellTaxBps, handler] = await Promise.all([
+        ctx.read(token, TAX_ABI, 'buyTaxBps'), ctx.read(token, TAX_ABI, 'sellTaxBps'), ctx.read(ctx.pad, PAD_ABI, 'taxHandler'),
+      ])
+    } catch (e) {
+      // never guess 0%: the minimum would ignore the tax
+      return fail('cannot read the token\'s pool tax rates (buyTaxBps / sellTaxBps) or the tax handler: no minimum is built without them', { token, detail: e.shortMessage || e.message.split('\n')[0], hint: 're-run' })
+    }
+    const me = walletFor(ctx, opt('from'))
+    // a minter still earning: selling past sellableBeforeOut drops it below the hold line and ends the reward for good
+    let outWarning = null
+    if (sub === 'sell') {
+      const shares = await ctx.read(ctx.pad, PAD_ABI, 'positions', [token, me])
+      if (shares && !(await ctx.read(handler, HANDLER_ABI, 'isOut', [token, me]))) {
+        const [tps, bal] = await Promise.all([ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE'), ctx.read(token, ERC20_ABI, 'balanceOf', [me])])
+        const line = (BigInt(shares) * tps * BigInt(Math.round(sale.holdPct * 100))) / 10_000n
+        const sellable = bal > line ? bal - line : 0n
+        const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
+        if (amount <= bal && amount > sellable) {
+          outWarning = {
+            warning: `WARNING: selling ${formatUnits(amount, 18)} tokens goes past sellableBeforeOut (${formatUnits(sellable, 18)}): this wallet drops below its hold line (${formatUnits(line, 18)} tokens) and loses the holder reward FOR GOOD — buying back does not restore it`,
+            sellableBeforeOut: formatUnits(sellable, 18), holdLineTokens: formatUnits(line, 18), balance: formatUnits(bal, 18),
+          }
+          if (!flag('confirm-out')) {
+            return fail(outWarning.warning, {
+              ...outWarning, token, wallet: me,
+              hint: `sell at most sellableBeforeOut to keep the reward, or re-run with --confirm-out once the user accepts losing it`,
+            })
+          }
+        }
+      }
+    }
+    return out(await poolTrade(ctx, {
+      side: sub, token, quote: sale.quote, me, slippage, buyTaxBps: Number(buyTaxBps), sellTaxBps: Number(sellTaxBps), handler,
+      amount: sub === 'sell' && flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: sub === 'sell' && flag('all'),
+      swapBackGas: Number(sellTaxBps) > 0, payBnb: sub === 'buy' && poolPayBnb(ctx, sale.quote, flag), toBnb: flag('to-bnb'),
+      base: { kind: 'fair', pair: sale.pair, ...(outWarning && { ...outWarning, confirmedOut: true }) },
+    }, { rawOnly, summarize, revertOf }))
   }
 
   if (sub === 'claim') {
