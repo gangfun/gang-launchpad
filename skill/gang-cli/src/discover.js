@@ -1,4 +1,7 @@
-/** Discovery for agents: ranked lists + a polling event stream, read from the gang.fun indexer API. */
+/**
+ * Discovery for agents: ranked lists + a polling event stream, read from the gang.fun indexer API.
+ * Covers LaunchpadV2 / Soft tokens and GangLaunchpad (V3 curves, 打新 sales).
+ */
 import { websiteError, twitterError } from './links.js'
 import { UA } from './version.js'
 
@@ -57,10 +60,13 @@ export function parseDuration(raw, name) {
 }
 
 /**
- * One shape for both API tracks. `v2` = quote-ERC20 curves (/stocks/tokens, LaunchpadV2 family);
- * `soft` = legacy BNB curve (/tokens, 20 BNB graduation). Amounts are human units of `quote`.
+ * One shape for every API track. `v2` = quote-ERC20 curves (/stocks/tokens, LaunchpadV2 family);
+ * `soft` = legacy BNB curve (/tokens, 20 BNB graduation); `v3` / `fair` = GangLaunchpad curves and 打新 sales
+ * (/v3/tokens, /fair/sales). Amounts are human units of `quote`. `prices`: quote address → USD, for list rows
+ * that carry no USD fields (the GangLaunchpad lists).
  */
-export function normalize(r) {
+export function normalize(r, prices) {
+  if (r.track === 'v3' || r.track === 'fair') return normalizePad(r, prices)
   const v2 = r.track === 'stocks'
   const quote = v2 ? (r.quoteSymbol || '?') : 'BNB'
   const raised = v2 ? num(r.raisedQuote) : num(r.raisedBnb)
@@ -83,6 +89,43 @@ export function normalize(r) {
   }
 }
 
+/**
+ * GangLaunchpad row: a list row (amounts in wei, no USD) or a detail row (/v3/tokens/<addr>, /fair/sales/<addr>:
+ * human amounts and USD, like V2). A 打新 sale "graduates" when it launches; its progress is shares sold.
+ */
+function normalizePad(r, prices) {
+  const fair = r.track === 'fair'
+  const dec = r.quoteDecimals ?? 18
+  const human = (v) => num(v) / 10 ** dec
+  const quoteUsd = num(r.quoteUsd) || prices?.get(r.quoteAddress?.toLowerCase()) || 0
+  const inUsd = (own, quoteAmt) => (own != null ? usd(num(own)) : quoteUsd && quoteAmt != null ? usd(num(quoteAmt) * quoteUsd) : null)
+  const graduated = fair && r.status ? r.status === 'launched' : !!r.graduated
+  const target = r.gradAmtQuote != null ? num(r.gradAmtQuote) : human(fair ? r.raiseQuote : r.gradAmt)
+  const raised = r.raisedQuote != null ? num(r.raisedQuote) : graduated ? target : fair ? num(r.sold) * human(r.sharePrice) : human(r.realQuote)
+  const remaining = graduated ? 0 : r.graduationRemainingQuote != null ? num(r.graduationRemainingQuote) : Math.max(0, target - raised)
+  const pct = (bps) => (bps == null ? null : num(bps) / 100)
+  return {
+    address: r.address, symbol: r.symbol, name: r.name, track: r.track,
+    quote: r.quoteSymbol || '?', quoteAddress: r.quoteAddress || null,
+    // 打新: the 1% pool tax after launch; V3: its own buy / sell tax (0 = untaxed)
+    taxed: fair ? (r.taxed ?? true) : r.buyTaxBps != null ? num(r.buyTaxBps) + num(r.sellTaxBps) > 0 : !!r.taxed,
+    ...(fair
+      ? { sharesLeft: r.sharesLeft ?? null, minWalletsLeft: r.minWalletsLeft ?? null, participants: r.participants ?? null, stale: r.stale ?? null }
+      : { buyTaxPct: pct(r.buyTaxBps), sellTaxPct: pct(r.sellTaxBps) }),
+    graduated, pair: r.pair || null,
+    progressPct: num(r.progressPct), raised, graduationTarget: target, remaining,
+    remainingUsd: quoteUsd ? usd(remaining * quoteUsd) : null,
+    priceUsd: r.priceUsd ?? (quoteUsd && r.priceQuote != null ? num(r.priceQuote) * quoteUsd : null),
+    fdvUsd: inUsd(r.fdvUsd, r.fdvQuote),
+    volume24hUsd: inUsd(r.volume24hUsd, r.volume24hQuote), trades24h: num(r.trades24h), trades: num(r.trades), holders: r.holders ?? null,
+    createdAt: r.createdAt, ageMin: r.createdAt ? Math.floor((now() - r.createdAt) / 60) : null,
+    lastTradeAt: r.lastTradeAt || null, creatorHandle: r.creatorHandle || null, logoUrl: r.logoUrl || null,
+    // from the token metadata; only detail rows carry them
+    website: r.website && !websiteError(r.website) ? r.website : null,
+    twitter: r.twitter && !twitterError(r.twitter) ? r.twitter : null,
+  }
+}
+
 async function pages(path, stop) {
   const rows = []
   for (let offset = 0, i = 0; i < MARKET_PAGES; i++) {
@@ -97,24 +140,58 @@ async function pages(path, stop) {
   return { rows, truncated: true }
 }
 
-/** All indexed tokens, normalized and de-duplicated. track: all | v2 | soft */
-export async function fetchMarket(track = 'all', stop) {
-  if (!['all', 'v2', 'soft'].includes(track)) throw new Error(`--track must be all, v2 or soft (got ${track})`)
-  const none = { rows: [], truncated: false }
-  const [v2, soft] = await Promise.all([
-    track === 'soft' ? none : pages('/stocks/tokens', stop),
-    track === 'v2' ? none : pages('/tokens?sort=new', stop),
-  ])
-  const seen = new Map()
-  for (const r of [...v2.rows, ...soft.rows]) {
-    const t = normalize(r)
-    if (!seen.has(t.address)) seen.set(t.address, t)
-  }
-  return { tokens: [...seen.values()], truncated: v2.truncated || soft.truncated }
+const TRACKS = ['all', 'v2', 'soft', 'v3', 'fair']
+const LISTS = { v2: '/stocks/tokens', soft: '/tokens?sort=new', v3: '/v3/tokens?status=all', fair: '/fair/sales?status=all' }
+// per-token routes: detail at `${route}/<addr>`, trades at `${route}/<addr>/trades` (V2 detail is served by /tokens)
+const DETAIL = { v2: '/tokens', soft: '/tokens', v3: '/v3/tokens', fair: '/fair/sales' }
+const TRADES = { v2: '/stocks/tokens', soft: '/tokens', v3: '/v3/tokens', fair: '/fair/sales' }
+const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'
+
+/**
+ * Quote address → USD, from the server's own prices on V2 rows (quoteUsd) and Soft rows (bnbUsd = WBNB).
+ * The GangLaunchpad lists carry no USD, so their volume / remaining / FDV are priced with this.
+ */
+function quotePrices(v2Rows, softRows) {
+  const m = new Map()
+  for (const r of v2Rows) if (r.quoteAddress && num(r.quoteUsd) > 0) m.set(r.quoteAddress.toLowerCase(), num(r.quoteUsd))
+  const bnb = softRows.find((r) => num(r.bnbUsd) > 0)
+  if (bnb && !m.has(WBNB)) m.set(WBNB, num(bnb.bnbUsd))
+  return m
 }
 
-const hint = (t) => `gang quote --token ${t.address} --bnb <amount in ${t.quote}>`
-const withHint = (t) => ({ ...t, next: t.graduated ? `trade on PancakeSwap (pair ${t.pair})` : hint(t) })
+/** All indexed tokens, normalized and de-duplicated. track: all | v2 | soft | v3 | fair */
+export async function fetchMarket(track = 'all', stop) {
+  if (!TRACKS.includes(track)) throw new Error(`--track must be one of ${TRACKS.join(', ')} (got ${track})`)
+  const want = (k) => track === 'all' || track === k
+  const none = { rows: [], truncated: false }
+  // --track v3 / fair still reads the V2 list, only for quote prices; without it those rows just have no USD
+  const priceOnly = !want('v2') && (want('v3') || want('fair'))
+  const [v2, soft, v3, fair] = await Promise.all([
+    want('v2') ? pages(LISTS.v2, stop) : priceOnly ? pages(LISTS.v2, stop).catch(() => none) : none,
+    want('soft') ? pages(LISTS.soft, stop) : none,
+    want('v3') ? pages(LISTS.v3, stop) : none,
+    want('fair') ? pages(LISTS.fair, stop) : none,
+  ])
+  const prices = quotePrices(v2.rows, soft.rows)
+  const seen = new Map()
+  for (const r of [...(priceOnly ? [] : v2.rows), ...soft.rows, ...v3.rows, ...fair.rows]) {
+    const t = normalize(r, prices)
+    if (!seen.has(t.address)) seen.set(t.address, t)
+  }
+  const truncated = (!priceOnly && v2.truncated) || soft.truncated || v3.truncated || fair.truncated
+  return { tokens: [...seen.values()], truncated }
+}
+
+/** What to run next on a token still on its curve / in its sale, or (GangLaunchpad) already in its pool. */
+function hint(t) {
+  const amount = `<amount in ${t.quote}>`
+  // graduated V3 / launched 打新: the same buy command trades the PancakeSwap pool through GangRouter
+  if (t.track === 'v3') return `gang v3 buy --token ${t.address} --amount ${amount}`
+  if (t.track === 'fair') return t.graduated ? `gang fair buy --token ${t.address} --amount ${amount}` : `gang fair mint --token ${t.address} --shares <n>`
+  return `gang quote --token ${t.address} --bnb ${amount}`
+}
+const poolOnly = (t) => t.graduated && (t.track === 'v2' || t.track === 'soft')
+const withHint = (t) => ({ ...t, next: poolOnly(t) ? `trade on PancakeSwap (pair ${t.pair})` : hint(t) })
 
 /** hot = 24h USD volume on the curve; new = newest first; near-grad = closest to graduation. */
 export function rank(tokens, sort, { limit = 10, minPct = 50, maxAgeSec = null, includeGraduated = false } = {}) {
@@ -134,19 +211,27 @@ export function rank(tokens, sort, { limit = 10, minPct = 50, maxAgeSec = null, 
   return list.slice(0, limit).map(withHint)
 }
 
-async function tokenDetail(addr, stop) {
-  const r = await get(`/tokens/${addr.toLowerCase()}`, stop)
-  if (!r) throw new Error(`token not indexed by ${API}: ${addr}. On-chain view: \`gang token --token ${addr}\``)
+/**
+ * One token from the API. `track` known (later polls) → its route; unknown → V2 / Soft first, then the
+ * GangLaunchpad routes (a V3 curve or a 打新 sale is not served by /tokens/<addr>).
+ */
+async function tokenDetail(addr, stop, track) {
+  const a = addr.toLowerCase()
+  let r = await get(`${DETAIL[track] || '/tokens'}/${a}`, stop)
+  if (!r && !track) r = (await Promise.all([get(`${DETAIL.v3}/${a}`, stop), get(`${DETAIL.fair}/${a}`, stop)])).find(Boolean)
+  if (!r) {
+    throw new Error(`token not indexed by ${API}: ${addr}. On-chain view: \`gang token --token ${addr}\` (V2 / Soft / U / S), `
+      + `\`gang v3 info --token ${addr}\` or \`gang fair info --token ${addr}\` (GangLaunchpad)`)
+  }
   return normalize(r)
 }
 
-/** One page of trades, newest first. */
+/** One page of trades, newest first. 打新 rows also carry `shares` (buy = mint, sell = withdraw while minting). */
 async function tradePage(t, offset = 0, stop) {
-  const base = t.track === 'v2' ? '/stocks/tokens' : '/tokens'
-  const page = await get(`${base}/${t.address}/trades?limit=${TRADE_PAGE}&offset=${offset}`, stop)
+  const page = await get(`${TRADES[t.track]}/${t.address}/trades?limit=${TRADE_PAGE}&offset=${offset}`, stop)
   const items = (page?.items || []).map((x) => ({
     side: x.side, trader: x.trader, traderHandle: x.traderHandle || null,
-    amount: num(x.quoteIn ?? x.bnb), quote: t.quote, tokens: num(x.tokens),
+    amount: num(x.quoteIn ?? x.bnb), quote: t.quote, tokens: num(x.tokens), ...(x.shares != null && { shares: num(x.shares) }),
     price: num(x.price), at: x.ts, tx: x.tx,
   }))
   return { items, next: page?.hasMore && page.nextOffset != null ? page.nextOffset : null }
@@ -212,7 +297,7 @@ export async function watch({ token, intervalSec = 10, minPct = 50, track = 'all
       await sleep(intervalSec)
       if (shouldStop()) return
       try {
-        const cur = await tokenDetail(token, stop)
+        const cur = await tokenDetail(token, stop, t.track)
         const { fresh, gap } = await freshTrades(cur, seen, stop)
         // advance state only after both reads succeed, so a failed tick can't swallow a prev → cur transition
         const prev = t

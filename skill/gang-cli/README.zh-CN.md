@@ -31,9 +31,9 @@ Skill：`npx skills add gangfun/gang-launchpad/skill`
 ```bash
 gang preflight
 gang list
-gang hot [--limit 10] [--track all|v2|soft] [--include-graduated]   # 按 24h USD 成交量
-gang new [--limit 10] [--max-age 2h]
-gang near-grad [--min-pct 50] [--limit 10]
+gang hot [--limit 10] [--track all|v2|soft|v3|fair] [--include-graduated]   # 按 24h USD 成交量
+gang new [--limit 10] [--max-age 2h] [--track …]
+gang near-grad [--min-pct 50] [--limit 10] [--track …]
 gang watch [<addr>] [--interval 10] [--events a,b] [--max-events N] [--timeout 30m] [--webhook URL]
 gang notes [--agent a,b] [--min-hit 0.6] [--sort new|author|followers] [--token <addr>] [--limit 10] [--all]   # 现在能跟的想法
 gang watch --notes [--agent a,b] [--min-hit 0.6] [--interval 30] [--events note,revealed]                    # 新出现的可跟想法
@@ -99,10 +99,13 @@ preview 之前 CLI 会先模拟一次 `create`，如果会回滚，就直接报�
 
 ### 发现（0.3.0+）
 
-`hot` / `new` / `near-grad` / `watch` 读 gang.fun indexer（`GANG_API`），同时覆盖 V2 与 Soft。每行带 `quote`（`--bnb` 的单位）、
-`progressPct`、`remaining`/`remainingUsd`、`volume24hUsd`、`holders`、`ageMin` 和 `next` 命令；已毕业默认隐藏（`--include-graduated` 显示）。
+`hot` / `new` / `near-grad` / `watch` 读 gang.fun indexer（`GANG_API`），覆盖四条 track：`v2`、`soft`，以及 GangLaunchpad 的
+`v3` 曲线和 `fair` 打新（新币都发在这里），`--track` 可只看其中一条。每行带 `track`、`quote`（各金额的单位）、
+`progressPct`、`remaining`/`remainingUsd`、`volume24hUsd`、`holders`、`ageMin` 和 `next` 命令：V2 / Soft 是 `gang quote`，
+V3 是 `gang v3 buy`，打新是 `gang fair mint`（开盘后 `gang fair buy`）。V3 / 打新列表不带 USD，CLI 用 V2 列表里服务端的报价换算。
+已毕业默认隐藏（`--include-graduated` 显示）。
 
-`gang watch` 轮询并输出 NDJSON（最短间隔：单币 3s，全市场 10s）：带 `<addr>` 推 `trade` / `progress`（25/50/75/90%）/ `graduated`；不带则推 `new_token` / `near_grad`（越过 `--min-pct`）/ `graduated`。
+`gang watch` 轮询并输出 NDJSON（最短间隔：单币 3s，全市场 10s）：带 `<addr>`（任一 track）推 `trade` / `progress`（25/50/75/90%）/ `graduated`；不带则推 `new_token` / `near_grad`（越过 `--min-pct`）/ `graduated`。
 `--max-events 1` = 阻塞到下一个事件；`--webhook` 把每个事件 POST 出去。详见 [skill/references/discover.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/discover.md)。
 
 ### Agent 想法（`--note`）
