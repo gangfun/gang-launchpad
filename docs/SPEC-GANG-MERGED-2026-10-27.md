@@ -235,12 +235,12 @@
 | 平台收入 | `SharedPlatformFeeBucket` |
 | 毕业 / 发射加池子 | `SharedMigrator` |
 | 固定换算额 | `QuoteRegistry` |
-| 用 BNB 买 / 打新 | `GangRouter` |
+| 用 BNB 买 / 打新、PancakeSwap 外盘买卖（`poolBuyBNB` / `poolBuy` / `poolSell` / `poolSellForBNB`） | `GangRouter`：透明代理，自身不存钱；升级由 Safe 经 48 小时 `TimelockController` 提出和执行（`ProxyAdmin` 的 owner 是时间锁） |
 
 对外接口：
 - 两个 `create` 是重载，selector 和合并前一样：V3 `create(name, symbol, logoURI, metaURI, quote, refPool, (buyTaxBps, sellTaxBps, dividendBps, recipient))`，打新 `create(name, symbol, logoURI, metaURI, quote, refPool, (raiseBnb, capBps, holdBps, mintFeeBps, exitFeeBps), devShares)`。
 - 事件名、参数、topic0 都和合并前一样；V3 `Created`（8 个参数）和打新 `Created`（13 个参数）都从内盘地址发出。
-- 用错种类的币调用（例如对打新币调 `buy`）会回滚：`UnknownToken`，或者 `WrongKind`【待定：合约最后是否加这个错误】。
+- 用错种类的币调用（例如对打新币调 `buy`）会回滚：`UnknownToken`（合约没有单独的 `WrongKind` 错误）。
 - 代币新错误：`Untaxed`（对无税币设 pair）、`NotReclaimable`（对 V3 币收回）、`NotLocked`（发射后收回，或毕业 / 发射后 `pullFor`）。
 - 替人交易（§9）：`buyFor` / `mintFor`（原有）、`sellFor(trader, token, tokensIn, minQuoteOut)` `0x9d10cdb1`、`withdrawFor(trader, token, shares, minPayout)` `0x60382b4e`（新增）；代币 `pullFor(owner, spender, amount)` `0x7d18ac71` 只有内盘能调；内盘新错误 `TraderNotOrigin`。
 
@@ -250,14 +250,15 @@
 
 | 合约 | 能做 | 不能做 |
 |---|---|---|
-| `GangLaunchpad` | 路由白名单；准入开关和 Agent ID 合约；V3 单地址上限开关；V3 池子工厂、TWAP 窗口、中转池；pair 工厂【待定：是否改为不可变量】；`setMigrator` 只能一次 | 改任何已有币的税率、分红比例、接收地址、毕业额、募集额、每份价格；动内盘托管的钱 |
+| `GangLaunchpad` | 路由白名单；准入开关和 Agent ID 合约；V3 单地址上限开关；V3 池子工厂、TWAP 窗口、中转池；pair 工厂（`setPairFactory`，只用于给之后新建的币的参考池定价）；`setMigrator` 只能一次 | 改任何已有币的税率、分红比例、接收地址、毕业额、募集额、每份价格；动内盘托管的钱 |
 | `GangTaxHandler` | 接收地址白名单；keeper（`setKeeper` 一生一次，之后提议 → 48 小时 → 接受）；换币路由（提议 → 48 小时 → 接受）；可代替 keeper 调 `process`；`setLaunchpad` 只能一次 | 改已有币的路由；动欠接收地址的钱 |
 | `SharedDividendVault` | 新币的门槛；排除合约地址 | 给已绑定的内盘换 operator；排除普通钱包 |
 | `SharedPlatformFeeBucket` | operator、金库、回购合约、keeper（同上的时间锁）、7 天应急出口 | 自定义兑换路径（只有固定路径的 `collectPlatform`） |
 | `SharedMigrator` | 只能再加内盘 | 移除内盘 |
 | `QuoteRegistry` | 给报价币设固定换算额（只影响之后创建的币） | |
+| `GangRouter`（经 `TimelockController`） | 提出并在 48 小时后执行实现升级（提案、执行、取消都只给 Safe，时间锁没有 admin） | 跳过 48 小时；动用户的钱（路由不存钱，只花用户为某笔交易授权的数额） |
 
-合约不可升级，没有暂停开关。出问题时能用的手段见运行手册 §9。
+除 `GangRouter` 以外的合约都不可升级，也都没有暂停开关。出问题时能用的手段见运行手册 §9。
 
 ---
 

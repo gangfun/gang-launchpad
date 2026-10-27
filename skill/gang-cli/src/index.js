@@ -253,7 +253,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          minOut for amountOutMin; also for a wallet that only bought in the pool)
   gang fair claim --token <addr>         claim the holder reward
   gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
-                                         --testnet = BSC testnet; mainnet needs GANG_PAD until this CLI ships the address; --calldata prints the raw tx
+                                         --testnet = BSC testnet (mainnet addresses are built in); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
                [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle]
@@ -319,7 +319,7 @@ GANG_UPDATE_CHECK, GANG_UPDATE_URL,
 GANG_PAD / GANG_TESTNET_PAD (the one GangLaunchpad behind both gang v3 and gang fair; old names GANG_V3_PAD / GANG_FAIR_PAD
 and GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD still work as aliases), GANG_TESTNET_RPC_URL (aliases
 GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET_ROUTER (alias GANG_ROUTER_TESTNET; GangRouter
-for BNB buys / mints and every pool trade; unset on mainnet = curve buys pay from WBNB, pool trades are refused)`
+for BNB buys / mints and every pool trade; both default to the built-in mainnet / testnet set 10 addresses)`
 
 function summarizePreview(p, extra = {}) {
   if (!p.success) return { success: false, step: extra.step, error: p.error }

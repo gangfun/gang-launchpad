@@ -22,7 +22,7 @@ export const MAINNET_GANG = {
   pad: '0x15CFD2dc8278Fb87a1783ef42111618E20874365',
   router: '0xE040445690Aa56C8b68B7f7038C7b2562B5079C4',
 }
-// 旧部署兼容，第 8 套填好后可删: testnet set 7 (before the merge: one pad per kind, one router for both).
+// Unused while TESTNET_SET8 (set 10) is filled; kept as the fallback shape: testnet set 7 (one pad per kind, one router).
 const TESTNET_SET7 = {
   v3: '0x771b6dAA5240e3Cc0F0819535E8200774AFedEED',
   fair: '0xF45C221cF453d3943b00F905f66d66e34380956A',
@@ -57,7 +57,7 @@ export function padNets(kind) {
   }
 }
 
-export const NOT_ON_MAINNET = 'the gang launchpad (V3 tax tokens and 打新) has no mainnet address in this CLI version yet — set GANG_PAD (and GANG_ROUTER for BNB buys / mints) to the mainnet GangLaunchpad, or add --testnet to use the BSC testnet deployment'
+export const NOT_ON_MAINNET = 'no gang launchpad address for this network — set GANG_PAD (and GANG_ROUTER for BNB buys / mints and pool trades), or add --testnet to use the BSC testnet deployment'
 
 /**
  * Errors of the merged token (GangToken) and handler (GangTaxHandler) that can surface through a pad call, plus the
