@@ -1034,9 +1034,11 @@ contract MergeGuardsTest is GangFixture {
         }
     }
 
-    // ================================================================ 3. token kinds
+    // ================================================================ 3. token kinds (end to end)
+    // Token-level cases (a test contract playing the pad) are in test/gang/GangToken.t.sol (feat/merge-token); these
+    // go through the real pad: create → curve / mint → graduation / launch → pool.
     /// @notice §12: `reclaim` only on 打新 tokens and only while locked; a V3 token (taxed or not) never has it.
-    function test_merge_reclaimOnlyFair() public {
+    function test_merge_e2e_reclaimOnlyFair() public {
         address alice = _newAgent();
         address tV = _createV3(alice, address(wbnb), _tax(300, 300, 5000, treasury));
         address tU = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
@@ -1075,7 +1077,7 @@ contract MergeGuardsTest is GangFixture {
 
     /// @notice An untaxed V3 token is never registered with the handler, never gets a pair set, and none of its
     ///         transfers (curve, graduation, pool, wallet to wallet) ever calls the handler.
-    function test_merge_untaxedNeverHooks() public {
+    function test_merge_e2e_untaxedNeverHooks() public {
         address alice = _newAgent();
         address bob = _newAgent();
         vm.expectCall(address(handler), abi.encodeWithSelector(GangTaxHandler.register.selector), 0);
