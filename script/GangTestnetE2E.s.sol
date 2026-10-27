@@ -292,6 +292,8 @@ contract GangTestnetE2E is Script {
             _faucet(address(quote), deployer, 3 ether);
             _swap(address(quote), f, 3 ether, deployer);
             vm.stopBroadcast();
+            // its mint used most of the prefund: the approve + a sell carrying a swap-back chunk need ~3 more
+            _prefund(m0, gasPerMinter * 3);
             vm.startBroadcast(_minterKey("gang-fair-mint-testnet", 0));
             _swap(f, address(quote), 55 * TPS, m0);
             vm.stopBroadcast();
@@ -303,6 +305,7 @@ contract GangTestnetE2E is Script {
         address m5 = _minterAddr("gang-fair-mint-testnet", 5);
         uint256 pend = vault.pending(f, m5);
         if (pend == 0) revert Check("no reward for minter 5");
+        _prefund(m5, gasPerMinter);
         vm.startBroadcast(_minterKey("gang-fair-mint-testnet", 5));
         vault.claim(f);
         vm.stopBroadcast();

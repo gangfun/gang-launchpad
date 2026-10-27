@@ -14,7 +14,7 @@
 
 | # | 项 | 谁给 | 用在哪 |
 |---|---|---|---|
-| 1 | 多签地址（BSC 上的 Safe，2/3 或 3/5，签名人分开保管） | 你 | `OWNER` |
+| 1 | 多签：Safe 1.5.0 `0x2866369F7acEFC9760bdE7779362fae5cD68B41E`（2/3 签名生效；2026-10-27 起平台 owner，V1 / V2 / S / U 的老合约已对它 `transferOwnership`，等它 accept） | 已定 | `OWNER` |
 | 2 | 合作方主网金库地址 + 名称；确认它能收报价币（合约不拒收 ERC-20、USDT 没拉黑它） | 合作方 | §3 `GangTaxHandler.list` |
 | 3 | 合作方用的报价币（WBNB 或 USDT）。USDT 不用设换算额：发币时用 USDT/WBNB 池子换算（§1） | 合作方 | 发币参数 |
 | 4 | 部署钱包：一个新热钱包，备 ≥ 0.03 BNB（`DeployGang` 一个脚本 35 笔、约 2,850 万 gas，按 0.1 gwei 估约 0.003 BNB，留余量） | 你 | `DEPLOYER_PRIVATE_KEY` |
@@ -49,10 +49,9 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 
 ```sh
 set -a; . ~/Desktop/gang-mainnet.env; set +a   # 只放 DEPLOYER_PRIVATE_KEY；不要 echo
-export OWNER=0x<owner>                       # 主网必须给；不给回滚 OwnerRequired
-# 2026-10-27 首发：0x4EEd…19d3 既部署又持有 owner，OWNER 填它自己并加下一行（不加回滚 OwnerRequired；此时没有 acceptOwnership 这一步）
-# 加了下一行但 OWNER 不是部署钱包时回滚 OwnerNotDeployer（不会悄悄忽略）
-export MAINNET_OWNER_IS_DEPLOYER=true
+export OWNER=0x2866369F7acEFC9760bdE7779362fae5cD68B41E   # 平台 Safe（2/3）；主网必须给，不给回滚 OwnerRequired；填别的地址日志打 WARN
+# 部署钱包仍是 0x4EEd…19d3。不要设 MAINNET_OWNER_IS_DEPLOYER（owner 不再是部署钱包；设了而 OWNER ≠ 部署钱包会回滚 OwnerNotDeployer）。
+# 脚本结束时 7 个合约 owner = 部署钱包、pendingOwner = Safe，日志列出这 7 个地址并打印一份 Safe Transaction Builder JSON（§3）
 # 可选：
 #   RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<名称>"   部署时就列入白名单；不填则之后由 owner handler.list
 #   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（201 上 keeper 私钥对应的地址）；主网填别的地址必须再加
@@ -111,7 +110,7 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 - 主网**不登记任何报价币**：USDT 发币时用 `USDT_REF_POOL`（Pancake V3 USDT/WBNB 0.01% 池 `0x172f…f849`，30 分钟 TWAP）换算毕业额 / 募集额。其它 18 位报价币由发币人自带参考池。
 - 换币路由（Pancake V2 Router02 `0x10ED…024E`）在构造 handler 时传入；之后要改只能 `proposeDexRouter` → 48 小时 → `acceptDexRouter`。
 - 跑完检查 `broadcast/DeployGang.s.sol/56/run-latest.json` 里所有 receipt 的 status 都是 `0x1`，确认文件里没有私钥，再提交到仓库。
-- 部署完成后删掉 `~/Desktop/gang-mainnet.env` 和 `~/Downloads` 下那份私钥文件；owner 不是部署钱包时，部署钱包把剩余 BNB 转走、不再使用。
+- 部署完成后删掉 `~/Desktop/gang-mainnet.env` 和 `~/Downloads` 下那份私钥文件；Safe accept 之后部署钱包 `0x4EEd` 不再有任何角色，把剩余 BNB 转走、不再使用。
 
 **测试网**（第 8 套）：同一个脚本，不需要 `OWNER`（默认部署钱包）、不需要 `$L`；默认复用测试网 Agent ID 和测试报价币，新部署一个黑名单报价币（`BLACKLIST_QUOTE` 可指定已有的），两种报价币按 15 枚 = 15 BNB 登记固定换算额，演示金库 `0xe22e…8c77` 列入白名单，keeper = 部署钱包。
 
@@ -146,7 +145,7 @@ BSC_RPC_URL=https://rpc-bsc.48.club BSC_TESTNET_RPC_URL=$T \
 ```sh
 c() { cast call "$@" --rpc-url $R; }
 ALL="$GANG_PAD $GANG_TAX_HANDLER $QUOTE_REGISTRY $PLATFORM_BUCKET $DIVIDEND_VAULT $MIGRATOR $TOKEN_DEPLOYER"
-# 7 个带 owner 的合约：owner 还是部署钱包，pendingOwner 是多签（MAINNET_OWNER_IS_DEPLOYER=true 时 owner 就是部署钱包、pendingOwner 为 0x0）
+# 7 个带 owner 的合约：Safe accept 之前 owner 是部署钱包 0x4EEd…、pendingOwner 是 Safe 0x2866…B41E；accept 之后 owner = Safe、pendingOwner = 0x0
 for a in $ALL; do echo $a $(c $a "owner()(address)") $(c $a "pendingOwner()(address)"); done
 # 内盘：两种币都在这一个地址上
 c $GANG_PAD "taxHandler()(address)"; c $GANG_PAD "dividendVault()(address)"; c $GANG_PAD "platformBucket()(address)"; c $GANG_PAD "migrator()(address)"
@@ -179,7 +178,7 @@ c $GANG_PAD "routers(address)(bool)" $GANG_ROUTER
 
 ## 3. 多签要签的交易
 
-**必须（从这一刻起所有合约归多签）**：对下面每个带 owner 的合约各调一次 `acceptOwnership()`（`MAINNET_OWNER_IS_DEPLOYER=true` 时没有这一步，之后另行 `transferOwnership(多签)`）。合并前是 9 个，合并后是 7 个（含 TokenDeployer）：
+**必须（从这一刻起所有合约归 Safe `0x2866369F7acEFC9760bdE7779362fae5cD68B41E`）**：Safe 对下面 7 个合约各调一次 `acceptOwnership()`（selector `0x79ba5097`，无参数，value 0）。最省事的做法：把部署日志 `--- Safe Transaction Builder JSON ---` 下面那一行存成 `.json`，在 Safe 的 Transaction Builder 里 Load，核对 7 个 `to` 与日志 `PENDING owner` 列出的地址一致，一笔批量交易发起，2/3 签名后执行。合并前是 9 个，合并后是 7 个（含 TokenDeployer）：
 
 | # | 合约 | 地址 | 多签之后能做什么（详见审计说明 §4、§20，规格 §8） |
 |---|---|---|---|
@@ -193,13 +192,13 @@ c $GANG_PAD "routers(address)(bool)" $GANG_ROUTER
 
 两个库（`CurveLogic` / `FairLogic`）和 GangRouter 没有 owner。
 
-接受后，再跑一遍 §2 的 owner 循环，确认每个合约的 owner 都是多签，pendingOwner 都是 `0x0`。**部署钱包此后不应有任何角色**：它不是任何合约的 owner、keeper 或 operator（keeper 是 `KEEPER` 默认的 `0xB6f1…cFc7`）。
+接受后，再跑一遍 §2 的 owner 循环，确认每个合约的 owner 都是 Safe `0x2866…B41E`，pendingOwner 都是 `0x0`；也可以用 `OWNER=0x2866…B41E GANG_PAD=… GANG_ROUTER=…` 重跑脚本核对（不发交易，`_check` 通过即可）。**部署钱包此后不应有任何角色**：它不是任何合约的 owner、keeper 或 operator（keeper 是 `KEEPER` 默认的 `0xB6f1…cFc7`）。
 
 **合作方**（部署时没设 `RECIPIENT` 的话）：`GangTaxHandler.list(<合作方金库>, "<名称>")`（`GANG_TAX_HANDLER`）。
 
 **建议，不挡上线**：
-- V2 那几份（owner 现为普通钱包 `0x4EEd…`）：`0x4EEd` 对 V2 发射台、分账合约 `0xBDDd…F111`、QuoteRegistry `0x053C…060D`、DividendVault 分别 `transferOwnership(多签)`，多签逐个 `acceptOwnership()`。
-- 回购合约 GangBuybackBurner `0x3812…363B`（owner 也是 `0x4EEd`，能改兑换路由，从而截走回购那一部分）：同样转给多签。
+- V1 / V2 / S / U 的老合约：`0x4EEd` 已于 2026-10-27 对它们 `transferOwnership(Safe)`，Safe 用另一份 Transaction Builder JSON 逐个 `acceptOwnership()`（不在本手册范围；accept 之前 owner 仍是 `0x4EEd`）。
+- 回购合约 GangBuybackBurner `0x3812…363B`（能改兑换路由，从而截走回购那一部分）：确认它在上面那批里，owner 最终是 Safe。
 
 ---
 

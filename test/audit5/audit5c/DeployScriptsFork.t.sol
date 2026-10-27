@@ -37,6 +37,10 @@ contract DeployGangHarness is DeployGang {
     function padsLine(Stack memory s) external pure returns (string memory) {
         return _padsLine(s);
     }
+
+    function safeAcceptJson(Stack memory s, Cfg memory c) external pure returns (string memory) {
+        return _safeAcceptJson(s, c);
+    }
 }
 
 /// @notice script/DeployGang.s.sol simulated in-process on BSC forks (no broadcast): the whole merged stack in one run,
@@ -49,7 +53,8 @@ contract DeployGangHarness is DeployGang {
 ///         The script reads its config through `vm.setEnv`, which is process-wide: run with `--threads 1`.
 contract DeployScriptsForkTest is Test {
     uint256 constant PK = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
-    address multisig = address(0xBEEF);
+    /// @dev The platform Safe (2026-10-27): every mainnet case runs the OWNER != deployer path with the real owner.
+    address multisig = M.OWNER_SAFE;
     address deployer;
     bool forked;
 
@@ -252,6 +257,57 @@ contract DeployScriptsForkTest is Test {
         vm.expectRevert();
         h.check(fake, cf);
         h.check(st, cf); // the real one still passes
+    }
+
+    /// Mainnet with OWNER = the platform Safe: the deploy key owns all 7 with the Safe pending, the self-check accepts
+    /// that state, a re-run with the Safe is idempotent, a re-run with another OWNER is refused, and the Safe
+    /// Transaction Builder batch has exactly the 7 acceptOwnership() calls.
+    function test_fork_deploy_mainnetSafeOwner() public {
+        if (!forked) return;
+        assertEq(multisig, 0x2866369F7acEFC9760bdE7779362fae5cD68B41E);
+        DeployGang.Stack memory s = _deploy();
+        address[7] memory owned = _owned(s);
+        for (uint256 i; i < owned.length; i++) {
+            assertEq(Ownable2Step(owned[i]).owner(), deployer);
+            assertEq(Ownable2Step(owned[i]).pendingOwner(), M.OWNER_SAFE, "Safe pending");
+        }
+        h.check(st, cf);
+
+        string memory j = h.safeAcceptJson(st, cf);
+        assertEq(vm.parseJsonString(j, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(j, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
+        assertFalse(vm.keyExistsJson(j, ".transactions[7]"), "exactly 7");
+        for (uint256 i; i < 7; i++) {
+            string memory k = string.concat(".transactions[", vm.toString(i), "]");
+            assertEq(vm.parseJsonAddress(j, string.concat(k, ".to")), owned[i]);
+            assertEq(vm.parseJsonString(j, string.concat(k, ".data")), "0x79ba5097");
+            assertEq(vm.parseJsonString(j, string.concat(k, ".value")), "0");
+        }
+        assertEq(bytes4(0x79ba5097), Ownable2Step.acceptOwnership.selector);
+
+        // the Safe accepts: from then on the Safe owns everything and a re-run with it still passes the self-check
+        for (uint256 i; i < owned.length; i++) {
+            vm.prank(M.OWNER_SAFE);
+            Ownable2Step(owned[i]).acceptOwnership();
+            assertEq(Ownable2Step(owned[i]).owner(), M.OWNER_SAFE);
+        }
+        h.check(st, cf);
+    }
+
+    /// Re-runs against a Safe-pending stack: the same OWNER is idempotent, another OWNER is refused.
+    function test_fork_deploy_mainnetSafeOwnerRerun() public {
+        if (!forked) return;
+        DeployGang.Stack memory s = _deploy();
+        _rerunEnv(s);
+        new DeployGang().run();
+        assertEq(Ownable2Step(s.pad).pendingOwner(), M.OWNER_SAFE);
+        vm.setEnv("OWNER", vm.toString(address(0xBAD)));
+        DeployGang d = new DeployGang();
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.PendingOwnerMismatch.selector, s.quoteRegistry));
+        d.run();
+        vm.stopBroadcast();
+        _clear();
+        assertEq(Ownable2Step(s.handler).pendingOwner(), M.OWNER_SAFE, "pending Safe kept");
     }
 
     /// Mainnet: MAINNET_OWNER_IS_DEPLOYER=true with an OWNER that is not the deployer is refused, not ignored.

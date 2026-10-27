@@ -32,7 +32,10 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 ///         Re-run on an existing stack: GANG_PAD (+ GANG_ROUTER) skips every deploy and wiring step and only hands over
 ///         ownership again (idempotent; a different OWNER than the pending one is refused, PendingOwnerMismatch) and
 ///         re-runs `_check` — e.g. to verify a deployment from another machine.
-/// @dev Mainnet broadcast is refused unless GANG_MAINNET_OK=true.
+/// @dev Mainnet broadcast is refused unless GANG_MAINNET_OK=true. Mainnet OWNER is the platform Safe
+///      0x2866369F7acEFC9760bdE7779362fae5cD68B41E (since 2026-10-27; a WARN line for anything else): every owned contract
+///      ends with owner = the deployer and pendingOwner = the Safe, and the log prints the 7 addresses plus a Safe
+///      Transaction Builder JSON of the 7 acceptOwnership() calls.
 ///      Env: DEPLOYER_PRIVATE_KEY; OWNER (required on mainnet; = the deployer only with MAINNET_OWNER_IS_DEPLOYER=true,
 ///      else OwnerRequired; the flag with another OWNER: OwnerNotDeployer); optional KEEPER (mainnet: must be
 ///      0xB6f1…cFc7 unless KEEPER_OVERRIDE_OK=true, KeeperNotDefault; testnet default the deployer), FEE_VAULT / BURNER
@@ -154,6 +157,9 @@ contract DeployGang is Script {
             if (owner == address(0)) revert OwnerRequired();
             if (owner == deployer && !ownerIsDeployer) revert OwnerRequired();
             if (owner != deployer && ownerIsDeployer) revert OwnerNotDeployer();
+            if (owner != M.OWNER_SAFE) {
+                console.log("WARN mainnet OWNER is not the platform Safe 0x2866...B41E:", owner);
+            }
         }
     }
 
@@ -557,7 +563,46 @@ contract DeployGang is Script {
             console.log("PENDING owner: handler.list(<partner vault>, <label>) before the partner creates taxed tokens");
         }
         if (c.owner != c.deployer) {
-            console.log("PENDING owner: acceptOwnership() on pad, handler, registry, bucket, vault, migrator, deployer");
+            console.log("PENDING owner: acceptOwnership() (0x79ba5097) from", c.owner, "on these 7 contracts:");
+            address[7] memory owned = _owned(s);
+            string[7] memory names = [
+                "QuoteRegistry",
+                "SharedPlatformFeeBucket",
+                "SharedDividendVault",
+                "SharedMigrator",
+                "TokenDeployer",
+                "GangTaxHandler",
+                "GangLaunchpad"
+            ];
+            for (uint256 i; i < owned.length; i++) {
+                console.log(" ", names[i], owned[i]);
+            }
+            console.log("--- Safe Transaction Builder JSON (save as a .json file, Transaction Builder > Load) ---");
+            console.log(_safeAcceptJson(s, c));
         }
+    }
+
+    /// @dev One Safe Transaction Builder batch: acceptOwnership() (selector 0x79ba5097) on each of the 7 owned contracts.
+    function _safeAcceptJson(Stack memory s, Cfg memory c) internal pure returns (string memory j) {
+        address[7] memory owned = _owned(s);
+        j = string.concat(
+            '{"version":"1.0","chainId":"',
+            c.mainnet ? "56" : "97",
+            '","createdAt":0,"meta":{"name":"gang: accept ownership of the 7 merged GangLaunchpad contracts",',
+            '"description":"acceptOwnership() on each contract whose pendingOwner is this Safe","txBuilderVersion":"1.16.5",',
+            '"createdFromSafeAddress":"',
+            vm.toString(c.owner),
+            '"},"transactions":['
+        );
+        for (uint256 i; i < owned.length; i++) {
+            j = string.concat(
+                j,
+                i == 0 ? "" : ",",
+                '{"to":"',
+                vm.toString(owned[i]),
+                '","value":"0","data":"0x79ba5097","contractMethod":null,"contractInputsValues":null}'
+            );
+        }
+        j = string.concat(j, "]}");
     }
 }

@@ -12,6 +12,12 @@ library GangMainnetRefs {
     ///         --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
     address internal constant POOL_CHECK = 0xd2B159820749f178503E4faBCB18A7Ae4492bDb3;
     address internal constant AGENT_ID_REGISTRY = 0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F;
+    /// @notice The owner every new contract is handed to (Ownable2Step; the Safe accepts): the Safe 1.5.0 multisig
+    ///         (2 of 3) that owns the platform since 2026-10-27 (= MainnetAddresses.OWNER). OWNER stays an explicit env
+    ///         var; the script warns when it is not this.
+    address internal constant OWNER_SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
+    /// @notice The deploy wallet (no role after the hand-over).
+    address internal constant DEPLOYER = 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3;
     /// @notice The keeper wallet on the production server (201).
     address internal constant KEEPER = 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7;
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
