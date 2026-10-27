@@ -179,10 +179,11 @@ abstract contract SharedPlatform is Script {
         if (!enabled || amount != graduationQuoteAmount) reg.setQuote(quote, true, graduationQuoteAmount);
     }
 
-    /// @dev Mainnet needs OWNER (the multisig): leaving every contract on the deploy key is refused.
+    /// @dev Mainnet needs OWNER (normally another key than the deployer): leaving every contract on the deploy key is
+    ///      refused unless MAINNET_OWNER_IS_DEPLOYER=true says so explicitly (owner and deployer are the same wallet).
     function _owner(bool mainnet, address deployer) internal view returns (address owner) {
         owner = vm.envOr("OWNER", deployer);
-        if (mainnet && owner == deployer) revert OwnerRequired();
+        if (mainnet && owner == deployer && !vm.envOr("MAINNET_OWNER_IS_DEPLOYER", false)) revert OwnerRequired();
     }
 
     function _handOver(address owner, address deployer, address target) internal {

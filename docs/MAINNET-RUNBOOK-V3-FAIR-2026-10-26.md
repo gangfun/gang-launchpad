@@ -46,6 +46,8 @@ BSC_RPC_URL=https://rpc-bsc.48.club forge test --match-path 'test/audit5/**' --t
 ```sh
 export DEPLOYER_PRIVATE_KEY=0x…            # 只在这台机器的这个 shell 里
 export OWNER=0x<多签>
+# owner 和部署钱包是同一个钱包时（2026-10-27 首发：0x4EEd…19d3 既部署又持有 owner），OWNER 填它自己并加：
+# export MAINNET_OWNER_IS_DEPLOYER=true   # 不加时脚本回滚 OwnerRequired；此时没有 acceptOwnership 这一步
 export RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<合作方名称>"   # 可选：也可以之后由多签 list
 # 可选：BURNER=0x… / FEE_VAULT=0x…  新手续费池的回购合约 / 金库（不填或填 0 = 照抄 V2 手续费池的）。
 #   部署时就按它接线，脚本最后也按它核对；第 2 步复用时必须给和第 1 步相同的值（或都不填），否则 WiringCheck("bucket burner")
