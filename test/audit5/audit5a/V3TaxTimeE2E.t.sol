@@ -22,7 +22,9 @@ contract V3TaxTimeE2E is LaunchpadV3Test {
             if (IERC20(t).balanceOf(w) == 0) break;
             holders.push(w);
         }
-        for (uint256 i = 0; i < 6; i++) holders.push(address(uint160(0xD0000 + i)));
+        for (uint256 i = 0; i < 6; i++) {
+            holders.push(address(uint160(0xD0000 + i)));
+        }
     }
 
     function _owedAll() internal view returns (uint256 owed, uint256 units) {

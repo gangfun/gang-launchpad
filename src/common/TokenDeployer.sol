@@ -28,10 +28,7 @@ contract TokenDeployer is Ownable2Step {
     }
 
     /// @notice LaunchpadV3 untaxed token.
-    function deployPlain(string calldata name, string calldata symbol, string calldata uri)
-        external
-        returns (address)
-    {
+    function deployPlain(string calldata name, string calldata symbol, string calldata uri) external returns (address) {
         _onlyLaunchpad();
         return _record(address(new LaunchTokenV3(name, symbol, msg.sender, uri)));
     }

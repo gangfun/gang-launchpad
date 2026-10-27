@@ -57,14 +57,18 @@ contract Agent5b {
 
 /// @dev A seller's contract: donates 1 wei of quote to the pair, then sells through the router in the same tx.
 contract SkipSeller {
-    function sell(address router, address token, address quote, address pair, uint256 amount) external returns (uint256) {
+    function sell(address router, address token, address quote, address pair, uint256 amount)
+        external
+        returns (uint256)
+    {
         IERC20(quote).transfer(pair, 1);
         IERC20(token).approve(router, amount);
         address[] memory path = new address[](2);
         path[0] = token;
         path[1] = quote;
         uint256 b = IERC20(quote).balanceOf(address(this));
-        IRouterA(router).swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, path, address(this), block.timestamp);
+        IRouterA(router)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, 0, path, address(this), block.timestamp);
         return IERC20(quote).balanceOf(address(this)) - b;
     }
 }
@@ -127,7 +131,12 @@ contract SwapBackAudit5bTest is Test {
 
         vm.prank(dev);
         t = pad.create(
-            "A5", "A5", "", "", WBNB, address(0),
+            "A5",
+            "A5",
+            "",
+            "",
+            WBNB,
+            address(0),
             ILaunchpadV3.TaxConfig({buyTaxBps: 300, sellTaxBps: SELL_TAX, dividendBps: 5000, recipient: treasury})
         );
         for (uint256 i = 0; i < 400 && TaxLaunchTokenV3(t).pair() == address(0); i++) {
@@ -157,7 +166,8 @@ contract SwapBackAudit5bTest is Test {
         vm.startPrank(who);
         IERC20(tokenIn).approve(V2_ROUTER, amountIn);
         uint256 before = IERC20(tokenOut).balanceOf(who);
-        IRouterA(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, who, block.timestamp);
+        IRouterA(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, who, block.timestamp);
         got = IERC20(tokenOut).balanceOf(who) - before;
         vm.stopPrank();
     }
@@ -235,7 +245,8 @@ contract SwapBackAudit5bTest is Test {
         vm.startPrank(seller);
         IERC20(t).approve(V2_ROUTER, amount);
         uint256 b = IERC20(WBNB).balanceOf(seller);
-        IRouterA(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, quoted, path, seller, block.timestamp);
+        IRouterA(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, quoted, path, seller, block.timestamp);
         vm.stopPrank();
         assertEq(IERC20(WBNB).balanceOf(seller) - b, quoted, "exactly the next-block preview");
     }
@@ -271,9 +282,9 @@ contract SwapBackAudit5bTest is Test {
                 if (minOk == 0) minOk = gl;
                 bool ran = handler.accruedTax(t) == acc - chunk + (amount * SELL_TAX) / 10_000;
                 if (!ran) okNoChunk++;
-                if (
-                    handler.pendingHolderUnits(t) != 0 || handler.owedPlatformOf(WBNB) != 0 || handler.owedOf(t) != 0
-                ) okDeferred++;
+                if (handler.pendingHolderUnits(t) != 0 || handler.owedPlatformOf(WBNB) != 0 || handler.owedOf(t) != 0) {
+                    okDeferred++;
+                }
             }
             vm.revertToState(snap);
         }

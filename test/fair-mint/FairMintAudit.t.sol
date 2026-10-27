@@ -210,8 +210,12 @@ contract FairMintAuditTest is FairMintTest {
         address v = _minter(8);
         // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
+        );
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         _sell(t, v, 10 * TPS); // the handler's setShare reverts (not out of gas) → swallowed, the sell goes through
         assertEq(IERC20(t).balanceOf(v), 90 * TPS);

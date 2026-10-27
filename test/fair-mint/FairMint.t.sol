@@ -131,7 +131,8 @@ contract FairMintTest is Test {
         view
         returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 lastMintAt, address pair)
     {
-        (, uint64 last, uint16 cap,,, uint16 sold_, bool launched_,,,, uint128 price, address pair_,,) = pad.sales(token);
+        (, uint64 last, uint16 cap,,, uint16 sold_, bool launched_,,,, uint128 price, address pair_,,) =
+            pad.sales(token);
         return (cap, sold_, launched_, price, last, pair_);
     }
 
@@ -690,8 +691,12 @@ contract FairMintTest is Test {
         _fill(t);
         // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
+        );
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         address m = _minter(0);
         _sell(t, m, 60 * TPS);

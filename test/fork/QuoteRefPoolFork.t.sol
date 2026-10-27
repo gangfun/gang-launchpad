@@ -74,8 +74,13 @@ contract QuoteRefPoolForkTest is Test {
         DividendVault v2Div = new DividendVault(owner);
         PlatformFeeBucket v2Bucket = new PlatformFeeBucket(owner, owner);
         v2 = new LaunchpadV2(
-            owner, address(reg), address(v2Div), address(v2Bucket),
-            address(new PostGradTaxHandler(owner, address(v2Div), address(v2Bucket))), WBNB, V2_FACTORY
+            owner,
+            address(reg),
+            address(v2Div),
+            address(v2Bucket),
+            address(new PostGradTaxHandler(owner, address(v2Div), address(v2Bucket))),
+            WBNB,
+            V2_FACTORY
         );
         v2.setV3Factory(V3_FACTORY);
         v2.setBridgePool(USDT, bridge);

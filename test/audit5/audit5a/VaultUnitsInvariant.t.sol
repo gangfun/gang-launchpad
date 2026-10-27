@@ -50,7 +50,9 @@ contract VaultActor is Test {
     }
 
     function _snapOther(uint256 t) internal view returns (uint256[5] memory p) {
-        for (uint256 i = 0; i < 5; i++) p[i] = vault.pending(tokens[1 - t], users[i]);
+        for (uint256 i = 0; i < 5; i++) {
+            p[i] = vault.pending(tokens[1 - t], users[i]);
+        }
     }
 
     function _checkOther(uint256 t, uint256[5] memory p) internal view {

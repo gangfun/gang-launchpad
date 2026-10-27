@@ -83,14 +83,7 @@ contract FairMintForkTest is Test {
         handler = new HolderRewardHandler(owner, address(vault), address(bucket), V2_ROUTER);
         agent = new ForkAgent();
         pad = new FairMintPad(
-            owner,
-            address(reg),
-            address(vault),
-            address(bucket),
-            address(handler),
-            address(deployer),
-            WBNB,
-            V2_FACTORY
+            owner, address(reg), address(vault), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
         );
         mig = new SharedMigrator(owner, V2_FACTORY);
 
@@ -271,9 +264,8 @@ contract FairMintForkTest is Test {
         IERC20(t).approve(V2_ROUTER, amount);
         uint256 got0 = IERC20(WBNB).balanceOf(m);
         uint256 g = gasleft();
-        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amount, quoted, path, m, block.timestamp
-        );
+        IPancakeRouter02(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, quoted, path, m, block.timestamp);
         uint256 gasWithChunk = g - gasleft();
         vm.stopPrank();
         assertEq(IERC20(WBNB).balanceOf(m) - got0, quoted, "previewSell is exact");

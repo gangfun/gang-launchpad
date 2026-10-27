@@ -205,7 +205,9 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         vm.expectRevert(LaunchpadV3.QuoteNotAllowed.selector);
         pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));
 
-        vm.mockCall(address(pad.tokenDeployer()), abi.encodeWithSignature("isLaunchToken(address)", x), abi.encode(false));
+        vm.mockCall(
+            address(pad.tokenDeployer()), abi.encodeWithSignature("isLaunchToken(address)", x), abi.encode(false)
+        );
         vm.mockCall(address(divVault), abi.encodeWithSignature("launchpadOf(address)", x), abi.encode(address(0)));
         vm.prank(agent);
         address y = pad.create("Y", "Y", "", "", x, address(0), _tax(200, 200, 0, treasury));

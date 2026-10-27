@@ -80,14 +80,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
         SharedDividendVault vault = SharedDividendVault(s.vault);
         TaxHandlerV3 handler = new TaxHandlerV3(deployer, address(vault), s.bucket, dexRouter);
         LaunchpadV3 pad = new LaunchpadV3(
-            deployer,
-            s.quoteRegistry,
-            address(vault),
-            s.bucket,
-            address(handler),
-            s.tokenDeployer,
-            wbnb,
-            factory
+            deployer, s.quoteRegistry, address(vault), s.bucket, address(handler), s.tokenDeployer, wbnb, factory
         );
         (s.handler, s.pad) = (address(handler), address(pad));
 
@@ -146,7 +139,9 @@ contract DeployLaunchpadV3 is SharedPlatform {
         }
         _checkBucket(mainnet, M.V2_PLATFORM_BUCKET, s.bucket, keeper, s.pad, s.handler);
         address[7] memory owned = [s.vault, s.migrator, s.tokenDeployer, s.handler, s.pad, s.quoteRegistry, s.bucket];
-        for (uint256 i = 0; i < owned.length; i++) _checkOwner(owner, owned[i]);
+        for (uint256 i = 0; i < owned.length; i++) {
+            _checkOwner(owner, owned[i]);
+        }
         if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }
@@ -168,9 +163,7 @@ contract DeployLaunchpadV3 is SharedPlatform {
             console.log("PENDING owner: handler.list(<partner vault>, <label>) before the partner creates tokens");
         }
         if (owner != deployer) {
-            console.log(
-                "PENDING owner: acceptOwnership() on pad, tax handler, and the five shared contracts"
-            );
+            console.log("PENDING owner: acceptOwnership() on pad, tax handler, and the five shared contracts");
             console.log("  (run DeployFairMint with the five shared addresses above BEFORE the owner accepts)");
         }
     }

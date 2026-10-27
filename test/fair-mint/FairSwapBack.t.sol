@@ -55,7 +55,9 @@ contract FairSwapBackTest is FairMintTest {
         _sell(t, _minter(4), 10 * TPS); // same block: whatever is left of the budget
         uint256 sold = accrued0 + (20 * TPS) / 100 - handler.accruedTax(t);
         assertLe(sold, budget, "never more than one budget a block");
-        assertEq(sold, (10 * TPS) / 4 * 2 < budget ? (10 * TPS) / 4 * 2 : budget, "each a quarter, capped by the budget");
+        assertEq(
+            sold, (10 * TPS) / 4 * 2 < budget ? (10 * TPS) / 4 * 2 : budget, "each a quarter, capped by the budget"
+        );
         vm.roll(vm.getBlockNumber() + 1);
         uint256 accrued = handler.accruedTax(t);
         vm.prank(_minter(4));
@@ -153,8 +155,12 @@ contract FairSwapBackTest is FairMintTest {
         (address t,) = _launched();
         // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused");
-        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused");
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
+        );
         vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.depositReward.selector), "refused");
         uint256 unsold0 = vault.unsoldUnits(t);
         _buy(t, buyer, 2 ether);

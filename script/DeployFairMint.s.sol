@@ -128,7 +128,9 @@ contract DeployFairMint is SharedPlatform {
         if (pad.taxHandler() != s.handler) revert WiringCheck("pad.taxHandler");
         _checkBucket(mainnet, M.V2_PLATFORM_BUCKET, s.bucket, keeper, s.pad, s.handler);
         address[7] memory owned = [s.vault, s.migrator, s.tokenDeployer, s.handler, s.pad, s.quoteRegistry, s.bucket];
-        for (uint256 i = 0; i < owned.length; i++) _checkOwner(owner, owned[i]);
+        for (uint256 i = 0; i < owned.length; i++) {
+            _checkOwner(owner, owned[i]);
+        }
         if (s.testQuote != address(0) && !QuoteRegistry(s.quoteRegistry).isQuoted(s.testQuote)) {
             revert WiringCheck("quote listed");
         }

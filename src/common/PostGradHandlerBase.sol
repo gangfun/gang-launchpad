@@ -326,9 +326,8 @@ abstract contract PostGradHandlerBase is Ownable2Step, ReentrancyGuard {
         if ((sellAmount * _sellTaxBps(token)) / 10_000 == 0) return (0, 0, false);
         address pair = IHasPair(token).pair();
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
-        Ref memory ref = fresh || windowOf[token].blockNumber != block.number
-            ? Ref(uint112(rT), uint112(rQ))
-            : refOf[token];
+        Ref memory ref =
+            fresh || windowOf[token].blockNumber != block.number ? Ref(uint112(rT), uint112(rQ)) : refOf[token];
         if (_belowRef(rT, rQ, ref)) return (0, 0, false);
         // a balance below its reserve: mid-swap (the pair is locked) — never sell into that (`_swapBack` refuses a
         // sell with the quote below its reserve outright)

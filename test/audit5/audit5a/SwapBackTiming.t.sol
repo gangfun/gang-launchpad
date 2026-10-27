@@ -17,7 +17,9 @@ contract SwapBackTimingTest is LaunchpadV3Test {
         t = _create(_tax(100, 100, 10_000, address(0))); // 1% / 1%, all of the rest to holders
         _graduate(t);
         pair = MockPair(TaxLaunchTokenV3(t).pair());
-        for (uint256 i = 0; i < 12; i++) _poolBuy(t, address(uint160(0xC0000 + i)), 20 ether); // backlog
+        for (uint256 i = 0; i < 12; i++) {
+            _poolBuy(t, address(uint160(0xC0000 + i)), 20 ether); // backlog
+        }
         // whale gathers tokens (untaxed wallet transfers)
         for (uint256 i = 1; i < 60; i++) {
             address w = address(uint160(0xB0000 + i));

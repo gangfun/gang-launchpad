@@ -55,9 +55,8 @@ contract KeeperSmartCollectForkTest is Test {
 
         uint256 k0 = IERC20(USDT).balanceOf(KEEPER);
         vm.prank(KEEPER);
-        (bool ok,) = s.bucket.call(
-            abi.encodeWithSignature("collectPlatformSmart(address,uint256,bytes)", WBNB, uint256(1), data)
-        );
+        (bool ok,) = s.bucket
+        .call(abi.encodeWithSignature("collectPlatformSmart(address,uint256,bytes)", WBNB, uint256(1), data));
         assertFalse(ok, "no collectPlatformSmart on the shared bucket");
         assertEq(IERC20(USDT).balanceOf(KEEPER), k0, "nothing to the keeper");
         assertEq(bucket.accruedQuote(WBNB), 10 ether, "the fees wait for the fixed-path collect");

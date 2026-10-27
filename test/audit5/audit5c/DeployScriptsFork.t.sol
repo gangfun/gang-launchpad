@@ -47,10 +47,18 @@ contract DeployScriptsForkTest is Test {
     function _clear() internal {
         // BURNER / FEE_VAULT: 0 = the default (the V2 bucket's on mainnet)
         string[8] memory k = [
-            "QUOTE_REGISTRY", "PLATFORM_BUCKET", "DIVIDEND_VAULT", "MIGRATOR", "TOKEN_DEPLOYER", "PEER_CORE", "BURNER",
+            "QUOTE_REGISTRY",
+            "PLATFORM_BUCKET",
+            "DIVIDEND_VAULT",
+            "MIGRATOR",
+            "TOKEN_DEPLOYER",
+            "PEER_CORE",
+            "BURNER",
             "FEE_VAULT"
         ];
-        for (uint256 i; i < 8; i++) vm.setEnv(k[i], vm.toString(address(0)));
+        for (uint256 i; i < 8; i++) {
+            vm.setEnv(k[i], vm.toString(address(0)));
+        }
         vm.setEnv("OWNER", vm.toString(multisig));
     }
 
@@ -119,12 +127,31 @@ contract DeployScriptsForkTest is Test {
         vm.mockCall(AGENT, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
         address dev = makeAddr("dev");
         vm.prank(dev);
-        address t = LaunchpadV3(a.pad).create("T", "T", "", "", address(0), address(0),
-            ILaunchpadV3.TaxConfig({buyTaxBps: 0, sellTaxBps: 0, dividendBps: 0, recipient: address(0)}));
+        address t = LaunchpadV3(a.pad)
+            .create(
+                "T",
+                "T",
+                "",
+                "",
+                address(0),
+                address(0),
+                ILaunchpadV3.TaxConfig({buyTaxBps: 0, sellTaxBps: 0, dividendBps: 0, recipient: address(0)})
+            );
         vm.prank(dev);
         vm.expectRevert(FairMintPad.QuoteNotAllowed.selector);
-        FairMintPad(b.pad).create("F", "F", "", "", t, address(0),
-            FairMintPad.MintConfig({raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100}), 1);
+        FairMintPad(b.pad)
+            .create(
+                "F",
+                "F",
+                "",
+                "",
+                t,
+                address(0),
+                FairMintPad.MintConfig({
+                    raiseBnb: 5 ether, capBps: 50, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
+                }),
+                1
+            );
     }
 
     /// Wiring checks that do fire.

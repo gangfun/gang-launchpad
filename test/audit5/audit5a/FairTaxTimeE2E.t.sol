@@ -41,7 +41,9 @@ contract FairTaxTimeE2E is FairMintTest {
         t = _create();
         _fill(t);
         holders.push(dev);
-        for (uint256 i = 0; i < 100; i++) holders.push(_minter(i));
+        for (uint256 i = 0; i < 100; i++) {
+            holders.push(_minter(i));
+        }
         holders.push(buyer);
         for (uint256 i = 0; i < 60; i++) {
             uint256 r = uint256(keccak256(abi.encode(seed, i)));
@@ -81,6 +83,8 @@ contract FairTaxTimeE2E is FairMintTest {
         }
         assertEq(vault.unsoldUnits(t), 0, "all sold");
         _check();
-        for (uint256 i = 0; i < holders.length; i++) assertEq(vault.pendingUnits(t, holders[i]), 0);
+        for (uint256 i = 0; i < holders.length; i++) {
+            assertEq(vault.pendingUnits(t, holders[i]), 0);
+        }
     }
 }

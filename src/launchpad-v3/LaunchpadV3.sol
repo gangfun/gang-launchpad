@@ -154,8 +154,7 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
     ) Ownable(owner_) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
-                || taxHandler_ == address(0)
-                || tokenDeployer_ == address(0) || wbnb_ == address(0)
+                || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
         ) revert ZeroAddress();
         quoteRegistry = QuoteRegistry(quoteRegistry_);
         dividendVault = SharedDividendVault(dividendVault_);
@@ -413,13 +412,10 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         v.refundGross = quoteIn - spentGross;
     }
 
-    function _execBuy(
-        Curve storage c,
-        address token,
-        address trader,
-        uint256 quoteIn,
-        BuyVars memory v
-    ) internal returns (uint256 tokensOut) {
+    function _execBuy(Curve storage c, address token, address trader, uint256 quoteIn, BuyVars memory v)
+        internal
+        returns (uint256 tokensOut)
+    {
         address quoteAddr = c.quote;
         _pullExact(quoteAddr, quoteIn);
 
@@ -522,7 +518,9 @@ contract LaunchpadV3 is ILaunchpadV3, Ownable2Step, ReentrancyGuard {
         // audit 4 (C-F3 / C-F4 / B-F1 / A-F2): never a token of this platform — a locked sibling pulled as a quote moves
         // past its wallet cap and lock; a dividend token held by the vault / bucket / a new pair earns rewards no one
         // can claim. TokenDeployer records every token of both cores; the vault also knows registered ones.
-        if (tokenDeployer.isLaunchToken(quote) || dividendVault.launchpadOf(quote) != address(0)) revert QuoteNotAllowed();
+        if (tokenDeployer.isLaunchToken(quote) || dividendVault.launchpadOf(quote) != address(0)) {
+            revert QuoteNotAllowed();
+        }
     }
 
     function _requireAgent(address account) internal view {

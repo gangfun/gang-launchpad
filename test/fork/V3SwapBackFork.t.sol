@@ -91,7 +91,12 @@ contract V3SwapBackForkTest is Test {
     function _launched() internal returns (address t, address pair) {
         vm.prank(dev);
         t = pad.create(
-            "Fork V3", "FV3", "", "", WBNB, address(0),
+            "Fork V3",
+            "FV3",
+            "",
+            "",
+            WBNB,
+            address(0),
             ILaunchpadV3.TaxConfig({buyTaxBps: 300, sellTaxBps: SELL_TAX, dividendBps: 5000, recipient: treasury})
         );
         for (uint256 i = 0; i < 400 && !_graduated(t); i++) {
@@ -114,9 +119,8 @@ contract V3SwapBackForkTest is Test {
         vm.startPrank(who);
         IERC20(tokenIn).approve(V2_ROUTER, amountIn);
         uint256 before = IERC20(tokenOut).balanceOf(who);
-        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 0, path, who, block.timestamp
-        );
+        IPancakeRouter02(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, who, block.timestamp);
         got = IERC20(tokenOut).balanceOf(who) - before;
         vm.stopPrank();
     }
@@ -156,9 +160,8 @@ contract V3SwapBackForkTest is Test {
         IERC20(t).approve(V2_ROUTER, amount);
         uint256 got0 = IERC20(WBNB).balanceOf(seller);
         uint256 g = gasleft();
-        IPancakeRouter02(V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amount, quoted, path, seller, block.timestamp
-        );
+        IPancakeRouter02(V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amount, quoted, path, seller, block.timestamp);
         uint256 gasWithChunk = g - gasleft();
         vm.stopPrank();
         assertEq(IERC20(WBNB).balanceOf(seller) - got0, quoted, "previewSell is exact");

@@ -342,7 +342,11 @@ contract SharedDividendVault is Ownable2Step {
 
     /// @dev Quote `user` gained from settled batches, and the position after it (unsettled units only in the selling
     ///      and the open batch). `s` = the share held, unchanged, since the last touch.
-    function _unitsView(address token, address user, uint256 s) internal view returns (uint256 quote, Position memory np) {
+    function _unitsView(address token, address user, uint256 s)
+        internal
+        view
+        returns (uint256 quote, Position memory np)
+    {
         Pipe memory p = pipeOf[token];
         if (p.open == 0) return (0, np);
         Position memory u = positionOf[token][user];
