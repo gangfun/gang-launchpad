@@ -684,7 +684,7 @@ gas（主网分叉、真实 Pancake）：
 
 ## 20. 合约合并：一个内盘、一个外盘处理合约、一种代币（2026-10-27）
 
-> 本节按合并方案 `MERGE-PLAN`（2026-10-27）和四个实现分支（`feat/merge-token`、`feat/merge-handler`、`feat/merge-pad`、`feat/merge-scripts`）写成。标【待填】的地方要等最终代码和 `forge build --sizes` 实测后补上。合并以 §19 之后的代码为基础。
+> 本节按合并方案 `MERGE-PLAN`（2026-10-27）和四个实现分支（`feat/merge-token`、`feat/merge-handler`、`feat/merge-pad`、`feat/merge-scripts`）写成。实测数据取自整合分支 `feat/gang-merged`（四个实现分支 + `feat/merge-tests` + `feat/merge-cli-docs` 合在一起，再加三路审查的修改）。合并以 §19 之后的代码为基础。
 
 ### 20.1 为什么合并、合并成什么
 
@@ -696,22 +696,22 @@ V3 和打新原来各有一个核心、一个外盘处理合约、各自的代�
 
 | # | 合约 / 库 | 类型 | 由谁合并而来 | 职责 | 运行时字节 |
 |---|---|---|---|---|---|
-| 1 | `GangToken` | 代币（每个币一份） | TaxLaunchTokenV3 + FairToken + LaunchTokenV3 | 三种币一份代码：V3 有税（买 / 卖各 1–5%）、V3 无税（0 / 0）、打新（1% / 1%，`reclaimable`）。毕业前锁转账；`unlock(migrator)`、`setPair` 各一次；外盘收税、卖出时 `swapBack` | 【待填】 |
-| 2 | `GangLaunchpad` | 内盘核心 | LaunchpadV3 + FairMintPad 的外壳、存储、管理函数、共用部分 | 唯一地址、唯一状态：`curves`、`sales`、`positions`、`kindOf`、`owedFee`；准入、路由白名单、`nonReentrant` 都在这里；视图 `baselineOf` / `holdBpsOf` 直接读存储 | 【待填】 |
-| 3 | `CurveLogic` | 外部库（delegatecall） | LaunchpadV3 的创建、买卖、毕业 | V3 曲线：`create` / `buy` / `sell` / 毕业；只收 1% 手续费（§19） | 【待填】 |
-| 4 | `FairLogic` | 外部库（delegatecall） | FairMintPad 的创建、打新、卖回、发射 | 打新：`create` / `mint` / `withdraw` / `flushFees` / 发射；计时、撤出费、`owedFee` | 【待填】 |
+| 1 | `GangToken` | 代币（每个币一份） | TaxLaunchTokenV3 + FairToken + LaunchTokenV3 | 三种币一份代码：V3 有税（买 / 卖各 1–5%）、V3 无税（0 / 0）、打新（1% / 1%，`reclaimable`）。毕业前锁转账；`unlock(migrator)`、`setPair` 各一次；外盘收税、卖出时 `swapBack` | 4,795 |
+| 2 | `GangLaunchpad` | 内盘核心 | LaunchpadV3 + FairMintPad 的外壳、存储、管理函数、共用部分 | 唯一地址、唯一状态：`curves`、`sales`、`positions`、`kindOf`、`owedFee`；准入、路由白名单、`nonReentrant` 都在这里；视图 `baselineOf` / `holdBpsOf` 直接读存储 | 13,494 |
+| 3 | `CurveLogic` | 外部库（delegatecall） | LaunchpadV3 的创建、买卖、毕业 | V3 曲线：`create` / `buy` / `sell` / 毕业；只收 1% 手续费（§19） | 11,140 |
+| 4 | `FairLogic` | 外部库（delegatecall） | FairMintPad 的创建、打新、卖回、发射 | 打新：`create` / `mint` / `withdraw` / `flushFees` / 发射；计时、撤出费、`owedFee` | 11,015 |
 | 5 | `PadCommon` | internal 库（编译进调用方） | 两个核心的重复代码 | `requireQuote`、`toQuote`、`pullExact`、`toPlatform`、`migrate` | — |
-| 6 | `GangTaxHandler` | 外盘税处理（继承 `PostGradHandlerBase`） | TaxHandlerV3 + HolderRewardHandler | 两种币按 `routeOf.kind` 分派：V3 平台拿成交额 0.5%、分红比例自设、接收地址白名单和欠款；打新平台部分为 0、一半给合格持有人、出局线 | 【待填】 |
+| 6 | `GangTaxHandler` | 外盘税处理（继承 `PostGradHandlerBase`） | TaxHandlerV3 + HolderRewardHandler | 两种币按 `routeOf.kind` 分派：V3 平台拿成交额 0.5%、分红比例自设、接收地址白名单和欠款；打新平台部分为 0、一半给合格持有人、出局线 | 22,214 |
 | 7 | `PostGradHandlerBase` | 抽象基类 | 不变，只改两个钩子的默认实现 | keeper / dexRouter 时间锁、每区块额度、`swapBack` / `process`、skim 后退回、`flushHolders` / `flushPlatform`、带保护的写份额 | — |
-| 8 | `GangRouter` | 无状态路由 | GangRouter（构造参数改成一个 pad） | `v3Buy` / `v3BuyBNB` / `fairMint` / `fairMintBNB` 不变；`v3()`、`fair()` 都返回同一个 pad | 【待填】 |
-| 9 | `SharedDividendVault` | 外盘分红 | 不变（§19 版） | 按交税时记账，两批先进先出；一个 pad 只绑一个 operator（这个 handler） | 【待填】 |
+| 8 | `GangRouter` | 无状态路由 | GangRouter（构造参数改成一个 pad） | `v3Buy` / `v3BuyBNB` / `fairMint` / `fairMintBNB` 不变；`v3()`、`fair()` 都返回同一个 pad | 4,041 |
+| 9 | `SharedDividendVault` | 外盘分红 | 不变（§19 版） | 按交税时记账，两批先进先出；一个 pad 只绑一个 operator（这个 handler） | 8,752（不变） |
 | 10 | `SharedPlatformFeeBucket` | 内盘手续费池 | 不变 | operator：pad、handler | 4,365（不变） |
 | 11 | `SharedMigrator` | 迁移、LP 销毁 | 不变，只登记一个 pad | | 2,001（不变） |
 | 12 | `QuoteRegistry` | 固定换算额 | 不变 | | 1,537（不变） |
-| 13 | `TokenDeployer` 或 `TokenFactory` | 部署代币 | 缩成一个 `deploy(...)`；或换成外部库 `TokenFactory`，`isLaunchToken` 换成 `kindOf != 0` | 【待填：最终用哪一种】 | 【待填】 |
+| 13 | `TokenDeployer` | 部署代币 | 缩成一个 `deploy(name, symbol, uri, handler, buy, sell, reclaimable)`（保留合约，没有改成 `TokenFactory` 库） | 只有登记过的 pad 能部署 | 9,361 |
 | 14 | `PoolCheck` | 外部库，主网已部署 `0xd2B1…bDb3` | 不变，按地址链接（`CurveLogic` / `FairLogic` 都要链接） | 参考池检查 | 5,345（不变） |
 
-带 owner 的合约从 9 个减到 6 个：pad、handler、vault、bucket、migrator、registry；保留 TokenDeployer 时是 7 个。
+带 owner 的合约从 9 个减到 7 个：pad、handler、vault、bucket、migrator、registry、TokenDeployer。主网 owner 是 Safe `0x2866…B41E`（2/3）：部署后 7 个合约 owner = 部署钱包、pendingOwner = Safe，Safe 批量 `acceptOwnership()`（运行手册 §3）。
 
 ### 20.3 库的 delegatecall 语义和风险
 
@@ -725,10 +725,10 @@ V3 和打新原来各有一个核心、一个外盘处理合约、各自的代�
 风险（请重点看）：
 1. **storage 指针传错 mapping**：库的签名里有多个同类型的 mapping（`curves` / `sales`、`logoURIOf`、`kindOf`），传错位置时编译器不会报错。`test_merge_getterLayout` 和两种币交替的端到端测试兜底。
 2. **库被直接调用**：库的非 view 函数如果被直接 call（不经 delegatecall），会在库自己的上下文里执行。Solidity 的 external 库函数默认带「只能 delegatecall」检查，非 view 函数直接 call 会回滚；`test_merge_libsNotDirectlyCallable` 锁住这一点。库没有存储、也不持有资金。
-3. **链接地址**：部署时 `CurveLogic`、`FairLogic` 链接 PoolCheck，pad 链接两个库；地址错了 pad 会 delegatecall 到错的代码。部署脚本要核对 pad 字节码里链接的库地址的 `extcodehash`。【待填：mscripts 的核对写法】
+3. **链接地址**：部署时 `CurveLogic`、`FairLogic` 链接 PoolCheck，pad 链接两个库；地址错了 pad 会 delegatecall 到错的代码。部署脚本要核对 pad 字节码里链接的库地址的 `extcodehash`。部署脚本不读 extcodehash，改用经 pad 调用两个库的 view 来证明链接可用：`graduationAmountOf(WBNB)` / `previewCreate(WBNB, 15 BNB)`，主网再走 USDT 参考池路径（`graduationAmountOf(USDT, USDT_REF_POOL) > 0`、`previewCreate(USDT, USDT_REF_POOL, 5 BNB)` 不回滚，覆盖库里链接的 PoolCheck）；另查只有真 pad 才有的 `CURVE_SUPPLY` / `MINT_SUPPLY` / `checkTaxConfig`（旧的部署用 stub 过不了，`test_fork_deploy_checkRefusesTheStub`）。两个库由 forge 经 CREATE2 部署，地址在 `broadcast/…/run-latest.json` 的 `libraries` 字段。
 4. **不可变量只能靠 `Deps` 传**：如果库里漏用 `Deps` 字段、写死了地址，测试网和主网会不同。
 5. **ABI 漂移**：indexed 位置、getter 字段顺序、事件参数名变了时，topic0 不变但解码会错。`test_merge_eventTopics` / `test_merge_selectors` / `test_merge_getterLayout` 兜底。
-6. **gas**：路由卖出多一次 delegatecall，约多 3–5k gas；`swapBack` 在 handler 里，不受影响。如果 handler 为了大小降了 optimizer runs，要重跑 §18 的 gas 扫描（`SWAP_BACK_GAS = 600_000`）。【待填：实测】
+6. **gas**：路由卖出多一次 delegatecall，约多 3–5k gas；`swapBack` 在 handler 里，不受影响。如果 handler 为了大小降了 optimizer runs，要重跑 §18 的 gas 扫描（`SWAP_BACK_GAS = 600_000`）。实测（主网分叉、真实 Pancake，handler 没有降 runs）：V3 毕业后第一块（handler 第一次 approve 路由、接收地址第一次收 WBNB，存储全部 `vm.cool`）在 `SWAP_BACK_GAS = 600_000` 的上限内用 399,510 gas 卖出；同一笔路由卖出 635,619。gas 扫描：路由卖出最低 610,000、直接转进池子最低 571,000，任何能成功的 gas 都卖出了这一块（没有静默跳过、没有延后）；有未同步余额时最低 602,000 / 640,000。`test_gas_typical`：路由卖出带一块 703,782（§18 skim 版 658,231），不带一块 318,255，直接转账带一块 376,608，路由买入 285,435，keeper `process` 312,625。`test_review_gas_unsynced`：池子已同步 527,510、多出报价币 560,168、多出报价币和代币 570,024。
 
 ### 20.4 旧函数到新位置
 
@@ -741,7 +741,7 @@ V3 和打新原来各有一个核心、一个外盘处理合约、各自的代�
 | V3 `buy` / `buyFor` / `sell` | pad → `CurveLogic` | `buyFor` 的路由白名单和 `agentGateEnabled` 检查留在 pad |
 | 打新 `mint` / `mintFor` / `withdraw` / `flushFees` | pad → `FairLogic` | `mintFor` 的路由白名单和 `s.gate != 0` 检查留在 pad |
 | 两边都有的 `setMigrator` / `setRouter` / `setAgentGate` / `setV3Factory` / `setTwapWindow` / `setBridgePool` | pad 各一份 | 事件签名本来就一样，合成一份 |
-| V3 `setPairFactory` / `setWalletCapEnabled` | pad | 打新原来的 `pairFactory` 是不可变量，合并后可以设置，只影响之后创建的币。【待填：是否改回不可变量】 |
+| V3 `setPairFactory` / `setWalletCapEnabled` | pad | 打新原来的 `pairFactory` 是不可变量，合并后可以设置，只影响之后创建的币。保留可设置（V3 原有行为，审查同意）；构造时 `pairFactory_ == 0` 回滚 `ZeroAddress`（和旧 FairMintPad 一致） |
 | `checkTaxConfig` / `taxConfigOf` / `walletRoom` / `gradAmtOf` / `graduationRemaining` / `graduationAmountOf` | pad 视图 | 不变 |
 | `checkConfig` / `previewCreate` / `previewMint` / `previewWithdraw` / `exitFeeBpsOf` / `status` / `baselineOf` / `holdBpsOf` | pad 视图 | `baselineOf` / `holdBpsOf` 每笔池子交易都被 handler 调用，留在 pad 直接读存储 |
 | `isAgent`、`tokenCount` / `allTokens` / `logoURIOf` | pad 一份，两种币混在一起 | 新增 `kindOf(token)`：0 不是本 pad 的币 / 1 V3 曲线 / 2 打新 |
@@ -749,7 +749,7 @@ V3 和打新原来各有一个核心、一个外盘处理合约、各自的代�
 | 事件 V3 `Created`（8 个参数）/ 打新 `Created`（13 个参数） | 重载，topic0 都不变 | |
 | `Buy` / `Sell` / `VirtualQuoteLocked` / `Graduated` / `TaxConfigured` | `CurveLogic` 发出（发出地址是 pad） | `tax` 恒为 0（§19） |
 | `Minted` / `Withdrawn` / `Launched` / `ShareWriteFailed` / `FeeOwed` / `FeesFlushed` | `FairLogic` 发出（发出地址是 pad） | 不变 |
-| 错误 | 同名的合成一份，各自独有的保留 | 名字和参数不变，CLI 按 selector 解码。`WrongKind()` 方案里是可选项【待填：最终是否加】；不加时用错种类的币调用报 `UnknownToken` |
+| 错误 | 同名的合成一份，各自独有的保留 | 名字和参数不变，CLI 按 selector 解码。没有加 `WrongKind()`：用错种类的币调用报 `UnknownToken`（CLI 按 `kindOf` 提示改用另一个命令）。库里发生的 `ThinReferencePool`、`GradAmtZero`（PoolCheck）和 OZ 的 `SafeCastOverflowedUintDowncast`、`SafeERC20FailedOperation` 也声明在 `IGangLaunchpad` 里，pad 的 ABI 能解码（`test_merge_libraryErrorsInPadAbi`） |
 
 **外盘：TaxHandlerV3 / HolderRewardHandler → GangTaxHandler**
 
@@ -771,7 +771,7 @@ V3 和打新原来各有一个核心、一个外盘处理合约、各自的代�
 |---|---|
 | `TaxLaunchTokenV3` / `FairToken` / `LaunchTokenV3` | `GangToken`，不可变量 `buyTaxBps`、`sellTaxBps`、`reclaimable`。事件不变；新错误 `Untaxed`、`NotReclaimable`，`NotLocked` 原来只有打新币有 |
 | `LaunchTokenV3.unlock()`（无参数） | `GangToken.unlock(migrator)` |
-| `TokenDeployer.deployPlain` / `deployTax` / `deployFair` | 一个 `deploy(…)`，或 `TokenFactory.deploy`【待填】 |
+| `TokenDeployer.deployPlain` / `deployTax` / `deployFair` | 一个 `TokenDeployer.deploy(name, symbol, uri, handler, buyTaxBps, sellTaxBps, reclaimable)` |
 | `GangRouter(v3_, fair_, wbnb_)` | `GangRouter(pad_, wbnb_)`，`v3()` 和 `fair()` 都返回 pad |
 | 三个部署脚本 + `SharedPlatform` 的复用逻辑 | 一个部署脚本（见运行手册 §1，由 `feat/merge-scripts` 改）；`PEER_CORE` / `PartialShared` 没有了 |
 
@@ -857,28 +857,32 @@ balanceOf(pad, q) == Σ_未发射 sale (sold × sharePrice) + owedFee[q] + Σ_�
 
 ### 20.8 大小（EIP-170 上限 24,576 B）
 
-方案的估算：pad 10–13 KB，两个库各 9–11 KB，handler 21.5–23 KB（不拆库），代币 4.6–4.9 KB。实测数在最终代码上用 `forge build --sizes` 填。
+方案的估算：pad 10–13 KB，两个库各 9–11 KB，handler 21.5–23 KB（不拆库），代币 4.6–4.9 KB。下面是整合分支 `feat/gang-merged` 上 `forge build --sizes` 的实测运行时字节（FairLogic 不在 `--sizes` 的表里，用 `forge inspect FairLogic deployedBytecode` 量）。
 
 | 合约 | 合并前（§19 版） | 合并后实测 | 余量 |
 |---|---|---|---|
-| GangLaunchpad | LaunchpadV3 16,948 / FairMintPad 16,803 | 【待填】 | 【待填】 |
-| CurveLogic | — | 【待填】 | 【待填】 |
-| FairLogic | — | 【待填】 | 【待填】 |
-| GangTaxHandler | TaxHandlerV3 19,941 / HolderRewardHandler 18,041 | 【待填】 | 【待填】 |
-| GangToken | TaxLaunchTokenV3 4,472 / FairToken 4,372 / LaunchTokenV3 2,297 | 【待填】 | 【待填】 |
-| GangRouter | 4,135 | 【待填】 | 【待填】 |
-| TokenDeployer / TokenFactory | 20,688 | 【待填】 | 【待填】 |
-| SharedDividendVault | 9,799（§19 之前） | 【待填】 | 【待填】 |
+| GangLaunchpad | LaunchpadV3 16,948 / FairMintPad 16,803 | 13,494 | 11,082 |
+| CurveLogic | — | 11,140 | 13,436 |
+| FairLogic | — | 11,015 | 13,561 |
+| GangTaxHandler | TaxHandlerV3 19,941 / HolderRewardHandler 18,041 | 22,214 | 2,362 |
+| GangToken | TaxLaunchTokenV3 4,472 / FairToken 4,372 / LaunchTokenV3 2,297 | 4,795 | 19,781 |
+| GangRouter | 4,135 | 4,041 | 20,535 |
+| TokenDeployer | 20,688 | 9,361 | 15,215 |
+| SharedDividendVault | 9,799（§19 之前） | 8,752 | 15,824 |
+| SharedPlatformFeeBucket | 4,365 | 4,365 | 20,211 |
+| SharedMigrator | 2,001 | 2,001 | 22,575 |
+| QuoteRegistry | 1,537 | 1,537 | 23,039 |
 
-- 新目录 `src/gang/` 已加进 `foundry.toml` 的 via-ir 列表【待填：确认】；不加会用非 IR 编译，可能 stack too deep，体积也会变大。
-- handler 如果超过 23,500 B，先只给这个文件降 optimizer runs，再考虑把纯视图挪进库；降 runs 后要重跑 §18 的 gas 扫描。【待填：最终做法】
+- 新目录 `src/gang/` 已在 `foundry.toml` 的 via-ir 列表里（`{ paths = "src/gang/**", via_ir = true }`，已确认）；不加会用非 IR 编译，可能 stack too deep，体积也会变大。
+- handler 实测 22,214 B（< 23,500 B），不需要降 optimizer runs，也没有把视图挪进库；§18 的 gas 扫描照样重跑并通过（见 §20.3 第 6 条）。最大的合约是 handler，余 2,362 B。
 - 测试 `test_sizes` 断言每个合约 < 24,064 B（留 512 B 余量）。
 
 ### 20.9 测试
 
 - 新增 `test/merge/MergeGuards.t.sol`：`test_merge_eventTopics`（topic0 等于服务端和 CLI 里的签名）、`test_merge_selectors`、`test_merge_getterLayout`、`test_merge_kindIsolation_syncShares` / `_notifyTax` / `_swapBack`、`test_merge_reclaimOnlyFair`、`test_merge_untaxedNeverHooks`、`test_merge_sameQuoteIsolation_wbnb`、`test_merge_libsNotDirectlyCallable`、`test_sizes`、`test_merge_floorConstantsEqual`。
+- 另有 `test/merge/PadMergeGuards.t.sol`（pad 侧的事件 topic、selector、getter 布局、同一报价币的托管隔离、库调用保护、大小、门槛）、`test/merge/HandlerKindIsolation.t.sol`、`test/merge/FairMixedIsolation.t.sol`（打新与同报价币隔离审查的回归：两种报价币交替 + owedFee、随机交替 fuzz、跨种类入口）、`test_merge_libraryErrorsInPadAbi`、`test_merge_constructorNeedsPairFactory`、`test_fork_v3_firstChunkAfterGraduation_coldFitsTheCap`，部署脚本的 `test_fork_deploy_checkRefusesTheStub` / `_mainnetSafeOwner` / `_keeperPinnedAndTwapFloor` 等。
 - 原有套件改用共用夹具 `GangFixture`，断言不变；`SharedInfra` 改写成「一个核心、两种 kind」；`Audit4Regression` 跨核心的用例改成跨 kind；`CoreInvariants` 改用 §20.7 的等式。
-- 结果：【待填：`forge test` 个数、不变量 200 × 80、主网分叉 `test/fork/*` 和 `test/audit5/**` 的结果、gas 基线】
+- 结果：`forge fmt --check` 通过；`forge test`（不设 RPC）767 个全过；主网分叉（48.club）`test/fork/*` 13 个全过；`test/audit5/**`（`--threads 1`）163 个全过（`ReviewFairForkTest` 7 个在一次跑里因 48.club 只留近期状态报 `not supported`，单独重跑 5 个过，余下 2 个改用 blastapi 重跑通过）；部署脚本测试（带 PoolCheck `--libraries`，测试网 publicnode）`DeployScriptsFork` 16 + `DeployReview` 20 + `KeeperSmartCollectFork` 1 全过；不变量 200 × 80：`CoreInvariants` 10 条（16,000 次调用）、`VaultUnitsInvariant` 3 条全过，跑完 inline 配置已还原（24 × 50 / 48 × 120）；`DeployGang` 在主网分叉（OWNER = Safe，35 笔、约 2,814 万 gas）和测试网分叉（31 笔、约 3,025 万 gas）上模拟成功；本地 anvil（测试网分叉）真实广播 `DeployGang` 31 / 31 笔、`GangTestnetE2E` 1,178 / 1,178 笔成功，没有往任何真实链广播。gas 见 §20.3 第 6 条。
 
 ### 20.10 对外接口变化
 
