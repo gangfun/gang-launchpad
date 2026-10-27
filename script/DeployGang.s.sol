@@ -11,7 +11,7 @@ import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../src/common/TokenDeployer.sol";
-import {GangRouter} from "../src/router/GangRouter.sol";
+import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
@@ -23,13 +23,19 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 /// @title DeployGang — the whole merged stack (one GangLaunchpad for V3 and 打新) on BSC testnet (97) or mainnet (56)
 /// @notice One run deploys, in this order: QuoteRegistry, SharedPlatformFeeBucket, SharedDividendVault, SharedMigrator,
 ///         TokenDeployer, GangTaxHandler, GangLaunchpad (+ its external libraries CurveLogic / FairLogic, which forge
-///         deploys first and links; PoolCheck is linked by address on mainnet), GangRouter. Never the live V2 registry /
+///         deploys first and links; PoolCheck is linked by address on mainnet), then the upgradeable GangRouter
+///         (GangRouterDeployLib, AUDIT-BRIEF §21: implementation → TimelockController → TransparentUpgradeableProxy
+///         initialized in its constructor; the pad lists the proxy). Never the live V2 registry /
 ///         bucket (their owner is an EOA). Then it wires everything and calls `pad.setMigrator` LAST (A-1: create needs a
 ///         migrator, so the pad only opens once every fee sink, the vault, the router and the gate accept it), hands
 ///         ownership to OWNER (Ownable2Step: the owner accepts) and runs the full self-check `_check`.
 ///         Quotes: mainnet lists nothing (USDT is priced from USDT_REF_POOL at create); testnet lists the test quote and
 ///         a blacklist quote at a fixed rate (15 units = 15 BNB) and lists the demo treasury as a tax recipient.
-///         Re-run on an existing stack: GANG_PAD (+ GANG_ROUTER) skips every deploy and wiring step and only hands over
+///         Router timelock: proposer = executor = canceller = the platform Safe on mainnet (always, also with
+///         MAINNET_OWNER_IS_DEPLOYER=true), OWNER on testnet; no admin (the timelock is its own only admin),
+///         minDelay 48 h (mainnet fixed; ROUTER_TIMELOCK_DELAY may shorten it on testnet only). The ProxyAdmin the proxy
+///         deploys is owned by the timelock from the start: neither needs an acceptOwnership.
+///         Re-run on an existing stack: GANG_PAD (+ GANG_ROUTER = the proxy) skips every deploy and wiring step and only hands over
 ///         ownership again (idempotent; a different OWNER than the pending one is refused, PendingOwnerMismatch) and
 ///         re-runs `_check` — e.g. to verify a deployment from another machine.
 /// @dev Mainnet broadcast is refused unless GANG_MAINNET_OK=true. Mainnet OWNER is the platform Safe
@@ -42,7 +48,8 @@ import {TestnetAgentId} from "../src/fair-mint/mocks/TestnetAgentId.sol";
 ///      (new bucket's; 0 / unset = the V2 bucket's on mainnet, a WARN line when overridden), RECIPIENT + RECIPIENT_LABEL
 ///      (listed tax recipient; testnet default the demo treasury), TWAP_WINDOW (default 1800, at least 600); testnet:
 ///      AGENT_ID, TEST_QUOTE, BLACKLIST_QUOTE, NEW_MOCKS=true (fresh Agent ID registry + test quote); re-run: GANG_PAD,
-///      GANG_ROUTER, GANG_PAD_BLOCK (without it the server env lines are not printed).
+///      GANG_ROUTER, GANG_PAD_BLOCK (without it the server env lines are not printed); ROUTER_TIMELOCK_DELAY (seconds,
+///      default 172800; mainnet refuses any other value, MainnetTimelockDelay).
 ///      Mainnet: link the live PoolCheck with
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 ///      (CurveLogic / FairLogic are not passed: forge deploys them from the deployer as the first broadcast txs).
@@ -64,7 +71,11 @@ contract DeployGang is Script {
         address tokenDeployer;
         address handler;
         address pad;
+        /// @dev the router PROXY (what the pad lists and users approve)
         address router;
+        address routerImpl;
+        address routerAdmin;
+        address routerTimelock;
         address agentId;
         address testQuote;
         address blacklistQuote;
@@ -86,6 +97,8 @@ contract DeployGang is Script {
         address burner;
         address feeVault;
         string label;
+        /// @dev router timelock minDelay (48 h on mainnet)
+        uint256 routerDelay;
     }
 
     error WrongChain(uint256 chainId);
@@ -140,6 +153,7 @@ contract DeployGang is Script {
         c.burner = _burner(c.mainnet);
         c.feeVault = _feeVault(c.mainnet, deployer);
         c.label = vm.envOr("RECIPIENT_LABEL", string(c.mainnet ? "" : "testnet demo treasury"));
+        c.routerDelay = R.minDelayFromEnv(c.mainnet);
     }
 
     /// @dev No mainnet broadcast without GANG_MAINNET_OK=true (a dry run / fork simulation needs nothing).
@@ -209,7 +223,9 @@ contract DeployGang is Script {
             )
         );
         s.padBlock = block.number;
-        s.router = address(new GangRouter(s.pad, c.wbnb));
+        // upgradeable router: impl → timelock (the Safe on mainnet, OWNER on testnet, proposes / executes / cancels)
+        // → proxy (initialized)
+        _setRouter(s, R.deploy(s.pad, c.wbnb, c.dexRouter, R.timelockSafe(c.mainnet, c.owner), c.routerDelay));
 
         if (c.mainnet) {
             s.agentId = M.AGENT_ID_REGISTRY;
@@ -241,6 +257,9 @@ contract DeployGang is Script {
         vault.setOperator(s.handler, s.pad);
         vault.setExcluded(s.migrator, true);
         vault.setExcluded(s.bucket, true);
+        // §21: the router proxy only ever holds a seller's tokens inside one pool sell; excluded, the vault never
+        // writes a share for it (saves ~90k gas per routed sell; the handler's sync already gives it none of the tax)
+        vault.setExcluded(s.router, true);
 
         SharedMigrator(s.migrator).addLaunchpad(s.pad);
         TokenDeployer(s.tokenDeployer).setLaunchpad(s.pad, true);
@@ -277,8 +296,10 @@ contract DeployGang is Script {
         s.tokenDeployer = pad.tokenDeployer();
         s.handler = pad.taxHandler();
         s.agentId = pad.agentIdRegistry();
-        s.router = _envAddr("GANG_ROUTER", address(0));
-        if (s.router == address(0)) revert WiringCheck("GANG_ROUTER");
+        address proxy = _envAddr("GANG_ROUTER", address(0));
+        if (proxy == address(0)) revert WiringCheck("GANG_ROUTER");
+        // impl / ProxyAdmin / timelock are read from the proxy; `_check` then proves what they are
+        _setRouter(s, R.load(proxy));
         s.padBlock = vm.envOr("GANG_PAD_BLOCK", uint256(0));
         if (c.mainnet) {
             s.recipient = _envAddr("RECIPIENT", address(0));
@@ -287,6 +308,17 @@ contract DeployGang is Script {
             s.blacklistQuote = _envAddr("BLACKLIST_QUOTE", address(0));
             s.recipient = _envAddr("RECIPIENT", T.DEMO_TREASURY);
         }
+    }
+
+    function _setRouter(Stack memory s, R.Router memory r) internal pure {
+        s.router = r.proxy;
+        s.routerImpl = r.impl;
+        s.routerAdmin = r.proxyAdmin;
+        s.routerTimelock = r.timelock;
+    }
+
+    function _router(Stack memory s) internal pure returns (R.Router memory r) {
+        r = R.Router({proxy: s.router, impl: s.routerImpl, proxyAdmin: s.routerAdmin, timelock: s.routerTimelock});
     }
 
     // ---------------------------------------------------------------- ownership
@@ -341,6 +373,10 @@ contract DeployGang is Script {
         if (pad.twapWindow() != c.twapWindow) revert WiringCheck("pad.twapWindow");
         if (c.mainnet && pad.bridgePoolOf(M.USDT) != M.USDT_WBNB_V3) revert WiringCheck("pad.bridgePool USDT");
         if (!pad.routers(s.router)) revert WiringCheck("pad.routers");
+        // the pad trusts the proxy only: never the implementation (nor the ProxyAdmin / timelock)
+        if (pad.routers(s.routerImpl) || pad.routers(s.routerAdmin) || pad.routers(s.routerTimelock)) {
+            revert WiringCheck("pad.routers impl");
+        }
         // one vault floor for both kinds (merge plan §5.3), equal to the one the vault was given
         if (pad.TAXED_MIN_SHARE() != MIN_SHARE || pad.MIN_SHARE_BALANCE() != MIN_SHARE) {
             revert WiringCheck("pad floor constants");
@@ -436,6 +472,7 @@ contract DeployGang is Script {
         if (!v.excluded(s.bucket)) revert WiringCheck("vault excludes bucket");
         if (!v.excluded(s.pad)) revert WiringCheck("vault excludes pad");
         if (!v.excluded(s.handler)) revert WiringCheck("vault excludes handler");
+        if (!v.excluded(s.router)) revert WiringCheck("vault excludes router");
     }
 
     /// @dev C-F8 / R5-5: operators, keeper, and the fee legs' destinations — the same `_burner` / `_feeVault` the
@@ -470,13 +507,24 @@ contract DeployGang is Script {
         }
     }
 
-    /// @dev C-F8: the router is wired on this very pad and WBNB (deployed in the same run; checked again on a re-run).
+    /// @dev C-F8: the router proxy is wired on this very pad and WBNB; §21: its ERC-1967 slots point at this build's
+    ///      locked GangRouter and at the ProxyAdmin it deployed, owned by a timelock of at least `routerDelay` whose
+    ///      only proposer / executor / canceller is OWNER, the deploy wallet holds no role, and only the timelock
+    ///      administers its roles (GangRouterDeployLib.check, the names are its WiringCheck strings).
     function _checkRouter(Stack memory s, Cfg memory c) internal view {
-        GangRouter r = GangRouter(payable(s.router));
-        if (address(r.pad()) != s.pad || address(r.v3()) != s.pad || address(r.fair()) != s.pad) {
-            revert WiringCheck("router pad");
-        }
-        if (r.wbnb() != c.wbnb) revert WiringCheck("router wbnb");
+        R.check(
+            _router(s),
+            R.Expect({
+                pad: s.pad,
+                wbnb: c.wbnb,
+                pancakeRouter: c.dexRouter,
+                pancakeFactory: c.factory,
+                safe: R.timelockSafe(c.mainnet, c.owner),
+                deployer: c.deployer,
+                minDelay: c.routerDelay,
+                mainnet: c.mainnet
+            })
+        );
     }
 
     /// @dev C-F8: every owned contract is owned by OWNER or has it pending (nothing left for another address); with
@@ -534,7 +582,12 @@ contract DeployGang is Script {
         console.log("GANG_PAD", s.pad);
         console.log("GANG_PAD_BLOCK", s.padBlock);
         console.log("GANG_TAX_HANDLER", s.handler);
-        console.log("GANG_ROUTER", s.router);
+        console.log("GANG_ROUTER (proxy: the pad lists it, users approve it)", s.router);
+        console.log("GANG_ROUTER_IMPL", s.routerImpl);
+        console.log("GANG_ROUTER_PROXY_ADMIN (owner = the timelock)", s.routerAdmin);
+        console.log("GANG_ROUTER_TIMELOCK", s.routerTimelock);
+        console.log("router timelock minDelay (s)", c.routerDelay);
+        console.log("router timelock proposer / executor / canceller", R.timelockSafe(c.mainnet, c.owner));
         console.log("QUOTE_REGISTRY", s.quoteRegistry);
         console.log("PLATFORM_BUCKET", s.bucket);
         console.log("DIVIDEND_VAULT", s.vault);
@@ -579,6 +632,9 @@ contract DeployGang is Script {
             }
             console.log("--- Safe Transaction Builder JSON (save as a .json file, Transaction Builder > Load) ---");
             console.log(_safeAcceptJson(s, c));
+            console.log(
+                "(router: nothing to accept: the timelock has no owner, the ProxyAdmin's owner is the timelock)"
+            );
         }
     }
 

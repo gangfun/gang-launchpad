@@ -56,7 +56,10 @@ contract QuoteRefPoolForkTest is Test {
     address bridge;
 
     modifier forkOnly() {
-        if (address(v3) == address(0)) return;
+        if (address(v3) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         _;
     }
 
@@ -225,7 +228,7 @@ contract QuoteRefPoolForkTest is Test {
     }
 
     /// @dev Matches what the live LaunchpadV2 (0x1B8F…966E) returns for the same V2 pair: reserves, no TWAP.
-    function test_fork_matchesLiveV2_onV2Pair() public view forkOnly {
+    function test_fork_matchesLiveV2_onV2Pair() public forkOnly {
         uint256 live = LaunchpadV2(0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E).graduationAmountOf(NVDAB, NVDAB_WBNB_V2);
         assertEq(v3.graduationAmountOf(NVDAB, NVDAB_WBNB_V2), live);
         (uint256 raiseQuote,) = fair.previewCreate(NVDAB, NVDAB_WBNB_V2, 15 ether);

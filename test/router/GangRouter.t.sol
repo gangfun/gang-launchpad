@@ -18,12 +18,15 @@ import {IGangLaunchpad as ILaunchpadV3} from "../../src/gang/interfaces/IGangLau
 import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
 import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
+import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
 
 /// @notice GangRouter in front of both cores: BNB in / refunds out, the trader (not the router) gets tokens, shares,
 ///         dividend weight, gate and cap; only listed routers may buy / mint for someone; sells / withdraw /
-///         claim have no router entry at all.
+///         claim have no router entry at all. Every call goes through the router PROXY, deployed as DeployGang does
+///         (GangRouterDeployLib: impl → 48 h timelock → TransparentUpgradeableProxy initialized in its constructor).
 contract GangRouterTest is Test {
     MockWBNB internal wbnb;
     MockSPCXB internal quoteTok;
@@ -35,7 +38,9 @@ contract GangRouterTest is Test {
     SharedMigrator internal sharedMig;
     TokenDeployer internal tokenDeployer;
     FairMintPad internal fair;
+    /// @dev the proxy
     GangRouter internal router;
+    R.Router internal rs;
 
     address internal owner = makeAddr("owner");
     address internal treasury = makeAddr("treasury");
@@ -66,7 +71,8 @@ contract GangRouterTest is Test {
         tokenDeployer = new TokenDeployer(owner);
         _deployPad();
         // one pad for both kinds
-        router = new GangRouter(address(v3), address(wbnb));
+        rs = R.deploy(address(v3), address(wbnb), makeAddr("pancakeRouter"), owner, R.MAINNET_MIN_DELAY);
+        router = GangRouter(payable(rs.proxy));
         vm.prank(owner);
         v3.setRouter(address(router), true);
 
@@ -108,6 +114,10 @@ contract GangRouterTest is Test {
     }
 
     // ---------------------------------------------------------------- helpers
+    function _init(address p, address w, address pancake) internal pure returns (bytes memory) {
+        return abi.encodeCall(GangRouter.initialize, (p, w, pancake));
+    }
+
     function _agent(address who) internal {
         if (agents.balanceOf(who) == 0) agents.mint(who, nextId++);
         vm.deal(who, 1_000 ether);
@@ -345,11 +355,14 @@ contract GangRouterTest is Test {
         vm.expectRevert(GangRouter.UnknownToken.selector);
         router.v3BuyBNB{value: 0.1 ether}(makeAddr("nope"), 0, block.timestamp);
 
-        // no pad / no WBNB: the router cannot be deployed at all
+        // no pad / no WBNB: the router proxy cannot be deployed at all (initialize runs in the proxy's constructor)
+        address impl = address(new GangRouter());
         vm.expectRevert(GangRouter.NotDeployed.selector);
-        new GangRouter(address(0), address(wbnb));
+        new TransparentUpgradeableProxy(impl, owner, _init(address(0), address(wbnb), address(1)));
         vm.expectRevert(GangRouter.NotDeployed.selector);
-        new GangRouter(address(v3), address(0));
+        new TransparentUpgradeableProxy(impl, owner, _init(address(v3), address(0), address(1)));
+        vm.expectRevert(GangRouter.NotDeployed.selector);
+        new TransparentUpgradeableProxy(impl, owner, _init(address(v3), address(wbnb), address(0)));
 
         // both old core getters are the one pad
         assertEq(address(router.pad()), address(v3), "pad");

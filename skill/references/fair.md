@@ -73,7 +73,8 @@ gang fair tx --hash 0x… --testnet                            # decode Created 
 - **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
   Tell the user why in words instead.
 - Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` is the mainnet pad (shared
-  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The old names `GANG_FAIR_TESTNET_PAD` /
+  with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` the router. The router address is fixed: it is an upgradeable proxy whose
+  upgrades go through a public 48-hour timelock held by the platform Safe (AUDIT-BRIEF §21). Buys and mints through it pay native BNB; a pool buy in a quote token or a pool sell first approves the router for exactly that call's amount (never unlimited) — keep it that way. The old names `GANG_FAIR_TESTNET_PAD` /
   `GANG_FAIR_TESTNET_RPC_URL` / `GANG_FAIR_PAD` / `GANG_ROUTER_TESTNET` still work as aliases.
 - `NotReclaimable` / `NotLocked` on a withdraw: the token is not a 打新 token, or the sale already launched (sell-back
   is over: trade on PancakeSwap). Both come back with a `hint`.

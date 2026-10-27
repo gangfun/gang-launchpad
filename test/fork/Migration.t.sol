@@ -52,7 +52,10 @@ contract MigrationForkTest is Test {
     }
 
     function test_realAgentId_gatesBuy() public {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         assertTrue(pad.isAgent(REAL_AGENT));
         assertFalse(pad.isAgent(alice));
 
@@ -68,7 +71,10 @@ contract MigrationForkTest is Test {
     }
 
     function test_graduation_createsPancakePairAndBurnsLp() public {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         _fillCurve();
 
         (,,, bool graduated, address pair) = pad.curves(address(tok));
@@ -97,7 +103,10 @@ contract MigrationForkTest is Test {
     }
 
     function test_graduation_survivesWbnbDonationGriefing() public {
-        if (address(pad) == address(0)) return;
+        if (address(pad) == address(0)) {
+            vm.skip(true);
+            return;
+        }
         // Griefer pre-creates the pair, donates WBNB and syncs, which would brick router.addLiquidity
         address pair = IPancakeFactory(FACTORY).createPair(address(tok), WBNB);
         address griefer = makeAddr("griefer");
