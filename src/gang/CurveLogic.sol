@@ -66,7 +66,7 @@ library CurveLogic {
         if (lockedGrad < MIN_GRAD_AMT) revert IGangLaunchpad.GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
-            token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, d.taxHandler, 0, 0, false);
+            token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, address(0), 0, 0, false);
         } else {
             token = _createTaxed(d, name, symbol, metaURI, quote, tax);
         }

@@ -2,15 +2,15 @@
 pragma solidity 0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {GangToken} from "../gang/stub/GangToken.sol";
+import {GangToken} from "../gang/GangToken.sol";
 
-/// @title TokenDeployer (GangLaunchpad · token creation code, outside the pad)
-/// @notice Keeps the token bytecode out of the pad (24 KB limit). Only listed pads may deploy, and the caller is always
-///         the token's launchpad (the pad that mints and unlocks it).
-/// @dev feat/merge-pad: minimal `deploy` on the STUB GangToken; feat/merge-token's version replaces this file.
+/// @title TokenDeployer (every launch token's creation code, outside the cores)
+/// @notice Keeps the token bytecode out of the cores (24 KB limit). Only listed cores may deploy, and the caller is
+///         always the token's launchpad (the core that mints and unlocks it). One token contract for every kind
+///         (GangToken): V3 taxed (rates checked to 1%–5% by the pad), V3 untaxed (0 / 0), 打新 (1% / 1%, reclaimable).
 contract TokenDeployer is Ownable2Step {
     mapping(address => bool) public launchpads;
-    /// @notice Every token deployed here. The pad refuses these as quotes (audit 4 C-F3 / B-F1).
+    /// @notice Every token deployed here (all cores). The cores refuse these as quotes (audit 4 C-F3 / B-F1).
     mapping(address token => bool) public isLaunchToken;
 
     error OnlyLaunchpad();
@@ -26,7 +26,7 @@ contract TokenDeployer is Ownable2Step {
         emit LaunchpadSet(launchpad, enabled);
     }
 
-    /// @notice V3 taxed: (buy, sell, false); V3 untaxed: (0, 0, false); 打新: (100, 100, true).
+    /// @notice Deploys a GangToken whose launchpad is the caller (a listed core).
     function deploy(
         string calldata name,
         string calldata symbol,

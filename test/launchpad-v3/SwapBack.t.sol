@@ -6,7 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
 import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";

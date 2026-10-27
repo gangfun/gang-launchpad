@@ -15,7 +15,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
-import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 

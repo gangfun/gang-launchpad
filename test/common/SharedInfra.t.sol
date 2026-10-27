@@ -7,7 +7,7 @@ import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {GangRouterTest} from "../router/GangRouter.t.sol";

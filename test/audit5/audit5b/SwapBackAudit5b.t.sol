@@ -11,7 +11,7 @@ import {TokenDeployer} from "../../../src/common/TokenDeployer.sol";
 import {GangLaunchpad as LaunchpadV3} from "../../../src/gang/GangLaunchpad.sol";
 import {GangTaxHandler as TaxHandlerV3} from "../../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../../src/common/PostGradHandlerBase.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../../src/gang/GangToken.sol";
 import {IGangLaunchpad as ILaunchpadV3} from "../../../src/gang/interfaces/IGangLaunchpad.sol";
 
 interface IRouterA {

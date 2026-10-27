@@ -10,8 +10,8 @@ import {SharedPlatformFeeBucket} from "../../src/common/SharedPlatformFeeBucket.
 import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IGangPadView} from "../../src/gang/interfaces/IGangPadView.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
-import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 
 contract KindQuote is ERC20("Quote", "Q") {

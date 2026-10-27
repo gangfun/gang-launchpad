@@ -8,7 +8,7 @@ import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {GangLaunchpad as LaunchpadV3} from "../../src/gang/GangLaunchpad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as TaxHandlerV3} from "../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 

@@ -13,7 +13,7 @@ import {IV3FactoryLite, IV3PoolLite} from "../../src/launchpad-v2/PoolCheck.sol"
 import {IPancakeRouter02} from "../../src/launchpad-v2/interfaces/IPancake.sol";
 import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
-import {GangToken as FairToken} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 
 contract ForkAgent {

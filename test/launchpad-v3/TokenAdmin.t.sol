@@ -2,8 +2,8 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {GangToken as LaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as LaunchTokenV3} from "../../src/gang/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
 import {TokenURI} from "../../src/launchpad-v3/TokenURI.sol";
 import {LaunchpadV3Test} from "./LaunchpadV3.t.sol";
 

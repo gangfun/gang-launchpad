@@ -7,7 +7,7 @@ import {MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {PostGradHandlerBase} from "../../src/common/PostGradHandlerBase.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
-import {GangToken as TaxLaunchTokenV3} from "../../src/gang/stub/GangToken.sol";
+import {GangToken as TaxLaunchTokenV3} from "../../src/gang/GangToken.sol";
 import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {LaunchpadV3Test} from "../launchpad-v3/LaunchpadV3.t.sol";
 import {SharedInfraTest} from "../common/SharedInfra.t.sol";
