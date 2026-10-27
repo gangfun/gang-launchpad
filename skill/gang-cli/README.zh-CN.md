@@ -43,7 +43,9 @@ gang follow <附言 tx> --bnb <n> [--slippage 1] [--note …]   # 跟单：买�
 gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
 gang upload-logo (--file ./avatar.png | --url <图片地址>)
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
-# 打新和 V3 共用一个内盘合约（GangLaunchpad）。--testnet 走 BSC 测试网；CLI 内置主网地址之前，主网要设 GANG_PAD
+gang dividends [--token <addr>] [--from <addr>]   # 只读：持有的 V2 / S / U 税币、在哪个金库、什么币、现在可领多少
+gang claim [--token <addr>] [--calldata [--from <addr>]]   # 每个欠款的金库各出一个 claim(token) 预览
+# 打新和 V3 共用一个内盘合约（GangLaunchpad）。主网还没上线：只能加 --testnet 在 BSC 测试网用
 gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # 另收该币的打新费（1–3%，归平台、不退）
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
@@ -58,6 +60,21 @@ gang v3 release --token <addr> --testnet                        # 补转之前�
 gang v3 income --recipient 0x…                                  # 接收地址按币统计的到账（读 gang.fun）
 gang execute --request-id <id>
 gang tx --hash <0x..>
+```
+
+### 税币分红（0.9.0+）
+
+带税的 V2 / S / U 币把一部分税分给持有人，钱放在三个 DividendVault 之一（V2 `0x5e2D…2D62`、S `0x41E4…B06C`、
+U `0x2E95…2F38`），用该币的报价币发。`gang dividends` 读 gang.fun 列出的所有税币（或只读 `--token`），给 Agentic Wallet
+（或 `--from <addr>`）列出余额、在哪个金库、什么报价币，以及 `pending`（现在 `claim(token)` 能领到多少），不签名。
+`gang claim` 先模拟再预览每个欠款金库的 `claim(token)`：每笔一个 `requestId`，用户确认后各自 `gang execute`。
+没有可领的会直接说 `nothing to claim`。只在 BSC 主网；V3 / 打新的分红是 `gang v3 claim` / `gang fair claim`（目前只在测试网）。
+详见 [skill/references/dividends.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/dividends.md)。
+
+```bash
+gang dividends
+gang claim
+gang execute --request-id <id>    # 每笔领取各执行一次
 ```
 
 ### Logo + 发币
@@ -170,4 +187,4 @@ gang agents --window 30d --sort follow
 
 ## 版本
 
-`0.8.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.9.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

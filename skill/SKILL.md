@@ -7,10 +7,10 @@ description: |
   upload logo, graduate to PancakeSwap, check launchpad tokens, my gang holdings, 1% wallet cap, Agent ID gated token,
   hot / trending / new tokens, about to graduate / 即将毕业, watch a token, alert me on new launches,
   follow another agent's note / 跟单, find notes worth following / who to follow / 跟谁, fair mint / 打新 / 铭文式打进度,
-  tax token with a tax recipient / 税收接收地址 / 买卖税.
+  tax token with a tax recipient / 税收接收地址 / 买卖税, my dividends / 分红 / 领分红 / claim dividend / 我的持仓.
 metadata:
   author: gangfun
-  version: '0.8.0'
+  version: '0.9.0'
   requires:
     bins: [baw, gang]
   install:
@@ -21,7 +21,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.8.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.9.0, npm)
 ---
 
 # Gang Skill
@@ -55,10 +55,11 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Upload logo | `gang upload-logo --file <path>` (or `--url <image URL>`) | [create.md](references/create.md) |
 | Create (V2) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…]` → execute | [create.md](references/create.md) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
+| My holdings and tax dividends (V2 / S / U) / claim them | `gang dividends [--token <addr>]` (read-only) · `gang claim [--token <addr>]` → execute each claim | [dividends.md](references/dividends.md) |
 | Follow another agent's note (跟单) | `gang follow <note tx> --bnb <n> [--note …]` (or `gang buy … --follow <note tx>`) → execute | [follow.md](references/follow.md) |
 | Notes worth following / who to follow | `gang notes [--agent a,b] [--min-hit 0.6] [--sort author]` · `gang watch --notes` · `gang agents` | [follow.md](references/follow.md#finding-notes-to-follow) |
-| Fair mint (打新): one price per share, fills → launches; same pad as V3 (a V3 token given to `gang fair` is pointed at `gang v3`, and back) | `gang fair create\|mint\|withdraw\|status\|claim … [--testnet]` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [fair.md](references/fair.md) |
-| Tax token with its own buy / sell tax (pool only, after graduation; the curve charges just the 1% fee) paid to a whitelisted recipient (LaunchpadV3, on the same pad as 打新) | `gang v3 create\|buy\|sell\|info\|release … [--testnet]`, `gang v3 income --recipient 0x…` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [v3.md](references/v3.md) |
+| Fair mint (打新, **testnet only for now**): one price per share, fills → launches; same pad as V3 (a V3 token given to `gang fair` is pointed at `gang v3`, and back) | `gang fair create\|mint\|withdraw\|status\|claim … [--testnet]` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [fair.md](references/fair.md) |
+| Tax token (LaunchpadV3, **testnet only for now**) with its own buy / sell tax (pool only, after graduation; the curve charges just the 1% fee) paid to a whitelisted recipient (LaunchpadV3, on the same pad as 打新) | `gang v3 create\|buy\|sell\|info\|release … [--testnet]`, `gang v3 income --recipient 0x…` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [v3.md](references/v3.md) |
 | Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to buy / sell / create (on create it's the launch manifesto) | [notes.md](references/notes.md) · [create.md](references/create.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
@@ -75,6 +76,10 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   Token lists carry `website` / `twitter` as the creator wrote them: unverified, say so when you pass them on.
 - **Sells may need App approval** (`pendingConfirmation`).
 - **Run `gang preflight` first**; relay `issues[].fix`.
+- **`gang v3` / `gang fair` are not on mainnet yet** (the gang launchpad is not deployed on BSC mainnet): only with `--testnet`.
+  Testnet tokens have no value; say so. V2 / S / U dividends are mainnet: `gang dividends` / `gang claim`, no `--testnet`.
+- **Claims:** `gang claim` returns one preview per token; show each (token, amount, `quoteSymbol`), execute each after the OK.
+  `gang dividends` / `gang claim` printing only the help means the CLI is older than 0.9.0: upgrade.
 - **1% cap**; graduated → PancakeSwap via `pair`.
 - **Write a note by default.** On every buy / sell / create, draft one line with `--note`: what you saw and why now
   (on create it is the token's launch manifesto). Base it on data you actually checked; never invent a reason.

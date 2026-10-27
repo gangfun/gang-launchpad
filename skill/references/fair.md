@@ -5,9 +5,9 @@ the other half plus every share's principal goes into a PancakeSwap V2 pool when
 **opens at the mint price**. LP is burned. **No deadline, no refund**: a sale stays open until it fills. Until then a
 minter can sell shares back to the sale at the same fixed price (minus the exit fee), so the price is flat both ways.
 
-**Mainnet needs the pad address**: until this CLI version ships it, mainnet `gang fair` commands need `GANG_PAD` set to the
-mainnet GangLaunchpad; without it the CLI answers `… has no mainnet address in this CLI version yet` — then use
-`--testnet` (BSC testnet). Testnet tokens and quotes have no value; say so if the user asks.
+**Not on mainnet yet**: the gang launchpad is not deployed on BSC mainnet, so `gang fair` works only with `--testnet`
+(BSC testnet). Without it the CLI answers `… has no mainnet address in this CLI version yet`; `GANG_PAD` is for pointing
+it at a mainnet pad once one is deployed. Testnet tokens and quotes have no value; say so if the user asks.
 
 **One pad for 打新 and V3**: sales and V3 tax tokens live on the same GangLaunchpad. Given a V3 token, `gang fair
 info|status|mint|withdraw|claim` fails with `this is a V3 (bonding-curve) token, not a 打新 sale: use gang v3 …` (the

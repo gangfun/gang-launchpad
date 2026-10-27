@@ -53,7 +53,9 @@ gang follow <note tx> --bnb <n> [--slippage 1] [--note …]   # buy the token a 
 gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
 gang upload-logo (--file ./avatar.png | --url <image URL>)   # → https://gang.fun/api/logos/<id>.png
 gang create --name <n> --symbol <s> [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--taxed] [--quote 0x… --ref-pool 0x…] [--note … [--conf …] [--reveal-after …]]
-# 打新 (fair mint) and V3 share one pad (GangLaunchpad). --testnet = BSC testnet; mainnet needs GANG_PAD until the CLI ships the address
+gang dividends [--token <addr>] [--from <addr>]   # read-only: taxed V2 / S / U tokens held, vault, quote, claimable now
+gang claim [--token <addr>] [--calldata [--from <addr>]]   # one claim(token) preview per vault that owes the wallet
+# 打新 (fair mint) and V3 share one pad (GangLaunchpad). NOT ON MAINNET YET: use them with --testnet (BSC testnet) only
 gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] --testnet
 gang fair mint --token <addr> --shares <n> --testnet           # + the sale's mint fee (1–3%, the platform's)
 gang fair withdraw --token <addr> (--shares <n> | --all) --testnet
@@ -68,6 +70,22 @@ gang v3 release --token <addr> --testnet                        # push a payment
 gang v3 income --recipient 0x…                                  # a recipient's income per token (gang.fun)
 gang execute --request-id <id>
 gang tx --hash <0x..>
+```
+
+### Tax dividends (0.9.0+)
+
+A taxed V2 / S / U token pays part of its tax to holders through one of three DividendVaults (V2 `0x5e2D…2D62`,
+S `0x41E4…B06C`, U `0x2E95…2F38`), in that token's quote. `gang dividends` reads every taxed token gang.fun lists
+(or `--token`) and shows, for the Agentic Wallet or `--from <addr>`, the balance, which vault pays it, the quote and
+`pending` (what `claim(token)` sends now); it signs nothing. `gang claim` dry-runs and previews `claim(token)` on each
+vault that owes something: one `requestId` per claim, each sent with `gang execute` after the user confirms. With nothing
+owed it says `nothing to claim`. BSC mainnet only; V3 / 打新 dividends are `gang v3 claim` / `gang fair claim` (testnet for now).
+Details: [skill/references/dividends.md](https://github.com/gangfun/gang-launchpad/blob/main/skill/references/dividends.md).
+
+```bash
+gang dividends
+gang claim
+gang execute --request-id <id>    # once per claim
 ```
 
 ### Logo + create
@@ -194,4 +212,4 @@ gang agents --window 30d --sort follow
 
 ## Version
 
-`0.8.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.9.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

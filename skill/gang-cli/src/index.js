@@ -17,6 +17,7 @@ import { rememberPreview, previewFor } from './previews.js'
 import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
+import { DIVIDEND_VAULTS, taxedTokens, dividendsOf, claimData, dryClaim } from './dividends.js'
 
 const args = process.argv.slice(2)
 const cmd = args[0]
@@ -176,6 +177,12 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang follow <note tx> --bnb <n> [--slippage 1] [--note …]
                                          buy the token that note is about, marked on-chain as following it (= buy --follow)
   gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--note … [--conf …] [--reveal-after …]]
+  gang dividends [--token <addr>] [--from <addr>]
+                                         read only: taxed V2 / S / U tokens the wallet holds (or is owed on), the balance,
+                                         which DividendVault pays each one, in what quote, and what is claimable now
+  gang claim [--token <addr>] [--calldata [--from <addr>]]
+                                         claim(token) on each vault that owes the wallet something (all tokens, or just
+                                         --token): one preview per claim, each sent with gang execute after the user confirms
   gang upload-logo (--file <path> | --url <image URL>)
                                          copy an image to https://gang.fun/api/logos → logoUrl
   gang create --name <n> --symbol <s> [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle|x.com link]
@@ -184,6 +191,9 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --website / --twitter (optional) go into the create tx, shown on gang.fun; permanent
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is
+
+  gang fair … / gang v3 …: NOT ON MAINNET YET (the gang launchpad is not deployed on BSC mainnet). Use them with
+  --testnet (BSC testnet) only; without it they answer "no mainnet address".
   gang fair create --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 50] [--mint-fee 1] [--exit-fee 1]
                  [--shares 1] [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL]
                  [--twitter @handle] [--description <text>]
@@ -206,7 +216,7 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          minOut for amountOutMin; also for a wallet that only bought in the pool)
   gang fair claim --token <addr>         claim the holder reward
   gang fair info --token <addr> | gang fair list [--status minting|launched|all] | gang fair tx --hash <0x..>
-                                         --testnet = BSC testnet; mainnet needs GANG_PAD until this CLI ships the address; --calldata prints the raw tx
+                                         --testnet = BSC testnet (required for now; GANG_PAD is only for a mainnet pad once deployed); --calldata prints the raw tx
                                          instead of a baw preview, --from <addr> reads / builds for that wallet
   gang v3 create --name <n> --symbol <s> --buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] --recipient <0x…>
                [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle]
@@ -235,7 +245,8 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang v3 release --token <addr>         push a tax payment that failed earlier (anyone may; the recipient gets it)
   gang v3 income --recipient <addr> | gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>
                                          V3 tokens and 打新 sales share one pad: a token of the other kind is pointed at the
-                                         other command (kindOf). --testnet / mainnet, --calldata / --from as in gang fair
+                                         other command (kindOf). --testnet (mainnet not yet), --calldata / --from as in gang fair
+
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -501,7 +512,36 @@ async function buy(token, bnb, note, followTx, checked = null) {
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'quote', 'buy',
-  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3'])
+  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'dividends', 'claim'])
+
+const NO_DIVIDEND_VAULT = 'not registered in any V2 / S / U DividendVault: untaxed, or a V3 / 打新 token (gang v3 status / gang fair status, --testnet for now)'
+
+/**
+ * `gang dividends` / `gang claim`: the wallet (--from, else the Agentic Wallet) and its rows, claimable first.
+ * --token checks that one token on-chain; otherwise every taxed token gang.fun lists.
+ */
+async function walletDividends({ fromAllowed }) {
+  if (flag('testnet')) fail('the V2 / S / U dividend vaults are on BSC mainnet only (testnet V3 / 打新 dividends: gang v3 claim / gang fair claim --testnet)')
+  const token = opt('token')
+  if (flag('token') && !ADDR_RE.test(token ?? '')) fail('--token must be a 0x… address', { got: token ?? null })
+  const from = opt('from')
+  if (flag('from') && !fromAllowed) fail('--from only applies with --calldata: a preview always signs from the Agentic Wallet')
+  if (flag('from') && !ADDR_RE.test(from ?? '')) fail('--from must be a 0x… address', { got: from ?? null })
+  let me = from
+  if (!me) {
+    try { me = bawAddress() } catch (e) { fail(`no Agentic Wallet address: ${e.message}`, { hint: 'sign in with `baw auth signin`, or pass --from <addr> to read another wallet' }) }
+  }
+  const tokens = await taxedTokens(token).catch((e) => fail(e.message))
+  const rows = await dividendsOf(me, tokens)
+  rows.sort((a, b) => Number(b.claimableRaw > 0n) - Number(a.claimableRaw > 0n))
+  return { me, token, checked: tokens.length, rows }
+}
+const dividendRow = ({ claimableRaw, ...r }) => ({
+  ...r, claimable: claimableRaw > 0n, ...(!r.vaults.length && { note: NO_DIVIDEND_VAULT }),
+  ...(r.vaults.some((v) => v.quote && !v.earning) && r.balanceRaw > 0n && {
+    hint: 'share 0 in its vault: this balance earns no new dividends there (e.g. below the vault\'s minimum holding)',
+  }),
+})
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
@@ -754,6 +794,53 @@ async function main() {
         step: 'sell', kind: 'v2', token, symbol: info.symbol, pad: pad.id, quote: info.quote,
         amount: fmtTok(amount), expectOut: q.outFmt, fee: q.feeFmt, minOut: fmt(minOut), unit: 'quote', quotePath: q.quotePath, deterministic: q.deterministic || false,
       }, note, 'sell'))
+    }
+    case 'dividends': {
+      const { me, token, checked, rows } = await walletDividends({ fromAllowed: true })
+      const tokens = rows.map(dividendRow)
+      const claimable = tokens.filter((t) => t.claimable).length
+      return out({
+        success: true, wallet: me, chainId: 56, vaults: Object.fromEntries(DIVIDEND_VAULTS.map((v) => [v.rail, v.address])),
+        checked, count: tokens.length, claimable, tokens,
+        note: claimable
+          ? `pending = what claim(token) sends now, in that vault's quote. To claim: \`gang claim${token ? ` --token ${token}` : ''}\` → show the preview → the user confirms → \`gang execute\`.`
+          : tokens.length
+            ? 'Nothing claimable right now.'
+            : (token ? 'This wallet holds none of this token and is owed nothing on it.' : 'This wallet holds no taxed V2 / S / U token and is owed nothing.'),
+        scope: 'V2 / S / U tax dividends only; V3 / 打新: gang v3 status / gang fair status (--testnet for now)',
+      })
+    }
+    case 'claim': {
+      const rawOnly = flag('calldata')
+      const { me, token, checked, rows } = await walletDividends({ fromAllowed: rawOnly })
+      const due = rows.flatMap((r) => r.vaults.filter((v) => v.pendingRaw > 0n).map((v) => ({ r, v })))
+      if (!due.length) {
+        const held = token ? rows[0] : null
+        fail(token ? 'nothing to claim on this token' : 'nothing to claim: no V2 / S / U vault owes this wallet a dividend', {
+          wallet: me, checked, ...(held && !held.vaults.length && { note: NO_DIVIDEND_VAULT }),
+          hint: `gang dividends${token ? ` --token ${token}` : ''}${opt('from') ? ` --from ${opt('from')}` : ''}`,
+        })
+      }
+      const claims = [], skipped = []
+      for (const { r, v } of due) {
+        const extra = {
+          step: 'claim', token: r.token, symbol: r.symbol, rail: v.rail, vault: v.vault,
+          amount: v.pending, quote: v.quote, quoteSymbol: v.quoteSymbol,
+        }
+        // eth_call first: a claim that would revert never reaches a preview
+        const dry = await dryClaim(me, v.vault, r.token)
+        if (dry) { skipped.push({ ...extra, ...dry }); continue }
+        const data = claimData(r.token)
+        if (rawOnly) claims.push({ success: true, ...extra, tx: { chainId: 56, from: me, to: v.vault, data, value: '0' } })
+        else claims.push(summarizePreview(bawPreview({ from: me, to: v.vault, data }), extra))
+      }
+      const sent = claims.filter((c) => c.success).length
+      return out({
+        success: sent > 0, wallet: me, checked, count: claims.length, claims, ...(skipped.length && { skipped }),
+        next: !sent ? `gang dividends${token ? ` --token ${token}` : ''}`
+          : rawOnly ? 'sign and send each tx from this wallet (claim(token) on that vault)'
+            : 'Show the user each claim (token, amount, quote). After they confirm, `gang execute --request-id <id>` for each one (previews expire: see expiresAt), then `gang tx --hash <hash>`.',
+      })
     }
     case 'upload-logo': {
       const file = opt('file') || opt('path') || opt('logo')

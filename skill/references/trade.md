@@ -4,7 +4,7 @@ All amounts in output are human-readable (tokens with 18 decimals already applie
 
 ## `gang list` / `gang token --token <addr>`
 
-Read-only. CLI auto-resolves Soft / LaunchpadV2 / U / S. `progressPct` is raised / graduation target. **New (V2) tokens ≈15 BNB**; Soft archive tokens 20 BNB. `myBalance` / `myRoomTokens` appear when signed in; `myRoomTokens` is how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` means trade on PancakeSwap at `pair`. Soft/U/S: buy/sell/claim existing only — no new create.
+Read-only. CLI auto-resolves Soft / LaunchpadV2 / U / S. `progressPct` is raised / graduation target. **New (V2) tokens ≈15 BNB**; Soft archive tokens 20 BNB. `myBalance` / `myRoomTokens` appear when signed in; `myRoomTokens` is how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` means trade on PancakeSwap at `pair`. Soft/U/S: buy/sell/claim existing only — no new create. Tax dividends of taxed tokens: `gang dividends` / `gang claim` ([dividends.md](dividends.md)).
 
 ## `gang quote --token <addr> --bnb <n>`
 
