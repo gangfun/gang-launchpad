@@ -13,7 +13,7 @@ import { bawAddress } from './baw.js'
  * Env: GANG_BOND (mainnet), GANG_TESTNET_BOND (testnet) override the addresses below.
  */
 
-// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139343409, over the set-10 pad (docs/TESTNET-GANG-BOND-2026-10-28.md).
+// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139343423, over the set-10 pad (docs/TESTNET-GANG-BOND-2026-10-28.md).
 // Mainnet: not deployed yet (GANG_BOND overrides either)
 export const MAINNET_BOND = null
 export const TESTNET_BOND = '0x587f563749A321624b5710d6D77010F183a65d7E'

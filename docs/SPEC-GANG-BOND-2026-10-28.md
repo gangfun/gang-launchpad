@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（按 claude.ai 文档「Agent 押金承诺规格草案」2026-10-27 版实现；待定问题全部按草案「建议」一栏）
-- 性质：**未部署，禁止主网广播**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
+- 性质：**测试网已部署（`0x587f…5d7E`，见 `docs/TESTNET-GANG-BOND-2026-10-28.md`），禁止主网广播**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
 
 ## 一句话
 
@@ -56,9 +56,11 @@ GangBond 不可升级、没有 owner，构造时写死 `pad`（GangLaunchpad）�
 
 - `forge test --match-contract GangBondTest`：20 个用例，覆盖三种币（收税 V3、不收税 V3、打新）、全部检查和状态流转、举报奖励、取回后开新一轮、分块回购到 `burnLeft` 归零、拉盘后跳过、滑点、覆盖率公式、空闲后观测重启（改回旧逻辑时该用例失败）、闪电兑换中不能 settle、新一轮罚没在 20 分钟内也重新记点（删掉 `report` 里的重置时该用例失败）、ERC20 报价币的回购、两个币共用 WBNB 时各自记账。交易对用 `test/mocks/TwapMockPair.sol`（带 K 检查、0.25% 手续费和累计价格），`GangFixture` 新增 `_newPairFactory()` 钩子，其他测试不受影响。
 - BSC 主网分叉（anvil，本地）上用真实 Pancake 交易对跑了 CLI 端到端：post（`--cover 100`）→ topup → raise-hold → extend → 卖出保护拒绝 / 放行 → `--break-bond` → report（1% 到账）→ 首次 burn 只记点 → 之后每 10 分钟一块；打新币上 post → 过期后卖出被拒、`--settle-first` 给出 settle → 第三方 settle 后押金回到创建者。
+- BSC 测试网：V3 币完整罚没流程按真实出块跑完（4 块回购，销毁 3,722,162 枚），打新币走完取回以外的全部操作，见 `docs/TESTNET-GANG-BOND-2026-10-28.md`。
 
 ## 还没做
 
-- 部署（测试网、主网）以及 CLI 里内置地址（现在靠 `GANG_BOND` / `GANG_TESTNET_BOND`）。
+- 主网部署和 CLI 里的主网地址（测试网已部署并内置）；BscScan 源码验证。
+- 测试网 B 币的取回（2026-11-05 之后）。
 - 网站（gang-web-legacy）：币详情页押金面板和举报按钮、行情页标识和「有押金」筛选、创建者记录、文案。
 - 服务端（gangfun-server）：索引 7 个事件、`/bonds` 接口、行情列表带押金和覆盖率、keeper（举报 / 取回 / 每 10 分钟回购）。
