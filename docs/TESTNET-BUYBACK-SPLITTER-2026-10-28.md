@@ -4,7 +4,7 @@
 
 | 版本 | 接入方式 | 本文 |
 |---|---|---|
-| 第二版（现行） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
+| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x71e9…2a87`） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
 | 第一版 | 每个 dev 由平台部署一个回购合约，多签逐个 `list` 和 `setExcluded` | 第二部分（保留作记录；回购合约 `0xB43b…c0C9` 仍在白名单上，但不在 `modules()` 里，新 keeper 不管它） |
 
 - 链：BSC 测试网（chainId 97），2026-10-28
@@ -22,9 +22,22 @@
 | 部署 | admin [`0xb128d292…0fb3`](https://testnet.bscscan.com/tx/0xb128d2923d341f33a1d43ca4dcdaf99e9ece483dd836b44dbdd4a009b5630fb3)（gas 636,160）、工厂 + 实现 [`0x8a0d207c…8c18`](https://testnet.bscscan.com/tx/0x8a0d207cf80693e5a2a30bd24494d6de58cbfba85f9f6fa15a0bafec62e68c18)（gas 2,381,506） |
 | 批量（测试网由 owner 钱包直接执行，主网是多签） | `handler.transferOwnership(admin)` [`0x9f022d40…f2b5`](https://testnet.bscscan.com/tx/0x9f022d40f521c947b36cbad981ea8091b98e311f53e6690a66741b5eb4f0f2b5)、`admin.exec(acceptOwnership())` [`0x9c808002…ed41`](https://testnet.bscscan.com/tx/0x9c80800206bf418493185420212702dc1f0cd7b81894c0e4b421aa958e99ed41)、`admin.setFactory(factory, true)` [`0x1fcfe132…574b`](https://testnet.bscscan.com/tx/0x1fcfe1324b48df33f27aa350b46f3a89376bdbf9e2bb0b51300711e150d4574b) |
 
-**第 10 套 handler 的 owner 现在是 GangHandlerAdmin。** owner 钱包对 handler 的管理操作（list / delist、换 keeper 等）要经 `admin.exec(<calldata>)`。交回：`admin.exec(transferOwnership(0xCa8e…00b6))`，再由 owner 钱包调 `handler.acceptOwnership()`（交回后工厂就不能再加白，CLI 的 `--buyback` 在测试网上会失败）。
+这是第一个管理合约和工厂（下称 v1）；审查后加了分页和确定性克隆，换成了下一节的 v2。
 
-## CLI 一键发射（`gang create … --buyback 50`）
+## 换新版管理合约（v1 → v2，现行）
+
+| 项 | 值 |
+|---|---|
+| GangHandlerAdmin v2 | [`0xBc2d7A1f2E86A7586f31A324aDaE3d38bFd49a4d`](https://testnet.bscscan.com/address/0xBc2d7A1f2E86A7586f31A324aDaE3d38bFd49a4d)（加了 `modulesFrom`），owner = `0xCa8e…00b6` |
+| GangBuybackSplitterFactory v2 | [`0x71e997B0d9eBa9678eD3d8C57622009a190d2a87`](https://testnet.bscscan.com/address/0x71e997B0d9eBa9678eD3d8C57622009a190d2a87)（`create(bps, salt)` / `predict`），实现合约 `0xEaB21041e9160594ddC348099e376a6ddA45aDf5`；CLI 内置的就是它 |
+| 部署 | admin [`0xa13f98ee…1b16`](https://testnet.bscscan.com/tx/0xa13f98eefdc30c518dbc351e515fd33ec464e13105a38ecfee68ca9825561b16)（gas 707,758）、工厂 + 实现 [`0xbb5c85f7…0ad1`](https://testnet.bscscan.com/tx/0xbb5c85f7bd8a7013fb3d2055a73082f470499729ff7b18c44a1065690b6d0ad1)（gas 2,413,583） |
+| 迁移批量（脚本识别出 handler 在 v1 管理合约手里） | `adminV1.exec(transferOwnership(adminV2))` [`0x772c37a9…1e2f`](https://testnet.bscscan.com/tx/0x772c37a91179987fb870bff2931192de978e0036fcf37570a5ca4625a8652e1f)、`adminV2.exec(acceptOwnership())` [`0x3ea96bd6…e557`](https://testnet.bscscan.com/tx/0x3ea96bd699297abeb9dd69badaf88f82c8c424a065c903f76d6d8dcaad10e557)、`adminV2.setFactory(factoryV2, true)` [`0x358d945d…edcf`](https://testnet.bscscan.com/tx/0x358d945d5d9e893a205c05bc52230a6e568890141803cec8dc2476004438edcf) |
+
+v1 工厂克隆的 `0xBCb5…8A39`（BBFT）仍在 handler 白名单上、照常收税，但不在 v2 的 `modules()` 里：keeper 要服务它就用 `MODULES` 补上（下文 keeper 一节就这么测的）。v1 工厂已经不能再加白（handler 不归 v1 管理合约了）。
+
+**第 10 套 handler 的 owner 现在是 GangHandlerAdmin v2。** owner 钱包对 handler 的管理操作（list / delist、换 keeper 等）要经 `adminV2.exec(<calldata>)`。交回：`adminV2.exec(transferOwnership(0xCa8e…00b6))`，再由 owner 钱包调 `handler.acceptOwnership()`（交回后工厂就不能再加白，CLI 的 `--buyback` 在测试网上会失败）。
+
+## CLI 一键发射（`gang create … --buyback 50`，v1 工厂）
 
 ```
 gang create --name "Buyback Factory Test" --symbol BBFT --buy-tax 3 --sell-tax 3 --dividend 50 --buyback 50 --dev-buy 0.5 \
@@ -68,6 +81,28 @@ gang create --name "Buyback Factory Test" --symbol BBFT --buy-tax 3 --sell-tax 3
 
 这一版没有从分红中排除回购合约（规格 §6）。
 
+## v2：确定性克隆、续接规则、keeper 只在发送时加锁
+
+CLI（内置 v2 工厂）：
+
+| 情况 | 结果 | 交易 |
+|---|---|---|
+| `gang create … --symbol BBST2 --buyback 40` 第一次 | 给出 `factory.create(4000, salt)`，并提前给出地址（salt 随机、记进 plan） | 只预览 |
+| 不执行就重跑 | 「the buy-back splitter is not on chain yet」，提示等待或 `--restart` | — |
+| `--restart` 后执行克隆 | 回购合约 [`0xa08c7311bdd5Dc923c0012efDe197B52D942f233`](https://testnet.bscscan.com/address/0xa08c7311bdd5Dc923c0012efDe197B52D942f233)，地址等于预测值，gas 326,224 | [`0x744a3bdb…bbbd`](https://testnet.bscscan.com/tx/0x744a3bdb9e1dc96068ba0b5a352a9f30beda22c579b271b9b97329ee56dbfbbd) |
+| 改成 `--buyback 30` 重跑 | 拒绝：这次启动的回购合约是 40% | — |
+| 去掉 `--buyback` 重跑 | 拒绝：这次启动是带 `--buyback` 开始的 | — |
+| 按原命令重跑 | 建币 BBST2 `0x631Bb7f86b6Dfa508E8C639f8431eDe9A50D0177` → `bind` → done，`buybackBps` 4000 | [`0x41c40863…e531`](https://testnet.bscscan.com/tx/0x41c408639ed978e26334b226765313acd021fcfc749704fda4adbee69fbfe531)、[`0x2eb37693…aaa1`](https://testnet.bscscan.com/tx/0x2eb37693b8d97f4d97ba2d7f7320ac98c4ed4c25b5e4ab97489593fe5b42aaa1) |
+| 不带回购的启动 NBBT，建币执行后重跑加上 `--buyback 50` | 拒绝：这次启动建币时没有 `--buyback`（不会再克隆、也不会建第二个币）；按原命令重跑接着 dev 买入 | [`0xcec2d3bd…6f91`](https://testnet.bscscan.com/tx/0xcec2d3bda59d562c01042b31b42bc1b046bc01da4ed4fe7abf864990ce1e6f91)、[`0x552456a1…a494`](https://testnet.bscscan.com/tx/0x552456a1e6e01b3e99c97d4831ff041b1f6b670fbcd551d62ce664c6df0fa494) |
+
+keeper（`7208423` 的 `keeper-module-work.sh`，macOS 自带的 bash 3.2，`MODULE_PAGE=1` 强制分页，`MODULES` 补上 v1 的 `0xBCb5…8A39`，往它铸 0.01 MockSPCXB）：
+
+| 情况 | 结果 | 交易 |
+|---|---|---|
+| 扫描 | 2 个模块（v2 管理合约分页读到 1 个 + `MODULES`），扫描不加锁，1 个到点 | — |
+| 发送 | 拿锁、重新 `previewWork`，`work(81,224.55 枚)`：销毁 82,045.00 枚（等于预览值），回购余额清零 | [`0x3522b4db…aba9`](https://testnet.bscscan.com/tx/0x3522b4db0af30488e2327e2a7a2d0964b53724cdbac65940a732094c39d6aba9) |
+| `SCAN_MAX_SEC=0` | WARN「scan stopped after 0s at 0 / 2」，退出码 5 | — |
+
 ## 没测到
 
 - 下调公告期满后执行（`gang buyback apply`）：BBFT 上的下调已取消；要等 3 天。单测覆盖执行、作废、取消。
@@ -83,7 +118,7 @@ GANG_PAD=0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1 DEPLOYER_PRIVATE_KEY=… \
   forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com \
   --broadcast --slow --legacy --with-gas-price 100000000
 # 只核对已部署的
-GANG_PAD=… HANDLER_ADMIN=0x4FcF…a2a3 SPLITTER_FACTORY=0x2EBe…A80E \
+GANG_PAD=… HANDLER_ADMIN=0xBc2d…9a4d SPLITTER_FACTORY=0x71e9…2a87 \
   forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com
 # keeper（gangfun-server）
 PADS=t10:0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1@0 BSC_RPC=https://bsc-testnet-rpc.publicnode.com \

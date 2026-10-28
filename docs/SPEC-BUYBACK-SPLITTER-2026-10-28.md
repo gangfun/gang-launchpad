@@ -33,7 +33,8 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
                     └─ moduleOf[地址] = 克隆它的工厂；modules() 全部列表
 ```
 
-- **GangHandlerAdmin**（不可升级，越小越好审）：多签把 handler 的 owner 转给它（`Ownable2Step`：多签 `handler.transferOwnership(admin)`，再 `admin.exec(acceptOwnership())`），多签仍是它的 owner。三个入口：`exec(data)` 原样转发调用 handler（list / delist、换 keeper、换 DEX router，以及把 handler 交回：`exec(transferOwnership(safe))` 后多签 accept）；`setFactory(f, allowed)`；`listModule(addr, label)` 只允许工厂调，记下 `moduleOf`。
+- **GangHandlerAdmin**（不可升级，越小越好审）：多签把 handler 的 owner 转给它（`Ownable2Step`：多签 `handler.transferOwnership(admin)`，再 `admin.exec(acceptOwnership())`），多签仍是它的 owner。三个入口：`exec(data)` 原样转发调用 handler（list / delist、换 keeper、换 DEX router，以及把 handler 交回：`exec(transferOwnership(safe))` 后多签 accept）；`setFactory(f, allowed)`；`listModule(addr, label)` 只允许工厂调，记下 `moduleOf`。模块列表只增不减，`modulesFrom(from, count)` 分页读。
+- **换新版管理合约**：旧管理合约 `exec(transferOwnership(新))`，新管理合约 `exec(acceptOwnership())`，再 `setFactory`。旧管理合约加白过的模块仍在 handler 白名单上（建币时就定了），但不在新管理合约的 `modules()` 里；keeper 要继续服务它们，用 `MODULES` 补上。部署脚本自动识别这种情况（批量的第一笔改成发给旧管理合约）。
 - **工厂**：每种模块（或每个版本）一个，只给自己克隆出来的合约申请加白。新逻辑 = 新工厂 + 多签 `setFactory`，不用再动 handler；旧工厂可停用，它克隆出去的合约不受影响（币的 recipient 建币时就定了）。
 - **已发出的模块永不升级**：持币人信任的是「这个币的规则不会变」，新逻辑只用于新币。
 - **IGangRecipientModule**：`moduleType()`、`dev()`、`token()`、`bind(token)`、`previewWork() → (due, minOut)`、`work(minOut)`。keeper 只认这个接口（到点就 `work`），CLI / 前端用 `moduleOf` + `moduleType()` 认出模块，新种类不用改 keeper。
@@ -106,14 +107,16 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 
 | `launch.stage` | 交易 |
 |---|---|
-| `buyback-splitter` | `factory.create(bps)`：克隆、`initialize(dev, bps)`、经 admin 加白，一笔完成（只有 Agent 能调，和建币一样） |
+| `buyback-splitter` | `factory.create(bps, salt)`：在 `predict(dev, salt)` 克隆、`initialize(dev, bps)`、经 admin 加白，一笔完成（只有 Agent 能调，和建币一样）。CLI 每次启动随机取 salt 记进 plan，克隆前就知道地址；同一钱包并行几个启动也不会互相认错 |
 | `create` | `pad.create(…, recipient = 回购合约)` |
 | `bind` | `splitter.bind(token)` |
 | `dev-buy` / `bond` | 与原来的一键发射相同 |
 
 不加 `--buyback` 的 dev 完全不经过这些合约，税直接给自己。之后：`gang buyback status|set|apply|bind|release --token …`；`gang v3 info` 在 `buyback` 下显示状态。
 
-**keeper**：`keeper-module-work.sh` 每个 pad 读 `taxHandler().owner().modules()`，对每个已绑定的模块调 `previewWork()`，到点就 `work(minOut)`；什么时候调、`minOut` 多少都由模块决定，keeper 不记状态。仍是每 5 分钟（合约 20 分钟没人调会重置观测，10 分钟一跑可能刚好越线）。
+续接规则：克隆还没上链时重跑，提示等待或 `--restart`；克隆后 `--buyback` 改了比例，提示原比例或 `--restart`（建币后用 `gang buyback set`）；一次启动保持开始时的模式——建币后才加 `--buyback`、或克隆后去掉它，都拒绝（不会重新克隆、也不会建第二个币）。
+
+**keeper**：`keeper-module-work.sh` 每个 pad 从 `taxHandler().owner()`（管理合约）分页读模块（`modulesFrom`，每页 `MODULE_PAGE`），每个模块调一次 `previewWork()`，到点就 `work(minOut)`；什么时候调、`minOut` 多少都由模块决定，keeper 不记状态。扫描不加锁、超过 `SCAN_MAX_SEC` 就停（下一轮从列表另一处开始）；只有发送前才拿共用的 keeper 锁，并在锁内重新 `previewWork`，所以模块再多也不会长时间挡住 tax-process。仍是每 5 分钟（合约 20 分钟没人调会重置观测，10 分钟一跑可能刚好越线）。
 
 - 克隆不用逐个核对代码：工厂只克隆它自己部署的实现，实现的 pad 是工厂的 pad；多签在 `setFactory` 前核对工厂即可（部署脚本的 `check`）。
 - 不再从分红中排除：回购在同一笔交易里先买到合约、再转给 0xdead，交税时（`notifyTax`）合约的份额还没写，转走后份额归零，分不到分红（单测 `test_burn_noDividendWithoutExclusion`）；排除只省一点 gas，平台不用碰分红金库。
@@ -122,7 +125,8 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 ## 7. 风险与边界
 
 - **比例是 dev 的承诺，不是平台的**：dev 可以在 3 天公告后把比例降到 0。前端应展示 `buybackBps` 和 `pendingCut()`。
-- **白名单会变长**：任何 Agent 都能调工厂克隆（只付 gas），每个克隆都会加进 handler 的白名单（`recipients()`）和 admin 的 `modules()`。前端的合作方列表要按 `moduleOf` 过滤；keeper 对没绑定的模块只读一次 `token()` 就跳过。
+- **白名单会变长**：任何 Agent 都能调工厂克隆（只付 gas），每个克隆都会加进 handler 的白名单（`recipients()`）和 admin 的 `modules()`。前端的合作方列表要按 `moduleOf` 过滤；keeper 每个模块每轮一次只读调用、扫描有时限，见上。
+- **重复的 salt**：同一个 dev 用同一个 salt 再克隆会因地址已被占用而失败（CREATE2 冲突会吃掉转发的全部 gas；钱包估算 gas 时就会失败，CLI 每次启动换新 salt）。
 - **管理合约是 handler owner 前面多的一层**：它出问题时多签仍能用 `exec` 把 owner 交回；它本身不可升级、只有三个入口。
 - **白名单地址对所有发币人开放**：别人也能把这个回购合约填成自己币的 recipient，但只会多给它钱（绑定报价币按比例拆分，其他资产 sweep 给 dev）；绑定只认 dev 自己的币。
 - **回购慢**：每块最多 0.5% 储备、每 10 分钟左右一块，大额税要分很多块；价格被拉高时会暂停，直到高价成为均价。
@@ -130,6 +134,6 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 
 ## 8. 测试
 
-- 单测 `test/gang/GangBuybackSplitter.t.sol` 23 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复）、工厂（只给 Agent、比例越界、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、部署脚本（`check` 各项、批量按打印的执行后生效）、sweep、外盘税端到端。
+- 单测 `test/gang/GangBuybackSplitter.t.sol` 23 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白）、sweep、外盘税端到端。
 - 注意：`src/gang/**` 用 via-ir 单独编译，测试里 `new` 这些合约会变成 `vm.deployCode`，`vm.expectRevert` 看不到它的回滚（回滚会让测试直接当作通过）；构造函数的拒绝路径要经测试合约自己的 external 函数部署（`newFactory` / `newAdmin`）。
 - 测试网整轮见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`。
