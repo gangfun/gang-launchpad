@@ -73,8 +73,9 @@ gang fair tx --hash 0x… [--testnet]                            # decode Create
 
 - **Logo**: same as `gang create` — `--logo ./file.png` is uploaded to gang.fun; a `--logo-uri` on another host is copied
   to gang.fun first (`logoURI` is permanent on-chain). The preview shows the final `logoURI`.
-- **No notes yet**: `--note` / `--follow` are refused on `gang fair` (the server cannot match them to a fair-mint tx yet).
-  Tell the user why in words instead.
+- **Notes**: `--note` on `gang fair create` (the launch manifesto), `mint` and `withdraw`, as on `gang buy` / `gang sell`
+  ([notes.md](notes.md)); mainnet only. `gang fair buy` / `sell` after launch are pool trades and carry none. `--follow` is
+  refused: a mint can't follow a note.
 - Env: `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` override the testnet deployment, `GANG_PAD` overrides the built-in mainnet pad (shared
   with `gang v3`); `GANG_TESTNET_ROUTER` / `GANG_ROUTER` override the router. The router address is fixed: it is an upgradeable proxy whose
   upgrades go through a public 48-hour timelock held by the platform Safe (AUDIT-BRIEF §21). Buys and mints through it pay native BNB; a pool buy in a quote token or a pool sell first approves the router for exactly that call's amount (never unlimited) — keep it that way. The old names `GANG_FAIR_TESTNET_PAD` /

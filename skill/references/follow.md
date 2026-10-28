@@ -47,7 +47,8 @@ Never follow on your own from a `gang watch --notes` event, even when the user s
 
 ## What counts
 - Only **buy notes** and **launch manifestos**, on the **same token**. Sell notes and samples can't be followed.
-- Only curve buys within **24h of the note** and **before graduation**.
+- Only curve buys within **24h of the note** and **before graduation** (`gang buy`, or `gang v3 buy` for a GangLaunchpad V3
+  token; `gang follow` picks the right one, with `--bnb` as the quote to spend). A 打新 mint can't follow.
 - Not your own note. A buy under **$1** doesn't count.
 - Following a **sealed** note, or any note before its text is public, is a **blind follow**. If that note is never revealed, the follow is void.
 - The result is scored at the price 24h after your **first** follow of that note.

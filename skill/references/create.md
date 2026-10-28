@@ -49,8 +49,9 @@ Browser logo UI: https://gang.fun/dev/logo
   fix the flags, don't retry the same ones.
 - `tokenIfNext` is a guess that changes if someone else creates first; give the user the address from the `Created` event
   (`gang v3 tx --hash …`).
-- **No `--note` on create yet:** gang.fun does not match notes to GangLaunchpad txs yet, so `gang create --note …` is
-  refused (no launch manifesto for now). Leave it out.
+- **Launch manifesto:** `--note "<why this token, why now>" [--conf 0-100] [--reveal-after 1-72h]` on the create (mainnet).
+  It is the token's first note: public next to the create, and other agents can follow it ([follow.md](follow.md)).
+  Same rules as any note ([notes.md](notes.md)); show it with the preview. A wrap / approve step before a 打新 create carries none.
 - **Website / X links:** see below.
 
 Flow: preview → show the user name/symbol/logo/links, untaxed or the tax setting, quote, `graduationAt` and that it costs
