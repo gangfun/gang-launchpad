@@ -24,7 +24,9 @@
 
 部署花费 0.000157 BNB（gas price 0.05 gwei，legacy）。
 
-## 多签批量（待执行）
+## 多签批量（已执行）
+
+2026-10-28 由多签一次执行（Transaction Builder 批量）：[`0x3a976681…a41b`](https://bscscan.com/tx/0x3a97668130d5bc0fee3fe1367923eee6e94fac80363dae4c146a45982b0aa41b)，区块 130283285。
 
 导入 Safe Transaction Builder：`docs/MAINNET-BUYBACK-SPLITTER-SAFE-BATCH-2026-10-28.json`。三笔，顺序不能变：
 
@@ -39,7 +41,7 @@
 - **多签以后对 handler 的操作都改成调 `GangHandlerAdmin.exec(<原来的 calldata>)`**，例如加白合作方 `exec(list(addr, label))`、`exec(delist(addr))`、换 keeper `exec(proposeKeeper(k))` / `exec(acceptKeeper())`、换 DEX router `exec(proposeDexRouter(r))` 等。
 - 交回（撤销整个机制）：`GangHandlerAdmin.exec(transferOwnership(多签))`，再由多签调 `handler.acceptOwnership()`。
 
-核对（执行后任何人可跑）：
+执行后核对（2026-10-28 已跑）：handler 的 owner = 管理合约、无待接收的 owner；管理合约 owner = 多签；工厂已允许；handler 的 keeper 不变（`0xB6f1…cFc7`）；脚本检查模式打印「nothing to do」；真实 Agent `0xf7A8…14aA` 静态调用 `factory.create(5000, salt)` 返回 `predict` 的地址（估算 gas 330,005）；keeper 对主网报「modules: 0 found」（经管理合约读取）。命令：
 
 ```sh
 GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985 \
@@ -58,8 +60,8 @@ GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004
 
 ## 还要做的
 
-1. 多签执行上面的批量。
-2. CLI：主网工厂地址已写进 `skill/gang-cli/src/buyback.js`（`MAINNET_SPLITTER_FACTORY`）；批量执行后再发版（之前 `--buyback` 会在克隆的模拟里回滚，管理合约还不是 handler 的 owner）。
+1. ~~多签执行上面的批量~~（已执行，见上）。
+2. CLI：主网工厂地址已写进 `skill/gang-cli/src/buyback.js`（`MAINNET_SPLITTER_FACTORY`），批量已执行，可以发版。
 3. keeper：正式服务器 crontab 加 `keeper/crontab.txt` 里 `module-work` 那一行（`.env` 沿用 tax-process 的 `PADS` / `V3_PADS`、`KEEPER_PRIVATE_KEY`、`EXPECTED_KEEPER`，不用新增配置）；测站同样，或设 `MODULE_WORK_DISABLED=1`。
 4. BscScan 源码验证（需要 `ETHERSCAN_API_KEY`；编译设置 solc 0.8.28、via-ir、优化 200 次、cancun，`foundry.toml` 已配好 `--chain bsc`）：
 
