@@ -25,7 +25,9 @@ interface IOwnable2Step {
 ///            `oldAdmin.exec(transferOwnership(admin))` instead;
 ///         2. `admin.setFactory(factory, true)` — the factory may list the splitters it clones.
 ///         On testnet, when the deployer is the handler's owner (set 10: the deployer wallet), the batch is sent by
-///         the script itself. A later module kind / version: deploy its factory with HANDLER_ADMIN set (step 2 only).
+///         the script itself. A later module kind / version: deploy its factory with HANDLER_ADMIN set (step 2 only);
+///         the factories the admin still allows besides it are printed with the optional `setFactory(old, false)` that
+///         stops each (its clones keep working) — the Safe's call, never in the batch.
 /// @dev Env: GANG_PAD (mainnet: must be the live pad); HANDLER_ADMIN, SPLITTER_FACTORY (optional, existing ones);
 ///      ADMIN_OWNER (default: whoever holds the handler now — the Safe, or the owner of the older admin holding it);
 ///      DEPLOYER_PRIVATE_KEY (unless both exist); mainnet broadcast needs GANG_MAINNET_OK=true.
@@ -151,6 +153,30 @@ contract DeployGangBuybackSplitterFactory is Script {
         if (!GangHandlerAdmin(admin).isFactory(factory)) GangHandlerAdmin(admin).setFactory(factory, true);
     }
 
+    /// @notice The factories `admin` allows besides `factory` (an older version, another kind).
+    function otherFactories(address admin, address factory) public view returns (address[] memory others) {
+        address[] memory all = GangHandlerAdmin(admin).factories();
+        others = new address[](all.length);
+        uint256 n;
+        for (uint256 i; i < all.length; i++) {
+            if (all[i] != factory && GangHandlerAdmin(admin).isFactory(all[i])) others[n++] = all[i];
+        }
+        assembly ("memory-safe") {
+            mstore(others, n)
+        }
+    }
+
+    function _printOtherFactories(address admin, address factory) internal view {
+        address[] memory others = otherFactories(admin, factory);
+        for (uint256 i; i < others.length; i++) {
+            console.log(
+                "Also allowed on the admin (optional, the Safe's call: stop it, its clones keep working):", others[i]
+            );
+            console.log("  to  ", admin);
+            console.logBytes(abi.encodeCall(GangHandlerAdmin.setFactory, (others[i], false)));
+        }
+    }
+
     function _print(address pad, address admin, address factory, bytes[] memory batch) internal view {
         console.log("pad                      ", pad);
         console.log("GangHandlerAdmin         ", admin);
@@ -158,6 +184,7 @@ contract DeployGangBuybackSplitterFactory is Script {
         console.log("GangBuybackSplitterFactory", factory);
         console.log("  implementation         ", GangBuybackSplitterFactory(factory).implementation());
         console.log("block                    ", block.number);
+        _printOtherFactories(admin, factory);
         if (batch.length == 0) {
             console.log("Safe batch: nothing to do (admin owns the handler, factory allowed)");
             return;

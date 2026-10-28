@@ -56,6 +56,9 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
     /// @notice `previewWork`'s `minOut`: the previewed burn less this, for a trade earlier in the same block.
     uint256 public constant WORK_SLIPPAGE_BPS = 100;
+    /// @notice `previewWork` is not due while the buy-back holds less than this share of the pair's quote reserve: each
+    ///         swap-back pays a little, and a keeper tx for every trickle would cost more gas than it buys back.
+    uint256 public constant WORK_MIN_BPS = 5;
     bytes32 public constant MODULE_TYPE = "buyback-burn-v1";
 
     uint8 internal constant KIND_CURVE = 1;
@@ -312,41 +315,46 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
 
     /// @notice What `burnChunk` would do now: whether it buys, the quote it spends and the tokens it burns.
     function previewBurn() external view returns (bool ready, uint256 quoteIn, uint256 tokensOut) {
-        (ready, quoteIn, tokensOut,) = _preview();
+        (ready, quoteIn, tokensOut,,) = _preview();
     }
 
     /// @notice Due when `burnChunk` would buy a chunk (`minOut` = its burn less WORK_SLIPPAGE_BPS) or, while the price
     ///         check is not ready, when the call would record or roll the TWAP observation (`minOut` 0) — the call the
-    ///         buy-back needs to get ready again. Not due with nothing to buy back, before graduation, or twice a block.
+    ///         buy-back needs to get ready again. Not due with less than WORK_MIN_BPS of the pair's quote reserve to buy
+    ///         back (it waits for more tax; `burnChunk` still takes any amount by hand), before graduation, or twice a
+    ///         block.
     function previewWork() external view returns (bool due, uint256 minOut) {
-        (bool ready,, uint256 tokensOut, bool moves) = _preview();
+        (bool ready,, uint256 tokensOut, bool moves, bool small) = _preview();
+        if (small) return (false, 0);
         if (ready) return (true, (tokensOut * (BPS - WORK_SLIPPAGE_BPS)) / BPS);
         return (moves, 0);
     }
 
     // ---------------------------------------------------------------- internal
     /// @dev What `burnChunk` would do now: buy (`ready`, spending `quoteIn` for `tokensOut` after the buy tax), and
-    ///      whether it would move the TWAP observations (`moves`).
-    function _preview() internal view returns (bool ready, uint256 quoteIn, uint256 tokensOut, bool moves) {
+    ///      whether it would move the TWAP observations (`moves`); `small`: the buy-back is under WORK_MIN_BPS of the
+    ///      pair's quote reserve.
+    function _preview() internal view returns (bool ready, uint256 quoteIn, uint256 tokensOut, bool moves, bool small) {
         uint256 left = _buybackAfterSplit();
-        if (left == 0 || lastBurnBlock == block.number) return (false, 0, 0, false);
+        if (left == 0 || lastBurnBlock == block.number) return (false, 0, 0, false, true);
         address p = pair;
         bool tokenIs0 = _tokenIs0;
         if (p == address(0)) {
             bool live;
             (,,,,,, live,,,, p,) = IGangPadBondView(pad).curves(token);
-            if (!live) return (false, 0, 0, false);
+            if (!live) return (false, 0, 0, false, true);
             tokenIs0 = IBondPair(p).token0() == token;
         }
         (uint256 rT, uint256 rQ, uint256 cum) = _pairState(p, tokenIs0);
+        small = left * BPS < rQ * WORK_MIN_BPS;
         Twap memory w = _twap;
         uint32 seen = w.recent.at;
         Twap memory next;
         (next, ready) = _twapCheck(w, cum, rT, rQ);
         moves = next.recent.at != seen;
-        if (!ready) return (false, 0, 0, moves);
+        if (!ready) return (false, 0, 0, moves, small);
         quoteIn = _chunkOf(left, rQ);
-        if (quoteIn == 0) return (false, 0, 0, moves);
+        if (quoteIn == 0) return (false, 0, 0, moves, small);
         uint256 out = _amountOut(quoteIn, rQ, rT);
         tokensOut = out - (out * IBondToken(token).buyTaxBps()) / BPS;
     }

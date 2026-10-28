@@ -603,6 +603,30 @@ contract GangBuybackSplitterTest is GangFixture {
         assertFalse(due, "rolled a minute ago");
     }
 
+    /// @dev Review: a trickle under WORK_MIN_BPS of the pair's quote reserve is not worth a keeper tx — not due, neither
+    ///      to buy nor to observe — until more tax arrives; burnChunk still takes it by hand.
+    function test_work_notDueBelowMinimum() public {
+        (GangBuybackSplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        (, uint256 rQ) = _reserves(t, _curvePair(t));
+        uint256 floor = (rQ * s.WORK_MIN_BPS()) / 10_000;
+        wbnb.mintUnlimited(address(s), floor - 1);
+        (bool due,) = s.previewWork();
+        assertFalse(due, "under the floor: no observation call either");
+        s.burnChunk(0); // by hand: records the observation
+        _next(10 minutes);
+        (bool ready,,) = s.previewBurn();
+        assertTrue(ready);
+        (due,) = s.previewWork();
+        assertFalse(due, "under the floor: no chunk either");
+
+        // enough tax arrives: due again
+        wbnb.mintUnlimited(address(s), 2);
+        (due,) = s.previewWork();
+        assertTrue(due);
+        (uint256 q,) = s.burnChunk(0);
+        assertEq(q, floor + 1);
+    }
+
     /// @dev Review: a quote that blacklists the dev must not freeze the buy-back (every path splits first).
     function test_devBlacklisted_owedNotBlocking() public {
         (GangBuybackSplitter s, address t, address dev) = _setup(address(blq), 5_000, true);
@@ -737,6 +761,20 @@ contract GangBuybackSplitterTest is GangFixture {
         _runAsSafe(batch);
         assertEq(handler.owner(), address(admin2));
         assertEq(script.pendingBatch(address(admin2), address(factory2)).length, 0);
+        // a later factory on the same admin: only setFactory, and the earlier one is listed as still allowed
+        GangBuybackSplitterFactory factory2b = new GangBuybackSplitterFactory(address(pad), address(admin2));
+        assertEq(script.pendingBatch(address(admin2), address(factory2b)).length, 1);
+        address[] memory others = script.otherFactories(address(admin2), address(factory2b));
+        assertEq(others.length, 1);
+        assertEq(others[0], address(factory2));
+        // allowed too, then the earlier one stopped: none left besides it
+        vm.startPrank(owner);
+        admin2.setFactory(address(factory2b), true);
+        admin2.setFactory(address(factory2), false);
+        vm.stopPrank();
+        assertEq(script.otherFactories(address(admin2), address(factory2b)).length, 0);
+        vm.prank(owner);
+        admin2.setFactory(address(factory2), true);
         script.check(address(pad), address(admin2), address(factory2));
         // the old admin's factory can't list any more; the new one's can
         address dev = _newAgent();
