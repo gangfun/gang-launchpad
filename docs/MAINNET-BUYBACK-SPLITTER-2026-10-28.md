@@ -85,7 +85,7 @@ GangBond 审计（`docs/AUDIT-GANG-BOND-2026-10-29.md` H-1、I-5）发现：价�
 3. 发 CLI：主网工厂地址指向 v3，最低版本提到新版本（0.13 / 0.14 / 0.15 发带回购的币会失败）。
 4. 服务端和网站认 `buyback-burn-v3`：keeper `keeper-module-work.sh` 的 `NOT_NOW` 加 `BurnTooSoon`（v3 间隔内被别人抢先买了会这样回滚，不该报警）；indexer `src/splitters.js` 的 `BUYBACK_MODULES` 和网站 `src/buyback.js` 的类型列表加 v3（v3 有 payee，读 payee 的分支按 v2 处理）。这一步要在第 2 步之前上线。
 5. 现有 4 个 v1 币：通知两位 dev 风险和选项——保持不变（keeper 会及时买掉，风险是毕业后价格持续拉高、余额攒大时被高位卖给回购）；或 `gang buyback set --pct 0` 在 3 天公告后关掉回购（之后全部给 dev）。
-6. 测试网先走一遍：部署 v3 工厂、测试网管理合约放行，发一个回购币走完毕业和两块回购。
+6. ~~测试网先走一遍~~：2026-10-29 已完成（PR #58 合并后）：测试网工厂 v6 `0x7E63…2BBe` 放行、v5 停用，CLI 发 GAPT、毕业、两块回购相隔 247 秒，间隔内回滚 `BurnTooSoon`。见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`「v6 工厂」。
 
 ## 上主网前的演练（anvil 主网 fork，区块 130281857）
 

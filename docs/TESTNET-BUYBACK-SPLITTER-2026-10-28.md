@@ -4,7 +4,7 @@
 
 | 版本 | 接入方式 | 本文 |
 |---|---|---|
-| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x08b9…a87D`，v2 回购模块带收款地址） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
+| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 v6 `0x7E63…2BBe`，v3 回购模块：带收款地址、两块之间隔 4 分钟） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
 | 第一版 | 每个 dev 由平台部署一个回购合约，多签逐个 `list` 和 `setExcluded` | 第二部分（保留作记录；回购合约 `0xB43b…c0C9` 仍在白名单上，但不在 `modules()` 里，新 keeper 不管它） |
 
 - 链：BSC 测试网（chainId 97），2026-10-28
@@ -122,13 +122,37 @@ CLI 一键发射 BBFL（`--buyback 50 --dev-buy 0.5`）：克隆 [`0x28585D12C24
 | 11:13 | 再铸 0.01（回购部分 0.01） | `true, 0`：keeper 发 `work(0)`（拆分、记观测点），之后又不到点 | [`0x79bcd2d2…e7a1`](https://testnet.bscscan.com/tx/0x79bcd2d2affd3777fcc0652b84f05916909d8cadc051027e778ae9074669e7a1) |
 | 11:24 | 窗口满 | `work(127,635.02 枚)`：花 0.01，销毁 128,924.27 枚（等于预览值），回购余额清零 | [`0xf3efb4dd…5375`](https://testnet.bscscan.com/tx/0xf3efb4dd2e68437e31e82155ad653007ff169f0756e3bc23bd8ed53feff45375) |
 
+## v6 工厂：两块之间的间隔（`buyback-burn-v3`，2026-10-29）
+
+GangBond 审计 H-1（`docs/AUDIT-GANG-BOND-2026-10-29.md`）对 splitter 同样成立：价格拉高并维持到均价追上来后，回购每个区块都能买一块，攻击者每块卖回。v3 回购模块两块之间至少隔 `CHUNK_GAP` = 4 分钟（PR #58）。管理合约不变（v2），只换工厂：
+
+| 项 | 值 |
+|---|---|
+| GangBuybackSplitterFactory v6（现行，CLI 内置） | [`0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe`](https://testnet.bscscan.com/address/0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe)，实现合约 [`0xeE7745aE38E669E40647Eb88c806363b36f2CD85`](https://testnet.bscscan.com/address/0xeE7745aE38E669E40647Eb88c806363b36f2CD85)；部署 [`0x208063b2…6d3e`](https://testnet.bscscan.com/tx/0x208063b2b7a33cd7bf3aaf33876b03cddf21041ab2f659633c71f15cd9946d3e)（区块 139483553，gas 2,567,877）；两个都已在 BscScan 测试网验证 |
+| `adminV2.setFactory(factoryV6, true)`（脚本自动发） | [`0xa8e1102e…ad8d`](https://testnet.bscscan.com/tx/0xa8e1102eb175f0313d34c42f902a8e572efe0602246b4ed4d3c20c4cd746ad8d) |
+| 停用 v5 工厂 | [`0x0efc88cf…1330`](https://testnet.bscscan.com/tx/0x0efc88cf775ed247d181d911d702797b5a807cfa21dafc117a27f9b106fe1330) |
+
+CLI（`GANG_TESTNET_SPLITTER_FACTORY` 指向 v6；本 PR 起是内置地址）`gang create --name "Gap Test" --symbol GAPT --buy-tax 3 --sell-tax 3 --buyback 50 --quote MockSPCXB` 一键发射：
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 克隆 | 回购合约 [`0x050246845Abd7C37d0bc098722dcB91744287F53`](https://testnet.bscscan.com/address/0x050246845Abd7C37d0bc098722dcB91744287F53)，`moduleType` = `buyback-burn-v3`，`CHUNK_GAP` = 240 | [`0x704f4693…d9e5`](https://testnet.bscscan.com/tx/0x704f469383300611a7798be6c099910c8abd39b36f07eba7b7828c972fb2d9e5) |
+| 建币 GAPT `0x64Ca46E86950F607DD62C2d1D939661c490De9fd` → bind → done | — | [`0x0dc4af89…87ad`](https://testnet.bscscan.com/tx/0x0dc4af89e179114869007e52346e406505ab1677e6097e156f7c1c912fcf87ad)、[`0x12d77877…c652`](https://testnet.bscscan.com/tx/0x12d77877d7d8c04ec0366f1b9f462d409047e98196949c678887fec91a73c652) |
+| 毕业 | 175 笔全部成功，交易对 `0x2652ef5d0aD86F1f22d445EF4d51366B9B83049C`（报价币储备 15）；买家剩下的 gas 收回（79 笔，0.005106 tBNB） | 最后一笔 [`0xeab43211…679b`](https://testnet.bscscan.com/tx/0xeab43211bf8f91b5d225745344808bfa23ecb48b847c3bbe277fc24a91e6679b) |
+| 铸 0.2 进回购合约 | `previewWork` = `true, 0` | [`0x3c3d9946…6922`](https://testnet.bscscan.com/tx/0x3c3d9946418195b9168488763fa6f4908b89d8c77d33371be4b4ef1318f46922) |
+| `work(0)` | 拆分：回购余额 0.1、dev 收到 0.1；记观测点 | [`0xef4e316e…171b`](https://testnet.bscscan.com/tx/0xef4e316ed30d980736fcaa1097f39841e5d4bb2b84f036685a0bb963a9d7171b) |
+| 10 分钟后 `work(minOut)` | 第一块：花 0.075（储备的 0.5%），销毁 962,773.17 枚（等于预览值），剩 0.025 | [`0x4e13829e…4a9c`](https://testnet.bscscan.com/tx/0x4e13829e4a6f338f6783b762d2af2c01672a21f4d34c7bf9de54d02404a04a9c) |
+| 紧接着 `burnChunk(0)` / `work(0)` | 回滚 `BurnTooSoon`（`0x0cea97bc`）；`previewWork` / `previewBurn` 不到点 | — |
+| 236 秒时 | `previewWork` = `false` | — |
+| 247 秒时 `work(minOut)` | 第二块：花剩下的 0.025，销毁 318,800.38 枚，回购余额清零 | [`0x6493687f…33bd`](https://testnet.bscscan.com/tx/0x6493687f4f098b11b095fdbea8dd97f89d473fcb4c38a1e92945a219849c33bd) |
+
 ## v4 / v5 工厂：收款地址（`buyback-burn-v2`）
 
 v2 回购模块：回购以外的部分打给 `payee`（默认 dev，建币时 `--buyback-to` 指定，dev 随时 `setPayee`）。管理合约不变（v2），只换工厂：
 
 | 项 | 值 |
 |---|---|
-| GangBuybackSplitterFactory v5（现行，CLI 内置） | [`0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D`](https://testnet.bscscan.com/address/0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D)，实现合约 `0xD6e7122a815A7A4C017576d5374E1691D6BAb1Ac`；部署 [`0x96a5d70a…da43`](https://testnet.bscscan.com/tx/0x96a5d70aa801dbec448f7012e98d375f59bf0af2fc20544213f0b9767d89da43)，`setFactory` [`0x83aa3b0d…2409`](https://testnet.bscscan.com/tx/0x83aa3b0de4e6bc56ae10290884774220cf8205e27f8a8c18261ee1363eb92409)；停用 v4 [`0xb0b9dfe8…7f55`](https://testnet.bscscan.com/tx/0xb0b9dfe89462b5ba95f9b4705ea0ea62091f41ac09950826878fce0c5cab7f55)。比 v4 多一条：payee 不能是回购合约自己（`BadPayee`，自查时补上：付给自己会把 dev 那份在下次拆分里又拆一遍） |
+| GangBuybackSplitterFactory v5（2026-10-29 已停用，换成 v6） | [`0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D`](https://testnet.bscscan.com/address/0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D)，实现合约 `0xD6e7122a815A7A4C017576d5374E1691D6BAb1Ac`；部署 [`0x96a5d70a…da43`](https://testnet.bscscan.com/tx/0x96a5d70aa801dbec448f7012e98d375f59bf0af2fc20544213f0b9767d89da43)，`setFactory` [`0x83aa3b0d…2409`](https://testnet.bscscan.com/tx/0x83aa3b0de4e6bc56ae10290884774220cf8205e27f8a8c18261ee1363eb92409)；停用 v4 [`0xb0b9dfe8…7f55`](https://testnet.bscscan.com/tx/0xb0b9dfe89462b5ba95f9b4705ea0ea62091f41ac09950826878fce0c5cab7f55)。比 v4 多一条：payee 不能是回购合约自己（`BadPayee`，自查时补上：付给自己会把 dev 那份在下次拆分里又拆一遍） |
 | GangBuybackSplitterFactory v4（已停用） | [`0x2a56B8Ee199827F2A8E241BC91def360569278Ec`](https://testnet.bscscan.com/address/0x2a56B8Ee199827F2A8E241BC91def360569278Ec)，实现合约 `0x980A1832B71995Ce8a1457362D077C7CeEE9C5Ca`；部署 [`0x8f65ccc8…6db2`](https://testnet.bscscan.com/tx/0x8f65ccc8697d17ab14c0abbda01df3519fdb01367930e961e78e422dcf1d6db2)（gas 2,534,545） |
 | `adminV2.setFactory(factoryV4, true)` | [`0x6bcb4fa3…3d41`](https://testnet.bscscan.com/tx/0x6bcb4fa382fa7fb631845b41980a1b6191bb181e97c469e74369dbda493e3d41) |
 | 停用 v3 工厂 | [`0x96b66604…c22a`](https://testnet.bscscan.com/tx/0x96b66604d2758526419d477411a8463345901739bfe84dbdad021092f209c22a) |
