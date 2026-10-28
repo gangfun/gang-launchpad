@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（产品规格 + 合约设计）
-- 代码：`src/gang/GangHandlerAdmin.sol`（handler 的 owner）、`src/gang/GangBuybackSplitterFactory.sol`、`src/gang/GangBuybackSplitter.sol`（克隆的实现）、`src/gang/interfaces/IGangRecipientModule.sol`（模块通用接口）；部署脚本 `script/DeployGangBuybackSplitterFactory.s.sol`；单测 `test/gang/GangBuybackSplitter.t.sol`（23 个）；CLI `gang create … --buyback <pct>`、`gang buyback …`；keeper gangfun-server `keeper/keeper-module-work.sh`
+- 代码：`src/gang/GangHandlerAdmin.sol`（handler 的 owner）、`src/gang/GangBuybackSplitterFactory.sol`、`src/gang/GangBuybackSplitter.sol`（克隆的实现）、`src/gang/interfaces/IGangRecipientModule.sol`（模块通用接口）；部署脚本 `script/DeployGangBuybackSplitterFactory.s.sol`；单测 `test/gang/GangBuybackSplitter.t.sol`（24 个）；CLI `gang create … --buyback <pct>`、`gang buyback …`；keeper gangfun-server `keeper/keeper-module-work.sh`
 - 测试网记录：`docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`
 - 来源：dev 需求（2026-10-28，经用户转达），用户确认：
   1. 只针对新币：dev 拿到的交易税，一部分回购，一部分到 dev 的地址；
@@ -81,6 +81,8 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 `previewWork()`（模块接口）：能买时 `due = true`、`minOut` = 预览销毁量 − `WORK_SLIPPAGE_BPS`（1%）；不能买时，只有这次调用会记录或推进 TWAP 观测点才 `due`（`minOut` 0）——这一步正是价格检查恢复所需要的；没东西可买、没毕业、本区块已买过时都不 due。`work(minOut)` = `burnChunk(minOut)`。
 
+**最低金额**：拆分后的回购余额低于交易对报价币储备的 `WORK_MIN_BPS`（0.05%）时不 due——买和推进观测都不报。毕业后每笔卖出的 swap-back 都给回购合约打一点，没有门槛的话 keeper 每 10 分钟左右就要为一点点钱发一笔（约 20–35 万 gas）。攒够以后第一次调用记观测点（停了超过 20 分钟，观测重来），10 分钟后开始买。`burnChunk` 本身仍收任何金额，谁都可以手动调。
+
 ## 5. 其它规则
 
 - **绑定**：`bind(token)` 任何人可调，只能绑一次。要求：V3（curve）币、创建者是 dev、handler 里这个币的 recipient 是本合约。设成任何人可调，是为了防止 dev 故意不绑、再用 `sweep` 把报价币拿走。
@@ -91,7 +93,7 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 ## 6. 接入步骤
 
-**平台，一次性**（每个 pad 一次；以后加新模块只做第 2 步）：
+**平台，一次性**（每个 pad 一次；以后加新模块只做第 2 步——脚本设 `HANDLER_ADMIN` 只部署新工厂，批量只有 `setFactory`，并列出管理合约上仍允许的其他工厂和停用它们的可选交易，停不停由多签决定，停用后它们克隆出去的合约照常工作）：
 
 | 步骤 | 做什么 |
 |---|---|
@@ -134,6 +136,6 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 
 ## 8. 测试
 
-- 单测 `test/gang/GangBuybackSplitter.t.sol` 23 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白）、sweep、外盘税端到端。
+- 单测 `test/gang/GangBuybackSplitter.t.sol` 24 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、sweep、外盘税端到端。
 - 注意：`src/gang/**` 用 via-ir 单独编译，测试里 `new` 这些合约会变成 `vm.deployCode`，`vm.expectRevert` 看不到它的回滚（回滚会让测试直接当作通过）；构造函数的拒绝路径要经测试合约自己的 external 函数部署（`newFactory` / `newAdmin`）。
 - 测试网整轮见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`。

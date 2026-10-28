@@ -4,7 +4,7 @@
 
 | 版本 | 接入方式 | 本文 |
 |---|---|---|
-| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x71e9…2a87`） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
+| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x0Ff5…9DA1`） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
 | 第一版 | 每个 dev 由平台部署一个回购合约，多签逐个 `list` 和 `setExcluded` | 第二部分（保留作记录；回购合约 `0xB43b…c0C9` 仍在白名单上，但不在 `modules()` 里，新 keeper 不管它） |
 
 - 链：BSC 测试网（chainId 97），2026-10-28
@@ -29,7 +29,7 @@
 | 项 | 值 |
 |---|---|
 | GangHandlerAdmin v2 | [`0xBc2d7A1f2E86A7586f31A324aDaE3d38bFd49a4d`](https://testnet.bscscan.com/address/0xBc2d7A1f2E86A7586f31A324aDaE3d38bFd49a4d)（加了 `modulesFrom`），owner = `0xCa8e…00b6` |
-| GangBuybackSplitterFactory v2 | [`0x71e997B0d9eBa9678eD3d8C57622009a190d2a87`](https://testnet.bscscan.com/address/0x71e997B0d9eBa9678eD3d8C57622009a190d2a87)（`create(bps, salt)` / `predict`），实现合约 `0xEaB21041e9160594ddC348099e376a6ddA45aDf5`；CLI 内置的就是它 |
+| GangBuybackSplitterFactory v2 | [`0x71e997B0d9eBa9678eD3d8C57622009a190d2a87`](https://testnet.bscscan.com/address/0x71e997B0d9eBa9678eD3d8C57622009a190d2a87)（`create(bps, salt)` / `predict`），实现合约 `0xEaB21041e9160594ddC348099e376a6ddA45aDf5`；已被 v3 工厂取代并停用（见「v3 工厂」一节） |
 | 部署 | admin [`0xa13f98ee…1b16`](https://testnet.bscscan.com/tx/0xa13f98eefdc30c518dbc351e515fd33ec464e13105a38ecfee68ca9825561b16)（gas 707,758）、工厂 + 实现 [`0xbb5c85f7…0ad1`](https://testnet.bscscan.com/tx/0xbb5c85f7bd8a7013fb3d2055a73082f470499729ff7b18c44a1065690b6d0ad1)（gas 2,413,583） |
 | 迁移批量（脚本识别出 handler 在 v1 管理合约手里） | `adminV1.exec(transferOwnership(adminV2))` [`0x772c37a9…1e2f`](https://testnet.bscscan.com/tx/0x772c37a91179987fb870bff2931192de978e0036fcf37570a5ca4625a8652e1f)、`adminV2.exec(acceptOwnership())` [`0x3ea96bd6…e557`](https://testnet.bscscan.com/tx/0x3ea96bd699297abeb9dd69badaf88f82c8c424a065c903f76d6d8dcaad10e557)、`adminV2.setFactory(factoryV2, true)` [`0x358d945d…edcf`](https://testnet.bscscan.com/tx/0x358d945d5d9e893a205c05bc52230a6e568890141803cec8dc2476004438edcf) |
 
@@ -103,6 +103,24 @@ keeper（`7208423` 的 `keeper-module-work.sh`，macOS 自带的 bash 3.2，`MOD
 | 发送 | 拿锁、重新 `previewWork`，`work(81,224.55 枚)`：销毁 82,045.00 枚（等于预览值），回购余额清零 | [`0x3522b4db…aba9`](https://testnet.bscscan.com/tx/0x3522b4db0af30488e2327e2a7a2d0964b53724cdbac65940a732094c39d6aba9) |
 | `SCAN_MAX_SEC=0` | WARN「scan stopped after 0s at 0 / 2」，退出码 5 | — |
 
+## v3 工厂：最低金额（`WORK_MIN_BPS`）
+
+实现合约加了最低金额：回购余额低于交易对报价币储备的 0.05% 时 `previewWork` 不报到点。管理合约不变（v2），只换工厂：
+
+| 项 | 值 |
+|---|---|
+| GangBuybackSplitterFactory v3（现行，CLI 内置） | [`0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1`](https://testnet.bscscan.com/address/0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1)，实现合约 `0x666429D8978167F6003792c442a8e3958C6d5997`；部署 [`0x158da28e…f691`](https://testnet.bscscan.com/tx/0x158da28ea253c1e6059e2c8dc67e158229ce7920e5c5fbcd2388f4799b5bf691)（gas 2,435,455） |
+| 批量（`HANDLER_ADMIN` 已设，只有一笔） | `adminV2.setFactory(factoryV3, true)` [`0xb7aa2c37…68df`](https://testnet.bscscan.com/tx/0xb7aa2c37822ce1d1ae5d75d3d080267ffa564bf7f0df3fe34edb3cfd8b6868df)；脚本同时列出 v2 工厂仍被允许，附停用交易 |
+| 停用 v2 工厂（可选那一笔） | `adminV2.setFactory(factoryV2, false)` [`0x5a03e66c…9caa`](https://testnet.bscscan.com/tx/0x5a03e66cf785ba6c2ba67489c7171b7b034902b8a3cb75f7d68264e29ece9caa) |
+
+CLI 一键发射 BBFL（`--buyback 50 --dev-buy 0.5`）：克隆 [`0x28585D12C24e36425bc82cA33f55cDAe10CE24f0`](https://testnet.bscscan.com/address/0x28585D12C24e36425bc82cA33f55cDAe10CE24f0)（[`0xba053cb4…c83c`](https://testnet.bscscan.com/tx/0xba053cb4ec36c56218c2f600d7ab41da22a2fe07d195dd13a46ca9e5d9f2c83c)）→ 建币 `0x693515C0669Ef28a61a095D8c898C85C2a03C454` → bind → dev 买入 → done。毕业（171 笔，全部成功），交易对 `0x07F2…8EfB`，报价币储备 15，所以门槛 = 0.0075。
+
+| 时间（UTC） | 情况 | `previewWork` / keeper（`ac5f142`） | 交易 |
+|---|---|---|---|
+| 11:13 | 铸 0.01 进回购合约（50%：回购部分 0.005 < 0.0075） | `false`；keeper「scanned 2 / 2, due 0」 | [`0xfa127004…f8bcb`](https://testnet.bscscan.com/tx/0xfa1270043a733b40ecbc6c4400991c067e0a6022b4004878fd17792fea7f8bcb) |
+| 11:13 | 再铸 0.01（回购部分 0.01） | `true, 0`：keeper 发 `work(0)`（拆分、记观测点），之后又不到点 | [`0x79bcd2d2…e7a1`](https://testnet.bscscan.com/tx/0x79bcd2d2affd3777fcc0652b84f05916909d8cadc051027e778ae9074669e7a1) |
+| 11:24 | 窗口满 | `work(127,635.02 枚)`：花 0.01，销毁 128,924.27 枚（等于预览值），回购余额清零 | [`0xf3efb4dd…5375`](https://testnet.bscscan.com/tx/0xf3efb4dd2e68437e31e82155ad653007ff169f0756e3bc23bd8ed53feff45375) |
+
 ## 没测到
 
 - 下调公告期满后执行（`gang buyback apply`）：BBFT 上的下调已取消；要等 3 天。单测覆盖执行、作废、取消。
@@ -118,7 +136,7 @@ GANG_PAD=0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1 DEPLOYER_PRIVATE_KEY=… \
   forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com \
   --broadcast --slow --legacy --with-gas-price 100000000
 # 只核对已部署的
-GANG_PAD=… HANDLER_ADMIN=0xBc2d…9a4d SPLITTER_FACTORY=0x71e9…2a87 \
+GANG_PAD=… HANDLER_ADMIN=0xBc2d…9a4d SPLITTER_FACTORY=0x0Ff5…9DA1 \
   forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com
 # keeper（gangfun-server）
 PADS=t10:0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1@0 BSC_RPC=https://bsc-testnet-rpc.publicnode.com \
