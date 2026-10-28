@@ -684,6 +684,8 @@ async function main() {
   }
   // --bond-hold / --bond-days / --restart only mean something in a chained launch (--dev-buy / --bond); never drop them silently
   if (tokenCreate && !isLaunch(cmd === 'fair' ? 'fair' : 'v3', flag)) {
+    // a 打新 dev buys with --shares in the create itself: say so here, not "add --bond" (which would only lead to that)
+    if (cmd === 'fair' && flag('dev-buy')) fail('a 打新 dev buys its shares in the create itself: use --shares <n> (not --dev-buy)')
     const lone = LAUNCH_FLAGS.find((f) => flag(f))
     if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${cmd === 'fair' ? '' : ' (or --dev-buy <quote>)'}`)
   }
