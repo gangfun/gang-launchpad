@@ -27,6 +27,7 @@
 |---|---|
 | **GangLaunchpad**（V3 和打新共用一个内盘） | `0x15CFD2dc8278Fb87a1783ef42111618E20874365`（区块 130104322） |
 | **GangRouter**（代理，用户授权这个地址） | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
+| GangPadRegistry（代理，聚合器查币所在的 pad、拿曲线报价） | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
 | GangTaxHandler（外盘税） | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
