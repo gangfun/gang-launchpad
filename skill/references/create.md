@@ -83,7 +83,7 @@ gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bo
 - **`--dev-buy`** is V3 only (as `gang v3 buy --amount`: quote, the 1% curve fee included, capped at 1% of supply). A 打新
   dev buys with `--shares` in the create itself.
 - **`--bond`** posts a creator bond ([bond.md](bond.md)) right after: `--bond-hold` (default all of the dev's tokens),
-  `--bond-days` from graduation / launch. It needs GangBond on the network (testnet only for now) and is checked before
+  `--bond-days` from graduation / launch. It needs GangBond on the network (mainnet and testnet) and is checked before
   the create, so a launch never stops half way on a bad flag. Tell the user the bond rules before the first run.
 - **`--buyback <0-100>`** (V3, taxed; not with `--recipient`): the recipient's part of the tax is split, that % bought
   back in the pool and burned (0xdead), the rest to the dev, or to `--buyback-to <addr>` (another wallet, a treasury;
