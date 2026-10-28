@@ -10,7 +10,7 @@ description: |
   tax token with a tax recipient / 税收接收地址 / 买卖税.
 metadata:
   author: gangfun
-  version: '0.13.0'
+  version: '0.14.0'
   requires:
     bins: [baw, gang]
   install:
@@ -44,7 +44,7 @@ The `gang` CLI reads the chain and builds calldata; all signing goes through the
 It never holds keys.
 
 Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g github:gangfun/cli`). Check with `npm ls -g @gangfun/cli`.
-The one-command launch (`--dev-buy` / `--bond`), `gang bond` and the buy-back (`--buyback`, `gang buyback`) need **0.13.0** or later; the unified commands (`gang info`, `gang mint`, `gang create --fair`, …) 0.12.0; GangLaunchpad and pool trades 0.9.0.
+A buy-back payee (`--buyback-to`, `gang buyback set-payee`) needs **0.14.0** or later (0.13.0 cloned v1 splitters, which always pay the dev); the one-command launch (`--dev-buy` / `--bond`), `gang bond` and the buy-back (`--buyback`, `gang buyback`) need 0.13.0; the unified commands (`gang info`, `gang mint`, `gang create --fair`, …) 0.12.0; GangLaunchpad and pool trades 0.9.0.
 
 ## Command Routing
 
