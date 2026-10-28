@@ -66,7 +66,7 @@ contract GangBondTest is GangFixture {
     }
 
     function _next(uint256 dt) internal {
-        vm.warp(block.timestamp + dt);
+        vm.warp(vm.getBlockTimestamp() + dt);
         vm.roll(block.number + 1);
     }
 
@@ -104,13 +104,13 @@ contract GangBondTest is GangFixture {
         // the edges themselves are fine
         vm.prank(creator);
         bond.post{value: 1 ether}(t, 1 ether, bal, 7 days);
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 7 days); // live token: the clock starts at once
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 7 days); // live token: the clock starts at once
     }
 
     function test_post_bnb_recordsBond() public {
         (address t, address creator) = _v3(address(wbnb), TAX);
         uint256 hold = _bal(t, creator) / 2;
-        uint64 dl = uint64(block.timestamp + 30 days);
+        uint64 dl = uint64(vm.getBlockTimestamp() + 30 days);
         vm.deal(creator, 1 ether);
         vm.expectEmit(address(bond));
         emit IGangBond.BondPosted(t, creator, 1, address(wbnb), 1 ether, hold, 30 days, dl);
@@ -122,7 +122,7 @@ contract GangBondTest is GangFixture {
         assertEq(b.quote, address(wbnb));
         assertEq(b.round, 1);
         assertEq(uint8(b.state), uint8(IGangBond.State.Active));
-        assertEq(b.postedAt, block.timestamp);
+        assertEq(b.postedAt, vm.getBlockTimestamp());
         assertEq(b.deadline, dl);
         assertEq(b.amount, 1 ether);
         assertEq(b.holdAmount, hold);
@@ -183,7 +183,7 @@ contract GangBondTest is GangFixture {
         assertEq(bond.bondOf(t).holdAmount, bal);
 
         // extend: later by `by`, at most 90 days from now
-        uint64 room = uint64(block.timestamp + 90 days) - dl;
+        uint64 room = uint64(vm.getBlockTimestamp() + 90 days) - dl;
         vm.startPrank(creator);
         vm.expectRevert(IGangBond.BadDuration.selector);
         bond.extend(t, 0);
@@ -191,7 +191,7 @@ contract GangBondTest is GangFixture {
         bond.extend(t, room + 1);
         bond.extend(t, room);
         vm.stopPrank();
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 90 days);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 90 days);
         assertEq(bond.bondOf(t).duration, 30 days + room);
 
         vm.prank(reporter);
@@ -558,7 +558,7 @@ contract GangBondTest is GangFixture {
         assertTrue(bond.isLive(t));
         assertEq(bond.bondOf(t).deadline, 0, "nobody started it yet");
         _next(1 hours);
-        uint64 expect = uint64(block.timestamp + 30 days);
+        uint64 expect = uint64(vm.getBlockTimestamp() + 30 days);
         vm.expectEmit(address(bond));
         emit IGangBond.BondStarted(t, 1, expect);
         vm.prank(reporter); // anyone
@@ -584,7 +584,7 @@ contract GangBondTest is GangFixture {
         vm.deal(creator, 1 ether);
         vm.prank(creator);
         bond.topUp{value: 0.1 ether}(t, 0.1 ether);
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 30 days);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 30 days);
         assertEq(_pairOf(t), _curvePair(t));
     }
 
@@ -600,7 +600,7 @@ contract GangBondTest is GangFixture {
         assertEq(bond.bondOf(t).deadline, 0);
         _graduate(t);
         bond.start(t);
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 90 days);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 90 days);
     }
 
     /// @dev Selling on the curve before graduation breaks the promise; the buy-back waits for the pair.
@@ -632,7 +632,7 @@ contract GangBondTest is GangFixture {
     /// @dev Slashed on the curve and the token never graduates: MAX_WAIT after the post the rest goes to 0xdead as WBNB.
     function test_preGrad_neverGraduates_burnsQuoteAfterWait() public {
         (address t, address creator) = _v3OnCurve();
-        uint64 posted = uint64(block.timestamp);
+        uint64 posted = uint64(vm.getBlockTimestamp());
         _postPending(t, creator, 0.5 ether, 30 days);
         _curveSell(t, creator, _bal(t, creator));
         vm.prank(reporter);
@@ -657,7 +657,7 @@ contract GangBondTest is GangFixture {
 
     function test_refund_requestThenNotice() public {
         (address t, address creator) = _v3OnCurve();
-        uint64 posted = uint64(block.timestamp);
+        uint64 posted = uint64(vm.getBlockTimestamp());
         _postPending(t, creator, 0.5 ether, 30 days);
 
         vm.warp(posted + 30 days - 1);
@@ -672,7 +672,7 @@ contract GangBondTest is GangFixture {
         vm.expectRevert(IGangBond.NoRefundRequest.selector);
         bond.refund(t);
 
-        uint64 at = uint64(block.timestamp + 3 days);
+        uint64 at = uint64(vm.getBlockTimestamp() + 3 days);
         vm.expectEmit(address(bond));
         emit IGangBond.RefundRequested(t, 1, at);
         vm.prank(creator);
@@ -714,7 +714,7 @@ contract GangBondTest is GangFixture {
     ///      still binds (a breach can be reported) and graduating voids the request: the clock starts instead.
     function test_refund_noticeBindsAndGraduationVoidsIt() public {
         (address t, address creator) = _v3OnCurve();
-        uint64 posted = uint64(block.timestamp);
+        uint64 posted = uint64(vm.getBlockTimestamp());
         _postPending(t, creator, 0.5 ether, 30 days);
         vm.warp(posted + 30 days);
         vm.prank(creator);
@@ -731,7 +731,7 @@ contract GangBondTest is GangFixture {
 
         // breach during a notice on another token: reportable, and no refund
         (address t2, address c2) = _v3OnCurve();
-        uint64 p2 = uint64(vm.getBlockTimestamp()); // block.timestamp can read stale after vm.warp (via-ir)
+        uint64 p2 = uint64(vm.getBlockTimestamp()); // vm.getBlockTimestamp() can read stale after vm.warp (via-ir)
         _postPending(t2, c2, 0.5 ether, 30 days);
         vm.warp(p2 + 30 days);
         vm.prank(c2);
@@ -748,7 +748,7 @@ contract GangBondTest is GangFixture {
 
     function test_refund_refusedWhenBrokenOrLive() public {
         (address t, address creator) = _v3OnCurve();
-        uint64 posted = uint64(block.timestamp);
+        uint64 posted = uint64(vm.getBlockTimestamp());
         _postPending(t, creator, 0.5 ether, 30 days);
         vm.warp(posted + 30 days);
         _curveSell(t, creator, 1 ether);
@@ -758,7 +758,7 @@ contract GangBondTest is GangFixture {
 
         // past MAX_WAIT, then the pair comes: the bond runs, no refund
         (address t2, address c2) = _v3OnCurve();
-        uint64 p2 = uint64(vm.getBlockTimestamp()); // block.timestamp can read stale after vm.warp (via-ir)
+        uint64 p2 = uint64(vm.getBlockTimestamp()); // vm.getBlockTimestamp() can read stale after vm.warp (via-ir)
         _postPending(t2, c2, 0.5 ether, 30 days);
         vm.warp(p2 + 31 days);
         _graduate(t2);
@@ -766,14 +766,14 @@ contract GangBondTest is GangFixture {
         vm.expectRevert(IGangBond.AlreadyLive.selector);
         bond.requestRefund(t2);
         bond.start(t2);
-        assertEq(bond.bondOf(t2).deadline, block.timestamp + 30 days);
+        assertEq(bond.bondOf(t2).deadline, vm.getBlockTimestamp() + 30 days);
     }
 
     /// @dev Review gap: slashed before the pair, the pair comes after MAX_WAIT but before the first burnChunk — the rest
     ///      is bought back, never burned as quote.
     function test_preGrad_slashed_lateGraduation_stillBuysBack() public {
         (address t, address creator) = _v3OnCurve();
-        uint64 posted = uint64(block.timestamp);
+        uint64 posted = uint64(vm.getBlockTimestamp());
         _postPending(t, creator, 0.5 ether, 30 days);
         _curveSell(t, creator, _bal(t, creator));
         vm.prank(reporter);
@@ -802,7 +802,7 @@ contract GangBondTest is GangFixture {
         assertEq(bond.bondOf(t).deadline, 0, "the reverted settle started nothing");
         vm.prank(creator);
         bond.extend(t, 10 days);
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 40 days);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 40 days);
         assertEq(bond.bondOf(t).duration, 40 days);
     }
 
@@ -839,9 +839,9 @@ contract GangBondTest is GangFixture {
         bond.post{value: 0.2 ether}(t, 0.2 ether, hold, 7 days);
         _fill(t);
         bond.start(t);
-        assertEq(bond.bondOf(t).deadline, block.timestamp + 7 days);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 7 days);
         assertEq(_pairOf(t), _salePair(t));
-        vm.warp(block.timestamp + 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
         bond.settle(t);
         assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Settled));
     }

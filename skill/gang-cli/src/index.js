@@ -18,7 +18,7 @@ import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
 import { runBond } from './bond.js'
-import { isLaunch, runLaunch } from './launch.js'
+import { isLaunch, LAUNCH_FLAGS, runLaunch } from './launch.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { MERGED_ERRORS_ABI, kindOf, padNets } from './gangpad.js'
@@ -681,6 +681,11 @@ async function main() {
   }
   if (flag('description') && !tokenCreate) {
     fail('--description only applies when creating a token (`gang create`, `gang v3 create`, `gang fair create`; it goes into the token metadata)')
+  }
+  // --bond-hold / --bond-days / --restart only mean something in a chained launch (--dev-buy / --bond); never drop them silently
+  if (tokenCreate && !isLaunch(cmd === 'fair' ? 'fair' : 'v3', flag)) {
+    const lone = LAUNCH_FLAGS.find((f) => flag(f))
+    if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${cmd === 'fair' ? '' : ' (or --dev-buy <quote>)'}`)
   }
   switch (cmd) {
     case 'fair':

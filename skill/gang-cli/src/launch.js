@@ -18,8 +18,9 @@ import { parseAmount, parseIntIn } from './steps.js'
  * pad's token count before the create, and each run looks for a token this wallet created with that symbol since then
  * (none yet → the create; found and the dev holds none → the V3 dev buy; holds some and no bond → the bond; else done).
  * The plan is written only once the create preview succeeds, and a run that finds no token never builds a second
- * create on its own (the first may still be landing): `--restart` does. A finished launch keeps its plan (7 days), so
- * running the command once more reports it again instead of creating another token.
+ * create on its own (the first may still be landing): `--restart` does. The plan keeps the token once found (no rescan
+ * on later runs) and is marked done at the end: a done launch only reports, even if the dev's balance or the bond
+ * changed since (no second buy, bond or create) — for 7 days, then the plan expires.
  */
 
 const LAUNCH_DIR = process.env.GANG_LAUNCH_DIR || join(dirname(DIR), 'launch')
@@ -129,15 +130,21 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     return runFair('create', { ...createIo, notes: padNotes('fair', 'create') })
   }
 
-  // ---- find the token this plan created
-  let token = null
-  const count = Number(await read(net.pad, PAD_ABI, 'tokenCount'))
-  for (let i = Number(plan.startCount); i < count && !token; i++) {
-    const t = await read(net.pad, PAD_ABI, 'allTokens', [BigInt(i)])
-    const k = Number(await read(net.pad, PAD_ABI, 'kindOf', [t]))
-    const creator = k === 1 ? (await read(net.pad, PAD_ABI, 'curves', [t]))[0] : k === 2 ? (await read(net.pad, PAD_ABI, 'sales', [t]))[0] : zeroAddress
-    if (creator.toLowerCase() !== me.toLowerCase()) continue
-    if ((await read(t, ERC20_ABI, 'symbol')) === symbol) token = t
+  // ---- the token this plan created: kept in the plan once found, else looked up from the pad's list since the plan
+  let token = plan.token ?? null
+  if (!token) {
+    const count = Number(await read(net.pad, PAD_ABI, 'tokenCount'))
+    for (let i = Number(plan.startCount); i < count && !token; i++) {
+      const t = await read(net.pad, PAD_ABI, 'allTokens', [BigInt(i)])
+      const k = Number(await read(net.pad, PAD_ABI, 'kindOf', [t]))
+      const creator = k === 1 ? (await read(net.pad, PAD_ABI, 'curves', [t]))[0] : k === 2 ? (await read(net.pad, PAD_ABI, 'sales', [t]))[0] : zeroAddress
+      if (creator.toLowerCase() !== me.toLowerCase()) continue
+      if ((await read(t, ERC20_ABI, 'symbol')) === symbol) token = t
+    }
+    if (token) {
+      plan = { ...plan, token }
+      writePlan(key, plan)
+    }
   }
   if (!token) {
     return out({
@@ -149,6 +156,17 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   // later steps carry no note (it went on the create) and take the token from the plan
   const stepIo = (over) => ({ ...io, ...argsWith(io, { ...over, token }, [...LAUNCH_FLAGS, ...NOTE_FLAGS, 'name', 'symbol']) })
   const bal = await read(token, ERC20_ABI, 'balanceOf', [me])
+
+  // ---- done: the report only, whatever happened to the balance or the bond since
+  const report = () => {
+    const done = {
+      success: true, ...tag('done', { token, again: 'this launch is done; running the command again only reports it. Another token with the same name / symbol: add --restart' }),
+      token, name, symbol, devBalance: formatUnits(bal, 18), chainId: Number(net.chainId),
+    }
+    if (!bond) return out({ ...done, note: `launched: gang ${kind} info --token ${token}${testnet ? ' --testnet' : ''}` })
+    return runBond('status', { ...stepIo({}), out: (o) => out({ ...done, bondStatus: o, note: `launched and bonded: gang bond status --token ${token}${testnet ? ' --testnet' : ''}` }) })
+  }
+  if (plan.done) return report()
 
   // ---- V3 dev buy (a 打新 dev already holds its shares' tokens)
   if (devBuy && bal === 0n) {
@@ -170,11 +188,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     }
   }
 
-  // ---- done (the plan stays: running this again reports it, never a second create)
-  const done = {
-    success: true, ...tag('done', { token, again: 'this launch is done; running the command again only reports it. Another token with the same name / symbol: add --restart' }),
-    token, name, symbol, devBalance: formatUnits(bal, 18), chainId: Number(net.chainId),
-  }
-  if (!bond) return out({ ...done, note: `launched: gang ${kind} info --token ${token}${testnet ? ' --testnet' : ''}` })
-  return runBond('status', { ...stepIo({}), out: (o) => out({ ...done, bondStatus: o, note: `launched and bonded: gang bond status --token ${token}${testnet ? ' --testnet' : ''}` }) })
+  // ---- every step done: mark the plan, so later runs only report (never a second buy, bond or create)
+  writePlan(key, { ...plan, done: true })
+  return report()
 }

@@ -5,7 +5,7 @@ import { API } from './discover.js'
 import { UA } from './version.js'
 import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
 import { poolPayBnb, poolTrade } from './pool.js'
-import { bondGuard } from './bond.js'
+import { bondAddress, bondGuard } from './bond.js'
 
 /**
  * `gang fair …` — 打新 (fair mint): one fixed price per share both ways (mint buys at it, withdraw sells back at it);
@@ -392,8 +392,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     if (!held) return fail('this wallet has no shares in this sale')
     const shares = flag('all') ? Number(held) : parseIntIn(fail, 'shares', opt('shares'), 1, Number(held))
     // a bond posted during the sale already binds: selling shares back takes their tokens out of the creator's wallet
-    const tps = await ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE')
-    const guard = await bondGuard(ctx, { token, me, amount: BigInt(shares) * tps, testnet, breakBond: flag('break-bond'), settleFirst: flag('settle-first') }, rawOnly, summarize)
+    const guard = bondAddress(testnet) && await bondGuard(ctx, {
+      token, me, amount: BigInt(shares) * (await ctx.read(ctx.pad, PAD_ABI, 'TOKENS_PER_SHARE')), testnet, breakBond: flag('break-bond'), settleFirst: flag('settle-first'),
+    }, rawOnly, summarize)
     if (guard?.refuse) return out({ success: false, step: 'withdraw', wallet: me, ...guard.refuse })
     const [payout, fee] = await ctx.read(ctx.pad, PAD_ABI, 'previewWithdraw', [token, me, BigInt(shares)])
     // the price is fixed, so only the exit fee can move the payout: a mint landing first can restart the 7-day clock
