@@ -1,0 +1,90 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1793220690138,
+  "meta": {
+    "name": "Buy-back splitter v3: allow factory v3, stop v1 and v2",
+    "description": "GangHandlerAdmin.setFactory: allow GangBuybackSplitterFactory v3 0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd (buyback-burn-v3: at most one buy-back chunk per 4 minutes, GangBond audit 2026-10-29 H-1), stop v1 0x6bcd\u20268546 and v2 0x9346\u20268F2f (their clones keep working; new ones would buy a chunk per block). gang-launchpad PR #58. Run only once the keeper, indexer and site know buyback-burn-v3.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E",
+    "createdFromOwnerAddress": "",
+    "checksum": ""
+  },
+  "transactions": [
+    {
+      "to": "0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985",
+      "value": "0",
+      "data": "0x71013c10000000000000000000000000f1d5ca816d72e6f130f42662d11b238312a7f1cd0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setFactory",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory": "0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985",
+      "value": "0",
+      "data": "0x71013c100000000000000000000000006bcd79206da85aa0643db2164ab887b4686185460000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setFactory",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory": "0x6bcd79206da85Aa0643Db2164Ab887b468618546",
+        "allowed": "false"
+      }
+    },
+    {
+      "to": "0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985",
+      "value": "0",
+      "data": "0x71013c1000000000000000000000000093467cb38b9cb7f6ef3b67d2226eb8b77ca58f2f0000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setFactory",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory": "0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f",
+        "allowed": "false"
+      }
+    }
+  ]
+}
