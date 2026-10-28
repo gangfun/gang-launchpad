@@ -70,6 +70,14 @@ contract GangBondTest is GangFixture {
         vm.roll(block.number + 1);
     }
 
+    /// @dev Both settle steps, SETTLE_DELAY apart.
+    function _settle(address t) internal {
+        bond.requestSettle(t);
+        vm.warp(bond.bondOf(t).requestAt);
+        vm.roll(block.number + 1);
+        bond.settle(t);
+    }
+
     // ---------------------------------------------------------------- post
     function test_post_refusesUnknownToken() public {
         vm.expectRevert(IGangBond.UnknownToken.selector);
@@ -257,7 +265,7 @@ contract GangBondTest is GangFixture {
         vm.warp(dl + 1 days);
         _dump(t, creator, _bal(t, creator));
         vm.expectRevert(IGangBond.Violated.selector);
-        bond.settle(t);
+        bond.requestSettle(t);
         vm.prank(reporter);
         bond.report(t);
         assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Slashed));
@@ -269,9 +277,24 @@ contract GangBondTest is GangFixture {
         (uint256 hold, uint64 dl) = _postBnb(t, creator, 1 ether);
         vm.warp(dl - 1);
         vm.expectRevert(IGangBond.NotDue.selector);
+        bond.requestSettle(t);
+        vm.expectRevert(IGangBond.NoSettleRequest.selector);
         bond.settle(t);
 
         vm.warp(dl);
+        uint64 at = uint64(dl) + bond.SETTLE_DELAY();
+        vm.expectEmit(address(bond));
+        emit IGangBond.SettleRequested(t, 1, at);
+        vm.prank(reporter); // anyone asks
+        bond.requestSettle(t);
+        assertEq(bond.bondOf(t).requestAt, at);
+        vm.expectRevert(IGangBond.AlreadyRequested.selector);
+        bond.requestSettle(t);
+        vm.warp(at - 1);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.settle(t);
+
+        vm.warp(at);
         uint256 before = wbnb.balanceOf(creator);
         vm.expectEmit(address(bond));
         emit IGangBond.BondSettled(t, 1, creator, 1 ether);
@@ -293,7 +316,80 @@ contract GangBondTest is GangFixture {
         assertEq(bond.bondOf(t).round, 2);
     }
 
+    /// @dev Audit 2026-10-29 M: a creator that sold everything can't pass settle with tokens bought and sold around it in
+    ///      one transaction — the balance must meet the promise at the request and again SETTLE_DELAY later.
+    function test_settle_atomicRoundTripFails() public {
+        (address t, address creator) = _v3(address(wbnb), 0);
+        (uint256 hold, uint64 dl) = _postBnb(t, creator, 1 ether);
+        address pair = _pairOf(t);
+        _poolSell(t, pair, creator, _bal(t, creator)); // dumped, never reported
+        vm.warp(dl);
+
+        // one transaction: buy the promise back to the creator, ask to settle, sell again
+        while (_bal(t, creator) < hold) {
+            (, uint256 rQ) = _reserves(t, pair);
+            _poolBuy(t, address(wbnb), pair, creator, rQ / 10);
+        }
+        bond.requestSettle(t);
+        _poolSell(t, pair, creator, _bal(t, creator));
+
+        // meanwhile it is reportable, and the second step fails on the balance
+        assertTrue(bond.isViolated(t));
+        vm.warp(bond.bondOf(t).requestAt);
+        vm.expectRevert(IGangBond.Violated.selector);
+        bond.settle(t);
+        vm.prank(reporter);
+        bond.report(t);
+        assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Slashed));
+    }
+
+    /// @dev Moving the deadline voids a settle request: the new deadline has to come first.
+    function test_settle_extendVoidsRequest() public {
+        (address t, address creator) = _v3(address(wbnb), TAX);
+        (, uint64 dl) = _postBnb(t, creator, 1 ether);
+        vm.warp(dl);
+        bond.requestSettle(t);
+        vm.prank(creator);
+        bond.extend(t, 7 days);
+        assertEq(bond.bondOf(t).requestAt, 0);
+        vm.warp(dl + bond.SETTLE_DELAY());
+        vm.expectRevert(IGangBond.NoSettleRequest.selector);
+        bond.settle(t);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.requestSettle(t);
+        vm.warp(dl + 7 days);
+        _settle(t);
+        assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Settled));
+    }
+
     // ---------------------------------------------------------------- burnChunk
+    /// @dev Audit 2026-10-29 H-1: one chunk per CHUNK_GAP, not per block — a price pushed up and held until the average
+    ///      catches up buys one chunk, not the whole bond in a few seconds of blocks.
+    function test_burn_oneChunkPerGap() public {
+        (address t, address creator) = _v3(address(wbnb), 0);
+        _postBnb(t, creator, 3 ether);
+        _dump(t, creator, _bal(t, creator));
+        vm.prank(reporter);
+        bond.report(t);
+        bond.burnChunk(t, 0);
+        _next(10 minutes);
+        (uint256 q,) = bond.burnChunk(t, 0);
+        assertGt(q, 0);
+        uint64 gap = bond.CHUNK_GAP();
+        for (uint256 i; i < 20; i++) {
+            _next(1); // later blocks inside the gap
+            (bool ready,,) = bond.previewBurn(t);
+            assertFalse(ready);
+            vm.expectRevert(IGangBond.BurnTooSoon.selector);
+            bond.burnChunk(t, 0);
+        }
+        _next(gap - 20);
+        (bool ok,,) = bond.previewBurn(t);
+        assertTrue(ok);
+        (q,) = bond.burnChunk(t, 0);
+        assertGt(q, 0);
+    }
+
     function test_burn_chunksUntilDone() public {
         (address t, address creator) = _v3(address(wbnb), TAX);
         _postBnb(t, creator, 0.5 ether);
@@ -328,7 +424,7 @@ contract GangBondTest is GangFixture {
             burnedTotal += burned;
             chunks++;
             if (bond.bondOf(t).burnLeft > 0) {
-                vm.expectRevert(IGangBond.BurnedThisBlock.selector);
+                vm.expectRevert(IGangBond.BurnTooSoon.selector);
                 bond.burnChunk(t, 0);
             }
         }
@@ -420,7 +516,7 @@ contract GangBondTest is GangFixture {
         vm.prank(pair);
         IERC20(t).transfer(creator, need);
         vm.expectRevert(IGangBond.FlashSwapActive.selector);
-        bond.settle(t);
+        bond.requestSettle(t);
     }
 
     function test_burn_slippage() public {
@@ -448,9 +544,9 @@ contract GangBondTest is GangFixture {
         bond.burnChunk(t, 0);
         assertEq(bond.bondOf(t).burnLeft, 0);
 
-        // round 2, slashed a minute later (well inside the window, so only the report's reset can make this call
-        // record-only): its first call records again instead of reusing round 1's observations
-        _next(1 minutes);
+        // round 2, slashed 5 minutes later (past CHUNK_GAP, well inside the window, so only the report's reset can
+        // make this call record-only): its first call records again instead of reusing round 1's observations
+        _next(5 minutes);
         vm.deal(creator, 0.01 ether);
         vm.prank(creator);
         bond.post{value: 0.01 ether}(t, 0.01 ether, 1, 30 days);
@@ -505,7 +601,7 @@ contract GangBondTest is GangFixture {
 
         vm.warp(dl);
         uint256 before = wbnb.balanceOf(cc);
-        bond.settle(c);
+        _settle(c);
         assertEq(wbnb.balanceOf(cc) - before, 2 ether);
         assertEq(wbnb.balanceOf(address(bond)), bond.bondOf(a).burnLeft);
     }
@@ -551,6 +647,8 @@ contract GangBondTest is GangFixture {
         vm.expectRevert(IGangBond.NotTradable.selector);
         bond.start(t);
         vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.requestSettle(t);
+        vm.expectRevert(IGangBond.NoSettleRequest.selector);
         bond.settle(t);
 
         _next(3 days);
@@ -570,9 +668,9 @@ contract GangBondTest is GangFixture {
 
         vm.warp(expect - 1);
         vm.expectRevert(IGangBond.NotDue.selector);
-        bond.settle(t);
+        bond.requestSettle(t);
         vm.warp(expect);
-        bond.settle(t);
+        _settle(t);
         (, uint32 honored,) = bond.historyOf(creator);
         assertEq(honored, 1);
     }
@@ -677,7 +775,7 @@ contract GangBondTest is GangFixture {
         emit IGangBond.RefundRequested(t, 1, at);
         vm.prank(creator);
         bond.requestRefund(t);
-        assertEq(bond.bondOf(t).refundAt, at);
+        assertEq(bond.bondOf(t).requestAt, at);
         vm.prank(creator);
         vm.expectRevert(IGangBond.AlreadyRequested.selector);
         bond.requestRefund(t);
@@ -707,7 +805,7 @@ contract GangBondTest is GangFixture {
         // a refunded round is over: the creator may post again
         _postPending(t, creator, 0.1 ether, 7 days);
         assertEq(bond.bondOf(t).round, 2);
-        assertEq(bond.bondOf(t).refundAt, 0);
+        assertEq(bond.bondOf(t).requestAt, 0);
     }
 
     /// @dev Review M (2026-10-28): the bond can't be pulled unseen right before the pair. During the notice the promise
@@ -727,7 +825,7 @@ contract GangBondTest is GangFixture {
         bond.refund(t);
         bond.start(t);
         assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 30 days);
-        assertEq(bond.bondOf(t).refundAt, 0, "the pair voids the request");
+        assertEq(bond.bondOf(t).requestAt, 0, "the pair voids the request");
 
         // breach during a notice on another token: reportable, and no refund
         (address t2, address c2) = _v3OnCurve();
@@ -798,8 +896,8 @@ contract GangBondTest is GangFixture {
         _postPending(t, creator, 0.5 ether, 30 days);
         _graduate(t);
         vm.expectRevert(IGangBond.NotDue.selector);
-        bond.settle(t);
-        assertEq(bond.bondOf(t).deadline, 0, "the reverted settle started nothing");
+        bond.requestSettle(t);
+        assertEq(bond.bondOf(t).deadline, 0, "the reverted settle request started nothing");
         vm.prank(creator);
         bond.extend(t, 10 days);
         assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 40 days);
@@ -842,7 +940,7 @@ contract GangBondTest is GangFixture {
         assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 7 days);
         assertEq(_pairOf(t), _salePair(t));
         vm.warp(vm.getBlockTimestamp() + 7 days);
-        bond.settle(t);
+        _settle(t);
         assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Settled));
     }
 
