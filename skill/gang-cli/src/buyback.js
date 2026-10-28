@@ -16,7 +16,7 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  */
 
 export const MAINNET_SPLITTER_FACTORY = null
-export const TESTNET_SPLITTER_FACTORY = '0x71e997B0d9eBa9678eD3d8C57622009a190d2a87'
+export const TESTNET_SPLITTER_FACTORY = '0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1'
 export const BUYBACK_TYPE = 'buyback-burn-v1'
 
 export const FACTORY_ABI = parseAbi([
