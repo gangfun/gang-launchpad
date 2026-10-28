@@ -6,6 +6,7 @@ import { walletFor } from './fair.js'
 import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
+import { splitterOf } from './buyback.js'
 
 /**
  * `gang v3 …` — LaunchpadV3 (tax recipient): a token with its own buy / sell tax (1–5% each), a dividend share and a
@@ -272,7 +273,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const taxNote = c.buyTaxPct > 0 || c.sellTaxPct > 0
       ? `buy ${c.buyTaxPct}% / sell ${c.sellTaxPct}% tax only in the PancakeSwap pool after graduation (${fees.platformTaxPct}% of volume to the platform, then ${c.dividendPct}% of the rest to holders, the remainder to the recipient); curve trades pay only the ${fees.curveFeePct}% fee, no tax`
       : `untaxed; curve trades pay the ${fees.curveFeePct}% fee`
-    return out({ success: true, chainId: Number(ctx.chainId), ...fees, ...pub, taxNote, ...(swapBack && { swapBack }) })
+    // a recipient that is the dev's buy-back splitter: its ratio and what waits to be bought back
+    const buyback = c.recipient && !c.recipientIsCreator ? await splitterOf(ctx.read, c.recipient) : null
+    return out({ success: true, chainId: Number(ctx.chainId), ...fees, ...pub, taxNote, ...(swapBack && { swapBack }), ...(buyback && { buyback }) })
   }
 
   if (sub === 'status') {

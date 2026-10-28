@@ -18,6 +18,7 @@ import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
 import { runBond } from './bond.js'
+import { runBuyback } from './buyback.js'
 import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, runLaunch } from './launch.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
@@ -236,6 +237,11 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
   gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]
                                          V3: create → the dev buys on the curve (--dev-buy, as gang v3 buy) → bonds what it
                                          holds (--bond-hold, default all; gang bond post). Wrap / approve steps come in between
+  gang create … --buy-tax <1-5> --sell-tax <1-5> --buyback <0-100> [--dev-buy … [--bond …]]
+                                         V3, taxed: the recipient's part of the tax is split, --buyback % bought back in the
+                                         pool and burned (0xdead), the rest to you. Steps: clone your buy-back splitter
+                                         (GangBuybackSplitterFactory; listed as a recipient in the same tx) → create with it as
+                                         the recipient → bind → the rest of the launch. Without --buyback the tax goes to you
   gang fair create … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
                                          打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
                                          chain (a token this wallet created with this symbol since the plan); a run that finds
@@ -346,6 +352,15 @@ BOND (押金承诺, GangBond; any GangLaunchpad token, from create on; GANG_BOND
   gang bond tx --hash <0x..>             decode GangBond events. --testnet, --calldata, --from as in gang v3. A bonded
                                          creator's gang v3 sell (curve or pool), gang fair sell and gang fair withdraw are
                                          checked against X (--break-bond / --settle-first)
+BUYBACK (a V3 token whose recipient is a buy-back splitter; GANG_SPLITTER_FACTORY / GANG_TESTNET_SPLITTER_FACTORY):
+  gang buyback status --token <addr>     ratio, a cut asked for (applies from / lapses after), quote waiting to be bought
+                                         back, owed to the dev, the next chunk (the keeper buys it back every few minutes)
+  gang buyback set --token <addr> --pct <0-100>
+                                         dev only: a higher share applies at once; a lower one after a 3-day notice
+  gang buyback apply --token <addr>      anyone: apply a cut whose notice ran (within 7 days, or it lapses)
+  gang buyback bind --token <addr> | gang buyback release --token <addr>
+                                         anyone: bind the splitter to its token (the launch does it) / push the dev what a
+                                         failed payment left owed. --testnet, --calldata, --from as in gang v3
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -670,7 +685,7 @@ const LAUNCH_DEPS = { io: PAD_IO, runV3, runFair, runBond, padNotes: (kind, sub,
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'quote', 'buy',
-  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'bond'])
+  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'bond', 'buyback'])
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
@@ -687,7 +702,7 @@ async function main() {
     // a 打新 dev buys with --shares in the create itself: say so here, not "add --bond" (which would only lead to that)
     if (cmd === 'fair' && flag('dev-buy')) fail(FAIR_DEV_BUY)
     const lone = LAUNCH_FLAGS.find((f) => flag(f))
-    if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${cmd === 'fair' ? '' : ' (or --dev-buy <quote>)'}`)
+    if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${cmd === 'fair' ? '' : ' (or --dev-buy <quote> / --buyback <pct>)'}`)
   }
   switch (cmd) {
     case 'fair':
@@ -698,6 +713,8 @@ async function main() {
       return runV3(args[1], { ...PAD_IO, notes: padNotes('v3', args[1]) })
     case 'bond':
       return runBond(args[1], { opt, flag, out, fail, summarize: summarizePreview })
+    case 'buyback':
+      return runBuyback(args[1], { opt, flag, out, fail, summarize: summarizePreview })
     case 'preflight': {
       const issues = []
       const status = bawStatus()
