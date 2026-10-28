@@ -62,4 +62,7 @@ is refused. Mainnet only; CLI 0.9.0+ uses the mainnet GangRouter `0xE040445690Aa
 ## `gang execute --request-id <id>` / `gang tx --hash <0x..> [--testnet]`
 
 Broadcast a preview; decode the events after the tx lands: V2 / Soft / U / S (`Created` / `Buy` / `Sell` / `Graduated`),
-GangLaunchpad (V3 and 打新, the tax router, the vaults). `--testnet` decodes a BSC testnet tx (GangLaunchpad only). Both publish a queued `--note` (`note.published`, mainnet), and for a follow print `follow: { noteTx, link }`.
+GangLaunchpad (V3 and 打新, the tax router, the vaults). `--testnet` decodes a BSC testnet tx (GangLaunchpad only).
+GangLaunchpad events carry `units: 'raw'`: their integers are as on chain (amounts in wei, 18 decimals; bps and share
+counts as they are), so convert amounts before you report them. Both publish a queued `--note` (`note.published`,
+mainnet), and for a follow print `follow: { noteTx, link }`.

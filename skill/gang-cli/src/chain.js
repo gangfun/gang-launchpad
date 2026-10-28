@@ -262,8 +262,9 @@ export const calldata = {
 }
 
 /**
- * Events of the logs that decode with one of `abis` (raw integers as strings: their decimals vary), each with the
- * emitting contract. GangLaunchpad logs, which `gang tx` reads beside the V2 / Soft / U / S pads'.
+ * Events of the logs that decode with one of `abis`, each with the emitting contract: GangLaunchpad logs, which `gang tx`
+ * reads beside the V2 / Soft / U / S pads'. Integers stay as on chain (strings), marked `units: 'raw'`: amounts are in wei
+ * (18 decimals), bps / shares / counts as they are; the V2 / Soft events are formatted (no `units`).
  */
 export function decodeLogs(logs, abis) {
   const events = []
@@ -271,7 +272,7 @@ export function decodeLogs(logs, abis) {
     for (const abi of abis) {
       try {
         const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
-        events.push({ event: ev.eventName, contract: log.address, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })
+        events.push({ event: ev.eventName, contract: log.address, units: 'raw', ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })
         break
       } catch { /* other contract / event */ }
     }

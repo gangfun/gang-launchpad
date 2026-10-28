@@ -297,7 +297,8 @@ graduated tokens only).
                                          --from only on graduated tokens, mainnet only
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..> [--testnet]      wait for receipt and decode Gang events: V2 / Soft / U / S, GangLaunchpad (V3 /
-                                         打新, tax router, vaults) (publishes a queued --note; mainnet)
+                                         打新, tax router, vaults) (publishes a queued --note; mainnet). GangLaunchpad events
+                                         carry units: "raw" (amounts in wei, 18 decimals; bps / shares as is)
 
 --note is PUBLIC: shown on gang.fun next to the trade. Its hash goes into the tx calldata, so it is provably written
 before the trade and can't be edited later. 1–280 chars, no links. Sent by \`gang execute\` (or \`gang tx\`) within 24h.
@@ -669,6 +670,9 @@ const PAD_IO = { opt, flag, out, fail, summarize: summarizePreview, resolveLogo:
 const V3_VERBS = new Set(['buy', 'sell', 'info', 'status', 'claim', 'release'])
 const FAIR_VERBS = new Set(['buy', 'sell', 'info', 'status', 'claim', 'mint', 'withdraw'])
 const KIND_NAMES = { v3: 'a V3 (bonding-curve) token', fair: 'a 打新 (fair-mint) token', legacy: 'a V2 / Soft / U / S token' }
+// what the V2 / Soft / U / S code runs: it looks the token up on those pads itself, so it can also take a token whose kindOf
+// could not be read (a GangLaunchpad token then gets a pointer from resolvePad instead of a wrong answer)
+const LEGACY_VERBS = new Set(['buy', 'sell', 'info', 'status', 'quote'])
 /** Why a command does not apply to a kind, and what to run instead. */
 const NOT_FOR = {
   v3: {
@@ -684,15 +688,20 @@ const NOT_FOR = {
   },
 }
 
-/** 'v3' | 'fair' on GangLaunchpad (mainnet, or BSC testnet with --testnet); else 'legacy' (mainnet V2 / Soft / U / S). */
-async function padKind(token) {
+/**
+ * 'v3' | 'fair' on GangLaunchpad (mainnet, or BSC testnet with --testnet); else 'legacy' (mainnet V2 / Soft / U / S).
+ * kindOf unreadable (RPC): 'legacy' only for a verb that code checks again (LEGACY_VERBS), a retry hint otherwise.
+ */
+async function padKind(token, verb) {
   const testnet = flag('testnet')
   let ctx
   try { ctx = v3Ctx(testnet) } catch (e) { fail(e.message) }
   const kind = await kindOf(ctx, token)
   if (kind === 'v3' || kind === 'fair') return kind
+  if (kind === null && (testnet || !LEGACY_VERBS.has(verb))) {
+    fail('could not read the token\'s kind from GangLaunchpad (kindOf; RPC error)', { token, retry: 'same command again' })
+  }
   if (testnet) fail('not a GangLaunchpad token on BSC testnet (V2 / Soft / U / S have no testnet deployment)', { token })
-  // 'none', or kindOf unreadable (RPC): the V2 / Soft / U / S lookup then says whether the token is known at all
   return 'legacy'
 }
 
@@ -712,8 +721,12 @@ const tagKind = (kind) => (o) => out(o && typeof o === 'object' && !('kind' in o
 async function routed(verb) {
   const token = opt('token')
   if (!isAddress(token ?? '')) fail('--token <address> required', { got: token ?? null })
-  if (verb === 'buy') spendArg() // both --amount and --bnb: refused before any RPC
-  const kind = await padKind(token)
+  // refused before any RPC: both --amount and --bnb, a malformed --note / --conf / --reveal-after, a bad --follow (the
+  // note itself is built again by the kind's code)
+  if (verb === 'buy') spendArg()
+  parseNote()
+  parseFollow()
+  const kind = await padKind(token, verb)
   const io = { ...PAD_IO, out: tagKind(kind) }
   if (kind === 'v3' && V3_VERBS.has(verb)) return runV3(verb, { ...io, notes: padNotes('v3', verb) })
   if (kind === 'fair' && FAIR_VERBS.has(verb)) {
@@ -734,7 +747,8 @@ async function routed(verb) {
       return out({ success: true, wallet: me, ...(await tokenInfo(token, me)) })
     }
   }
-  return fail(`gang ${verb} does not apply to ${KIND_NAMES[kind]}`, { token, kind, hint: NOT_FOR[kind][verb] })
+  // a V2 / Soft result names its pad's kind ('v2' | 'soft'); here the pad is not looked up, so no kind for them
+  return fail(`gang ${verb} does not apply to ${KIND_NAMES[kind]}`, { token, ...(kind !== 'legacy' && { kind }), hint: NOT_FOR[kind][verb] })
 }
 
 // what each gang v3 / gang fair subcommand is now: their results carry it as `useInstead` (the aliases keep working)
@@ -963,8 +977,8 @@ async function main() {
       return routed(cmd)
     case 'quote': {
       const token = opt('token'), bnb = spendArg()
-      if (!token || !bnb) fail('--token and --amount required (Soft archive: BNB; V2: quote ERC-20 amount; --bnb is the older name)')
-      if ((await padKind(token)) !== 'legacy') {
+      if (!isAddress(token ?? '') || !bnb) fail('--token <address> and --amount required (Soft archive: BNB; V2: quote ERC-20 amount; --bnb is the older name)')
+      if ((await padKind(token, 'quote')) !== 'legacy') {
         fail('gang quote prices V2 / Soft / U / S curve buys; on GangLaunchpad, gang buy simulates the trade and shows expectTokens (nothing is sent before gang execute)', { token })
       }
       const me = bawAddress()
