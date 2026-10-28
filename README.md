@@ -94,6 +94,11 @@ gang v3 info --token 0x…                   # tax setting, recipient, what is o
 gang v3 claim --token 0x…                  # holder dividend, in the quote token
 ```
 
+To have part of that tax bought back and burned, ask the platform to deploy and whitelist a GangBuybackSplitter for
+you and pass it as `--recipient`: each payment is split between a pool buy-back sent to 0xdead and your wallet, at a
+ratio you can raise any time and lower after a 3-day notice
+([docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md](docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md)).
+
 **打新** (`--raise` BNB, `--cap` % of supply per wallet, `--hold` %; also `--mint-fee 1-3`, `--exit-fee 1-2`):
 
 ```bash

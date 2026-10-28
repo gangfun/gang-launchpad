@@ -3,6 +3,7 @@
 回购合约挂在第 10 套内盘上，走完了接入的全部步骤：部署并检查 → 多签 `list` 和 `setExcluded` → dev 建币时 recipient 填它 → `bind` → 毕业 → 池子里卖出交税 → keeper `process` → 拆分 → `burnChunk` 买入并销毁。比例调整（提高、申请下调、取消下调）和部署脚本的检查模式也都在链上跑过。
 
 - 链：BSC 测试网（chainId 97），2026-10-28
+- 规格：`docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md`
 - 合约：`src/gang/GangBuybackSplitter.sol`；部署 / 检查脚本：`script/DeployGangBuybackSplitter.s.sol`
 - 发交易：`cast send --legacy --gas-price 0.1gwei`（原因见 `docs/TESTNET-GANG-BOND-2026-10-28.md`「gas」）
 
