@@ -23,11 +23,10 @@
 |---|---|
 | CLI | 0.15.1 内置 `MAINNET_BOND`（`skill/gang-cli/src/bond.js`），已同步到 gangfun/cli 并发布到 npm |
 | 正式站 indexer | gangfun-server v1.2.43；`/opt/gang/indexer/indexer.env` 加了 `GANG_BOND`、`GANG_BOND_START_BLOCK=130335965` 和 `GANG_BOND_BALANCE_RPC_URLS`（QuickNode，可读历史状态）；修改前备份为 `indexer.env.bak-20261029-bond`。`https://gang.fun/api/bonds/config` 返回 `enabled: true` |
-| 正式站 keeper | `/opt/gang/keeper/.env`（修改前备份为 `.env.bak.<时间戳>`）加了 `BONDS=main:0xf26F…C817@130335965`、`BOND_WATCH=1` 和 `BOND_LOCK`；举报和回购走 48 Club 隐私 RPC（`KEEPER_PRIVATE_RPC=https://rpc.48.club`），读链走 QuickNode。crontab 每 5 分钟跑一次 `keeper-bond.sh`；systemd `gang-keeper-bond-watch` 每 3 秒检查一次 |
+| 正式站 keeper | `/opt/gang/keeper/.env`（修改前备份为 `.env.bak.<时间戳>`）加了 `BONDS=main:0xf26F…C817@130335965`、`BOND_WATCH=1` 和 `BOND_LOCK`；举报和回购的私有发送走 QuickNode 节点（开了 Merkle MEV Protection 插件，`KEEPER_PRIVATE_RPC` 与读链用同一个地址；2026-10-29 上线时先用 48 Club `https://rpc.48.club`，当天切换），读链也走 QuickNode。crontab 每 5 分钟跑一次 `keeper-bond.sh`；systemd `gang-keeper-bond-watch` 每 3 秒检查一次 |
 | 押金 keeper 钱包 | 单独的钱包 [`0x807225305Aa80d048b4bF071331340e618852Fa3`](https://bscscan.com/address/0x807225305Aa80d048b4bF071331340e618852Fa3)：私钥只在服务器 `.env` 里，举报的 1% 奖励进这个地址；从主 keeper 转入 0.06 BNB（[`0x1dd9665e…96db`](https://bscscan.com/tx/0x1dd9665e0e395c312a4d77929f1e02dc1c990ce1bfb8a70c99b78c2955df96db)） |
 | 网站 | gang-web-legacy v1.2.64（押金面板、标识、「有押金」筛选、两步取回、报价币白名单） |
 
 ## 以后要做
 
-- 私有通道换 QuickNode：在 QuickNode 后台给正式站的 BSC 节点开 **Merkle – MEV Protection** 插件，确认它支持 BSC 后，把 `KEEPER_PRIVATE_RPC` 换成同一个 QuickNode 地址，然后重启 `gang-keeper-bond-watch`。
 - `GangBuybackSplitter` 复制了同一套回购逻辑，已经在主网上（工厂 v1 / v2，见 `docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md`）。审计 I-5（拉盘后卖给回购）对它同样成立，要尽快按时间限速出新版。
