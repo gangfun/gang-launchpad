@@ -95,6 +95,11 @@ gang info  --token 0x…                   # tax setting, recipient, what is owe
 gang claim --token 0x…                   # holder dividend, in the quote token
 ```
 
+To have part of that tax bought back and burned, add `--buyback <0-100>` (taxed only, instead of `--recipient`): the
+launch clones your own GangBuybackSplitter (whitelisted in the same tx) and makes it the recipient. Each payment is split
+between a pool buy-back sent to 0xdead and your wallet, at a ratio you can raise any time and lower after a 3-day notice
+(`gang buyback status|set --token …`; [docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md](docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md)).
+
 **打新** (`--raise` BNB, `--cap` % of supply per wallet, `--hold` %; also `--mint-fee 1-3`, `--exit-fee 1-2`):
 
 ```bash

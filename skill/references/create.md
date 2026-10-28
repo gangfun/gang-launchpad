@@ -61,12 +61,14 @@ address back in full so the user can share it.
 
 Graduation: ≈ **15 BNB** worth of the quote → PancakeSwap V2, LP burned.
 
-## Launch in one command (`--dev-buy`, `--bond`)
+## Launch in one command (`--dev-buy`, `--bond`, `--buyback`)
 
 ```bash
 # V3: create → the dev buys on the curve → (optional) bonds what it holds
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.5
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.5 --bond 0.3 --bond-days 30 [--bond-hold all|<tokens>|N%]
+# V3 with a buy-back: clone the dev's splitter → create with it as the recipient → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 50 --buyback 50 --dev-buy 0.5
 # 打新: create (the dev's --shares are bought in it) → bond
 gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
@@ -83,6 +85,14 @@ gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bo
 - **`--bond`** posts a creator bond ([bond.md](bond.md)) right after: `--bond-hold` (default all of the dev's tokens),
   `--bond-days` from graduation / launch. It needs GangBond on the network (testnet only for now) and is checked before
   the create, so a launch never stops half way on a bad flag. Tell the user the bond rules before the first run.
+- **`--buyback <0-100>`** (V3, taxed; not with `--recipient`): the recipient's part of the tax is split, that % bought
+  back in the pool and burned (0xdead), the rest to the dev. The launch first clones the dev's GangBuybackSplitter
+  (`launch.stage: buyback-splitter`; listed as a tax recipient in the same tx), creates with it as the recipient, then
+  binds it (`bind`); the splitter's address is printed before the clone. A launch keeps the mode and ratio it began
+  with: adding `--buyback` after the create, dropping it after the clone, or another ratio is refused (run it as it
+  began, or `--restart`). Later: `gang buyback status|set|apply --token …` ([v3.md](v3.md#buy-back-splitter---buyback)). Only
+  when the user asks for a buy-back; without it the tax goes to the dev's own address. Tell the user: a raise applies at
+  once, a cut only 3 days after it is asked for.
 - `--note` goes on the create only (its launch manifesto); the buy and the bond carry none.
 
 ## Website and X links (`--website`, `--twitter`, `--description`)

@@ -87,6 +87,8 @@ gang bond burn --token <addr> | gang bond tx --hash <0x..>       # push one buy-
 #   A creator's gang sell (curve or pool) / gang withdraw below X is refused unless --break-bond (past T: --settle-first)
 # Launch in one command: one tx per run — execute it, run the very same command again, until launch.stage = done
 gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]  # V3: create → dev buy → bond
+gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--dev-buy …]  # V3: the recipient's part of the tax 50% bought back + burned, the rest to you
+gang buyback status|set|apply --token 0x… [--pct 0-100]           # the buy-back splitter: ratio (raise now, cut after 3 days), what waits
 gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>                 # 打新: create (dev shares) → bond
 gang execute --request-id <id>
 gang tx --hash <0x..> [--testnet]            # V2 / Soft and GangLaunchpad events (GangLaunchpad: units "raw", amounts in wei)
