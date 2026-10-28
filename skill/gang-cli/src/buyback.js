@@ -15,7 +15,8 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  * Env: GANG_SPLITTER_FACTORY / GANG_TESTNET_SPLITTER_FACTORY override the built-in factory addresses.
  */
 
-export const MAINNET_SPLITTER_FACTORY = null
+// BSC 56, 2026-10-28 (docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md); lists clones once the Safe ran its batch
+export const MAINNET_SPLITTER_FACTORY = '0x6bcd79206da85Aa0643Db2164Ab887b468618546'
 export const TESTNET_SPLITTER_FACTORY = '0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1'
 export const BUYBACK_TYPE = 'buyback-burn-v1'
 
