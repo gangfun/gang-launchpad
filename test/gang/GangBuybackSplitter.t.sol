@@ -2,38 +2,23 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {TwapMockPairFactory} from "../mocks/TwapMockPair.sol";
 import {GangBuybackSplitter} from "../../src/gang/GangBuybackSplitter.sol";
-import {DeployGangBuybackSplitter} from "../../script/DeployGangBuybackSplitter.s.sol";
-
-/// @dev A pad look-alike: answers `taxHandler()` like the real one, but its `curves()` would be whatever its author wants.
-contract FakePad {
-    address public taxHandler;
-
-    constructor(address handler_) {
-        taxHandler = handler_;
-    }
-}
-
-/// @dev Not a GangBuybackSplitter, but answers its getters like one over the real pad.
-contract ImposterSplitter {
-    address public pad;
-    address public taxHandler;
-    address public dev;
-
-    constructor(address pad_, address handler_, address dev_) {
-        pad = pad_;
-        taxHandler = handler_;
-        dev = dev_;
-    }
-}
+import {GangBuybackSplitterFactory} from "../../src/gang/GangBuybackSplitterFactory.sol";
+import {GangHandlerAdmin} from "../../src/gang/GangHandlerAdmin.sol";
+import {DeployGangBuybackSplitterFactory} from "../../script/DeployGangBuybackSplitterFactory.s.sol";
 
 /// @notice GangBuybackSplitter (dev 税按比例回购销毁) on the whole merged deployment, over pairs that keep the V2 oracle:
-///         binding, the split, ratio changes (raise now / cut after notice), the chunked buy-back with its TWAP check,
-///         sweep, and the pool tax paying it end to end.
+///         GangHandlerAdmin (the handler's owner, lists what allowed factories clone), the factory, binding, the split,
+///         ratio changes (raise now / cut after notice), the chunked buy-back with its TWAP check and the keeper's
+///         previewWork / work, sweep, the deploy script, and the pool tax paying it end to end.
 contract GangBuybackSplitterTest is GangFixture {
     address keeper = makeAddr("keeper");
+    GangHandlerAdmin admin;
+    GangBuybackSplitterFactory factory;
 
     uint16 constant TAX = 300;
 
@@ -43,17 +28,24 @@ contract GangBuybackSplitterTest is GangFixture {
 
     function setUp() public {
         _deployGang(keeper);
+        admin = new GangHandlerAdmin(owner, address(handler));
+        vm.startPrank(owner);
+        handler.transferOwnership(address(admin));
+        admin.exec(abi.encodeCall(Ownable2Step.acceptOwnership, ()));
+        vm.stopPrank();
+        factory = new GangBuybackSplitterFactory(address(pad), address(admin));
+        vm.prank(owner);
+        admin.setFactory(address(factory), true);
     }
 
     // ---------------------------------------------------------------- helpers
-    /// @dev A splitter for `dev`, listed on the tax handler.
+    /// @dev The dev's splitter, from the factory (listed by the admin).
     function _splitter(address dev, uint16 bps) internal returns (GangBuybackSplitter s) {
-        s = new GangBuybackSplitter(address(pad), dev, bps);
-        vm.prank(owner);
-        handler.list(address(s), "dev buyback");
+        vm.prank(dev);
+        s = GangBuybackSplitter(factory.create(bps));
     }
 
-    /// @dev The dev creates a taxed V3 token paying a fresh splitter, buys on the curve, and anyone binds it.
+    /// @dev The dev gets a splitter, creates a taxed V3 token paying it, buys on the curve, and anyone binds it.
     function _setup(address quote, uint16 bps, bool grad)
         internal
         returns (GangBuybackSplitter s, address t, address dev)
@@ -67,6 +59,16 @@ contract GangBuybackSplitterTest is GangFixture {
         if (grad) _graduate(t);
     }
 
+    /// @dev Deploys behind an external call: `src/gang/**` builds via-ir, so a `new` of it here is a vm.deployCode,
+    ///      which vm.expectRevert does not see (the revert would end the test as a pass).
+    function newFactory(address pad_, address admin_) external returns (GangBuybackSplitterFactory) {
+        return new GangBuybackSplitterFactory(pad_, admin_);
+    }
+
+    function newAdmin(address owner_, address handler_) external returns (GangHandlerAdmin) {
+        return new GangHandlerAdmin(owner_, handler_);
+    }
+
     function _next(uint256 dt) internal {
         vm.warp(block.timestamp + dt);
         vm.roll(block.number + 1);
@@ -76,23 +78,116 @@ contract GangBuybackSplitterTest is GangFixture {
         return IERC20(asset).balanceOf(who);
     }
 
-    // ---------------------------------------------------------------- deploy / bind
-    function test_constructor() public {
-        address dev = makeAddr("dev");
-        vm.expectRevert(GangBuybackSplitter.ZeroAddress.selector);
-        new GangBuybackSplitter(address(0), dev, 1);
-        vm.expectRevert(GangBuybackSplitter.ZeroAddress.selector);
-        new GangBuybackSplitter(address(pad), address(0), 1);
-        vm.expectRevert(GangBuybackSplitter.BadBps.selector);
-        new GangBuybackSplitter(address(pad), dev, 10_001);
+    // ---------------------------------------------------------------- admin
+    function test_admin_takeoverExecAndHandBack() public {
+        assertEq(handler.owner(), address(admin));
+        assertEq(admin.handler(), address(handler));
 
-        GangBuybackSplitter s = new GangBuybackSplitter(address(pad), dev, 10_000);
-        assertEq(s.taxHandler(), address(handler));
-        assertEq(s.dev(), dev);
-        assertEq(s.buybackBps(), 10_000);
-        assertEq(s.token(), address(0));
+        // only the Safe (the admin's owner) calls the handler through it
+        address stranger = makeAddr("stranger");
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, stranger));
+        admin.exec(abi.encodeWithSignature("list(address,string)", stranger, "x"));
+
+        // the handler's own admin calls still work, its errors come back as they are
+        address partner = makeAddr("partner");
+        vm.startPrank(owner);
+        admin.exec(abi.encodeWithSignature("list(address,string)", partner, "partner"));
+        assertTrue(handler.isListed(partner));
+        admin.exec(abi.encodeWithSignature("delist(address)", partner));
+        assertFalse(handler.isListed(partner));
+        vm.expectRevert(abi.encodeWithSignature("ZeroAddress()"));
+        admin.exec(abi.encodeWithSignature("list(address,string)", address(0), "zero"));
+
+        // and the Safe can take the handler back
+        admin.exec(abi.encodeCall(Ownable.transferOwnership, (owner)));
+        handler.acceptOwnership();
+        vm.stopPrank();
+        assertEq(handler.owner(), owner);
     }
 
+    function test_admin_factories() public {
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(this)));
+        admin.setFactory(address(factory), false);
+        vm.prank(owner);
+        vm.expectRevert(GangHandlerAdmin.ZeroAddress.selector);
+        admin.setFactory(address(0), true);
+
+        // only an allowed factory lists, a contract, once
+        GangBuybackSplitter s = _splitter(_newAgent(), 5_000);
+        vm.expectRevert(GangHandlerAdmin.NotFactory.selector);
+        admin.listModule(address(s), "x");
+        vm.startPrank(address(factory));
+        vm.expectRevert(GangHandlerAdmin.NoCode.selector);
+        admin.listModule(makeAddr("eoa"), "x");
+        vm.expectRevert(GangHandlerAdmin.AlreadyListed.selector);
+        admin.listModule(address(s), "x");
+        vm.stopPrank();
+        assertEq(admin.moduleOf(address(s)), address(factory));
+        assertEq(admin.moduleCount(), 1);
+        assertEq(admin.modules()[0], address(s));
+
+        // a stopped factory can't list any more (its clones stay listed); allowed again, it is not listed twice
+        vm.prank(owner);
+        admin.setFactory(address(factory), false);
+        address dev = _newAgent();
+        vm.prank(dev);
+        vm.expectRevert(GangHandlerAdmin.NotFactory.selector);
+        factory.create(5_000);
+        assertTrue(handler.isListed(address(s)));
+        vm.prank(owner);
+        admin.setFactory(address(factory), true);
+        assertEq(admin.factories().length, 1);
+        assertTrue(admin.isFactory(address(factory)));
+    }
+
+    // ---------------------------------------------------------------- factory
+    function test_factory_create() public {
+        GangHandlerAdmin elsewhere = new GangHandlerAdmin(owner, makeAddr("otherHandler"));
+        vm.expectRevert(GangBuybackSplitterFactory.WrongHandler.selector);
+        this.newFactory(address(pad), address(elsewhere));
+        vm.expectRevert(GangBuybackSplitterFactory.ZeroAddress.selector);
+        this.newFactory(address(pad), address(0));
+        vm.expectRevert(GangHandlerAdmin.ZeroAddress.selector);
+        this.newAdmin(owner, address(0));
+
+        // only an Agent (only an Agent can create the token)
+        vm.prank(makeAddr("notAgent"));
+        vm.expectRevert(GangBuybackSplitterFactory.NotAgent.selector);
+        factory.create(5_000);
+        address dev = _newAgent();
+        vm.prank(dev);
+        vm.expectRevert(GangBuybackSplitter.BadBps.selector);
+        factory.create(10_001);
+
+        vm.prank(dev);
+        address s = factory.create(10_000);
+        GangBuybackSplitter sp = GangBuybackSplitter(s);
+        assertEq(sp.dev(), dev);
+        assertEq(sp.buybackBps(), 10_000);
+        assertEq(sp.token(), address(0));
+        assertEq(sp.pad(), address(pad));
+        assertEq(sp.taxHandler(), address(handler));
+        assertEq(sp.factory(), address(factory));
+        assertEq(sp.moduleType(), bytes32("buyback-burn-v1"));
+        assertTrue(handler.isListed(s));
+        assertEq(admin.moduleOf(s), address(factory));
+        assertEq(factory.lastOf(dev), s);
+        assertEq(factory.count(), 1);
+        assertEq(factory.splitters()[0], s);
+
+        // the implementation is never initialized; a clone only once, only by the factory
+        GangBuybackSplitter impl = GangBuybackSplitter(factory.implementation());
+        vm.expectRevert(GangBuybackSplitter.NotClone.selector);
+        impl.initialize(dev, 1);
+        vm.expectRevert(GangBuybackSplitter.NotFactory.selector);
+        sp.initialize(dev, 1);
+        vm.prank(address(factory));
+        vm.expectRevert(GangBuybackSplitter.AlreadyInitialized.selector);
+        sp.initialize(dev, 1);
+    }
+
+    // ---------------------------------------------------------------- bind
     function test_bind_checks() public {
         address dev = _newAgent();
         GangBuybackSplitter s = _splitter(dev, 5_000);
@@ -307,6 +402,8 @@ contract GangBuybackSplitterTest is GangFixture {
         wbnb.mintUnlimited(address(s), 1 ether);
         (bool ready,,) = s.previewBurn();
         assertFalse(ready);
+        (bool due,) = s.previewWork();
+        assertFalse(due);
         vm.expectRevert(GangBuybackSplitter.NotTradable.selector);
         s.burnChunk(0);
     }
@@ -355,7 +452,6 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(_bal(t, s.DEAD()) - deadBefore, burnedTotal);
         assertEq(_bal(t, address(s)), 0);
         assertEq(_bal(address(wbnb), address(s)), 0);
-        assertEq(divVault.shares(t, address(s)), 0);
         vm.expectRevert(GangBuybackSplitter.NothingToBurn.selector);
         s.burnChunk(0);
     }
@@ -414,6 +510,75 @@ contract GangBuybackSplitterTest is GangFixture {
         assertGt(burned, 0);
     }
 
+    /// @dev Not excluded from the dividend vault (the factory flow needs no vault call), a chunk leaves the splitter no
+    ///      share and nothing pending: it holds the tokens only between the buy and the transfer to 0xdead.
+    function test_burn_noDividendWithoutExclusion() public {
+        (GangBuybackSplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        assertFalse(divVault.excluded(address(s)));
+        wbnb.mintUnlimited(address(s), 1 ether);
+        s.burnChunk(0);
+        _next(10 minutes);
+        (, uint256 burned) = s.burnChunk(0);
+        assertGt(burned, 0);
+        // more tax afterwards: still nothing for it
+        address seller = _newAgent();
+        (uint256 rT,) = _reserves(t, s.pair());
+        deal(t, seller, rT / 50);
+        _poolSell(t, s.pair(), seller, rT / 50);
+        assertEq(divVault.shares(t, address(s)), 0);
+        assertEq(divVault.pending(t, address(s)), 0);
+    }
+
+    // ---------------------------------------------------------------- keeper hook
+    /// @dev previewWork is due exactly when work does something: an observation, then (a window on) a chunk.
+    function test_work_dueWhenItActs() public {
+        (GangBuybackSplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        (bool due, uint256 minOut) = s.previewWork();
+        assertFalse(due, "nothing to buy back");
+
+        wbnb.mintUnlimited(address(s), 1 ether);
+        (due, minOut) = s.previewWork();
+        assertTrue(due, "first observation");
+        assertEq(minOut, 0);
+        s.work(minOut);
+        assertEq(s.buybackLeft(), 1 ether);
+        (due,) = s.previewWork();
+        assertFalse(due, "same block");
+
+        // inside the window a call changes nothing: not due
+        _next(5 minutes);
+        (due,) = s.previewWork();
+        assertFalse(due, "window not passed");
+
+        _next(5 minutes);
+        (bool ready,, uint256 pOut) = s.previewBurn();
+        assertTrue(ready);
+        (due, minOut) = s.previewWork();
+        assertTrue(due);
+        assertEq(minOut, (pOut * 9_900) / 10_000);
+        uint256 dead0 = _bal(t, s.DEAD());
+        s.work(minOut);
+        assertEq(_bal(t, s.DEAD()) - dead0, pOut);
+        (due,) = s.previewWork();
+        assertFalse(due, "burned this block");
+
+        // after a pump: not ready, but due when the call rolls the observation (it is what gets it ready again)
+        _next(10 minutes);
+        (, uint256 rQ) = _reserves(t, s.pair());
+        _poolBuy(t, address(wbnb), s.pair(), _newAgent(), (rQ * 5) / 100);
+        (ready,,) = s.previewBurn();
+        assertFalse(ready);
+        (due, minOut) = s.previewWork();
+        assertTrue(due, "rolls the observation");
+        assertEq(minOut, 0);
+        uint256 left = s.buybackLeft();
+        s.work(0);
+        assertEq(s.buybackLeft(), left);
+        _next(1 minutes);
+        (due,) = s.previewWork();
+        assertFalse(due, "rolled a minute ago");
+    }
+
     /// @dev Review: a quote that blacklists the dev must not freeze the buy-back (every path splits first).
     function test_devBlacklisted_owedNotBlocking() public {
         (GangBuybackSplitter s, address t, address dev) = _setup(address(blq), 5_000, true);
@@ -452,34 +617,6 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(s.devOwed(), 0);
         vm.expectRevert(GangBuybackSplitter.NothingOwed.selector);
         s.releaseDev();
-    }
-
-    /// @dev A splitter one block and a window past its first observation: the next `burnChunk` buys.
-    function _readyToBuy() internal returns (GangBuybackSplitter s, address t) {
-        (s, t,) = _setup(address(wbnb), 10_000, true);
-        wbnb.mintUnlimited(address(s), 1 ether);
-        s.burnChunk(0);
-        _next(10 minutes);
-    }
-
-    /// @dev The control for the test below: not excluded, a chunk does write the splitter's share (so the zero-call
-    ///      check there tests something).
-    function test_burn_notExcludedSplitterGetsShareWrite() public {
-        (GangBuybackSplitter s, address t) = _readyToBuy();
-        vm.expectCall(address(divVault), abi.encodeWithSelector(divVault.setShare.selector, t, address(s)));
-        s.burnChunk(0);
-    }
-
-    /// @dev Excluded from the vault (the Safe batch the deploy script prints), a chunk writes no share for it.
-    function test_burn_excludedSplitterHasNoShare() public {
-        (GangBuybackSplitter s, address t) = _readyToBuy();
-        vm.prank(owner);
-        divVault.setExcluded(address(s), true);
-        // no share write for the splitter at all (a prefix match: any new share)
-        vm.expectCall(address(divVault), abi.encodeWithSelector(divVault.setShare.selector, t, address(s)), 0);
-        (, uint256 burned) = s.burnChunk(0);
-        assertGt(burned, 0);
-        assertEq(divVault.shares(t, address(s)), 0);
     }
 
     /// @dev Review: a quote balance that shrinks below what is held must not lock the splitter (unsplit underflow).
@@ -545,58 +682,56 @@ contract GangBuybackSplitterTest is GangFixture {
         s.releaseDev();
     }
 
-    // ---------------------------------------------------------------- deploy-script check
-    function test_verify_acceptsGenuine_refusesFakes() public {
-        DeployGangBuybackSplitter script = new DeployGangBuybackSplitter();
+    // ---------------------------------------------------------------- deploy script
+    /// @dev The script's check and Safe batch, from a handler the Safe still owns to a factory that lists.
+    function test_script_checkAndBatch() public {
+        DeployGangBuybackSplitterFactory script = new DeployGangBuybackSplitterFactory();
+        // the fixture's admin owns the handler and allows its factory: nothing to do
+        script.check(address(pad), address(admin), address(factory));
+        assertEq(script.pendingBatch(address(admin), address(factory)).length, 0);
+
+        // a second admin while the first owns the handler is refused
+        GangHandlerAdmin other = new GangHandlerAdmin(owner, address(handler));
+        GangBuybackSplitterFactory otherFactory = new GangBuybackSplitterFactory(address(pad), address(other));
+        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "admin.owner"));
+        script.check(address(pad), address(other), address(otherFactory));
+        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "factory.admin"));
+        script.check(address(pad), address(admin), address(otherFactory));
+        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "factory.code"));
+        script.check(address(pad), address(admin), makeAddr("eoa"));
+
+        // the Safe holds the handler again (as before the takeover): the batch is takeover + allow, and works as printed
+        vm.startPrank(owner);
+        admin.exec(abi.encodeCall(Ownable.transferOwnership, (owner)));
+        handler.acceptOwnership();
+        vm.stopPrank();
+        script.check(address(pad), address(other), address(otherFactory));
+        bytes[] memory batch = script.pendingBatch(address(other), address(otherFactory));
+        assertEq(batch.length, 3);
+        for (uint256 i; i < batch.length; i++) {
+            (address to, bytes memory data) = _split(batch[i]);
+            vm.prank(owner);
+            (bool ok,) = to.call(data);
+            assertTrue(ok);
+        }
+        assertEq(handler.owner(), address(other));
+        assertEq(script.pendingBatch(address(other), address(otherFactory)).length, 0);
+        script.check(address(pad), address(other), address(otherFactory));
+
+        // and the new factory's clones are listed
         address dev = _newAgent();
-        GangBuybackSplitter s = new GangBuybackSplitter(address(pad), dev, 2_500);
-        script.verify(address(pad), address(s));
-
-        // over a fake pad: the getters say so
-        GangBuybackSplitter overFake = new GangBuybackSplitter(address(new FakePad(address(handler))), dev, 2_500);
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.pad"));
-        script.verify(address(pad), address(overFake));
-
-        // right getters, other code
-        ImposterSplitter imp = new ImposterSplitter(address(pad), address(handler), dev);
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.code"));
-        script.verify(address(pad), address(imp));
-
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.code"));
-        script.verify(address(pad), makeAddr("eoa"));
+        vm.prank(dev);
+        assertTrue(handler.isListed(otherFactory.create(5_000)));
     }
 
-    function test_script_expectAndBps() public {
-        DeployGangBuybackSplitter script = new DeployGangBuybackSplitter();
-        address dev = _newAgent();
-        GangBuybackSplitter s = new GangBuybackSplitter(address(pad), dev, 2_500);
-
-        // a genuine splitter of another dev, or at another ratio, is not the one asked for
-        script.expect(address(s), dev, 2_500);
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.dev"));
-        script.expect(address(s), makeAddr("other"), 2_500);
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.buybackBps"));
-        script.expect(address(s), dev, 2_000);
-
-        // a cut already asked for: refused while it can apply, fine once it lapsed or was cancelled
-        vm.prank(dev);
-        s.setBuybackBps(0);
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "splitter.pendingCut"));
-        script.expect(address(s), dev, 2_500);
-        uint256 snap = vm.snapshotState();
-        vm.warp(s.pendingAt() + s.CUT_TTL() + 1);
-        script.expect(address(s), dev, 2_500);
-        vm.revertToState(snap);
-        vm.prank(dev);
-        s.setBuybackBps(2_500);
-        script.expect(address(s), dev, 2_500);
-
-        // SPLITTER_BPS above 10000 is refused, not wrapped (uint16(70000) = 4464)
-        vm.setEnv("SPLITTER_BPS", "10000");
-        assertEq(script.envBps(), 10_000);
-        vm.setEnv("SPLITTER_BPS", "70000");
-        vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitter.WiringCheck.selector, "SPLITTER_BPS"));
-        script.envBps();
+    function _split(bytes memory c) internal pure returns (address to, bytes memory data) {
+        assembly ("memory-safe") {
+            to := shr(96, mload(add(c, 32)))
+        }
+        data = new bytes(c.length - 20);
+        for (uint256 j; j < data.length; j++) {
+            data[j] = c[j + 20];
+        }
     }
 
     // ---------------------------------------------------------------- sweep

@@ -7,16 +7,16 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IGangPadBondView, IBondPair, IBondToken} from "./GangBond.sol";
 import {IGangPad} from "./interfaces/IGangPad.sol";
 import {IGangPadHandler} from "./interfaces/IGangPadDeps.sol";
+import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 
 /// @title GangBuybackSplitter (dev 税按比例回购销毁)
 /// @notice The tax recipient of one V3 (curve) token: the quote the tax handler pays it is split, `buybackBps` of it
-///         bought back from the token's pair and sent to 0xdead, the rest to the dev. Set up in four steps:
-///         1. it is deployed for the dev (`pad`, `dev`, starting `buybackBps`), by script/DeployGangBuybackSplitter;
-///         2. the platform checks it with that script (the real pad, this code) and `list`s it on the tax handler (a
-///            recipient other than the creator must be listed) — the pad is a constructor input, so a splitter over a
-///            fake pad would buy from a fake pair: only a checked one may be listed;
-///         3. the dev creates the token with it as `recipient`;
-///         4. anyone `bind`s the token (once; the token's creator must be the dev and its recipient this contract —
+///         bought back from the token's pair and sent to 0xdead, the rest to the dev. A clone, set up in three steps:
+///         1. the dev calls GangBuybackSplitterFactory.create(bps) (the CLI's `--buyback`): the factory clones this
+///            implementation, `initialize`s it for the dev and has GangHandlerAdmin list it on the tax handler (a
+///            recipient other than the creator must be listed; the factory's clones all run this code over its pad);
+///         2. the dev creates the token with it as `recipient`;
+///         3. anyone `bind`s the token (once; the token's creator must be the dev and its recipient this contract —
 ///            permissionless so a dev can't leave it unbound and `sweep` the quote).
 ///         Before graduation nothing arrives (the pool tax starts at the pair), so binding right after create is enough.
 ///         Quote arriving is split only when something touches it (`split`, `burnChunk`, a ratio change), at the ratio
@@ -28,14 +28,15 @@ import {IGangPadHandler} from "./interfaces/IGangPadDeps.sol";
 ///         (`devOwed`, `releaseDev`), so it never holds up the buy-back. A quote balance that shrinks under what is
 ///         held (a seized or rebased balance) is taken from both held parts in proportion at the next split, so the
 ///         splitter keeps working on what it still has.
-///         The buy-back is GangBond's: anyone (the keeper on a cron) calls `burnChunk`; one chunk per block, at most
-///         CHUNK_MAX_BPS of the pair's quote reserve, and none while the spot price is more than MAX_PRICE_RISE_BPS
-///         above the pair's own TWAP — so whoever calls it can't sandwich it, and `minTokensOut` is optional.
-/// @dev Not upgradeable, no owner. Reads the pad's and the handler's public views and trades only with the token's
+///         The buy-back is GangBond's: anyone (the keeper, through `previewWork` / `work`) calls `burnChunk`; one
+///         chunk per block, at most CHUNK_MAX_BPS of the pair's quote reserve, and none while the spot price is more
+///         than MAX_PRICE_RISE_BPS above the pair's own TWAP — so whoever calls it can't sandwich it, and
+///         `minTokensOut` is optional.
+/// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Reads the pad's and the handler's public views and trades only with the token's
 ///      pair; needs no role from the pad, token, vault or handler. Any other token that names this contract as its
 ///      recipient (a listed address is open to every creator) only adds quote: in the bound quote it is split like
 ///      the rest, in any other asset `sweep` sends it to the dev.
-contract GangBuybackSplitter is ReentrancyGuard {
+contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant BPS = 10_000;
@@ -53,13 +54,20 @@ contract GangBuybackSplitter is ReentrancyGuard {
     uint256 public constant DEX_FEE_NUM = 9975;
     uint256 public constant DEX_FEE_DEN = 10_000;
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    /// @notice `previewWork`'s `minOut`: the previewed burn less this, for a trade earlier in the same block.
+    uint256 public constant WORK_SLIPPAGE_BPS = 100;
+    bytes32 public constant MODULE_TYPE = "buyback-burn-v1";
 
     uint8 internal constant KIND_CURVE = 1;
 
     address public immutable pad;
     address public immutable taxHandler;
-    address public immutable dev;
+    /// @notice The factory that deployed the implementation: the only caller of a clone's `initialize`.
+    address public immutable factory;
+    address internal immutable _self;
 
+    /// @notice The dev (set once by the factory).
+    address public dev;
     /// @notice The bound token and its quote (0 until `bind`).
     address public token;
     bool internal _tokenIs0;
@@ -104,6 +112,9 @@ contract GangBuybackSplitter is ReentrancyGuard {
     event Swept(address indexed asset, uint256 amount);
 
     error ZeroAddress();
+    error NotClone();
+    error NotFactory();
+    error AlreadyInitialized();
     error BadBps();
     error NotDev();
     error AlreadyBound();
@@ -126,14 +137,29 @@ contract GangBuybackSplitter is ReentrancyGuard {
         _;
     }
 
-    constructor(address pad_, address dev_, uint16 buybackBps_) {
-        if (pad_ == address(0) || dev_ == address(0)) revert ZeroAddress();
-        if (buybackBps_ > BPS) revert BadBps();
+    /// @dev The implementation, deployed by the factory; it is never initialized itself.
+    constructor(address pad_) {
+        if (pad_ == address(0)) revert ZeroAddress();
         pad = pad_;
         taxHandler = IGangPad(pad_).taxHandler();
+        factory = msg.sender;
+        _self = address(this);
+    }
+
+    /// @notice A clone's setup, by the factory in the tx that clones it.
+    function initialize(address dev_, uint16 buybackBps_) external {
+        if (address(this) == _self) revert NotClone();
+        if (msg.sender != factory) revert NotFactory();
+        if (dev != address(0)) revert AlreadyInitialized();
+        if (dev_ == address(0)) revert ZeroAddress();
+        if (buybackBps_ > BPS) revert BadBps();
         dev = dev_;
         buybackBps = buybackBps_;
         emit BuybackBpsSet(0, buybackBps_);
+    }
+
+    function moduleType() external pure returns (bytes32) {
+        return MODULE_TYPE;
     }
 
     // ---------------------------------------------------------------- dev
@@ -206,6 +232,15 @@ contract GangBuybackSplitter is ReentrancyGuard {
     ///         the observations start over (that call records only). Reverts NotTradable before graduation.
     /// @param minTokensOut Least tokens to burn (after the buy tax); checked only when a chunk is bought.
     function burnChunk(uint256 minTokensOut) external nonReentrant returns (uint256 quoteIn, uint256 burned) {
+        return _burnChunk(minTokensOut);
+    }
+
+    /// @notice IGangRecipientModule's step: `burnChunk(minOut)`.
+    function work(uint256 minOut) external nonReentrant {
+        _burnChunk(minOut);
+    }
+
+    function _burnChunk(uint256 minTokensOut) internal returns (uint256 quoteIn, uint256 burned) {
         _split();
         uint256 left = buybackLeft;
         if (left == 0) revert NothingToBurn();
@@ -277,26 +312,45 @@ contract GangBuybackSplitter is ReentrancyGuard {
 
     /// @notice What `burnChunk` would do now: whether it buys, the quote it spends and the tokens it burns.
     function previewBurn() external view returns (bool ready, uint256 quoteIn, uint256 tokensOut) {
+        (ready, quoteIn, tokensOut,) = _preview();
+    }
+
+    /// @notice Due when `burnChunk` would buy a chunk (`minOut` = its burn less WORK_SLIPPAGE_BPS) or, while the price
+    ///         check is not ready, when the call would record or roll the TWAP observation (`minOut` 0) — the call the
+    ///         buy-back needs to get ready again. Not due with nothing to buy back, before graduation, or twice a block.
+    function previewWork() external view returns (bool due, uint256 minOut) {
+        (bool ready,, uint256 tokensOut, bool moves) = _preview();
+        if (ready) return (true, (tokensOut * (BPS - WORK_SLIPPAGE_BPS)) / BPS);
+        return (moves, 0);
+    }
+
+    // ---------------------------------------------------------------- internal
+    /// @dev What `burnChunk` would do now: buy (`ready`, spending `quoteIn` for `tokensOut` after the buy tax), and
+    ///      whether it would move the TWAP observations (`moves`).
+    function _preview() internal view returns (bool ready, uint256 quoteIn, uint256 tokensOut, bool moves) {
         uint256 left = _buybackAfterSplit();
-        if (left == 0 || lastBurnBlock == block.number) return (false, 0, 0);
+        if (left == 0 || lastBurnBlock == block.number) return (false, 0, 0, false);
         address p = pair;
         bool tokenIs0 = _tokenIs0;
         if (p == address(0)) {
             bool live;
             (,,,,,, live,,,, p,) = IGangPadBondView(pad).curves(token);
-            if (!live) return (false, 0, 0);
+            if (!live) return (false, 0, 0, false);
             tokenIs0 = IBondPair(p).token0() == token;
         }
         (uint256 rT, uint256 rQ, uint256 cum) = _pairState(p, tokenIs0);
-        (, ready) = _twapCheck(_twap, cum, rT, rQ);
-        if (!ready) return (false, 0, 0);
+        Twap memory w = _twap;
+        uint32 seen = w.recent.at;
+        Twap memory next;
+        (next, ready) = _twapCheck(w, cum, rT, rQ);
+        moves = next.recent.at != seen;
+        if (!ready) return (false, 0, 0, moves);
         quoteIn = _chunkOf(left, rQ);
-        if (quoteIn == 0) return (false, 0, 0);
+        if (quoteIn == 0) return (false, 0, 0, moves);
         uint256 out = _amountOut(quoteIn, rQ, rT);
         tokensOut = out - (out * IBondToken(token).buyTaxBps()) / BPS;
     }
 
-    // ---------------------------------------------------------------- internal
     function _split() internal {
         if (quote == address(0)) return;
         uint256 bal = IERC20(quote).balanceOf(address(this));
