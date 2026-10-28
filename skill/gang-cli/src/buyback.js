@@ -16,8 +16,9 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  * Env: GANG_SPLITTER_FACTORY / GANG_TESTNET_SPLITTER_FACTORY override the built-in factory addresses.
  */
 
-// BSC 56, factory v2 (payee; docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md). v1 was 0x6bcd…8546 (2-argument create)
-export const MAINNET_SPLITTER_FACTORY = '0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f'
+// BSC 56, factory v3 (one chunk per 4 minutes; docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md). v2 0x9346…8F2f and v1
+// 0x6bcd…8546 (2-argument create) are stopped: their clones keep working, new ones can't be made
+export const MAINNET_SPLITTER_FACTORY = '0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd'
 export const TESTNET_SPLITTER_FACTORY = '0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe'
 /** The factory's clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 and v3 their payee; v3 buys at
  *  most one chunk per 4 minutes (GangBond audit H-1). */
