@@ -113,6 +113,40 @@ library GangRouterDeployLib {
         return address(uint160(uint256(vm.load(proxy, ADMIN_SLOT))));
     }
 
+    /// @dev Start of Solidity's CBOR metadata: {"ipfs": bytes(34) = 0x1220 ‖ 32-byte hash, …}.
+    bytes10 internal constant METADATA_IPFS = 0xa2646970667358221220;
+
+    /// @notice `a`'s runtime code equals `want` apart from the IPFS hash of every Solidity metadata block in it (the
+    ///         trailing one, and one per creation code embedded as data, e.g. TokenDeployer's GangToken): the hash
+    ///         moves with the build's source set and settings while the code stays the same. Metadata is never
+    ///         executed; every other byte, jump targets included, must match.
+    function sameCode(address a, bytes memory want) internal view returns (bool) {
+        return sameCode(a.code, want);
+    }
+
+    /// @dev Does not modify `got` or `want`: the hashes are masked in copies.
+    function sameCode(bytes memory got, bytes memory want) internal pure returns (bool) {
+        if (got.length != want.length) return false;
+        bytes memory g = bytes.concat(got);
+        bytes memory w = bytes.concat(want);
+        for (uint256 i; i + 42 <= w.length; i++) {
+            bytes10 mw;
+            bytes10 mg;
+            assembly {
+                mw := mload(add(add(w, 32), i))
+                mg := mload(add(add(g, 32), i))
+            }
+            if (mw != METADATA_IPFS) continue;
+            if (mg != METADATA_IPFS) return false;
+            assembly {
+                mstore(add(add(w, 42), i), 0)
+                mstore(add(add(g, 42), i), 0)
+            }
+            i += 41;
+        }
+        return keccak256(g) == keccak256(w);
+    }
+
     /// @return version Initializable._initialized of `a` (type(uint64).max = locked)
     /// @return initializing Initializable._initializing
     function initState(address a) internal view returns (uint64 version, bool initializing) {
@@ -130,8 +164,9 @@ library GangRouterDeployLib {
 
     /// @dev The proxy's own runtime code is OZ 5.1's TransparentUpgradeableProxy (this build's artifact) with its one
     ///      immutable, `_admin`, equal to r.proxyAdmin: the artifact has zeros where the immutable goes, so every
-    ///      32-byte word that is zero there and r.proxyAdmin in the deployed code is filled in, then the hashes must
-    ///      match. A look-alike with the same ERC-1967 slots but other code (a backdoor) fails here.
+    ///      32-byte word that is zero there and r.proxyAdmin in the deployed code is filled in, then the code must
+    ///      match (`sameCode`: metadata aside). A look-alike with the same ERC-1967 slots but other code (a backdoor)
+    ///      fails here.
     function checkProxyCode(Router memory r) internal view {
         bytes memory want = vm.getDeployedCode("TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy");
         bytes memory got = r.proxy.code;
@@ -153,16 +188,16 @@ library GangRouterDeployLib {
                 p += 31;
             }
         }
-        if (filled == 0 || keccak256(got) != keccak256(want)) revert WiringCheck("router proxy code");
+        if (filled == 0 || !sameCode(got, want)) revert WiringCheck("router proxy code");
     }
 
     /// @dev Proxy (its own code) → impl (this build's GangRouter, locked) and → ProxyAdmin (the one the proxy deployed,
     ///      plain OZ code, owned by the timelock); the proxy itself initialized on the right pad / WBNB / Pancake.
     function checkProxy(Router memory r, Expect memory e) internal view {
         checkProxyCode(r);
-        // ERC-1967 implementation slot = the implementation, and that is exactly this build's GangRouter
+        // ERC-1967 implementation slot = the implementation, and that is this build's GangRouter code
         if (r.impl == address(0) || implementationOf(r.proxy) != r.impl) revert WiringCheck("router impl slot");
-        if (r.impl.codehash != keccak256(type(GangRouter).runtimeCode)) revert WiringCheck("router impl code");
+        if (!sameCode(r.impl, type(GangRouter).runtimeCode)) revert WiringCheck("router impl code");
         // the implementation is locked by its constructor and holds no pad
         (uint64 implVersion,) = initState(r.impl);
         if (implVersion != type(uint64).max) revert WiringCheck("router impl locked");
@@ -171,7 +206,7 @@ library GangRouterDeployLib {
         if (adminOf(r.proxy) != r.proxyAdmin || r.proxyAdmin != vm.computeCreateAddress(r.proxy, 1)) {
             revert WiringCheck("router admin slot");
         }
-        if (r.proxyAdmin.codehash != keccak256(type(ProxyAdmin).runtimeCode)) revert WiringCheck("router admin code");
+        if (!sameCode(r.proxyAdmin, type(ProxyAdmin).runtimeCode)) revert WiringCheck("router admin code");
         if (ProxyAdmin(r.proxyAdmin).owner() != r.timelock) revert WiringCheck("router admin owner");
         // the proxy: initialized (once, not mid-initialization), on this pad and WBNB
         (uint64 v, bool initializing) = initState(r.proxy);
@@ -195,9 +230,8 @@ library GangRouterDeployLib {
         TimelockController t = TimelockController(payable(r.timelock));
         // mainnet: the platform Safe, whatever OWNER the run was given
         if (e.mainnet && e.safe != M.OWNER_SAFE) revert WiringCheck("router timelock not the Safe");
-        if (r.timelock.codehash != keccak256(type(TimelockController).runtimeCode)) {
-            revert WiringCheck("router timelock code");
-        }
+        // the code, not the metadata hash: the live timelock was built from another source set (same OZ 5.1 code)
+        if (!sameCode(r.timelock, type(TimelockController).runtimeCode)) revert WiringCheck("router timelock code");
         if (t.getMinDelay() < e.minDelay) revert WiringCheck("router timelock delay");
         bytes32 admin = t.DEFAULT_ADMIN_ROLE();
         bytes32[3] memory ops = [t.PROPOSER_ROLE(), t.EXECUTOR_ROLE(), t.CANCELLER_ROLE()];

@@ -17,7 +17,7 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**新币一律发在 GangLaunchpad**（2026-10-27 起在 BSC 主网运行）：同一个合约上发联合曲线币（无税或自带税，`gang create` = `gang v3 create`）和 **打新**（`gang fair`）。**LaunchpadV2**（旧内盘）**不再发新币**，存量币照常交易（`gang buy` / `gang sell`）。Soft / LaunchpadU / LaunchpadS 也**不是**发币入口（行情里可能仍有存量买卖/claim）。只有持有 SPACE ID Agent ID（`.ai`）的钱包能发币、在内盘买卖或打新。由 agent 跑 CLI；需要时在币安 App 确认。CLI **不持有私钥**。
+**新币一律发在 GangLaunchpad**（2026-10-27 起在 BSC 主网运行）：同一个合约上发联合曲线币（无税或自带税，`gang create`）和 **打新**（`gang create --fair`）。CLI 0.12.0 起一个动作一条命令，所有币通用：`gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` 先读出币的类型，再走对应内盘的逻辑（`gang v3 …` / `gang fair …` 保留为别名）。**LaunchpadV2**（旧内盘）**不再发新币**，存量币照常交易（`gang buy` / `gang sell`）。Soft / LaunchpadU / LaunchpadS 也**不是**发币入口（行情里可能仍有存量买卖/claim）。只有持有 SPACE ID Agent ID（`.ai`）的钱包能发币、在内盘买卖或打新。由 agent 跑 CLI；需要时在币安 App 确认。CLI **不持有私钥**。
 
 ---
 
@@ -27,6 +27,7 @@
 |---|---|
 | **GangLaunchpad**（V3 和打新共用一个内盘） | `0x15CFD2dc8278Fb87a1783ef42111618E20874365`（区块 130104322） |
 | **GangRouter**（代理，用户授权这个地址） | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
+| GangPadRegistry（代理，聚合器查币所在的 pad、拿曲线报价） | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
 | GangTaxHandler（外盘税） | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
@@ -51,7 +52,7 @@
 2. 领取 **SPACE ID Agent ID**（`.ai`）。
 3. 打开 **Developer Mode** 与 **Trade all tokens**（卖出需要后者）。
 
-### B. 安装 skill + CLI（`@gangfun/cli`：V2 要 ≥0.8.0，`gang v3` / `gang fair` / 外盘买卖要 **≥0.9.0**）
+### B. 安装 skill + CLI（`@gangfun/cli`：GangLaunchpad / 外盘买卖要 ≥0.9.0，下面的统一命令要 **≥0.12.0**）
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -82,15 +83,15 @@ gang preflight
 `gang execute --request-id …`。需要时会先返回 `approve` / `approve-quote` / `wrap-bnb` 这类步骤：先执行它，再把同一条命令重跑一次。
 详见 [skill/references/v3.md](skill/references/v3.md)、[skill/references/fair.md](skill/references/fair.md)。
 
-**V3 币**（`gang create` = `gang v3 create`）。不带 `--buy-tax` / `--sell-tax` 就是无税；带税时税款默认给创建者自己的钱包，
+**V3 币**（`gang create`；`gang v3 create` 是它的别名）。不带 `--buy-tax` / `--sell-tax` 就是无税；带税时税款默认给创建者自己的钱包，
 也可以用 `--recipient` 指定白名单里的合作方。税率和接收地址发币后不能改：
 
 ```bash
 gang create --name "My Token" --symbol MYT --logo ./avatar.png             # 无税：外盘不收税、无分红、无接收地址
 gang create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --logo ./avatar.png
-gang v3 buy  --token 0x… --amount 0.1      # 内盘：报价币数量，含 1% 手续费；WBNB 计价的币经 GangRouter 直接付 BNB
-gang v3 info --token 0x…                   # 税率、接收地址、还欠接收地址多少
-gang v3 claim --token 0x…                  # 领持币分红（报价币）
+gang buy   --token 0x… --amount 0.1      # 内盘：报价币数量，含 1% 手续费；WBNB 计价的币经 GangRouter 直接付 BNB
+gang info  --token 0x…                   # 税率、接收地址、还欠接收地址多少
+gang claim --token 0x…                   # 领持币分红（报价币）
 ```
 
 想把这部分税按比例回购销毁：加 `--buyback <0-100>`（只用于带税的币，代替 `--recipient`），一键发射会先给你克隆一个
@@ -101,18 +102,18 @@ GangBuybackSplitter（同一笔交易里加进白名单），再把它设为接�
 **打新**（`--raise` 募集 BNB，`--cap` 单地址占总量 %，`--hold` 出局线 %；另有 `--mint-fee 1-3`、`--exit-fee 1-2`）：
 
 ```bash
-gang fair create --name "My Token" --symbol MYT --raise 15 --cap 0.5 --hold 60 --logo ./avatar.png
-gang fair mint --token 0x… --shares 20      # 每份价格 × 份数，另收该币的打新费（不退）
-gang fair withdraw --token 0x… --shares 5   # 打满前：按打新价减撤出费卖回
-gang fair status --token 0x…                # 发射后：是否出局、sellableBeforeOut、可领奖励
+gang create --fair --name "My Token" --symbol MYT --raise 15 --cap 0.5 --hold 60 --logo ./avatar.png
+gang mint     --token 0x… --shares 20      # 每份价格 × 份数，另收该币的打新费（不退）
+gang withdraw --token 0x… --shares 5       # 打满前：按打新价减撤出费卖回
+gang status   --token 0x…                  # 发射后：是否出局、sellableBeforeOut、可领奖励
 ```
 
 **外盘买卖**（已毕业 / 已发射的币，经 GangRouter 走 PancakeSwap；不查 Agent ID、没有单地址上限，照收外盘税）：
 
 ```bash
-gang v3 buy   --token 0x… --amount 0.1 --slippage 1   # WBNB 计价的币付原生 BNB（--use-quote 用 WBNB；其他报价币用 --pay-bnb 付 BNB）
-gang fair sell --token 0x… --all --to-bnb             # 卖过 sellableBeforeOut（永久失去奖励）会被拒，除非加 --confirm-out
-gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / Soft / U / S 币，只在主网
+gang buy  --token 0x… --amount 0.1 --slippage 1       # WBNB 计价的币付原生 BNB（--use-quote 用 WBNB；其他报价币用 --pay-bnb 付 BNB）
+gang sell --token 0x<已发射的打新币> --all --to-bnb    # 卖过 sellableBeforeOut（永久失去奖励）会被拒，除非加 --confirm-out
+gang buy  --token 0x<已毕业的 V2 币> --amount 0.05     # 已毕业的 V2 / Soft / U / S 币，只在主网
 ```
 
 外盘卖出会先只授权这一笔的数量给路由；带税的卖出约需 70 万 gas（至少给 75 万）。
@@ -121,7 +122,7 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 
 ## 4. 规则（简要）
 
-| | V3 币（`gang create` / `gang v3`） | 打新（`gang fair`） | LaunchpadV2（仅存量币） |
+| | V3 币（`gang create`） | 打新（`gang create --fair`） | LaunchpadV2（仅存量币） |
 |---|---|---|---|
 | 准入 | 发币、内盘买卖要 Agent ID（`.ai`） | 发起和打入要 Agent ID（每个打新在发起时固定） | 内盘买卖要 Agent ID（不再发新币） |
 | 单钱包上限 | 内盘最多持有总量 1%，多付的同笔退回 | 每个钱包总量的 0.25–1%，发起时设定 | 内盘 1%，多付的同笔退回 |
@@ -158,19 +159,19 @@ gang buy  --token 0x<已毕业的 V2 币> --bnb 0.05        # 已毕业的 V2 / 
 
 ### 5.1 V2 买卖
 
-V2 走 **报价 ERC-20**（非 payable BNB）。`--bnb` 在 V2 上表示报价币数量。
+V2 走 **报价 ERC-20**（非 payable BNB）。`--amount`（旧名 `--bnb`）在 V2 上表示报价币数量。
 
 ```bash
 gang hot                            # 0.3.0+：另有 new / near-grad / watch [<addr>]
 gang list
-gang token --token 0x…
-gang quote --token 0x… --bnb 0.05
-gang buy  --token 0x… --bnb 0.05    # 可能先 approve-quote
+gang info  --token 0x…
+gang quote --token 0x… --amount 0.05
+gang buy  --token 0x… --amount 0.05 # 可能先 approve-quote
 gang execute --request-id …
 gang sell --token 0x… --all
 gang execute --request-id …
 
-gang follow 0x<附言 tx> --bnb 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
+gang follow 0x<附言 tx> --amount 0.05  # 0.6.0+：跟单，跟别的 Agent 的买入附言（= buy --follow）
 gang notes --min-hit 0.6            # 0.8.0+：现在能跟的想法和作者战绩；另有 watch --notes、agents
 ```
 

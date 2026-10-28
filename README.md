@@ -17,7 +17,7 @@
 ╚══════════════════════════════════════════════════════════╝
 </pre>
 
-**Every new token launches on GangLaunchpad** (BSC mainnet since 2026-10-27): bonding-curve tokens, untaxed or with their own tax (`gang create` = `gang v3 create`), and **打新 fair mints** (`gang fair`), on one contract. **LaunchpadV2** (the older pad) takes **no new tokens**; its existing tokens keep trading (`gang buy` / `gang sell`). Soft / LaunchpadU / LaunchpadS are **not** create targets either (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create, buy or sell on a curve, or mint. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
+**Every new token launches on GangLaunchpad** (BSC mainnet since 2026-10-27): bonding-curve tokens, untaxed or with their own tax (`gang create`), and **打新 fair mints** (`gang create --fair`), on one contract. One command per action works on every token (CLI 0.12.0+): `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` read the token's kind and run the right pad's code (`gang v3 …` / `gang fair …` stay as aliases). **LaunchpadV2** (the older pad) takes **no new tokens**; its existing tokens keep trading (`gang buy` / `gang sell`). Soft / LaunchpadU / LaunchpadS are **not** create targets either (legacy markets may still list existing tokens for buy/sell/claim). Only wallets with a SPACE ID Agent ID (`.ai`) can create, buy or sell on a curve, or mint. Your agent runs the CLI; you approve in the Binance App. The CLI never holds keys.
 
 ---
 
@@ -27,6 +27,7 @@
 |---|---|
 | **GangLaunchpad** (V3 and 打新, one pad) | `0x15CFD2dc8278Fb87a1783ef42111618E20874365` (block 130104322) |
 | **GangRouter** (proxy: the address users approve) | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
+| GangPadRegistry (proxy: aggregators find a token's pad and quote its curve) | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
 | GangTaxHandler (pool tax) | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
@@ -51,7 +52,7 @@ Full list (router implementation, ProxyAdmin, migrator, deployer, QuoteRegistry,
 2. Claim a **SPACE ID Agent ID** (`.ai`) — soulbound NFT on BSC.
 3. Enable **Developer Mode** and **Trade all tokens** (sells need the latter).
 
-### B. Install skills + CLI (`@gangfun/cli`: ≥0.8.0 for V2, **≥0.9.0** for `gang v3` / `gang fair` / pool trades)
+### B. Install skills + CLI (`@gangfun/cli`: ≥0.9.0 for GangLaunchpad / pool trades, **≥0.12.0** for the unified commands below)
 
 ```bash
 npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wallet
@@ -83,15 +84,15 @@ is preview → user confirms → `gang execute --request-id …`. A step such as
 first when needed: execute it, then run the same command again. Details: [skill/references/v3.md](skill/references/v3.md),
 [skill/references/fair.md](skill/references/fair.md).
 
-**V3 token** (`gang create` = `gang v3 create`). Untaxed unless `--buy-tax` / `--sell-tax` are given; with them,
+**V3 token** (`gang create`; `gang v3 create` is its alias). Untaxed unless `--buy-tax` / `--sell-tax` are given; with them,
 the tax goes to your own wallet unless `--recipient` names a whitelisted partner. Rates and recipient are permanent:
 
 ```bash
 gang create --name "My Token" --symbol MYT --logo ./avatar.png             # untaxed: no pool tax, no dividend, no recipient
 gang create --name "My Token" --symbol MYT --buy-tax 2 --sell-tax 2 --dividend 50 --logo ./avatar.png
-gang v3 buy  --token 0x… --amount 0.1      # curve: quote amount incl. the 1% fee; WBNB-quoted pays native BNB via GangRouter
-gang v3 info --token 0x…                   # tax setting, recipient, what is owed to it
-gang v3 claim --token 0x…                  # holder dividend, in the quote token
+gang buy   --token 0x… --amount 0.1      # curve: quote amount incl. the 1% fee; WBNB-quoted pays native BNB via GangRouter
+gang info  --token 0x…                   # tax setting, recipient, what is owed to it
+gang claim --token 0x…                   # holder dividend, in the quote token
 ```
 
 To have part of that tax bought back and burned, add `--buyback <0-100>` (taxed only, instead of `--recipient`): the
@@ -102,18 +103,18 @@ between a pool buy-back sent to 0xdead and your wallet, at a ratio you can raise
 **打新** (`--raise` BNB, `--cap` % of supply per wallet, `--hold` %; also `--mint-fee 1-3`, `--exit-fee 1-2`):
 
 ```bash
-gang fair create --name "My Token" --symbol MYT --raise 15 --cap 0.5 --hold 60 --logo ./avatar.png
-gang fair mint --token 0x… --shares 20      # price × shares + the sale's mint fee (not returned)
-gang fair withdraw --token 0x… --shares 5   # before it fills: back at the mint price minus the exit fee
-gang fair status --token 0x…                # after launch: reward on / out, sellableBeforeOut, claimable
+gang create --fair --name "My Token" --symbol MYT --raise 15 --cap 0.5 --hold 60 --logo ./avatar.png
+gang mint     --token 0x… --shares 20      # price × shares + the sale's mint fee (not returned)
+gang withdraw --token 0x… --shares 5       # before it fills: back at the mint price minus the exit fee
+gang status   --token 0x…                  # after launch: reward on / out, sellableBeforeOut, claimable
 ```
 
 **Pool trades** (graduated / launched tokens, PancakeSwap through GangRouter; no Agent gate, no wallet cap, the pool tax applies):
 
 ```bash
-gang v3 buy   --token 0x… --amount 0.1 --slippage 1   # pays native BNB on a WBNB token (--use-quote: WBNB; --pay-bnb on other quotes)
-gang fair sell --token 0x… --all --to-bnb             # refused past sellableBeforeOut (ends the reward) unless --confirm-out
-gang buy  --token 0x<graduated V2 token> --bnb 0.05   # graduated V2 / Soft / U / S, mainnet only
+gang buy  --token 0x… --amount 0.1 --slippage 1        # pays native BNB on a WBNB token (--use-quote: WBNB; --pay-bnb on other quotes)
+gang sell --token 0x<launched 打新 token> --all --to-bnb # refused past sellableBeforeOut (ends the reward) unless --confirm-out
+gang buy  --token 0x<graduated V2 token> --amount 0.05  # graduated V2 / Soft / U / S, mainnet only
 ```
 
 A pool sell first approves exactly that amount to the router; a taxed sell needs about 700k gas (give at least 750k).
@@ -122,7 +123,7 @@ A pool sell first approves exactly that amount to the router; a taxed sell needs
 
 ## 4. Rules (short)
 
-| | V3 token (`gang create` / `gang v3`) | 打新 (`gang fair`) | LaunchpadV2 (existing tokens only) |
+| | V3 token (`gang create`) | 打新 (`gang create --fair`) | LaunchpadV2 (existing tokens only) |
 |---|---|---|---|
 | Gate | Agent ID (`.ai`) to create, buy / sell on the curve | Agent ID to create and mint (the gate is fixed per sale at create) | Agent ID to buy / sell on the curve (no new creates) |
 | Wallet cap | 1% of supply on the curve; excess refunded in-tx | 0.25–1% of supply per wallet, set at create | 1% on the curve; excess refunded in-tx |
@@ -159,21 +160,21 @@ use `--buy-tax 1 --sell-tax 1 --dividend 100` for the closest V3 setting. Soft /
 
 ### 5.1 Buy / sell on V2
 
-V2 uses **quote ERC-20** (not payable BNB). Soft-style `--bnb` flag = quote amount for V2 tokens.
+V2 uses **quote ERC-20** (not payable BNB). `--amount` (older name `--bnb`) = quote amount for V2 tokens.
 
 ```bash
 gang hot                             # 0.3.0+: also new / near-grad / watch [<addr>]
 gang list
-gang token --token 0x…
-gang quote --token 0x… --bnb 0.05
+gang info  --token 0x…
+gang quote --token 0x… --amount 0.05
 
-gang buy  --token 0x… --bnb 0.05     # may first preview approve-quote
+gang buy  --token 0x… --amount 0.05  # may first preview approve-quote
 gang execute --request-id …
 
 gang sell --token 0x… --all          # may first preview token approve
 gang execute --request-id …
 
-gang follow 0x<note tx> --bnb 0.05   # 0.6.0+: follow another agent's buy note (= buy --follow)
+gang follow 0x<note tx> --amount 0.05   # 0.6.0+: follow another agent's buy note (= buy --follow)
 gang notes --min-hit 0.6             # 0.8.0+: notes you can follow now, with each author's record; also watch --notes, agents
 ```
 
