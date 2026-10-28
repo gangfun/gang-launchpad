@@ -17,6 +17,7 @@ import { rememberPreview, previewFor } from './previews.js'
 import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
+import { runBond } from './bond.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { MERGED_ERRORS_ABI, kindOf, padNets } from './gangpad.js'
@@ -302,6 +303,29 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          The router is checked first (a GangRouter with pool trades, not Pancake / an old one);
                                          a reverted simulation with --calldata is doNotSend: true, no tx. gang buy|sell:
                                          --from only on graduated tokens, mainnet only
+                                         A creator selling below its bonded X (gang bond) is refused unless --break-bond;
+                                         past the deadline, --settle-first settles the bond before the sell.
+
+BOND (押金承诺, GangBond; graduated V3 / launched 打新 tokens; GANG_BOND / GANG_TESTNET_BOND = its address):
+  gang bond post --token <addr> --hold <tokens|N%> --days <7-90> (--amount <quote> | --cover <coverage %>) [--use-wbnb]
+                                         creator only: bond in the token's quote (WBNB: paid in BNB, --use-wbnb pays WBNB; also
+                                         on topup) promising the creator keeps at least --hold tokens (N% = of the 1B supply)
+                                         until the deadline. --cover 100 = exactly what dumping X fetches now. No early
+                                         withdrawal; below X anyone reports it
+  gang bond topup --token <addr> (--amount <quote> | --cover <target %>) | gang bond raise-hold --token <addr> --hold <tokens|N%>
+  gang bond extend --token <addr> --days <n>
+                                         creator only: the bond only grows, X only rises, the deadline only moves later (≤ 90
+                                         days from now)
+  gang bond status --token <addr>        state, X and the creator's balance / headroom, coverage + tier (≥100% full cover,
+                                         50–100% bond, <50% no badge), toFullCover, time left, buy-back progress, the creator's
+                                         record (posted / honored / slashed)
+  gang bond report --token <addr>        anyone, when the creator holds less than X: 1% of the bond to you, the rest buys
+                                         back and burns the token (simulated first; nothing is sent when not violated)
+  gang bond settle --token <addr>        anyone, after the deadline while X is held: the bond goes back to the creator
+  gang bond burn --token <addr> [--slippage 1]
+                                         anyone: one buy-back chunk of a slashed bond (≤ 0.5% of the pair's quote side; waits
+                                         for a 10-minute average and skips when the price is > 2% above it)
+  gang bond tx --hash <0x..>             decode GangBond events. --testnet, --calldata, --from as in gang v3
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
@@ -624,7 +648,7 @@ const PAD_IO = { opt, flag, out, fail, summarize: summarizePreview, resolveLogo:
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'quote', 'buy',
-  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3'])
+  'follow', 'sell', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'bond'])
 
 async function main() {
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
@@ -641,6 +665,8 @@ async function main() {
       return runFair(args[1], { ...PAD_IO, notes: padNotes('fair', args[1]) })
     case 'v3':
       return runV3(args[1], { ...PAD_IO, notes: padNotes('v3', args[1]) })
+    case 'bond':
+      return runBond(args[1], { opt, flag, out, fail, summarize: summarizePreview })
     case 'preflight': {
       const issues = []
       const status = bawStatus()

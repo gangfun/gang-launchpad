@@ -459,6 +459,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       amount: sub === 'sell' && flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: sub === 'sell' && flag('all'),
       swapBackGas: Number(sellTaxBps) > 0, payBnb: sub === 'buy' && poolPayBnb(ctx, sale.quote, flag), toBnb: flag('to-bnb'),
       base: { kind: 'fair', pair: sale.pair, ...notes.pool, ...(outWarning && { ...outWarning, confirmedOut: true }) },
+      ...(sub === 'sell' && { bond: { testnet, breakBond: flag('break-bond'), settleFirst: flag('settle-first') } }),
     }, { rawOnly, summarize, revertOf }))
   }
 

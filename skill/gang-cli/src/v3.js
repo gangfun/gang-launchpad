@@ -469,6 +469,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
           side: 'sell', token, quote: c.quote, me, amount: flag('all') ? null : parseAmount(fail, 'amount', opt('amount')), all: flag('all'),
           slippage, buyTaxBps: Math.round(c.buyTaxPct * 100), sellTaxBps: Math.round(c.sellTaxPct * 100), handler: c.taxHandler,
           swapBackGas: c.sellTaxPct > 0, toBnb: flag('to-bnb'), base: { kind: 'v3', pair: c.pair, ...notes.pool },
+          bond: { testnet, breakBond: flag('break-bond'), settleFirst: flag('settle-first') },
         }, { rawOnly, summarize, revertOf }))
       }
       if (flag('all')) return fail('--all needs a wallet (or --from <addr>) whose balance can be read', { pair: c.pair })
