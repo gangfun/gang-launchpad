@@ -18,7 +18,7 @@ import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
 import { runBond } from './bond.js'
-import { isLaunch, LAUNCH_FLAGS, runLaunch } from './launch.js'
+import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, runLaunch } from './launch.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { MERGED_ERRORS_ABI, kindOf, padNets } from './gangpad.js'
@@ -685,7 +685,7 @@ async function main() {
   // --bond-hold / --bond-days / --restart only mean something in a chained launch (--dev-buy / --bond); never drop them silently
   if (tokenCreate && !isLaunch(cmd === 'fair' ? 'fair' : 'v3', flag)) {
     // a 打新 dev buys with --shares in the create itself: say so here, not "add --bond" (which would only lead to that)
-    if (cmd === 'fair' && flag('dev-buy')) fail('a 打新 dev buys its shares in the create itself: use --shares <n> (not --dev-buy)')
+    if (cmd === 'fair' && flag('dev-buy')) fail(FAIR_DEV_BUY)
     const lone = LAUNCH_FLAGS.find((f) => flag(f))
     if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${cmd === 'fair' ? '' : ' (or --dev-buy <quote>)'}`)
   }

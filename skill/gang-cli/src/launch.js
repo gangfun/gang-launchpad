@@ -36,6 +36,8 @@ const ERC20_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'
 /** Flags only the chain reads; everything else goes to the step's own command. */
 export const LAUNCH_FLAGS = ['dev-buy', 'bond', 'bond-hold', 'bond-days', 'restart']
 const NOTE_FLAGS = ['note', 'conf', 'reveal-after']
+/** `gang fair create --dev-buy`, with or without --bond (index.js stops the lone flag, runLaunch the chained one). */
+export const FAIR_DEV_BUY = 'a 打新 dev buys its shares in the create itself: use --shares <n> (not --dev-buy)'
 
 /** The run asks for a chained launch (`kind` 'v3' | 'fair'). */
 export const isLaunch = (kind, flag) => flag('bond') || (kind === 'v3' && flag('dev-buy'))
@@ -80,7 +82,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   const name = opt('name'), symbol = opt('symbol')
   if (!name || !symbol) fail('--name and --symbol are required')
   if (flag('follow')) fail('--follow does not apply to a launch')
-  if (kind === 'fair' && flag('dev-buy')) fail('a 打新 dev buys its shares in the create itself: use --shares <n> (not --dev-buy)')
+  if (kind === 'fair' && flag('dev-buy')) fail(FAIR_DEV_BUY)
 
   // everything checked before the create, so a launch never stops half way on a bad flag
   const devBuy = kind === 'v3' && flag('dev-buy') ? parseAmount(fail, 'dev-buy', opt('dev-buy')) : null
