@@ -1,12 +1,13 @@
 # 测试网 · GangBond（Agent 押金承诺）
 
-GangBond 在 BSC 测试网部署了三版，都挂在第 10 套内盘上：
+GangBond 在 BSC 测试网部署了四版，都挂在第 10 套内盘上：
 
 | 版本 | 地址 | 区别 | 本文 |
 |---|---|---|---|
 | 第一版 | `0x587f563749A321624b5710d6D77010F183a65d7E` | 只能在毕业 / 开盘后押 | A、B 节 |
 | 第二版 | `0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716` | 发币后随时可押，承诺期从毕业 / 开盘起算；30 天兜底退款任何人可调 | C 节 |
-| 第三版（CLI 内置） | `0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3` | 同第二版，退款改成 dev 发起 + 3 天公告期（内部审查二） | D 节 |
+| 第三版 | `0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3` | 同第二版，退款改成 dev 发起 + 3 天公告期（内部审查二） | D 节 |
+| 第四版（CLI 0.15.0 起内置） | `0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086` | 主网前审计（`docs/AUDIT-GANG-BOND-2026-10-29.md`）：两块回购之间至少 4 分钟，`settle` 分两步（申请后 1 小时） | F 节 |
 
 第一版：两枚币都走过了一遍：V3 币完整走完罚没流程（发押金 → 违约 → 举报 → 分块回购，按真实出块买完），打新币走完了除取回以外的全部操作。取回要等满 7 天，2026-11-05 之后再补测。
 
@@ -146,3 +147,34 @@ CLI 的 `--calldata` 只输出 to / data / value，gas 由签名方决定；用 
 - `--use-wbnb` 支付：在主网分叉端到端里测过（原生 BNB 支付已在 C 节上链）。
 - `baw` 签名：本次全部用 `--calldata` 加 cast 签名。
 - 服务端索引和 keeper：还没做。
+
+## F｜第四版：审计修复（2026-10-29）
+
+| 项 | 值 |
+|---|---|
+| GangBond（第四版） | [`0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086`](https://testnet.bscscan.com/address/0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086) |
+| 部署交易 | [`0x3e1a5587…1d44`](https://testnet.bscscan.com/tx/0x3e1a5587fe808a1e188f483727bb2ea27ac8fa3b9e35905b0599e48417d11d44)，区块 139463214，gas 2,969,709；链上读到 `CHUNK_GAP` 240、`SETTLE_DELAY` 3600 |
+
+打新币 `0x08DA…88C2`（已开盘，报价币 MockSPCXB，交易对报价币储备约 17.8），创建者 `0xCa8e…00b6`，举报人 `0x3FBf…5376`。全程用 CLI（`GANG_TESTNET_BOND` 指向第四版）生成交易，cast `--legacy` 发送：
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 授权报价币 | 成功 | [`0xa153aaad…2742`](https://testnet.bscscan.com/tx/0xa153aaada878d868d3f1973e43098f55e88b4822a9749a7a6a718f27e2932742) |
+| `post`：押 0.3，X = 82,412,454（创建者几乎全部持仓），7 天 | 成功，覆盖率 10.36%，gas 234,483 | [`0x646230a3…a70b`](https://testnet.bscscan.com/tx/0x646230a3a917530c24afcb398a9035b585045996def482c34c60958da65fa70b) |
+| 创建者转出 1 枚（低于 X） | 违约 | [`0xbc1cce36…6b69`](https://testnet.bscscan.com/tx/0xbc1cce36b8c7ad12de5d79a0d69eb4e0bffcdce5328a6b7e7bf01ace35eb6b69) |
+| 举报 | 举报人得 0.003，回购余 0.297 | [`0x04d203c0…75c4`](https://testnet.bscscan.com/tx/0x04d203c00328a8446e06275a259623e0ec8d9eae741ac7a579533216d49475c4) |
+| 首次 `burn` | 只记观测点 | [`0xbb7077df…6023`](https://testnet.bscscan.com/tx/0xbb7077df5a724dfa904476bfa3a6ee0fed3e9f73bf8c44a2aa65f86985416023) |
+| 10 分钟后第 1 块 | 0.0892 报价币，约 206.5 万枚到 0xdead | [`0xc77a52e0…48b0`](https://testnet.bscscan.com/tx/0xc77a52e0b91abe866191a49375b22c454b98a2662dfe1b37c4e0a6dd4c7b48b0) |
+| 紧接着再 `burn` | CLI 模拟回滚 `BurnTooSoon`，不发送 | 只预览 |
+| 第 2 块（隔 252 秒） | 0.0897，约 205.5 万枚 | [`0xa0801d81…26d7`](https://testnet.bscscan.com/tx/0xa0801d81316a7364ddc82686bc3fcae660110da5ae2470ecce09d71073c826d7) |
+| 第 3 块（隔 249 秒） | 0.0901，约 204.5 万枚 | [`0x5a761fa4…722f`](https://testnet.bscscan.com/tx/0x5a761fa4adb95041a77ea79af6e576f44e605b619d8c310d99a4ca88f957722f) |
+| 第 4 块（隔 252 秒） | 剩余 0.0280，约 63.0 万枚，`burnLeft` 归零 | [`0xcb7a5919…0c3d`](https://testnet.bscscan.com/tx/0xcb7a59190c118cae5a4a4136b5a21ef6f717a35ff19f660597184b40b38a0c3d) |
+
+两步 `settle` 要等满 7 天的承诺期，测试网上没等，在 BSC 主网分叉（anvil，本地，未广播）上用 CLI 跑通：
+- 到期前 `settle` 被拒；
+- 到期后卖出全部被卖出保护拦下，加 `--settle-first` 时给出 `requestSettle`；
+- 一小时内再次 `settle` 和 `--settle-first` 都被拒，并给出 `settleRunsAt`；
+- `status` 显示 `settleRequested`；
+- 一小时后 `settle`，0.1 WBNB 回到创建者。
+
+第三版上留着的 `0x10fF…a935` 两步退款补测照旧，要加 `GANG_TESTNET_BOND=0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3`。

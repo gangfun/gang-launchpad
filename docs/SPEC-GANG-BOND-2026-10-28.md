@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（按 claude.ai 文档「Agent 押金承诺规格草案」2026-10-27 版实现；待定问题全部按草案「建议」一栏）
-- 性质：**测试网已部署（当前版本 `0xB034…EBE3`；更早的 `0x587f…5d7E`、`0x5a99…d716` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`），禁止主网广播**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
+- 性质：**测试网已部署（当前版本 `0xd6a8…1086`，含 2026-10-29 审计修复；更早的 `0x587f…5d7E`、`0x5a99…d716`、`0xB034…EBE3` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`），禁止主网广播**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
 
 ## 一句话
 
