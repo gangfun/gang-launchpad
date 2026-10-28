@@ -129,7 +129,7 @@ A pool sell first approves exactly that amount to the router; a taxed sell needs
 | Wallet cap | 1% of supply on the curve; excess refunded in-tx | 0.25–1% of supply per wallet, set at create | 1% on the curve; excess refunded in-tx |
 | Fees before the pool | 1% curve fee, no tax | 1–3% mint fee; 1–2% exit fee on a sell-back | 1% curve fee |
 | Into the pool | ≈15 BNB raised + the 20% of supply left, LP burned | all raised + the other 50% of supply at the mint price, LP burned | ≈15 BNB, LP burned |
-| Pool tax | untaxed: none; taxed: 1–5% buy / sell: 0.5% of volume to the platform, the rest to holders (`--dividend`) and the recipient | 1%: half to minters above their hold line, half to the platform | untaxed: none; taxed: 1% → holders / buyback / vault |
+| Pool tax | untaxed: none; taxed: 1–5% buy / sell: 0.5% of volume to the platform, the rest to holders (`--dividend`) and the recipient | 1%: half to minters above their hold line, half to the platform | untaxed: none; taxed: 1%, the tax tokens stay frozen in PostGradTaxHandler (renounced 2026-10-28), no dividends |
 | Before graduation / launch | no transfers, curve only | no transfers, sell back to the pad only | no transfers, curve only |
 
 ---
@@ -152,6 +152,7 @@ A pool sell first approves exactly that amount to the router; a taxed sell needs
 
 - Graduation ≈ **15 BNB** (PoolCheck / `TARGET_GRAD_BNB`)
 - Existing tokens are on two tracks: **untaxed** / **taxed** (1% pool tax)
+- PostGradTaxHandler's keeper was cleared and its ownership renounced on 2026-10-28: the taxed tokens' pool tax stays frozen in the contract for good, never sold and never paid out as dividends (see `docs/MAINNET-V2-TAXHANDLER-RENOUNCE-2026-10-28.md`)
 - BAW Agent gate + 1% walletCap on bonding
 - BscScan: all V2 contracts **Verified**
 
