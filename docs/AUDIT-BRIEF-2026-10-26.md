@@ -2,6 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9；§19 记 V3 内盘不收税，§20 记把两个核心合并成一个内盘（GangLaunchpad）的改动，§1–§9 仍按合并前的两个核心写，以 §20 为准
 - 读者：外部审计方
+- **2026-10-28 §24：聚合器用的 pad registry（GangPadRegistry，可升级，48 小时时间锁）+ 部署自检的代码比对改为屏蔽 metadata 哈希**。新合约，内盘、代币、路由一行未改，改动列在 §24；§21、§23 里「比对 codehash / keccak」的描述以 §24.4 为准。
 - **2026-10-27 上线前 §22：参数调整**（V3 接收地址可以是发币人自己；打新出局线 60%–90%、单地址上限 0.25%–1%）。分支 `feat/launch-params`（基于 `main` `36d55df`），改动列在 §22。
 - **2026-10-27 晚 §21：GangRouter 改为可升级（TransparentUpgradeableProxy + 48 小时 TimelockController，Safe 是唯一的提案 / 执行 / 取消者）并新增 Pancake V2 外盘买卖入口**。分支 `feat/upgradeable-router`，改动列在 §21；§4.1 里 GangRouter「无 owner」一行以 §21 为准。
 - **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
@@ -924,7 +925,7 @@ balanceOf(pad, q) == Σ_未发射 sale (sold × sharePrice) + owedFee[q] + Σ_�
 
 升级流程：Safe 调 `timelock.schedule(ProxyAdmin, 0, upgradeAndCall(代理, 新实现, data), 0, salt, 172800)`（链上公示 `CallScheduled`）→ 等 48 小时 → Safe 调 `timelock.execute(...)`；48 小时内 Safe 可 `cancel`。时间锁和 ProxyAdmin 都不需要 `acceptOwnership`：时间锁没有 owner，ProxyAdmin 构造时 owner 就是时间锁。
 
-部署脚本自检（`GangRouterDeployLib.check`，任何一项不对回滚 `WiringCheck("<项>")`）：代理地址上的 runtime code 就是 OZ 5.1 的 `TransparentUpgradeableProxy`（取本次构建的产物，把 immutable `_admin` 那 32 字节填成 ProxyAdmin 地址后比对 keccak，仿冒的「代理」过不了，review PoC-2），ERC-1967 实现槽 = 实现合约，实现合约的代码 = 本仓库这一版 `GangRouter`（codehash），实现合约已锁死、没有 pad；管理员槽 = 代理自己创建的 ProxyAdmin，代码是标准 OZ ProxyAdmin，owner = 时间锁；代理已初始化且不在初始化中，`pad()` / `v3()` / `fair()` / `wbnb()` / `pancakeRouter()` 正确，Pancake 路由的 `factory()` 是 Pancake V2 工厂（主网 `0xcA14…0c73`）、`WETH()` 是 WBNB；时间锁代码是标准 OZ TimelockController，`minDelay` ≥ 48 小时（主网），**主网上时间锁的角色持有者必须是 Safe 常量 `0x2866…B41E`**（不论 `OWNER` 是谁，`MAINNET_OWNER_IS_DEPLOYER=true` 时也一样；库在主网上拒绝给别人部署时间锁，`MainnetTimelockNotSafe`；只部署路由的脚本在主网上 `OWNER` 不是 Safe 直接回滚 `OwnerNotSafe`，review PoC-1），Safe 有三个角色，`address(0)` 没有任何角色（否则任何人都能执行），三个角色的管理角色都是 `DEFAULT_ADMIN_ROLE`，`DEFAULT_ADMIN_ROLE` 只在时间锁自己手里（Safe、部署钱包、`address(0)`、ProxyAdmin 都没有），部署钱包没有任何角色（主网上无论它是不是 `OWNER`；测试网只有部署钱包本身就是 `OWNER` 时例外，用来演练升级）；内盘登记了代理，没有登记实现合约 / ProxyAdmin / 时间锁；分红合约排除了代理。测试对每一项各造一个错误接线（时间锁延迟 48 小时 − 1 秒、部署钱包留着 proposer 或 executor、admin 是部署钱包或 Safe、executor 含 `address(0)`、Safe 不是 proposer、Pancake 路由不对、实现不是本版 `GangRouter`、实现槽不一致、实现合约未锁、ProxyAdmin 被转走、ProxyAdmin 不是代理创建的、内盘登记了实现、内盘没登记代理、分红合约没排除代理），自检都报出对应的项。
+部署脚本自检（`GangRouterDeployLib.check`，任何一项不对回滚 `WiringCheck("<项>")`）：代理地址上的 runtime code 就是 OZ 5.1 的 `TransparentUpgradeableProxy`（取本次构建的产物，把 immutable `_admin` 那 32 字节填成 ProxyAdmin 地址后比对 keccak，仿冒的「代理」过不了，review PoC-2），ERC-1967 实现槽 = 实现合约，实现合约的代码 = 本仓库这一版 `GangRouter`（codehash；2026-10-28 起这几项代码比对都改为屏蔽 metadata 哈希后比对全部字节，见 §24.4），实现合约已锁死、没有 pad；管理员槽 = 代理自己创建的 ProxyAdmin，代码是标准 OZ ProxyAdmin，owner = 时间锁；代理已初始化且不在初始化中，`pad()` / `v3()` / `fair()` / `wbnb()` / `pancakeRouter()` 正确，Pancake 路由的 `factory()` 是 Pancake V2 工厂（主网 `0xcA14…0c73`）、`WETH()` 是 WBNB；时间锁代码是标准 OZ TimelockController，`minDelay` ≥ 48 小时（主网），**主网上时间锁的角色持有者必须是 Safe 常量 `0x2866…B41E`**（不论 `OWNER` 是谁，`MAINNET_OWNER_IS_DEPLOYER=true` 时也一样；库在主网上拒绝给别人部署时间锁，`MainnetTimelockNotSafe`；只部署路由的脚本在主网上 `OWNER` 不是 Safe 直接回滚 `OwnerNotSafe`，review PoC-1），Safe 有三个角色，`address(0)` 没有任何角色（否则任何人都能执行），三个角色的管理角色都是 `DEFAULT_ADMIN_ROLE`，`DEFAULT_ADMIN_ROLE` 只在时间锁自己手里（Safe、部署钱包、`address(0)`、ProxyAdmin 都没有），部署钱包没有任何角色（主网上无论它是不是 `OWNER`；测试网只有部署钱包本身就是 `OWNER` 时例外，用来演练升级）；内盘登记了代理，没有登记实现合约 / ProxyAdmin / 时间锁；分红合约排除了代理。测试对每一项各造一个错误接线（时间锁延迟 48 小时 − 1 秒、部署钱包留着 proposer 或 executor、admin 是部署钱包或 Safe、executor 含 `address(0)`、Safe 不是 proposer、Pancake 路由不对、实现不是本版 `GangRouter`、实现槽不一致、实现合约未锁、ProxyAdmin 被转走、ProxyAdmin 不是代理创建的、内盘登记了实现、内盘没登记代理、分红合约没排除代理），自检都报出对应的项。
 
 ### 21.3 外盘买卖入口（新增，原有函数不变）
 
@@ -1137,7 +1138,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 | `test/merge/MergeGuards.t.sol` | `test_merge_selectors` 钉住 `sellFor` `0x9d10cdb1`、`withdrawFor` `0x60382b4e`、`GangToken.pullFor` `0x7d18ac71`；原有 selector 全部照旧 |
 | `script/GangTestnetE2E.s.sol` | W 步骤之后加一步（部署钱包是内盘 owner 时；`SKIP_AGG=true` 跳过）：部署一个最小的 `E2EAggregator`（trader = 它的 msg.sender，所得只给 msg.sender），`setRouter` 列入，`buyFor` 用 BNB 买、`approve(聚合器)` 后 `sellFor` 卖成 BNB，再 `setRouter(…, false)` 撤下；检查部署钱包代币回到起点、授权为 0、聚合器为空、已撤下 |
 
-部署脚本 `DeployGang` 自检新增 `_checkOriginTrader`（新部署和 `GANG_PAD` 接续两种模式都跑）：`TokenDeployer` 的 codehash 必须等于本次构建的 `keccak256(type(TokenDeployer).runtimeCode)`（它没有 immutable，且内含 `GangToken` 的创建码，所以 §23 之前的部署器——发出的币没有 `pullFor`——过不了），内盘的代码里必须有 `sellFor` / `withdrawFor` 的 dispatcher（`PUSH4 <selector>`）；内盘有 immutable 和链接库，不能直接比 codehash，自检是 view，也不能发一笔会写重入标记的探测调用。任何一项不对回滚 `WiringCheck("tokenDeployer code")` / `WiringCheck("pad sellFor / withdrawFor")`。`test/audit5/audit5c/DeployScriptsFork.t.sol`（`--threads 1`）新增 `test_fork_deploy_checksOriginTraderCode`（改动部署器代码的一个字节、或把内盘 dispatcher 里的 `sellFor` 去掉，自检分别报出这两项）；`test_fork_deploy_routerBnbRefundRealWbnb` 改为：`v3BuyBNB` 的截断部分以真实 WBNB 回到买家、路由不发 BNB，经代理用真实 WBNB 解包退 BNB 的路径改由 `fairMintBNB` 多付的 BNB 覆盖。`GangRouterDeployLib.check` 比对的是 `GangRouter` 的 codehash，`GangRouter.sol` 只改了注释，元数据哈希变化随本次构建一起更新。
+部署脚本 `DeployGang` 自检新增 `_checkOriginTrader`（新部署和 `GANG_PAD` 接续两种模式都跑）：`TokenDeployer` 的 codehash 必须等于本次构建的 `keccak256(type(TokenDeployer).runtimeCode)`（它没有 immutable，且内含 `GangToken` 的创建码，所以 §23 之前的部署器——发出的币没有 `pullFor`——过不了；2026-10-28 起改为屏蔽 metadata 哈希后比对，结论不变，见 §24.4），内盘的代码里必须有 `sellFor` / `withdrawFor` 的 dispatcher（`PUSH4 <selector>`）；内盘有 immutable 和链接库，不能直接比 codehash，自检是 view，也不能发一笔会写重入标记的探测调用。任何一项不对回滚 `WiringCheck("tokenDeployer code")` / `WiringCheck("pad sellFor / withdrawFor")`。`test/audit5/audit5c/DeployScriptsFork.t.sol`（`--threads 1`）新增 `test_fork_deploy_checksOriginTraderCode`（改动部署器代码的一个字节、或把内盘 dispatcher 里的 `sellFor` 去掉，自检分别报出这两项）；`test_fork_deploy_routerBnbRefundRealWbnb` 改为：`v3BuyBNB` 的截断部分以真实 WBNB 回到买家、路由不发 BNB，经代理用真实 WBNB 解包退 BNB 的路径改由 `fairMintBNB` 多付的 BNB 覆盖。`GangRouterDeployLib.check` 比对的是 `GangRouter` 的 codehash，`GangRouter.sol` 只改了注释，元数据哈希变化随本次构建一起更新。
 
 - CLI（`skill/gang-cli`，不升版本，只改文字）：`gang v3 buy` 经路由用 BNB 买时的 `note` 和代码注释改为「1% 上限 / 毕业截断多出的部分以 WBNB（不是 BNB）退回这个钱包」；`skill/references/v3.md` 同步。
 
@@ -1156,3 +1157,50 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 5. 买入 / 打新只花调用者本次交来的钱；不持有用户长期资金。
 6. 列入后监控：`RouterSet` 事件、该路由的升级事件；发现问题多签 `setRouter(路由, false)` 立即撤下（撤下后它的四个入口立即 `OnlyRouter`）。
 
+## 24. 聚合器用的 pad registry；部署自检的代码比对（2026-10-28）
+
+### 24.1 需求
+
+聚合器接入说明（claude.ai 文档「Gang 聚合器接入说明」，§23.8 接入要点的对外版本）要求聚合器先确认代币所在的 pad 可信再调用：只读 `token.launchpad()` 不够，任何人都能部署一个指向假 pad 的币，路由在 `buyFor` 里付的钱就进了假合约。说明里把 registry（`padOf` / `isPad`）列为「规划中」，曲线也没有链上报价，聚合器要拿 `curves(token)` 自己在链下算。本节补上这两样，并且让以后的 V4、V5 pad 登记一次就能用，聚合器代码不用改。
+
+### 24.2 合约：`src/gang/GangPadRegistry.sol`
+
+- 部署形态和 GangRouter 相同（§21）：`TransparentUpgradeableProxy`，代理在构造时调用 `initialize(owner, pads)`，实现合约的构造函数调用 `_disableInitializers()`。聚合器只记代理地址，这个地址永久不变。
+- 权限：registry 的 `owner`（可调 `addPad`、两步转移 owner）和代理自己的 ProxyAdmin 的 owner，主网都是 GangRouter 现有的 48 小时 TimelockController（`0x3911…04C5`，提案 / 执行 / 取消都只给 Safe）。所以登记新 pad 和升级合约，上链前都会公开 48 小时。主网 pad 在 `initialize` 里直接登记，不用等。
+- 只增不删：`addPad` 之后不能删除、也不能改指向。登记时检查 pad 是合约、没有重复、`VIRTUAL_TOKEN` 和 `PROTOCOL_FEE_BPS` 与 registry 报价用的常量一致（不一致回滚 `CurveMathMismatch`：先升级 registry 再登记）。紧急止损仍是 pad 自己的 `setRouter(路由, false)`。
+- `padOf(token)`：以 1 万 gas 上限 `staticcall` 代币的 `launchpad()`，只读返回数据的前 32 字节；返回的 pad 必须已登记，**并且** pad 的 `kindOf(token) != 0`，否则返回 0。指向真 pad 的假币、指向未登记合约的币、回滚的币、耗光 gas 的币都返回 0；返回超长数据的币只读前 32 字节，结果仍按登记和 `kindOf` 判断。代币没法让调用回滚。毕业 / 开盘后仍返回原 pad。`lookup(token)` 同时返回 pad 和 kind。
+- `previewBuy(token, trader, quoteIn)` → `(tokensOut, spent, fee, refund)`，`previewSell(token, trader, tokensIn)` → `(quoteOut, fee)`：在 pad 当前状态上逐行重复 `CurveLogic._prepBuy` / `sell` 的算法（先查钱包上限、1% 手续费、毕业截断、钱包上限截断、`ceilDiv` 的取整方向），钱包剩余额度直接读 pad 的 `walletRoom`。`buyFor` / `sellFor` 会回滚的情况（不是曲线币、已毕业、准入不过、钱包已满、数量为 0、`quoteIn` 超过 `type(uint256).max / 100`、卖出超过已售量）都返回 0；`trader = address(0)` 时按新钱包报价，不查准入。卖出预览不检查 trader 的余额和授权。
+- 不持有资金，不调用任何会写状态的函数。存储布局：slot 0 `owner`、1 `pendingOwner`、2 `_pads`、3 `isPad`、4–49 `__gap`（46 个），`Initializable` 用 ERC-7201 槽。升级规则和 GangRouter 相同（新变量从 `__gap` 取槽）。
+- 大小：runtime 4,620 B，initcode 4,827 B。
+
+### 24.3 威胁模型
+
+| 威胁 | 处理 |
+|---|---|
+| 假币冒充 Gang 币，引聚合器把钱付给假 pad | `padOf` 要求 pad 已登记且 pad 自己列有这个币；假币返回 0 |
+| 恶意代币让 `padOf` 回滚或耗光 gas，卡住聚合器的批量查询 | 1 万 gas 上限的 `staticcall`，只拷 32 字节；失败、返回数据不足 32 字节、高位不为 0，都按非 Gang 币处理 |
+| 多签被盗后登记假 pad，或升级成恶意逻辑 | 两者都要过 48 小时时间锁，上链前公开可见。Safe 是 2/3，被控制后提案、执行、取消都在攻击者手里，这 48 小时的作用是给外界反应时间：聚合器监控时间锁的 `CallScheduled`、registry 的 `PadAdded` 和代理的 `Upgraded`，发现异常就停用 registry、改回固定地址 |
+| 新一代 pad 的曲线公式变了，报价出错 | `addPad` 核对曲线常量，不一致就拒绝登记，必须先升级 registry |
+| 报价和实际成交不一致 | fuzz 测试拿真实的 `buyFor` / `sellFor` 逐 wei 核对（24.5） |
+
+### 24.4 部署自检的代码比对：屏蔽 metadata 哈希
+
+问题：在主网 fork 上跑 registry 的部署脚本时，§21 的时间锁自检报 `WiringCheck("router timelock code")`。逐字节对比后发现，主网的 TimelockController、ProxyAdmin、GangRouter 代理和实现、TokenDeployer，和本仓库当前构建的产物只差 Solidity metadata 里的 IPFS 哈希。这个哈希会随编译时的源文件集合和设置变化，代码本身没变。TokenDeployer 有两处差异：末尾一份，内嵌的 `GangToken` 创建码里还有一份。所以 §21 的 `DeployGangRouterUpgradeable` 和 §23 的 `DeployGang` 拿当前构建在主网重跑自检，都会误报。
+
+改法：`GangRouterDeployLib.sameCode(got, want)`。在 `want`（本次构建，可信）里找每个 metadata 的 IPFS 标记（`a2 64 'ipfs' 58 22 12 20`）；`got` 在同一位置必须也有这个标记，然后把标记后面的 32 字节哈希在两边的副本里都清零，再比对全部字节，长度也必须相同。使用的地方：代理代码（先回填 immutable `_admin`，再比对）、GangRouter 实现、ProxyAdmin、时间锁、TokenDeployer、GangPadRegistry 实现。
+
+为什么等价：被清零的 32 字节只是 metadata，永远不会执行。其余每个字节都必须相同，包括所有代码和跳转目标，所以不可能跳进这段 metadata。TokenDeployer 内嵌的是 GangToken runtime 末尾的 metadata，用它 CREATE 出来的 GangToken 里，这段同样不会执行。语义上的变化：实现合约的要求从「必须是本次构建的产物」变成「必须和本次构建的代码相同」。§23 的结论（§23 之前、没有 `pullFor` 的部署器过不了）不受影响，因为那是代码上的差别。
+
+### 24.5 测试
+
+- `test/gang/GangPadRegistry.t.sol`（20 个）：部署自检与实现锁死、初始 pad 重复或 owner 为 0 时回滚；`padOf` 两种币都能识别、毕业后仍返回原 pad、各种假币返回 0、恶意代币（回滚、耗 gas、返回不是地址的字、4 KB 返回数据）不影响结果；`addPad` 只能经时间锁、只增不删、各种拒绝情况；两步转移 owner；`previewBuy` 覆盖普通买入、钱包上限截断、毕业截断（上限开 / 关）、各种返回 0 的情况；`previewSell` 同上；两个 fuzz 各 1,000 轮，拿真实的 `buyFor` / `sellFor` 逐 wei 核对成交量、退款、手续费；经时间锁升级后状态不变；存储布局快照。
+- `test/router/SameCode.t.sol`（3 个）：只改哈希（末尾或内嵌）判为相同；改代码字节、改标记本身、长度不同判为不同；输入不被修改；主网 fork 上 TokenDeployer、GangRouter 实现、ProxyAdmin、时间锁都能通过，并断言 TokenDeployer 用严格比对 codehash 会失败（时间锁、ProxyAdmin、路由代理的严格比对会失败，是写这一节时用 `cast` 读链上代码核对的；GangRouter 实现没有单独核对严格比对）。
+- `test/fork/PadRegistryTestnetFork.t.sol`（4 个，`BSC_TESTNET_RPC_URL`）：在测试网第 10 套 pad 已部署的字节码和真实状态上，报价和真实的 `buyFor` / `sellFor` 逐 wei 一致。覆盖（2026-10-28 的链上状态：9 个币，5 条还在内盘的 WBNB 曲线）每条在内盘曲线的小额买入、卖出，离毕业还远的曲线再加钱包上限截断，以及经真实 migrator / Pancake 的毕业截断；每个币的 `padOf` / `lookup` 都正确，准入不过的钱包和打新币返回 0。
+- 测试网 fork 模拟 `DeployGangPadRegistry`（没有广播）通过，`padOf(最后一个币)` 返回第 10 套 pad。
+- 主网 fork 模拟（没有广播）：`DeployGangPadRegistry` 通过，owner 读出是时间锁，`padOf(主网最后一个币)` 返回主网 pad；`DeployGangRouterUpgradeable` 重跑自检通过。
+
+### 24.6 对外接口
+
+- 新函数：`padOf(address)` `0xba0cb939`、`lookup(address)` `0xd4b6b5da`、`isPad(address)` `0x05e23609`、`padCount()` `0x6a5e9d24`、`padAt(uint256)` `0x5ff80b76`、`pads()` `0x580c3777`、`previewBuy(address,address,uint256)` `0x370ed8c6`、`previewSell(address,address,uint256)` `0x0d687d9f`；管理：`addPad(address)` `0x01fd75a3`、`transferOwnership(address)` `0xf2fde38b`、`acceptOwnership()` `0x79ba5097`。
+- 新错误：`OnlyOwner()` `0x5fc483c5`、`NotPendingOwner()` `0x1853971c`、`ZeroAddress()` `0xd92e233d`、`NotAContract()` `0x09ee12d5`、`AlreadyPad()` `0x789c0e85`、`CurveMathMismatch()` `0x278b7648`。事件：`PadAdded(pad, index)`、`OwnershipTransferStarted`、`OwnershipTransferred`。
+- 规格：`docs/SPEC-PAD-REGISTRY-2026-10-28.md`。部署：`script/DeployGangPadRegistry.s.sol`（主网 owner 从 `GANG_ROUTER` 读出时间锁并按 §21 核对）。测试网已部署：`0xB11B83C83DEd269B040faecC1D61B4885BA8e56e`（登记第 10 套 pad，部署后重跑自检通过，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`）；主网还没部署。
