@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { createPublicClient, http, parseAbi, formatUnits, encodeFunctionData, zeroAddress } from 'viem'
@@ -22,9 +22,10 @@ import { buybackBpsOf, FACTORY_ABI, notDeployed, simulateCall, SPLITTER_ABI, spl
  * create on its own (the first may still be landing): `--restart` does. The plan keeps the token once found (no rescan
  * on later runs) and is marked done at the end: a done launch only reports, even if the dev's balance or the bond
  * changed since (no second buy, bond or create) — for 7 days, then the plan expires.
- * --buyback (V3, taxed): before the create, GangBuybackSplitterFactory clones the dev's splitter (the plan keeps the
- * factory's lastOf(dev) from before; a run that sees it changed takes the new one), the create names it as the recipient,
- * and a bind step follows the create.
+ * --buyback (V3, taxed): before the create, GangBuybackSplitterFactory clones the dev's splitter at
+ * predict(dev, salt), with a fresh salt per plan kept in it (so the address is known before the clone and never another
+ * launch's), the create names it as the recipient, and a bind step follows the create. A launch keeps the mode it began
+ * with: adding --buyback after the create (or dropping it before) is refused rather than starting over.
  */
 
 const LAUNCH_DIR = process.env.GANG_LAUNCH_DIR || join(dirname(DIR), 'launch')
@@ -132,35 +133,50 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   let plan = flag('restart') ? null : readPlan(key)
   const base = { kind, name, symbol, me, chainId: net.chainId, pad: net.pad }
 
-  // ---- buy-back splitter: cloned for the dev before the create (the plan's `splitterBefore` is lastOf(dev) before it)
-  if (buyback && !plan?.splitter) {
-    const last = await read(buyback.factory, FACTORY_ABI, 'lastOf', [me])
-    if (plan?.splitterBefore && last.toLowerCase() !== plan.splitterBefore.toLowerCase()) {
-      plan = { ...plan, splitter: last }
-      writePlan(key, plan)
-    } else if (plan?.splitterBefore) {
-      return out({
-        success: false, ...tag('buyback-splitter'), error: 'no buy-back splitter from this launch yet',
-        hint: `if the clone was executed, wait for it to land and ${rerun.replace(' after executing it', '')}; if it was not, add --restart to build it again`,
-      })
-    } else {
-      const sim = await simulateCall(client, me, buyback.factory, FACTORY_ABI, 'create', [buyback.bps])
+  // ---- a launch keeps the mode it began with (the create, once built, is never redone by a changed flag)
+  const created = plan?.startCount !== undefined
+  if (buyback && created && !plan.splitter) {
+    return fail('this launch was created without --buyback (its recipient is fixed): run it again without --buyback, or add --restart for a new token')
+  }
+  if (!buyback && !created && plan?.salt) {
+    return fail('this launch began with --buyback (its splitter is cloned or on the way): run it again with --buyback, or add --restart without it')
+  }
+
+  // ---- buy-back splitter: cloned for the dev before the create, at predict(dev, plan.salt)
+  if (buyback && !created) {
+    if (!plan?.salt) {
+      const salt = `0x${randomBytes(32).toString('hex')}`
+      const at = await read(buyback.factory, FACTORY_ABI, 'predict', [me, salt])
+      const sim = await simulateCall(client, me, buyback.factory, FACTORY_ABI, 'create', [buyback.bps, salt])
       if (sim.failed) return out({ success: false, step: 'buyback-splitter', ...tag('buyback-splitter'), ...sim.failed })
-      writePlan(key, { ...base, splitterBefore: last })
-      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: 'create', args: [buyback.bps] })
+      writePlan(key, { ...base, salt, splitter: at, factory: buyback.factory })
+      const data = encodeFunctionData({ abi: FACTORY_ABI, functionName: 'create', args: [buyback.bps, salt] })
       return out({
         ...step({ chainId: net.chainId }, { from: me, to: buyback.factory, data }, {
           step: 'buyback-splitter', chainId: Number(net.chainId), factory: buyback.factory, buybackPct: buyback.bps / 100,
-          splitterIfNext: sim.result,
+          splitter: at,
           note: `clones your buy-back splitter (listed as a tax recipient in the same tx): ${buyback.bps / 100}% of the recipient's part is bought back and burned, the rest goes to you. A raise applies at once later, a cut only after a 3-day notice`,
         }, flag('calldata'), io.summarize),
-        ...tag('buyback-splitter', { next: `${rerun}: it then builds the create with the splitter as the recipient` }),
+        ...tag('buyback-splitter', { splitter: at, next: `${rerun}: it then builds the create with the splitter as the recipient` }),
       })
+    }
+    if ((await client.getCode({ address: plan.splitter }) ?? '0x') === '0x') {
+      return out({
+        success: false, ...tag('buyback-splitter', { splitter: plan.splitter }), error: 'the buy-back splitter is not on chain yet',
+        hint: `if the clone was executed, wait for it to land and ${rerun.replace(' after executing it', '')}; if it was not, add --restart to build it again`,
+      })
+    }
+    const s = await splitterOf(read, plan.splitter)
+    if (!s || s.dev.toLowerCase() !== me.toLowerCase() || s.token) {
+      return fail('the splitter at this launch\'s address is not an unbound buy-back splitter of this wallet: add --restart', { splitter: plan.splitter })
+    }
+    if (s.buybackBps !== buyback.bps) {
+      return fail(`this launch's splitter buys back ${s.buybackPct}%, not ${buyback.bps / 100}%: run it again with --buyback ${s.buybackPct}, or add --restart for a new splitter (gang buyback set changes it after the create)`, { splitter: plan.splitter })
     }
   }
 
   // ---- create
-  if (!plan || plan.startCount === undefined) {
+  if (!created) {
     const startCount = (await read(net.pad, PAD_ABI, 'tokenCount')).toString()
     const createIo = {
       ...io,
@@ -168,12 +184,12 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       out: (o) => {
         // the plan starts with the create tx itself: a wrap / approve step before it (or a failed preview) leaves none,
         // so the next run builds the create again
-        const created = o.success && o.step === 'create'
-        if (created) writePlan(key, { ...base, ...(plan?.splitter && { splitter: plan.splitter }), startCount })
+        const built = o.success && o.step === 'create'
+        if (built) writePlan(key, { ...base, ...(plan?.splitter && { salt: plan.salt, splitter: plan.splitter, factory: plan.factory }), startCount })
         const after = steps[steps.indexOf(kind === 'v3' ? 'create' : 'create (dev shares included)') + 1]
         return out({
           ...o,
-          ...tag('create', created ? { next: `${rerun}: it finds the new token and continues with ${after ?? 'nothing'}` } : o.success ? { next: `${rerun}: it then builds the create` } : {}),
+          ...tag('create', built ? { next: `${rerun}: it finds the new token and continues with ${after ?? 'nothing'}` } : o.success ? { next: `${rerun}: it then builds the create` } : {}),
         })
       },
     }

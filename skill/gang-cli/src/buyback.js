@@ -6,8 +6,9 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
 /**
  * `gang buyback …` and `gang create … --buyback <pct>` — GangBuybackSplitter (dev 税按比例回购销毁): a V3 token's tax
  * recipient that splits each payment between a buy-back in the token's PancakeSwap pool, sent to 0xdead, and the dev.
- * GangBuybackSplitterFactory clones one per token for the dev (`create(bps)`) and has GangHandlerAdmin list it, so the
- * dev names it as the recipient at create (launch.js does the three steps: clone → create → bind). A dev who doesn't
+ * GangBuybackSplitterFactory clones one per token for the dev (`create(bps, salt)`, at `predict(dev, salt)`) and has
+ * GangHandlerAdmin list it, so the dev names it as the recipient at create (launch.js does the three steps: clone →
+ * create → bind). A dev who doesn't
  * want it leaves --buyback out: the tax goes to their own address as before.
  * The ratio: a raise applies at once, a cut 3 days after it is asked for (then anyone applies it within 7 days, or it
  * lapses). The keeper buys back in chunks (≤ 0.5% of the pool's quote side, never > 2% above the 10-minute average).
@@ -15,12 +16,12 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  */
 
 export const MAINNET_SPLITTER_FACTORY = null
-export const TESTNET_SPLITTER_FACTORY = '0x2EBecb75D7C929912800f12ef7b52A63A14CA80E'
+export const TESTNET_SPLITTER_FACTORY = '0x71e997B0d9eBa9678eD3d8C57622009a190d2a87'
 export const BUYBACK_TYPE = 'buyback-burn-v1'
 
 export const FACTORY_ABI = parseAbi([
-  'function create(uint16 buybackBps) returns (address splitter)',
-  'function lastOf(address dev) view returns (address)',
+  'function create(uint16 buybackBps, bytes32 salt) returns (address splitter)',
+  'function predict(address dev, bytes32 salt) view returns (address)',
   'function pad() view returns (address)',
   'error NotAgent()',
   'error NotFactory()',
@@ -97,7 +98,7 @@ export async function splitterOf(read, addr) {
   // the pad takes 18-decimal quotes only
   const q = (x) => formatUnits(x, 18)
   return {
-    splitter: addr, moduleType: BUYBACK_TYPE, dev, token: token === zeroAddress ? null : token, buybackPct: pct(bps),
+    splitter: addr, moduleType: BUYBACK_TYPE, dev, token: token === zeroAddress ? null : token, buybackPct: pct(bps), buybackBps: Number(bps),
     pendingCut: cut[0] ? { toPct: pct(cut[1]), appliesFrom: iso(cut[2]), lapsesAfter: iso(Number(cut[2]) + 7 * 86400) } : null,
     buybackLeft: q(left), unsplit: q(unsplit), devOwed: q(owed),
     nextChunk: burn[0] ? { quoteIn: q(burn[1]), tokensBurned: formatUnits(burn[2], 18) } : null,
@@ -161,8 +162,7 @@ export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
     if (me().toLowerCase() !== s.dev.toLowerCase()) return fail(HINTS.NotDev, { wallet: me(), dev: s.dev })
     if (!flag('pct')) fail('--pct <0-100> required: the new buy-back share')
     const bps = Math.round(parseNum(fail, 'pct', opt('pct'), 0, 100) * 100)
-    const now = s.buybackPct * 100
-    return send('setBuybackBps', [bps], bps >= now
+    return send('setBuybackBps', [bps], bps >= s.buybackBps
       ? { step: 'set-buyback', fromPct: s.buybackPct, toPct: bps / 100, note: `applies at once${s.pendingCut ? ' and cancels the pending cut' : ''}` }
       : {
           step: 'ask-cut', fromPct: s.buybackPct, toPct: bps / 100, appliesFromAbout: new Date(Date.now() + 3 * 86400_000).toISOString(),
