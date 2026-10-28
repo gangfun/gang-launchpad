@@ -62,6 +62,21 @@
 
 当前状态：比例 6000，没有待执行的下调。
 
+## keeper（gangfun-server `keeper/keeper-buyback-burn.sh`）
+
+脚本在 gangfun-server 分支 `feat/buyback-burn-keeper`（`90d0d54`），本机运行，配置 `PADS=t10:0xFebF…5BB1@…`，测试网钥匙当 keeper（`EXPECTED_KEEPER` 设成它），`GAS_ARGS="--legacy --gas-price 100000000"`。回购合约从 handler 白名单里自动找到（演示金库没有被误认）。为了有东西可买，直接往回购合约铸 MockSPCXB 当作到账的税（比例此时是 6000）。
+
+| 时间（UTC） | 情况 | keeper 做了什么 | 交易 |
+|---|---|---|---|
+| 09:19 | 铸 0.02 进回购合约（[`0xae7ecad7…f358`](https://testnet.bscscan.com/tx/0xae7ecad7d79981abe504d07e69cb78d6cba49cf31941106467af2f9c3e61f358)） | dry-run 显示可买；`--broadcast` 买一块：0.012 → 销毁 164,034.78 枚，等于预览值（`minTokensOut` = 预览 − 1%） | [`0x96c72926…7800`](https://testnet.bscscan.com/tx/0x96c7292647991f4c39a292460a4ae4260b5c8cb93c6e4b10b328c10efa347800) |
+| 09:19 | 刚买完 | 再跑一次：nothing to buy back，不发交易 | — |
+| 09:20 | 池子里买入 0.5 报价币把价格拉高约 7%（[`0xb24abb50…7ded`](https://testnet.bscscan.com/tx/0xb24abb5005ad67eeebae72d3485d93706de638bb2df4820c91985f4b97557ded)），再铸 0.02（[`0x1f884bce…d342`](https://testnet.bscscan.com/tx/0x1f884bceb142aab2cf655b8e5c5451968ef7fa0090423db957bb08752783d342)） | `previewBurn` 不可买 → 只发观测调用 `burnChunk(0)`（顺带拆分，回购余额 0.012），记下时间 | [`0xc48187da…25bb`](https://testnet.bscscan.com/tx/0xc48187dab003cc4f31a12530cbd5811f6d412f76c0a26a8bd33b1a17143625bb) |
+| 09:20 | 11 秒后 | not ready, observed 11s ago — waiting，不发交易 | — |
+| 09:31 | 观测点推进到 09:31，均价窗口 09:13–09:31 里高价只占一部分，现价仍比均价高 2% 以上 | 观测调用，不买 | [`0x2495d7cd…5cf3`](https://testnet.bscscan.com/tx/0x2495d7cdd2905c1e8994bfc39a3824c45696d3704c59e83605eebd86db145cf3) |
+| 09:41 | 均价窗口 09:31–09:41 全是拉高后的价格 | 恢复买入：0.012 → 销毁 153,098.96 枚，等于预览值；回购余额清零 | [`0xf7164347…09a0`](https://testnet.bscscan.com/tx/0xf7164347feb96e4680ce99f2022b1ab0295df09596cdaf152e81904e06d009a0) |
+
+本机有 `flock` 但没有 `/run`，所以测试时设了 `KEEPER_LOCK`；服务器上用默认的 `/run/gang-keeper.lock`，和其它任务共用。
+
 ## 花费
 
 整轮约 2,737 万 gas，按 0.1 gwei 合 0.0027 tBNB；其中毕业的 163 笔占 1,950 万。
@@ -70,7 +85,7 @@
 
 - 下调公告期满后执行（`applyBuybackBps`）、过期作废：要等 3 天 / 10 天。
 - dev 被报价币拉黑时记为欠款（`devOwed`）、之后 `releaseDev`；余额被扣时两部分按比例分摊。
-- 价格被拉高时跳过（spot 比 TWAP 高 2% 以上）和滑点保护。
+- 滑点保护（`minTokensOut`）的回滚。价格被拉高时跳过、之后恢复，已在上面 keeper 一节上链测过。
 - `sweep` 别的资产。
 
 ## 复跑

@@ -75,7 +75,7 @@
 | 2 | 平台 | 用同一个脚本的检查模式（设 `SPLITTER`）核对：pad 是平台的、代码是本仓库的、dev 和比例与 dev 申请的一致、没有待执行的下调；然后把脚本打印的 Safe 批量交给多签执行：`handler.list(splitter, label)`、`divVault.setExcluded(splitter, true)` |
 | 3 | dev | 发币时把接收地址填成回购合约：`gang create … --buy-tax … --sell-tax … --recipient <splitter>` |
 | 4 | 任何人 | `bind(token)` |
-| 5 | keeper | 毕业后定时调 `burnChunk(0)`，间隔 10–20 分钟；`buybackLeft()` 和 `unsplit()` 都为 0 时不用调（会回滚 `NothingToBurn`） |
+| 5 | keeper | gangfun-server `keeper/keeper-buyback-burn.sh`，每 5 分钟：从各 pad 的 handler 白名单自动找到回购合约，不用配置。`previewBurn` 可买就买一块（`minTokensOut` = 预览 − `SLIPPAGE_BPS`）；不可买时最多每 10 分钟发一次 `burnChunk(0)` 推进观测点（合约 20 分钟没人调会重置观测，所以不能 10 分钟一跑）；`buybackLeft()` 和 `unsplit()` 都为 0 时不调 |
 
 - 为什么必须由平台检查后才能 list：pad 是构造参数，一个指向假 pad 的回购合约会从假交易对买入。检查模式会部署一个本地参照合约（不广播），比较 runtime code，代码相同就说明源码、pad、handler、dev 都相同。
 - 为什么要从分红中排除：回购合约只在一块回购的过程中短暂持有代币，排除后不会给它写分红份额，也省掉金库的写入。
