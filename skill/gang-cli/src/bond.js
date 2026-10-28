@@ -15,11 +15,12 @@ import { bawAddress } from './baw.js'
  * Env: GANG_BOND (mainnet), GANG_TESTNET_BOND (testnet) override the addresses below.
  */
 
-// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139374309, over the set-10 pad — bonds from create on, refunds
-// asked for by the creator with a 3-day notice (earlier testnet versions: 0x587f…5d7E after the pair only, 0x5a99…d716
-// without the notice; docs/TESTNET-GANG-BOND-2026-10-28.md). Mainnet: not deployed yet (GANG_BOND overrides either)
+// script/DeployGangBond.s.sol. Testnet: 2026-10-29, block 139463214, over the set-10 pad — the audited version (two-step
+// settle, one buy-back chunk per 4 minutes; earlier testnet versions: 0x587f…5d7E after the pair only, 0x5a99…d716
+// without the refund notice, 0xB034…EBE3 before the audit; docs/TESTNET-GANG-BOND-2026-10-28.md). Mainnet: not deployed
+// yet (GANG_BOND overrides either)
 export const MAINNET_BOND = null
-export const TESTNET_BOND = '0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3'
+export const TESTNET_BOND = '0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086'
 
 export const BOND_ABI = parseAbi([
   'function post(address token, uint256 amount, uint256 holdAmount, uint64 duration) payable',
