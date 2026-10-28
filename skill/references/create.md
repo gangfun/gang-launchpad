@@ -86,10 +86,11 @@ gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bo
   `--bond-days` from graduation / launch. It needs GangBond on the network (testnet only for now) and is checked before
   the create, so a launch never stops half way on a bad flag. Tell the user the bond rules before the first run.
 - **`--buyback <0-100>`** (V3, taxed; not with `--recipient`): the recipient's part of the tax is split, that % bought
-  back in the pool and burned (0xdead), the rest to the dev. The launch first clones the dev's GangBuybackSplitter
+  back in the pool and burned (0xdead), the rest to the dev, or to `--buyback-to <addr>` (another wallet, a treasury;
+  the dev can change it later at once with `gang buyback set-payee`). The launch first clones the dev's GangBuybackSplitter
   (`launch.stage: buyback-splitter`; listed as a tax recipient in the same tx), creates with it as the recipient, then
   binds it (`bind`); the splitter's address is printed before the clone. A launch keeps the mode and ratio it began
-  with: adding `--buyback` after the create, dropping it after the clone, or another ratio is refused (run it as it
+  with: adding `--buyback` after the create, dropping it after the clone, or another ratio or payee is refused (run it as it
   began, or `--restart`). Later: `gang buyback status|set|apply --token …` ([v3.md](v3.md#buy-back-splitter---buyback)). Only
   when the user asks for a buy-back; without it the tax goes to the dev's own address. Tell the user: a raise applies at
   once, a cut only 3 days after it is asked for.

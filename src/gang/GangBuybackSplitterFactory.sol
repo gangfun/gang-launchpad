@@ -11,9 +11,10 @@ interface IModuleLister {
 }
 
 /// @title GangBuybackSplitterFactory — a dev's buy-back recipient in one call
-/// @notice `create(bps, salt)` clones GangBuybackSplitter for the caller (the dev: an Agent, as only an Agent can create
-///         the token), initializes it at `bps` and has GangHandlerAdmin list it on the tax handler, so the dev can name
-///         it as the token's `recipient` right away (the CLI's `gang create … --buyback <pct>`). The address is
+/// @notice `create(bps, salt, payee)` clones GangBuybackSplitter for the caller (the dev: an Agent, as only an Agent can
+///         create the token), initializes it at `bps` with the dev's part going to `payee` (0 = the dev), and has
+///         GangHandlerAdmin list it on the tax handler, so the dev can name it as the token's `recipient` right away
+///         (the CLI's `gang create … --buyback <pct> [--buyback-to <addr>]`). The address is
 ///         `predict(dev, salt)`, known before the clone: the CLI picks a fresh salt per launch, so it never mistakes
 ///         another launch's splitter for its own. A dev who doesn't want a buy-back never touches this: the tax goes to
 ///         their own address as before.
@@ -22,7 +23,7 @@ interface IModuleLister {
 /// @dev No owner, not upgradeable. A new version of the module is a new factory (the Safe allows it on the admin; the
 ///      old one can be stopped there, its clones keep working).
 contract GangBuybackSplitterFactory {
-    string public constant LABEL = "buyback-burn-v1";
+    string public constant LABEL = "buyback-burn-v2";
 
     address public immutable pad;
     address public immutable admin;
@@ -31,7 +32,7 @@ contract GangBuybackSplitterFactory {
 
     address[] internal _all;
 
-    event Created(address indexed dev, address indexed splitter, uint16 buybackBps);
+    event Created(address indexed dev, address indexed splitter, uint16 buybackBps, address payee);
 
     error ZeroAddress();
     error WrongHandler();
@@ -45,15 +46,15 @@ contract GangBuybackSplitterFactory {
         implementation = address(new GangBuybackSplitter(pad_));
     }
 
-    /// @notice Clone a splitter for the caller at `buybackBps`, listed as a tax recipient, at `predict(caller, salt)`
-    ///         (a salt the caller used before reverts: that address is taken).
-    function create(uint16 buybackBps, bytes32 salt) external returns (address splitter) {
+    /// @notice Clone a splitter for the caller at `buybackBps`, its dev part to `payee` (0 = the caller), listed as a tax
+    ///         recipient, at `predict(caller, salt)` (a salt the caller used before reverts: that address is taken).
+    function create(uint16 buybackBps, bytes32 salt, address payee) external returns (address splitter) {
         if (!IGangPad(pad).isAgent(msg.sender)) revert NotAgent();
         splitter = Clones.cloneDeterministic(implementation, _saltOf(msg.sender, salt));
-        GangBuybackSplitter(splitter).initialize(msg.sender, buybackBps);
+        GangBuybackSplitter(splitter).initialize(msg.sender, buybackBps, payee);
         IModuleLister(admin).listModule(splitter, LABEL);
         _all.push(splitter);
-        emit Created(msg.sender, splitter, buybackBps);
+        emit Created(msg.sender, splitter, buybackBps, GangBuybackSplitter(splitter).payee());
     }
 
     /// @notice Where `create(…, salt)` from `dev` puts the splitter.
