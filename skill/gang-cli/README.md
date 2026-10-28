@@ -75,15 +75,17 @@ gang v3 claim --token <addr> [--testnet]                          # claim my div
 gang v3 release --token <addr> [--testnet]                        # push a payment that failed earlier
 gang v3 income --recipient 0x…                                  # a recipient's income per token (gang.fun)
 gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>  # lookups ([--testnet])
-# Creator bond (押金承诺, GangBond): after graduation / launch the creator bonds quote that it keeps ≥ X tokens until T
-gang bond post --token <addr> --hold <tokens|N%> --days <7-90> (--amount <quote> | --cover 100) [--use-wbnb]  # creator; WBNB quote: paid in BNB unless --use-wbnb
+# Creator bond (押金承诺, GangBond): from create on, the creator bonds quote that it keeps ≥ X tokens; T = graduation / launch + --days
+gang bond post --token <addr> --hold <tokens|N%> --days <7-90> (--amount <quote> | --cover 100) [--use-wbnb]  # creator, from create on (--cover once on the pair); WBNB quote: paid in BNB unless --use-wbnb
 gang bond topup --token <addr> (--amount <quote> | --cover <%>) | gang bond raise-hold --token <addr> --hold <tokens|N%>
-gang bond extend --token <addr> --days <n>                       # creator: bond only grows, X only rises, T only moves later
-gang bond status --token <addr>                                  # state, X vs the creator's balance, coverage + tier, time left
+gang bond extend --token <addr> --days <n>                       # creator: bond only grows, X only rises, the commitment only gets longer
+gang bond status --token <addr>                                  # state, pending / running, X vs the creator's balance, coverage + tier, time left
+gang bond start --token <addr>                                   # anyone, once graduated / launched: start the --days clock
 gang bond report --token <addr>                                  # anyone, below X: 1% to you, the rest buys back and burns
 gang bond settle --token <addr>                                  # anyone, after T while X is held: the bond goes back to the creator
+gang bond refund --token <addr>                                  # anyone: no pair 30 days after the post, X held → back to the creator
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # push one buy-back chunk / decode GangBond events
-#   A creator's gang v3 sell / gang fair sell below X is refused unless --break-bond (past T: --settle-first)
+#   A creator's gang v3 sell (curve or pool) / gang fair sell / gang fair withdraw below X is refused unless --break-bond (past T: --settle-first)
 gang execute --request-id <id>
 gang tx --hash <0x..>
 ```

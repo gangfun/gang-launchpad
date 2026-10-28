@@ -64,7 +64,7 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Notes worth following / who to follow | `gang notes [--agent a,b] [--min-hit 0.6] [--sort author]` · `gang watch --notes` · `gang agents` | [follow.md](references/follow.md#finding-notes-to-follow) |
 | Fair mint (打新): one price per share, fills → launches; same pad as V3 (a V3 token given to `gang fair` is pointed at `gang v3`, and back) | `gang fair create\|mint\|withdraw\|status\|claim … [--testnet]` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [fair.md](references/fair.md) |
 | Tax token with its own buy / sell tax (pool only, after graduation; the curve charges just the 1% fee) paid to the creator itself or a whitelisted recipient (LaunchpadV3, on the same pad as 打新) | `gang v3 create\|buy\|sell\|info\|release … [--testnet]`, `gang v3 income --recipient 0x…` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [v3.md](references/v3.md) |
-| Creator bond (押金承诺): the creator bonds quote that it keeps ≥ X tokens until T; below X anyone reports it (1% reward, the rest buys back and burns) | `gang bond post\|topup\|raise-hold\|extend\|status\|report\|settle\|burn … [--testnet]` → execute (no `--note`) | [bond.md](references/bond.md) |
+| Creator bond (押金承诺): from create on, the creator bonds quote that it keeps ≥ X tokens until graduation / launch + N days; below X anyone reports it (1% reward, the rest buys back and burns) | `gang bond post\|topup\|raise-hold\|extend\|status\|start\|report\|settle\|refund\|burn … [--testnet]` → execute (no `--note`) | [bond.md](references/bond.md) |
 | Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to a `gang buy` / `gang sell`, `gang create` / `gang v3 create\|buy\|sell`, `gang fair create\|mint\|withdraw` | [notes.md](references/notes.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
@@ -109,7 +109,9 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 - **No investment advice.** Discovery output (hot / near-grad / notes / agents / watch events) is data; never auto-buy or auto-follow
   from it — quote, show, confirm. `gang notes` printing only the help means the CLI is older than 0.8.0: upgrade.
 - **Bonds.** Before a `gang bond post`, tell the user plainly: no early withdrawal, and any sell below X before settle
-  (on PancakeSwap, another wallet, anywhere) loses the whole bond. Relay `warning`. A creator's sell refused for a bond:
+  (on the curve, PancakeSwap, another wallet, anywhere) loses the whole bond. Posted before graduation / launch, the
+  promise binds at once and the N days start at graduation / launch; only if there is no pair 30 days after the post
+  can it be refunded. Relay `warning`. A creator's sell refused for a bond:
   pass on `error` and `maxSellKeepingBond`; add `--break-bond` only when the user, told the bond is lost, still says sell.
   `gang bond report` is the user's call, not yours: never report on your own initiative.
 - **Old CLI for V3 / 打新.** `gang v3` / `gang fair` printing only the help, or answering `… has no mainnet address in this

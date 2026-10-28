@@ -65,15 +65,17 @@ gang v3 claim --token <addr> [--testnet]                          # 领取分红
 gang v3 release --token <addr> [--testnet]                        # 补转之前打款失败的税
 gang v3 income --recipient 0x…                                  # 接收地址按币统计的到账（读 gang.fun）
 gang v3 list [--status curve|graduated|all] | gang v3 tx --hash <0x..>  # 查询（可加 --testnet）
-# 押金承诺（GangBond）：毕业 / 开盘后，创建者押一笔报价币，承诺 T 之前创建地址至少持有 X 枚
-gang bond post --token <addr> --hold <枚数|N%> --days <7-90> (--amount <报价币数量> | --cover 100) [--use-wbnb]  # 创建者；WBNB 报价默认付 BNB，--use-wbnb 付 WBNB
+# 押金承诺（GangBond）：发币后随时可押，创建者押一笔报价币，承诺创建地址至少持有 X 枚；T = 毕业 / 开盘时间 + --days
+gang bond post --token <addr> --hold <枚数|N%> --days <7-90> (--amount <报价币数量> | --cover 100) [--use-wbnb]  # 创建者，发币后随时可押（--cover 要等开盘）；WBNB 报价默认付 BNB，--use-wbnb 付 WBNB
 gang bond topup --token <addr> (--amount <数量> | --cover <%>) | gang bond raise-hold --token <addr> --hold <枚数|N%>
-gang bond extend --token <addr> --days <天数>                    # 创建者：押金只能加、X 只能提高、T 只能往后延
-gang bond status --token <addr>                                  # 状态、X 和创建者余额、覆盖率和档位、剩余时间
+gang bond extend --token <addr> --days <天数>                    # 创建者：押金只能加、X 只能提高、承诺期只能变长
+gang bond status --token <addr>                                  # 状态（待开始 / 计时中）、X 和创建者余额、覆盖率和档位、剩余时间
+gang bond start --token <addr>                                   # 任何人，毕业 / 开盘后开始计时
 gang bond report --token <addr>                                  # 任何人，余额低于 X 时举报：拿押金 1%，其余回购销毁
 gang bond settle --token <addr>                                  # 任何人，T 之后余额仍达标：押金退回创建者
+gang bond refund --token <addr>                                  # 任何人：押后 30 天仍未开盘且余额达标，押金退回创建者
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # 推进一块回购销毁 / 解析 GangBond 事件
-#   创建者用 gang v3 sell / gang fair sell 卖到低于 X 会被拒，除非加 --break-bond（过了 T：--settle-first 先取回）
+#   创建者用 gang v3 sell（内盘或外盘）/ gang fair sell / gang fair withdraw 卖到低于 X 会被拒，除非加 --break-bond（过了 T：--settle-first 先取回）
 gang execute --request-id <id>
 gang tx --hash <0x..>
 ```

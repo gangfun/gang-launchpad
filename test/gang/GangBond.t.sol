@@ -49,10 +49,10 @@ contract GangBondTest is GangFixture {
     /// @dev Post with BNB (WBNB quote): half the creator's balance, 30 days.
     function _postBnb(address t, address creator, uint256 amount) internal returns (uint256 hold, uint64 deadline) {
         hold = _bal(t, creator) / 2;
-        deadline = uint64(block.timestamp + 30 days);
         vm.deal(creator, amount);
         vm.prank(creator);
-        bond.post{value: amount}(t, amount, hold, deadline);
+        bond.post{value: amount}(t, amount, hold, 30 days);
+        deadline = bond.bondOf(t).deadline;
     }
 
     /// @dev The creator sends `amount` away (below the promise once past its slack).
@@ -71,37 +71,23 @@ contract GangBondTest is GangFixture {
     }
 
     // ---------------------------------------------------------------- post
-    function test_post_refusesUnknownAndPreGraduation() public {
+    function test_post_refusesUnknownToken() public {
         vm.expectRevert(IGangBond.UnknownToken.selector);
-        bond.post(makeAddr("nope"), 1, 1, uint64(block.timestamp + 30 days));
-
-        address creator = _newAgent();
-        address t = _createV3(creator, address(wbnb), _tax(TAX, TAX, 5_000, creator));
-        vm.prank(creator);
-        pad.buy(t, 1 ether, 0);
-        vm.prank(creator);
-        vm.expectRevert(IGangBond.NotTradable.selector);
-        bond.post(t, 1 ether, 1, uint64(block.timestamp + 30 days));
-
-        address c2 = _newAgent();
-        address s = _createFair(c2, address(wbnb), 100);
-        vm.prank(c2);
-        vm.expectRevert(IGangBond.NotTradable.selector);
-        bond.post(s, 1 ether, 1, uint64(block.timestamp + 30 days));
+        bond.post(makeAddr("nope"), 1, 1, 30 days);
     }
 
     function test_post_checks() public {
         (address t, address creator) = _v3(address(wbnb), TAX);
         uint256 bal = _bal(t, creator);
-        uint64 dl = uint64(block.timestamp + 30 days);
+        uint64 dl = 30 days;
         vm.deal(creator, 10 ether);
         vm.startPrank(creator);
         vm.expectRevert(IGangBond.ZeroAmount.selector);
         bond.post(t, 0, 1, dl);
         vm.expectRevert(IGangBond.BadDuration.selector);
-        bond.post{value: 1 ether}(t, 1 ether, 1, uint64(block.timestamp + 7 days - 1));
+        bond.post{value: 1 ether}(t, 1 ether, 1, 7 days - 1);
         vm.expectRevert(IGangBond.BadDuration.selector);
-        bond.post{value: 1 ether}(t, 1 ether, 1, uint64(block.timestamp + 90 days + 1));
+        bond.post{value: 1 ether}(t, 1 ether, 1, 90 days + 1);
         vm.expectRevert(IGangBond.BadHold.selector);
         bond.post{value: 1 ether}(t, 1 ether, 0, dl);
         vm.expectRevert(IGangBond.BadHold.selector);
@@ -117,7 +103,8 @@ contract GangBondTest is GangFixture {
 
         // the edges themselves are fine
         vm.prank(creator);
-        bond.post{value: 1 ether}(t, 1 ether, bal, uint64(block.timestamp + 7 days));
+        bond.post{value: 1 ether}(t, 1 ether, bal, 7 days);
+        assertEq(bond.bondOf(t).deadline, block.timestamp + 7 days); // live token: the clock starts at once
     }
 
     function test_post_bnb_recordsBond() public {
@@ -126,9 +113,9 @@ contract GangBondTest is GangFixture {
         uint64 dl = uint64(block.timestamp + 30 days);
         vm.deal(creator, 1 ether);
         vm.expectEmit(address(bond));
-        emit IGangBond.BondPosted(t, creator, 1, address(wbnb), 1 ether, hold, dl);
+        emit IGangBond.BondPosted(t, creator, 1, address(wbnb), 1 ether, hold, 30 days, dl);
         vm.prank(creator);
-        bond.post{value: 1 ether}(t, 1 ether, hold, dl);
+        bond.post{value: 1 ether}(t, 1 ether, hold, 30 days);
 
         IGangBond.Bond memory b = bond.bondOf(t);
         assertEq(b.creator, creator);
@@ -157,8 +144,8 @@ contract GangBondTest is GangFixture {
         vm.startPrank(creator);
         quoteTok.approve(address(bond), type(uint256).max);
         vm.expectRevert(IGangBond.BadValue.selector); // native BNB only for a WBNB quote
-        bond.post{value: 1 ether}(t, 1 ether, hold, uint64(block.timestamp + 30 days));
-        bond.post(t, 2 ether, hold, uint64(block.timestamp + 30 days));
+        bond.post{value: 1 ether}(t, 1 ether, hold, 30 days);
+        bond.post(t, 2 ether, hold, 30 days);
         vm.stopPrank();
         assertEq(quoteTok.balanceOf(address(bond)), 2 ether);
         assertEq(bond.bondOf(t).quote, address(quoteTok));
@@ -195,19 +182,21 @@ contract GangBondTest is GangFixture {
         vm.stopPrank();
         assertEq(bond.bondOf(t).holdAmount, bal);
 
-        // extend: later, at most 90 days from now
+        // extend: later by `by`, at most 90 days from now
+        uint64 room = uint64(block.timestamp + 90 days) - dl;
         vm.startPrank(creator);
         vm.expectRevert(IGangBond.BadDuration.selector);
-        bond.extend(t, dl);
+        bond.extend(t, 0);
         vm.expectRevert(IGangBond.BadDuration.selector);
-        bond.extend(t, uint64(block.timestamp + 90 days + 1));
-        bond.extend(t, uint64(block.timestamp + 90 days));
+        bond.extend(t, room + 1);
+        bond.extend(t, room);
         vm.stopPrank();
         assertEq(bond.bondOf(t).deadline, block.timestamp + 90 days);
+        assertEq(bond.bondOf(t).duration, 30 days + room);
 
         vm.prank(reporter);
         vm.expectRevert(IGangBond.NotCreator.selector);
-        bond.extend(t, uint64(block.timestamp + 91 days));
+        bond.extend(t, 1);
     }
 
     // ---------------------------------------------------------------- report
@@ -249,7 +238,7 @@ contract GangBondTest is GangFixture {
         vm.deal(creator, 1 ether);
         vm.prank(creator);
         vm.expectRevert(IGangBond.BondLive.selector);
-        bond.post{value: 1 ether}(t, 1 ether, 1, uint64(block.timestamp + 30 days));
+        bond.post{value: 1 ether}(t, 1 ether, 1, 30 days);
     }
 
     function test_report_selfReportGetsNoReward() public {
@@ -300,7 +289,7 @@ contract GangBondTest is GangFixture {
         _dump(t, creator, _bal(t, creator) - hold / 2);
         vm.deal(creator, 1 ether);
         vm.prank(creator);
-        bond.post{value: 1 ether}(t, 1 ether, hold / 2, uint64(block.timestamp + 30 days));
+        bond.post{value: 1 ether}(t, 1 ether, hold / 2, 30 days);
         assertEq(bond.bondOf(t).round, 2);
     }
 
@@ -354,7 +343,7 @@ contract GangBondTest is GangFixture {
         vm.deal(creator, 1 ether);
         vm.prank(creator);
         vm.expectRevert(IGangBond.BadHold.selector);
-        bond.post{value: 1 ether}(t, 1 ether, 1, uint64(block.timestamp + 30 days));
+        bond.post{value: 1 ether}(t, 1 ether, 1, 30 days);
     }
 
     function test_burn_skipsAfterPump() public {
@@ -464,7 +453,7 @@ contract GangBondTest is GangFixture {
         _next(1 minutes);
         vm.deal(creator, 0.01 ether);
         vm.prank(creator);
-        bond.post{value: 0.01 ether}(t, 0.01 ether, 1, uint64(block.timestamp + 30 days));
+        bond.post{value: 0.01 ether}(t, 0.01 ether, 1, 30 days);
         _dump(t, creator, _bal(t, creator));
         vm.prank(reporter);
         bond.report(t);
@@ -480,7 +469,7 @@ contract GangBondTest is GangFixture {
         uint256 hold = _bal(t, creator) / 2;
         vm.startPrank(creator);
         quoteTok.approve(address(bond), type(uint256).max);
-        bond.post(t, 1 ether, hold, uint64(block.timestamp + 30 days));
+        bond.post(t, 1 ether, hold, 30 days);
         vm.stopPrank();
         _dump(t, creator, _bal(t, creator));
         vm.prank(reporter);
@@ -521,6 +510,234 @@ contract GangBondTest is GangFixture {
         assertEq(wbnb.balanceOf(address(bond)), bond.bondOf(a).burnLeft);
     }
 
+    // ---------------------------------------------------------------- posted before the pair
+    /// @dev A V3 token still on its curve; its creator bought some first.
+    function _v3OnCurve() internal returns (address t, address creator) {
+        creator = _newAgent();
+        t = _createV3(creator, address(wbnb), _tax(TAX, TAX, 5_000, creator));
+        vm.startPrank(creator);
+        pad.buy(t, 1 ether, 0);
+        IERC20(t).approve(address(pad), type(uint256).max); // curve sells pull through the pad
+        vm.stopPrank();
+    }
+
+    /// @dev The creator sells `amount` back into the curve (before graduation).
+    function _curveSell(address t, address creator, uint256 amount) internal {
+        vm.prank(creator);
+        pad.sell(t, amount, 0);
+    }
+
+    function _postPending(address t, address creator, uint256 amount, uint64 duration) internal returns (uint256 hold) {
+        hold = _bal(t, creator);
+        vm.deal(creator, amount);
+        vm.prank(creator);
+        bond.post{value: amount}(t, amount, hold, duration);
+    }
+
+    function test_preGrad_clockStartsAtGraduation() public {
+        (address t, address creator) = _v3OnCurve();
+        uint256 hold = _postPending(t, creator, 0.5 ether, 30 days);
+        IGangBond.Bond memory b = bond.bondOf(t);
+        assertEq(uint8(b.state), uint8(IGangBond.State.Active));
+        assertEq(b.deadline, 0, "pending");
+        assertEq(b.duration, 30 days);
+        assertEq(b.holdAmount, hold);
+        assertFalse(bond.isLive(t));
+        // no market yet: no coverage, no --cover, nothing to start or settle
+        assertEq(bond.dumpValue(t), 0);
+        assertEq(bond.coverageBps(t), 0);
+        vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.quoteDump(t, hold);
+        vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.start(t);
+        vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.settle(t);
+
+        _next(3 days);
+        _graduate(t);
+        assertTrue(bond.isLive(t));
+        assertEq(bond.bondOf(t).deadline, 0, "nobody started it yet");
+        _next(1 hours);
+        uint64 expect = uint64(block.timestamp + 30 days);
+        vm.expectEmit(address(bond));
+        emit IGangBond.BondStarted(t, 1, expect);
+        vm.prank(reporter); // anyone
+        bond.start(t);
+        assertEq(bond.bondOf(t).deadline, expect);
+        bond.start(t); // already started: nothing to do
+        assertEq(bond.bondOf(t).deadline, expect);
+        assertGt(bond.coverageBps(t), 0);
+
+        vm.warp(expect - 1);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.settle(t);
+        vm.warp(expect);
+        bond.settle(t);
+        (, uint32 honored,) = bond.historyOf(creator);
+        assertEq(honored, 1);
+    }
+
+    function test_preGrad_anyWriteStartsTheClock() public {
+        (address t, address creator) = _v3OnCurve();
+        _postPending(t, creator, 0.5 ether, 30 days);
+        _graduate(t);
+        vm.deal(creator, 1 ether);
+        vm.prank(creator);
+        bond.topUp{value: 0.1 ether}(t, 0.1 ether);
+        assertEq(bond.bondOf(t).deadline, block.timestamp + 30 days);
+        assertEq(_pairOf(t), _curvePair(t));
+    }
+
+    function test_preGrad_extendGrowsTheDuration() public {
+        (address t, address creator) = _v3OnCurve();
+        _postPending(t, creator, 0.5 ether, 30 days);
+        vm.startPrank(creator);
+        bond.extend(t, 60 days);
+        vm.expectRevert(IGangBond.BadDuration.selector);
+        bond.extend(t, 1); // 90 days in all at most
+        vm.stopPrank();
+        assertEq(bond.bondOf(t).duration, 90 days);
+        assertEq(bond.bondOf(t).deadline, 0);
+        _graduate(t);
+        bond.start(t);
+        assertEq(bond.bondOf(t).deadline, block.timestamp + 90 days);
+    }
+
+    /// @dev Selling on the curve before graduation breaks the promise; the buy-back waits for the pair.
+    function test_preGrad_curveSellIsBreach_buyBackAfterGraduation() public {
+        (address t, address creator) = _v3OnCurve();
+        _postPending(t, creator, 0.5 ether, 30 days);
+        _curveSell(t, creator, _bal(t, creator) / 2);
+        assertTrue(bond.isViolated(t));
+        vm.prank(reporter);
+        bond.report(t);
+        assertEq(wbnb.balanceOf(reporter), 0.005 ether);
+        assertEq(bond.bondOf(t).burnLeft, 0.495 ether);
+        assertEq(bond.bondOf(t).deadline, 0);
+
+        (bool ready,,) = bond.previewBurn(t);
+        assertFalse(ready);
+        vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.burnChunk(t, 0);
+
+        _graduate(t);
+        (uint256 q,) = bond.burnChunk(t, 0); // caches the market, records the observation
+        assertEq(q, 0);
+        assertEq(_pairOf(t), _curvePair(t));
+        _next(10 minutes);
+        (q,) = bond.burnChunk(t, 0);
+        assertGt(q, 0);
+    }
+
+    /// @dev Slashed on the curve and the token never graduates: MAX_WAIT after the post the rest goes to 0xdead as WBNB.
+    function test_preGrad_neverGraduates_burnsQuoteAfterWait() public {
+        (address t, address creator) = _v3OnCurve();
+        uint64 posted = uint64(block.timestamp);
+        _postPending(t, creator, 0.5 ether, 30 days);
+        _curveSell(t, creator, _bal(t, creator));
+        vm.prank(reporter);
+        bond.report(t);
+
+        vm.warp(posted + 30 days - 1);
+        vm.expectRevert(IGangBond.NotTradable.selector);
+        bond.burnChunk(t, 0);
+        vm.warp(posted + 30 days);
+        (bool ready, uint256 pq, uint256 pOut) = bond.previewBurn(t);
+        assertTrue(ready);
+        assertEq(pq, 0.495 ether);
+        assertEq(pOut, 0);
+        uint256 deadBefore = wbnb.balanceOf(bond.DEAD());
+        (uint256 q, uint256 burned) = bond.burnChunk(t, 0);
+        assertEq(q, 0.495 ether);
+        assertEq(burned, 0);
+        assertEq(wbnb.balanceOf(bond.DEAD()) - deadBefore, 0.495 ether);
+        assertEq(bond.bondOf(t).burnLeft, 0);
+        assertEq(wbnb.balanceOf(address(bond)), 0);
+    }
+
+    function test_refund_noPairWithinWait() public {
+        (address t, address creator) = _v3OnCurve();
+        uint64 posted = uint64(block.timestamp);
+        _postPending(t, creator, 0.5 ether, 30 days);
+
+        vm.warp(posted + 30 days - 1);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.refund(t);
+        vm.warp(posted + 30 days);
+        uint256 before = wbnb.balanceOf(creator);
+        vm.expectEmit(address(bond));
+        emit IGangBond.BondRefunded(t, 1, creator, 0.5 ether);
+        vm.prank(reporter); // anyone; the bond goes to the creator
+        bond.refund(t);
+        assertEq(wbnb.balanceOf(creator) - before, 0.5 ether);
+        assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Refunded));
+        (uint32 posted_, uint32 honored, uint32 slashed) = bond.historyOf(creator);
+        assertEq(posted_, 1);
+        assertEq(honored, 0, "a refund is not an honored bond");
+        assertEq(slashed, 0);
+
+        // a refunded round is over: the creator may post again
+        _postPending(t, creator, 0.1 ether, 7 days);
+        assertEq(bond.bondOf(t).round, 2);
+    }
+
+    function test_refund_refusedWhenBrokenOrLive() public {
+        (address t, address creator) = _v3OnCurve();
+        uint64 posted = uint64(block.timestamp);
+        _postPending(t, creator, 0.5 ether, 30 days);
+        vm.warp(posted + 30 days);
+        _curveSell(t, creator, 1 ether);
+        vm.expectRevert(IGangBond.Violated.selector);
+        bond.refund(t);
+
+        (address t2, address c2) = _v3OnCurve();
+        _postPending(t2, c2, 0.5 ether, 30 days);
+        _graduate(t2);
+        vm.warp(block.timestamp + 30 days);
+        vm.expectRevert(IGangBond.AlreadyLive.selector);
+        bond.refund(t2);
+    }
+
+    /// @dev 打新 before launch: selling shares back is a breach; launch starts the clock.
+    function test_fair_preLaunch_withdrawIsBreach() public {
+        address creator = _newAgent();
+        address t = _createFair(creator, address(wbnb), 100);
+        uint256 hold = _bal(t, creator);
+        assertGt(hold, 0, "dev shares are held before launch");
+        vm.deal(creator, 0.2 ether);
+        vm.prank(creator);
+        bond.post{value: 0.2 ether}(t, 0.2 ether, hold, 7 days);
+        assertEq(bond.bondOf(t).deadline, 0);
+        assertFalse(bond.isViolated(t));
+
+        vm.prank(creator);
+        pad.withdraw(t, 1, 0);
+        assertTrue(bond.isViolated(t));
+        vm.prank(reporter);
+        bond.report(t);
+        _fill(t);
+        bond.burnChunk(t, 0);
+        _next(10 minutes);
+        (uint256 q,) = bond.burnChunk(t, 0);
+        assertGt(q, 0);
+    }
+
+    function test_fair_preLaunch_keptThenLaunch() public {
+        address creator = _newAgent();
+        address t = _createFair(creator, address(wbnb), 100);
+        uint256 hold = _bal(t, creator);
+        vm.deal(creator, 0.2 ether);
+        vm.prank(creator);
+        bond.post{value: 0.2 ether}(t, 0.2 ether, hold, 7 days);
+        _fill(t);
+        bond.start(t);
+        assertEq(bond.bondOf(t).deadline, block.timestamp + 7 days);
+        assertEq(_pairOf(t), _salePair(t));
+        vm.warp(block.timestamp + 7 days);
+        bond.settle(t);
+        assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Settled));
+    }
+
     // ---------------------------------------------------------------- other kinds
     function test_untaxedV3_fullCycle() public {
         (address t, address creator) = _v3(address(wbnb), 0);
@@ -546,7 +763,7 @@ contract GangBondTest is GangFixture {
         assertGt(hold, 0);
         vm.deal(creator, 0.2 ether);
         vm.prank(creator);
-        bond.post{value: 0.2 ether}(t, 0.2 ether, hold, uint64(block.timestamp + 7 days));
+        bond.post{value: 0.2 ether}(t, 0.2 ether, hold, 7 days);
         assertEq(_pairOf(t), _salePair(t));
         _dump(t, creator, 1);
         vm.prank(reporter);

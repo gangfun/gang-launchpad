@@ -5,9 +5,11 @@ import { bawAddress } from './baw.js'
 
 /**
  * `gang bond …` — GangBond (Agent 押金承诺, gang-launchpad src/gang/GangBond.sol): a creator of a GangLaunchpad token
- * (V3 after graduation, 打新 after launch) posts a bond in the token's quote and promises its creating address holds at
- * least X tokens until T. Below X, anyone can report it: the reporter gets 1%, the rest buys the token back from its
- * pair in small chunks and burns it. Settle (after T, balance still ≥ X) returns the whole bond to the creator.
+ * posts a bond in the token's quote and promises its creating address holds at least X tokens. It can be posted any
+ * time after create (on the curve / during the 打新 sale too) and binds from then; T is `duration` after the token
+ * reaches its PancakeSwap pair (graduation / launch; `start` sets it). Below X, anyone can report it: the reporter gets
+ * 1%, the rest buys the token back from its pair in small chunks and burns it. Settle (after T, balance still ≥ X)
+ * returns the whole bond to the creator; refund does the same when the pair never came within 30 days of the post.
  * One contract per network, no owner; it only reads the pad.
  *
  * Env: GANG_BOND (mainnet), GANG_TESTNET_BOND (testnet) override the addresses below.
@@ -19,33 +21,38 @@ export const MAINNET_BOND = null
 export const TESTNET_BOND = '0x587f563749A321624b5710d6D77010F183a65d7E'
 
 export const BOND_ABI = parseAbi([
-  'function post(address token, uint256 amount, uint256 holdAmount, uint64 deadline) payable',
+  'function post(address token, uint256 amount, uint256 holdAmount, uint64 duration) payable',
   'function topUp(address token, uint256 amount) payable',
   'function raiseHold(address token, uint256 newHoldAmount)',
-  'function extend(address token, uint64 newDeadline)',
+  'function extend(address token, uint64 by)',
+  'function start(address token)',
   'function report(address token)',
   'function settle(address token)',
+  'function refund(address token)',
   'function burnChunk(address token, uint256 minTokensOut) returns (uint256 quoteIn, uint256 burned)',
-  'function bondOf(address token) view returns ((address creator, address quote, uint32 round, uint8 state, uint64 postedAt, uint64 deadline, uint128 amount, uint128 holdAmount, uint128 burnLeft))',
+  'function bondOf(address token) view returns ((address creator, uint64 postedAt, uint32 round, address quote, uint8 state, uint64 deadline, uint64 duration, uint128 amount, uint128 holdAmount, uint128 burnLeft))',
   'function isViolated(address token) view returns (bool)',
+  'function isLive(address token) view returns (bool)',
   'function dumpValue(address token) view returns (uint256)',
   'function coverageBps(address token) view returns (uint256)',
   'function historyOf(address creator) view returns (uint32 posted, uint32 honored, uint32 slashed)',
   'function quoteDump(address token, uint256 holdAmount) view returns (uint256)',
   'function previewBurn(address token) view returns (bool ready, uint256 quoteIn, uint256 tokensOut)',
   'function MIN_DURATION() view returns (uint64)', 'function MAX_DURATION() view returns (uint64)',
-  'function REPORTER_BPS() view returns (uint256)',
-  'event BondPosted(address indexed token, address indexed creator, uint32 round, address quote, uint256 amount, uint256 holdAmount, uint64 deadline)',
+  'function REPORTER_BPS() view returns (uint256)', 'function MAX_WAIT() view returns (uint64)',
+  'event BondPosted(address indexed token, address indexed creator, uint32 round, address quote, uint256 amount, uint256 holdAmount, uint64 duration, uint64 deadline)',
+  'event BondStarted(address indexed token, uint32 round, uint64 deadline)',
   'event BondToppedUp(address indexed token, uint32 round, uint256 added, uint256 amount)',
   'event HoldRaised(address indexed token, uint32 round, uint256 holdAmount)',
-  'event BondExtended(address indexed token, uint32 round, uint64 deadline)',
+  'event BondExtended(address indexed token, uint32 round, uint64 duration, uint64 deadline)',
   'event BondReported(address indexed token, uint32 round, address indexed reporter, uint256 balance, uint256 reward, uint256 burnLeft)',
   'event BondSettled(address indexed token, uint32 round, address indexed creator, uint256 amount)',
+  'event BondRefunded(address indexed token, uint32 round, address indexed creator, uint256 amount)',
   'event BondBurned(address indexed token, uint32 round, uint256 quoteIn, uint256 tokensBurned, uint256 burnLeft)',
   'error ZeroAddress()', 'error UnknownToken()', 'error NotTradable()', 'error NotCreator()', 'error BondLive()',
   'error NotActive()', 'error ZeroAmount()', 'error BadDuration()', 'error BadHold()', 'error BadValue()',
   'error FeeOnTransferQuote()', 'error NotViolated()', 'error Violated()', 'error NotDue()', 'error NothingToBurn()',
-  'error BurnedThisBlock()', 'error Slippage()', 'error FlashSwapActive()',
+  'error BurnedThisBlock()', 'error Slippage()', 'error FlashSwapActive()', 'error AlreadyLive()',
   'error SafeCastOverflowedUintDowncast(uint8 bits, uint256 value)', 'error SafeERC20FailedOperation(address token)',
 ])
 
@@ -57,17 +64,18 @@ const PAD_ABI = parseAbi([
 const ERC20_ABI = parseAbi(['function balanceOf(address) view returns (uint256)', 'function symbol() view returns (string)'])
 
 const HINTS = {
-  NotTradable: 'a bond needs the PancakeSwap pair: a V3 token after graduation, a 打新 token after launch',
+  NotTradable: 'this needs the token on its PancakeSwap pair (V3 graduated / 打新 launched), and it is not there yet',
   UnknownToken: 'not a GangLaunchpad token (V3 or 打新): bonds cover only those',
   NotCreator: 'only the token\'s creator (curves / sales creator) can post, top up, raise X or extend',
   BondLive: 'this token already has a bond in force (active, or slashed with buy-back still running): one at a time',
-  NotActive: 'no active bond on this token (none posted, already settled, or slashed)',
-  BadDuration: '--days must give a deadline 7–90 days from now (extend: later than the current one, at most 90 days from now)',
+  NotActive: 'no active bond on this token (none posted, already settled, refunded or slashed)',
+  BadDuration: '--days must be 7–90 (extend: before the pair at most 90 days in all, after it a deadline at most 90 days from now)',
   BadHold: '--hold must be above 0 and at most the creator\'s balance now (raise-hold: not below the current X)',
   BadValue: 'native BNB only for a WBNB-quoted token, exactly the bond amount',
   FeeOnTransferQuote: 'the quote takes a fee on transfer: it cannot be used for a bond',
   NotViolated: 'the creator still holds at least X: nothing to report',
-  Violated: 'the creator holds less than X: the bond cannot be settled, only reported',
+  Violated: 'the creator holds less than X: the bond cannot be settled or refunded, only reported',
+  AlreadyLive: 'the token reached its pair: the bond runs (gang bond start) instead of being refunded',
   NotDue: 'the deadline has not passed yet',
   NothingToBurn: 'no slashed bond with buy-back left on this token',
   BurnedThisBlock: 'a chunk was already bought for this token in this block: try the next block',
@@ -75,7 +83,8 @@ const HINTS = {
   FlashSwapActive: 'the token\'s pair is mid flash swap: settle cannot count tokens borrowed from it; send settle in its own tx',
 }
 
-const STATES = ['none', 'active', 'slashed', 'settled']
+const STATES = ['none', 'active', 'slashed', 'settled', 'refunded']
+const MAX_WAIT = 30 * 86_400 // GangBond.MAX_WAIT
 const BPS = 10_000n
 const TOTAL_SUPPLY = 1_000_000_000n * 10n ** 18n
 const DAY = 86_400
@@ -157,25 +166,43 @@ async function bondView(ctx, token, m) {
     token, kind: m.kind, creator, state, round: Number(b.round), quote: sym || quote,
     creatorHistory: { posted: Number(history[0]), honored: Number(history[1]), slashed: Number(history[2]) },
   }
-  const raw = { bond: b, bal, quote, dec, now }
+  const pending = state === 'active' && b.deadline === 0n
+  const raw = { bond: b, bal, quote, dec, now, pending, live: m.live }
   if (state === 'none') return { ...v, _raw: raw }
+  const days = (sec) => Math.round((Number(sec) / DAY) * 10) / 10
   Object.assign(v, {
     bond: q(b.amount), holdTokens: tokens(b.holdAmount), holdPctOfSupply: Number((b.holdAmount * 1_000_000n) / TOTAL_SUPPLY) / 10_000,
     creatorBalance: tokens(bal), headroomTokens: bal >= b.holdAmount ? tokens(bal - b.holdAmount) : `-${tokens(b.holdAmount - bal)}`,
-    postedAt: new Date(Number(b.postedAt) * 1000).toISOString(), deadline: new Date(Number(b.deadline) * 1000).toISOString(),
+    postedAt: new Date(Number(b.postedAt) * 1000).toISOString(), durationDays: days(b.duration),
+    deadline: b.deadline === 0n ? null : new Date(Number(b.deadline) * 1000).toISOString(),
   })
   if (state === 'active') {
-    const [violated, dump, cov] = await Promise.all([
-      ctx.read(ctx.bond, BOND_ABI, 'isViolated', [token]),
+    const violated = await ctx.read(ctx.bond, BOND_ABI, 'isViolated', [token])
+    const violatedNote = violated && { note: `the creator holds less than X: anyone can report it (gang bond report --token ${token}) and take 1% of the bond` }
+    if (pending) {
+      // posted before the pair: the promise binds now, the clock starts when the token reaches its pair
+      const refundAt = Number(b.postedAt) + MAX_WAIT
+      Object.assign(v, {
+        phase: 'pending', violated, live: m.live,
+        clock: `starts when the token ${m.kind === 'v3' ? 'graduates' : 'launches'}: deadline = that moment + ${days(b.duration)} days`,
+        ...(m.live
+          ? { note: `the token is on its pair: anyone can start the clock (gang bond start --token ${token}); any other bond write starts it too` }
+          : { refundableFrom: new Date(refundAt * 1000).toISOString(), coverageNote: 'no coverage before the pair: shown once it trades on PancakeSwap' }),
+        ...violatedNote,
+        ...(!violated && !m.live && raw.now >= refundAt && { note: `no pair within 30 days of the post and X is held: anyone can refund it to the creator (gang bond refund --token ${token})` }),
+      })
+      return { ...v, _raw: raw }
+    }
+    const [dump, cov] = await Promise.all([
       ctx.read(ctx.bond, BOND_ABI, 'dumpValue', [token]),
       ctx.read(ctx.bond, BOND_ABI, 'coverageBps', [token]),
     ])
     const left = Number(b.deadline) - now
     Object.assign(v, {
-      violated, dumpValue: q(dump), coveragePct: cov === MAX_UINT ? null : pctOfBps(cov), tier: tierOf(cov), tierNote: TIER_NOTE[tierOf(cov)],
+      phase: 'running', violated, dumpValue: q(dump), coveragePct: cov === MAX_UINT ? null : pctOfBps(cov), tier: tierOf(cov), tierNote: TIER_NOTE[tierOf(cov)],
       toFullCover: dump > b.amount ? q(dump - b.amount) : '0',
       ...(left > 0 ? { secondsLeft: left, daysLeft: Math.round((left / DAY) * 10) / 10 } : { pastDeadline: true }),
-      ...(violated && { note: `the creator holds less than X: anyone can report it (gang bond report --token ${token}) and take 1% of the bond` }),
+      ...violatedNote,
       ...(!violated && left <= 0 && { note: `past the deadline and X is held: anyone can settle it (gang bond settle --token ${token}); the bond goes back to the creator. Until then it can still be reported if the balance drops below X` }),
     })
     Object.assign(raw, { dump, cov })
@@ -184,7 +211,13 @@ async function bondView(ctx, token, m) {
     const [ready, quoteIn, tokensOut] = await ctx.read(ctx.bond, BOND_ABI, 'previewBurn', [token])
     Object.assign(v, {
       burnLeft: q(b.burnLeft), burnDone: b.burnLeft === 0n,
-      ...(b.burnLeft > 0n && { nextChunk: ready ? { quoteIn: q(quoteIn), tokensOut: tokens(tokensOut) } : null, nextChunkNote: ready ? 'gang bond burn --token … buys this chunk now' : 'not ready: the first call after a slash records a price observation, then the buy-back waits 10 minutes and skips while the price is more than 2% above its average (after 20 minutes without a call it starts over)' }),
+      ...(b.burnLeft > 0n && !m.live && {
+        nextChunk: ready ? { quoteToDead: q(quoteIn) } : null,
+        nextChunkNote: ready
+          ? 'slashed before the pair and still no pair 30 days after the post: gang bond burn --token … sends the rest to 0xdead as quote'
+          : `slashed before the pair: the buy-back starts once the token ${m.kind === 'v3' ? 'graduates' : 'launches'}; if it has not by ${new Date((Number(b.postedAt) + MAX_WAIT) * 1000).toISOString()}, the rest goes to 0xdead as quote`,
+      }),
+      ...(b.burnLeft > 0n && m.live && { nextChunk: ready ? { quoteIn: q(quoteIn), tokensOut: tokens(tokensOut) } : null, nextChunkNote: ready ? 'gang bond burn --token … buys this chunk now' : 'not ready: the first call after a slash records a price observation, then the buy-back waits 10 minutes and skips while the price is more than 2% above its average (after 20 minutes without a call it starts over)' }),
     })
   }
   return { ...v, _raw: raw }
@@ -225,8 +258,8 @@ const CLI_ONLY = 'the CLI refuses sells that would break the bond (gang v3 sell 
 // notes and follows are for trades and creates (gang.fun matches them to those txs); a bond tx carries none
 const NOTE_FLAGS = ['note', 'conf', 'reveal-after', 'follow']
 
-const SUBS = ['post', 'topup', 'raise-hold', 'extend', 'status', 'report', 'settle', 'burn', 'tx']
-const USAGE = 'usage: gang bond <post|topup|raise-hold|extend|status|report|settle|burn|tx> --token <addr> [--testnet] — see gang help'
+const SUBS = ['post', 'topup', 'raise-hold', 'extend', 'status', 'start', 'report', 'settle', 'refund', 'burn', 'tx']
+const USAGE = 'usage: gang bond <post|topup|raise-hold|extend|status|start|report|settle|refund|burn|tx> --token <addr> [--testnet] — see gang help'
 
 /** Entry for `gang bond <sub>`. io: { opt, flag, out, fail, summarize } from index.js. */
 export async function runBond(sub, { opt, flag, out, fail, summarize }) {
@@ -286,8 +319,36 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     }))
   }
 
+  if (sub === 'start') {
+    if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
+    if (!raw.pending) return fail('the clock is already running', { deadline: view.deadline })
+    if (!m.live) return fail(`the token has not ${m.kind === 'v3' ? 'graduated' : 'launched'} yet: the clock starts when it reaches its pair`, { refundableFrom: view.refundableFrom })
+    const sim = await simulate(ctx, me(), 'start', [token])
+    if (sim.failed) return out({ success: false, step: 'start', ...sim.failed })
+    return out(send('start', [token], {
+      step: 'start', durationDays: view.durationDays, deadlineAbout: new Date((raw.now + Number(b.duration)) * 1000).toISOString(),
+      note: 'anyone may start it; the deadline is the block this lands in + the duration',
+    }))
+  }
+
+  if (sub === 'refund') {
+    if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
+    if (!raw.pending || m.live) return fail(HINTS.AlreadyLive, { deadline: view.deadline })
+    const refundAt = Number(b.postedAt) + MAX_WAIT
+    if (raw.now < refundAt) return fail('a refund needs 30 days without a pair since the post', { refundableFrom: view.refundableFrom, secondsLeft: refundAt - raw.now })
+    if (view.violated) return fail(HINTS.Violated, { creatorBalance: view.creatorBalance, holdTokens: view.holdTokens, hint: `gang bond report --token ${token}${net}` })
+    const sim = await simulate(ctx, me(), 'refund', [token])
+    if (sim.failed) return out({ success: false, step: 'refund', ...sim.failed })
+    return out(send('refund', [token], { step: 'refund', creator: b.creator, refund: view.bond, quote: view.quote, note: 'no pair within 30 days of the post: the bond goes back to the creator, whoever sends this (not counted as honored)' }))
+  }
+
   if (sub === 'settle') {
     if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
+    if (raw.pending) {
+      return fail(m.live ? 'the clock has not started: settle comes duration days after it' : 'the token is not on its pair yet: settle comes after graduation / launch + the duration', {
+        durationDays: view.durationDays, hint: m.live ? `gang bond start --token ${token}${net}` : `if there is still no pair 30 days after the post: gang bond refund --token ${token}${net}`,
+      })
+    }
     if (raw.now < Number(b.deadline)) return fail(HINTS.NotDue, { deadline: view.deadline, secondsLeft: Number(b.deadline) - raw.now })
     if (view.violated) return fail(HINTS.Violated, { creatorBalance: view.creatorBalance, holdTokens: view.holdTokens, hint: `gang bond report --token ${token}${net}` })
     const sim = await simulate(ctx, me(), 'settle', [token])
@@ -301,18 +362,19 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     const [ready, quoteIn, tokensOut] = await ctx.read(ctx.bond, BOND_ABI, 'previewBurn', [token])
     // not ready: the call only records / waits. If a chunk has become buyable by the time it lands, the max minimum
     // makes it revert (Slippage) instead of buying unchecked: re-run for a priced preview
-    const minOut = ready ? (tokensOut * BigInt(Math.round((100 - slippage) * 100))) / BPS : MAX_UINT
+    const toDead = ready && !m.live
+    const minOut = toDead ? 0n : ready ? (tokensOut * BigInt(Math.round((100 - slippage) * 100))) / BPS : MAX_UINT
     const sim = await simulate(ctx, me(), 'burnChunk', [token, minOut])
     if (sim.failed) return out({ success: false, step: 'burn', ...sim.failed })
     return out(send('burnChunk', [token, minOut], {
       step: 'burn', burnLeft: view.burnLeft, quote: view.quote,
-      ...(ready ? { chunkQuoteIn: qf(quoteIn), expectBurnTokens: tokens(tokensOut), minBurnTokens: tokens(minOut), slippagePct: slippage }
+      ...(toDead ? { quoteToDead: qf(quoteIn), note: 'slashed before the pair and still no pair 30 days after the post: the rest goes to 0xdead as quote' }
+        : ready ? { chunkQuoteIn: qf(quoteIn), expectBurnTokens: tokens(tokensOut), minBurnTokens: tokens(minOut), slippagePct: slippage }
         : { note: 'no chunk this time: the call records the price observation (first call after a slash) or waits for the 10-minute average / a price no more than 2% above it. It is cheap; the platform keeper also calls it every 10 minutes. If a chunk becomes buyable before it lands, it reverts (Slippage) rather than buy without a minimum: re-run then' }),
     }))
   }
 
-  // creator commands
-  if (!m.live) return fail(HINTS.NotTradable, { token, kind: m.kind })
+  // creator commands (any time after create: on the curve / during the sale too)
   if (!same(me(), m.creator)) return fail(HINTS.NotCreator, { wallet: me(), creator: m.creator })
 
   if (sub === 'post') {
@@ -321,25 +383,41 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     if (flag('amount') === flag('cover')) fail('pass exactly one of --amount <quote> or --cover <coverage %> (e.g. --cover 100 for full cover)')
     const hold = parseHold(fail, opt('hold'))
     const days = parseIntIn(fail, 'days', opt('days'), 7, 90)
-    if (hold > raw.bal) fail('--hold is above the creator\'s balance now', { hold: tokens(hold), balance: tokens(raw.bal) })
-    const dump = await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold])
+    if (hold === 0n) fail('--hold rounds to 0 tokens')
+    if (hold > raw.bal) {
+      fail('--hold is above the creator\'s balance now', {
+        hold: tokens(hold), balance: tokens(raw.bal), ...(!m.live && m.kind === 'v3' && raw.bal === 0n && { hint: `buy on the curve first (gang v3 buy --token ${token}${net}), then bond what you hold` }),
+      })
+    }
+    if (flag('cover') && !m.live) fail('--cover needs the PancakeSwap pair to price X: before graduation / launch give --amount <quote>')
+    const dump = m.live ? await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold]) : null
     const amount = flag('amount') ? parseUnits(parseAmount(fail, 'amount', opt('amount')), raw.dec)
       : ceilDiv(dump * BigInt(Math.round(parseNum(fail, 'cover', opt('cover'), 1, 1000) * 100)), BPS)
     if (amount === 0n) fail('the bond rounds to 0')
-    // the contract checks 7–90 days against the block that mines it: an hour of slack below 90 days keeps --days 7 valid
-    const deadline = BigInt(raw.now + days * DAY + (days < 90 ? 3600 : 0))
+    const duration = BigInt(days * DAY)
     const pay = await payment(ctx, me(), raw.quote, amount, view.quote, flag('use-wbnb'), rawOnly, summarize)
     if (pay.pre) return out(pay.pre)
-    const sim = await simulate(ctx, me(), 'post', [token, amount, hold, deadline], pay.value)
+    const sim = await simulate(ctx, me(), 'post', [token, amount, hold, duration], pay.value)
     if (sim.failed) return out({ success: false, step: 'post', ...sim.failed })
-    const cov = dump === 0n ? null : (amount * BPS) / dump
-    return out(send('post', [token, amount, hold, deadline], {
+    const cov = !dump ? null : (amount * BPS) / dump
+    const until = m.live ? 'the deadline' : `${days} days after the token ${m.kind === 'v3' ? 'graduates' : 'launches'}`
+    return out(send('post', [token, amount, hold, duration], {
       step: 'post', bond: qf(amount), quote: view.quote, payWith: pay.value ? 'BNB' : view.quote,
-      holdTokens: tokens(hold), holdPctOfSupply: Number((hold * 1_000_000n) / TOTAL_SUPPLY) / 10_000, creatorBalance: tokens(raw.bal),
-      days, deadline: new Date(Number(deadline) * 1000).toISOString(),
-      dumpValue: qf(dump), coveragePct: cov == null ? null : pctOfBps(cov), tier: cov == null ? 'full' : tierOf(cov),
-      toFullCover: dump > amount ? qf(dump - amount) : '0',
-      warning: `until settled after the deadline, keep at least ${tokens(hold)} tokens in ${m.creator}: below that anyone can report it, the reporter takes 1% and the rest of the bond buys back and burns the token. There is no early withdrawal. ${CLI_ONLY}`,
+      holdTokens: tokens(hold), holdPctOfSupply: Number((hold * 1_000_000n) / TOTAL_SUPPLY) / 10_000, creatorBalance: tokens(raw.bal), days,
+      ...(m.live
+        ? {
+            deadlineAbout: new Date((raw.now + days * DAY) * 1000).toISOString(),
+            dumpValue: qf(dump), coveragePct: cov == null ? null : pctOfBps(cov), tier: cov == null ? 'full' : tierOf(cov),
+            toFullCover: dump > amount ? qf(dump - amount) : '0',
+          }
+        : {
+            clock: `starts when the token ${m.kind === 'v3' ? 'graduates' : 'launches'}: deadline = that moment + ${days} days`,
+            refundableFrom: new Date((raw.now + MAX_WAIT) * 1000).toISOString(),
+            coverageNote: 'no coverage before the pair: gang.fun shows the bond amount and X until it trades on PancakeSwap',
+          }),
+      warning: `from now until settled after ${until}, keep at least ${tokens(hold)} tokens in ${m.creator}: below that anyone can report it, the reporter takes 1% and the rest of the bond buys back and burns the token.`
+        + (m.live ? ' There is no early withdrawal.' : ' There is no early withdrawal; only if the token has no pair 30 days after this post, and X is still held, it can be refunded.')
+        + ` ${CLI_ONLY}`,
     }, pay.value))
   }
 
@@ -350,6 +428,7 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     let amount
     if (flag('amount')) amount = parseUnits(parseAmount(fail, 'amount', opt('amount')), raw.dec)
     else {
+      if (raw.pending) fail('--cover needs the clock running on the PancakeSwap pair: give --amount <quote>', { phase: 'pending' })
       const target = ceilDiv(raw.dump * BigInt(Math.round(parseNum(fail, 'cover', opt('cover'), 1, 1000) * 100)), BPS)
       if (target <= b.amount) return fail(`the bond already covers ${view.coveragePct}%: nothing to add for --cover ${opt('cover')}`, { bond: view.bond, dumpValue: view.dumpValue })
       amount = target - b.amount
@@ -359,7 +438,7 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     const sim = await simulate(ctx, me(), 'topUp', [token, amount], pay.value)
     if (sim.failed) return out({ success: false, step: 'topup', ...sim.failed })
     const total = b.amount + amount
-    const cov = raw.dump === 0n ? null : (total * BPS) / raw.dump
+    const cov = !raw.dump ? null : (total * BPS) / raw.dump
     return out(send('topUp', [token, amount], {
       step: 'topup', add: qf(amount), bondAfter: qf(total), quote: view.quote, payWith: pay.value ? 'BNB' : view.quote,
       dumpValue: view.dumpValue, coveragePct: cov == null ? null : pctOfBps(cov), tier: cov == null ? 'full' : tierOf(cov), deadline: view.deadline,
@@ -374,23 +453,31 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     if (hold > raw.bal) fail('--hold is above the creator\'s balance now', { balance: view.creatorBalance })
     const sim = await simulate(ctx, me(), 'raiseHold', [token, hold])
     if (sim.failed) return out({ success: false, step: 'raise-hold', ...sim.failed })
-    const dump = await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold])
-    const cov = dump === 0n ? null : (b.amount * BPS) / dump
+    const dump = m.live ? await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold]) : null
+    const cov = !dump ? null : (b.amount * BPS) / dump
     return out(send('raiseHold', [token, hold], {
       step: 'raise-hold', holdBefore: view.holdTokens, holdAfter: tokens(hold), creatorBalance: view.creatorBalance,
-      dumpValueAfter: qf(dump), coveragePctAfter: cov == null ? null : pctOfBps(cov), deadline: view.deadline,
+      ...(dump != null && { dumpValueAfter: qf(dump), coveragePctAfter: cov == null ? null : pctOfBps(cov) }), deadline: view.deadline,
       note: 'X can only go up; a higher X means dumping it fetches more, so the same bond covers less',
     }))
   }
 
   if (sub === 'extend') {
     const days = parseIntIn(fail, 'days', opt('days'), 1, 90)
-    const deadline = BigInt(Number(b.deadline) + days * DAY)
-    if (Number(deadline) > raw.now + 90 * DAY) fail('the new deadline would be more than 90 days from now', { deadline: view.deadline, maxDays: Math.floor((raw.now + 90 * DAY - Number(b.deadline)) / DAY) })
-    const sim = await simulate(ctx, me(), 'extend', [token, deadline])
+    const by = BigInt(days * DAY)
+    if (raw.pending) {
+      // before the pair: the duration grows (90 days in all at most)
+      if (Number(b.duration) + days * DAY > 90 * DAY) fail('the commitment would be more than 90 days in all', { durationDays: view.durationDays, maxDays: Math.floor((90 * DAY - Number(b.duration)) / DAY) })
+    } else if (Number(b.deadline) + days * DAY > raw.now + 90 * DAY) {
+      fail('the new deadline would be more than 90 days from now', { deadline: view.deadline, maxDays: Math.floor((raw.now + 90 * DAY - Number(b.deadline)) / DAY) })
+    }
+    const sim = await simulate(ctx, me(), 'extend', [token, by])
     if (sim.failed) return out({ success: false, step: 'extend', ...sim.failed })
-    return out(send('extend', [token, deadline], {
-      step: 'extend', deadlineBefore: view.deadline, deadlineAfter: new Date(Number(deadline) * 1000).toISOString(), coveragePct: view.coveragePct,
+    return out(send('extend', [token, by], {
+      step: 'extend', days,
+      ...(raw.pending
+        ? { durationDaysBefore: view.durationDays, durationDaysAfter: view.durationDays + days, clock: 'starts at graduation / launch' }
+        : { deadlineBefore: view.deadline, deadlineAfter: new Date((Number(b.deadline) + days * DAY) * 1000).toISOString(), coveragePct: view.coveragePct }),
     }))
   }
 
@@ -398,7 +485,8 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
 }
 
 /**
- * Sell protection for the creator's own sells (gang v3 sell / gang fair sell in the pool). `p`: { token, me, amount,
+ * Sell protection for the creator's own sells: gang v3 sell (curve or pool), gang fair sell (pool), gang fair withdraw
+ * (shares back to the pad while minting). `p`: { token, me, amount,
  * breakBond, settleFirst, testnet }. Returns null when there is nothing to guard (no GangBond on this network, no active
  * bond, not the creator), else one of:
  * - { refuse: {…} } — the sell would leave less than X before the deadline (no --break-bond), or after the deadline
@@ -424,10 +512,12 @@ export async function bondGuard(ctx, p, rawOnly, summarize) {
     return { refuse: { error: 'RPC error while checking the sell against your bond', bondContract: addr, detail: e.shortMessage || e.message.split('\n')[0], hint: 're-run; set GANG_RPC_URL / GANG_TESTNET_RPC_URL if the RPC keeps failing' } }
   }
   const after = bal > p.amount ? bal - p.amount : 0n
-  const pastDeadline = Number(block.timestamp) >= Number(b.deadline)
+  // pending (deadline 0, posted before the pair): the promise binds, nothing is past due
+  const pastDeadline = b.deadline !== 0n && Number(block.timestamp) >= Number(b.deadline)
   const base = {
     bondContract: addr, holdTokens: tokens(b.holdAmount), balanceBefore: tokens(bal), balanceAfter: tokens(after),
-    bond: formatUnits(b.amount, dec), deadline: new Date(Number(b.deadline) * 1000).toISOString(),
+    bond: formatUnits(b.amount, dec),
+    ...(b.deadline === 0n ? { clock: 'starts at graduation / launch' } : { deadline: new Date(Number(b.deadline) * 1000).toISOString() }),
   }
   if (after >= b.holdAmount) {
     return { info: { bondCheck: { ...base, headroomAfter: tokens(after - b.holdAmount), ...(pastDeadline && { note: 'past the deadline: settle the bond (gang bond settle) to get it back; until then it can still be reported if the balance drops below X' }) } } }

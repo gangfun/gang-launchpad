@@ -306,26 +306,33 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          A creator selling below its bonded X (gang bond) is refused unless --break-bond;
                                          past the deadline, --settle-first settles the bond before the sell.
 
-BOND (押金承诺, GangBond; graduated V3 / launched 打新 tokens; GANG_BOND / GANG_TESTNET_BOND = its address):
+BOND (押金承诺, GangBond; any GangLaunchpad token, from create on; GANG_BOND / GANG_TESTNET_BOND = its address):
   gang bond post --token <addr> --hold <tokens|N%> --days <7-90> (--amount <quote> | --cover <coverage %>) [--use-wbnb]
-                                         creator only: bond in the token's quote (WBNB: paid in BNB, --use-wbnb pays WBNB; also
-                                         on topup) promising the creator keeps at least --hold tokens (N% = of the 1B supply)
-                                         until the deadline. --cover 100 = exactly what dumping X fetches now. No early
-                                         withdrawal; below X anyone reports it
+                                         creator only, any time after create (V3: buy on the curve first): bond in the token's
+                                         quote (WBNB: paid in BNB, --use-wbnb pays WBNB; also on topup) promising the creator
+                                         keeps at least --hold tokens (N% = of the 1B supply) from now on. The --days clock
+                                         starts when the token graduates / launches (at once if it already has). --cover 100 =
+                                         exactly what dumping X fetches now (only once on the pair). No early withdrawal;
+                                         below X anyone reports it, on the curve too
   gang bond topup --token <addr> (--amount <quote> | --cover <target %>) | gang bond raise-hold --token <addr> --hold <tokens|N%>
   gang bond extend --token <addr> --days <n>
-                                         creator only: the bond only grows, X only rises, the deadline only moves later (≤ 90
-                                         days from now)
-  gang bond status --token <addr>        state, X and the creator's balance / headroom, coverage + tier (≥100% full cover,
-                                         50–100% bond, <50% no badge), toFullCover, time left, buy-back progress, the creator's
-                                         record (posted / honored / slashed)
+                                         creator only: the bond only grows, X only rises, the commitment only gets longer (90
+                                         days in all before the pair; a deadline ≤ 90 days from now after it)
+  gang bond status --token <addr>        state, phase (pending: waiting for the pair / running), X and the creator's balance /
+                                         headroom, coverage + tier once on the pair (≥100% full cover, 50–100% bond, <50% no
+                                         badge), toFullCover, time left, buy-back progress, the creator's record
+  gang bond start --token <addr>         anyone, once the token graduated / launched: start the clock (deadline = now + days)
   gang bond report --token <addr>        anyone, when the creator holds less than X: 1% of the bond to you, the rest buys
                                          back and burns the token (simulated first; nothing is sent when not violated)
   gang bond settle --token <addr>        anyone, after the deadline while X is held: the bond goes back to the creator
+  gang bond refund --token <addr>        anyone: posted before the pair, still no pair 30 days later, X held → back to the creator
   gang bond burn --token <addr> [--slippage 1]
                                          anyone: one buy-back chunk of a slashed bond (≤ 0.5% of the pair's quote side; waits
-                                         for a 10-minute average and skips when the price is > 2% above it)
-  gang bond tx --hash <0x..>             decode GangBond events. --testnet, --calldata, --from as in gang v3
+                                         for a 10-minute average and skips when the price is > 2% above it). Slashed before the
+                                         pair: waits for it; none 30 days after the post → the rest goes to 0xdead as quote
+  gang bond tx --hash <0x..>             decode GangBond events. --testnet, --calldata, --from as in gang v3. A bonded
+                                         creator's gang v3 sell (curve or pool), gang fair sell and gang fair withdraw are
+                                         checked against X (--break-bond / --settle-first)
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --hash <0x..>                  wait for receipt and decode Gang events (publishes a queued --note)
 
