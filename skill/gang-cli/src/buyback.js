@@ -19,9 +19,10 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
 // BSC 56, factory v2 (payee; docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md). v1 was 0x6bcd…8546 (2-argument create)
 export const MAINNET_SPLITTER_FACTORY = '0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f'
 export const TESTNET_SPLITTER_FACTORY = '0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D'
-/** The factory's clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 its payee. */
-export const BUYBACK_TYPE = 'buyback-burn-v2'
-const BUYBACK_TYPES = ['buyback-burn-v1', BUYBACK_TYPE]
+/** The factory's clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 and v3 their payee; v3 buys at
+ *  most one chunk per 4 minutes (GangBond audit H-1). */
+export const BUYBACK_TYPE = 'buyback-burn-v3'
+const BUYBACK_TYPES = ['buyback-burn-v1', 'buyback-burn-v2', BUYBACK_TYPE]
 
 export const FACTORY_ABI = parseAbi([
   'function create(uint16 buybackBps, bytes32 salt, address payee) returns (address splitter)',
@@ -182,7 +183,7 @@ export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
   }
 
   if (sub === 'set-payee') {
-    if (!s.payeeChangeable) return fail('this splitter (buyback-burn-v1) has no payee: it pays the dev; only splitters from the current factory (v2) can name another address')
+    if (!s.payeeChangeable) return fail('this splitter (buyback-burn-v1) has no payee: it pays the dev; only splitters from later factories (v2, v3) can name another address')
     if (me().toLowerCase() !== s.dev.toLowerCase()) return fail('only the dev this splitter was made for can change its payee', { wallet: me(), dev: s.dev })
     const to = opt('to')
     if (!isAddress(to ?? '') || to === zeroAddress) fail('--to <0x…> required (checksummed or all lowercase): the address the dev\'s part goes to from now on', { got: to ?? null })

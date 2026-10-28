@@ -63,6 +63,30 @@ dev 可以把回购以外的那份打给别的地址（`payee`，建币时 `--bu
 
 演练（anvil 主网 fork，区块 130307708）：同一脚本部署 → 冒充多签 `setFactory` → 真实 Agent `0xf7A8…14aA` 以 40%、payee `0x…be1ef` 克隆（地址等于 `predict`，已加白，`moduleOf` = v2 工厂）→ 建 WBNB 币并 bind → 打入 1 WBNB 拆分：payee 收到 0.6、dev 0、回购余额 0.4 → `setPayee` 后再拆：新 payee 收到 0.6、旧的不变 → `setPayee(自己)` 回滚 `BadPayee`、陌生地址回滚 `NotDev` → v1 工厂仍能克隆。
 
+## v3：两块之间的间隔（`buyback-burn-v3`，GangBond 审计 H-1）——计划，未部署
+
+GangBond 审计（`docs/AUDIT-GANG-BOND-2026-10-29.md` H-1、I-5）发现：价格拉高并维持 10 分钟后，均价追上来，回购每个区块都能买一块，攻击者每块卖回，几秒就买光整笔余额。splitter 照搬了同一套回购逻辑，v1、v2 同样成立。v3 加 `CHUNK_GAP` = 4 分钟（两块之间至少隔 4 分钟，`lastBurnBlock` 改为 `lastBurnAt`，不到时间回滚 `BurnTooSoon`，`previewBurn` / `previewWork` 报不能买），和 GangBond PR #54 的修法一致。详见规格 §4。
+
+**现有主网 splitter 的风险（2026-10-29，区块 130341146 核对）**：管理合约下 4 个模块，全是 v1；v2 工厂没有克隆。4 个币都还在内盘、没有交易对，毕业前不收外盘税，所以报价币余额和 `buybackLeft` 全是 0，目前没有可被攻击的钱。
+
+| splitter（v1） | 币 | 比例 | 报价币余额 |
+|---|---|---|---|
+| `0x9165…68E0` | GQ `0x86cc…103c` | 50% | 0 WBNB |
+| `0xB82b…975D` | gang球 `0x5eca…1f7b` | 50% | 0 WBNB |
+| `0xE5f7…a9Fa` | 钢球 `0x69fa…DAb9` | 100% | 0 WBNB |
+| `0x8f86…B294` | GANGBALL `0x45f8…3eb5` | 100% | 0 GANG |
+
+毕业后风险等于当时攒着的回购余额：平时只有 keeper 两轮之间（5 分钟）的税；价格持续上涨时回购暂停，余额会越攒越多。v1 克隆改不了，也没法改接收地址（币的 recipient 建币时就定了）。
+
+**计划**（需要用户同意后执行）：
+
+1. 部署 v3 工厂（`DeployGangBuybackSplitterFactory.s.sol`，同一个管理合约），BscScan 验证工厂和实现合约。
+2. 多签批量：`setFactory(v3, true)`、`setFactory(v2 0x9346…8F2f, false)`、`setFactory(v1 0x6bcd…8546, false)`。停用 v1、v2 只影响新建（旧 CLI 发币会在 `listModule` 回滚 `NotFactory`），已有克隆照常工作。
+3. 发 CLI：主网工厂地址指向 v3，最低版本提到新版本（0.13 / 0.14 / 0.15 发带回购的币会失败）。
+4. 服务端和网站认 `buyback-burn-v3`：keeper `keeper-module-work.sh` 的 `NOT_NOW` 加 `BurnTooSoon`（v3 间隔内被别人抢先买了会这样回滚，不该报警）；indexer `src/splitters.js` 的 `BUYBACK_MODULES` 和网站 `src/buyback.js` 的类型列表加 v3（v3 有 payee，读 payee 的分支按 v2 处理）。这一步要在第 2 步之前上线。
+5. 现有 4 个 v1 币：通知两位 dev 风险和选项——保持不变（keeper 会及时买掉，风险是毕业后价格持续拉高、余额攒大时被高位卖给回购）；或 `gang buyback set --pct 0` 在 3 天公告后关掉回购（之后全部给 dev）。
+6. 测试网先走一遍：部署 v3 工厂、测试网管理合约放行，发一个回购币走完毕业和两块回购。
+
 ## 上主网前的演练（anvil 主网 fork，区块 130281857）
 
 - 同一个脚本在 fork 上部署，地址与上面一致；冒充多签按上表执行 3 笔，全部成功：handler 的 owner = 管理合约，管理合约 owner = 多签，工厂已允许。
