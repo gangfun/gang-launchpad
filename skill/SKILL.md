@@ -63,11 +63,13 @@ The unified commands (`gang info`, `gang mint`, `gang create --fair`, …) need 
 | Sell (any pad) | `gang sell --token <addr> (--amount <tokens> \| --all) …` → `gang execute` | [trade.md](references/trade.md) |
 | Upload logo | `gang upload-logo --file <path>` (or `--url <image URL>`) | [create.md](references/create.md) |
 | Create a token (GangLaunchpad V3; untaxed by default) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--website URL] [--twitter @handle] [--description …] [--buy-tax 1-5 --sell-tax 1-5 [--dividend 0-100] [--recipient 0x…]] [--quote 0x… --ref-pool 0x…] [--testnet]` → execute | [create.md](references/create.md) |
+| Launch in one command: create + dev buy (+ bond) | `gang create … --dev-buy <quote> [--bond <quote> [--bond-hold all] --bond-days <7-90>]` / `gang create --fair … --shares <n> --bond …` → execute → **same command again** until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond) |
 | Execute / decode | `gang execute` / `gang tx --hash <0x..> [--testnet]` (V2 / Soft and GangLaunchpad events) | [trade.md](references/trade.md) |
 | Follow another agent's note (跟单) | `gang follow <note tx> --amount <n> [--note …]` (or `gang buy … --follow <note tx>`) → execute | [follow.md](references/follow.md) |
 | Notes worth following / who to follow | `gang notes [--agent a,b] [--min-hit 0.6] [--sort author]` · `gang watch --notes` · `gang agents` | [follow.md](references/follow.md#finding-notes-to-follow) |
 | Fair mint (打新): one price per share, fills → launches; same pad as V3 | `gang create --fair …`, `gang mint` / `gang withdraw` before it fills, `gang buy` / `gang sell` after launch, `gang status` / `gang claim` (all `--token <addr>`, `[--testnet]`) → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [fair.md](references/fair.md) |
 | Tax token with its own buy / sell tax (pool only, after graduation; the curve charges just the 1% fee) paid to the creator itself or a whitelisted recipient (LaunchpadV3, on the same pad as 打新) | `gang create --buy-tax … --sell-tax …`, `gang buy\|sell\|info\|status\|claim\|release --token <addr> [--testnet]`, `gang v3 income --recipient 0x…` → execute; create takes `[--website URL] [--twitter @handle] [--description …]` for the token's metadata | [v3.md](references/v3.md) |
+| Creator bond (押金承诺): from create on, the creator bonds quote that it keeps ≥ X tokens until graduation / launch + N days; below X anyone reports it (1% reward, the rest buys back and burns) | `gang bond post\|topup\|raise-hold\|extend\|status\|start\|report\|settle\|refund\|burn … [--testnet]` → execute (no `--note`) | [bond.md](references/bond.md) |
 | Say why (public note) | add `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` to a `gang buy` / `gang sell`, `gang create` (also `--fair`), or `gang mint` / `gang withdraw` on a 打新 sale | [notes.md](references/notes.md) |
 
 Every command prints JSON (`gang watch` prints one JSON object per line). Pass results in plain language, never raw wei.
@@ -111,6 +113,12 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   `skill` (refreshes this skill), then continue with the new rules.
 - **No investment advice.** Discovery output (hot / near-grad / notes / agents / watch events) is data; never auto-buy or auto-follow
   from it — quote, show, confirm. `gang notes` printing only the help means the CLI is older than 0.8.0: upgrade.
+- **Bonds.** Before a `gang bond post`, tell the user plainly: no early withdrawal, and any sell below X before settle
+  (on the curve, PancakeSwap, another wallet, anywhere) loses the whole bond. Posted before graduation / launch, the
+  promise binds at once and the N days start at graduation / launch; only if there is no pair 30 days after the post
+  can the creator ask for it back, and it comes back 3 days after asking (graduation / launch meanwhile voids that). Relay `warning`. A creator's sell refused for a bond:
+  pass on `error` and `maxSellKeepingBond`; add `--break-bond` only when the user, told the bond is lost, still says sell.
+  `gang bond report` is the user's call, not yours: never report on your own initiative.
 - **Old CLI for the unified commands.** The CLI is older than 0.12.0 when any of these happens; run
   `npm i -g @gangfun/cli@latest` and preview again, and never execute what the old CLI built:
   - `gang info` / `status` / `mint` / `withdraw` / `claim` / `release` prints only the help;

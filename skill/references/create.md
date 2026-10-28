@@ -61,6 +61,30 @@ address back in full so the user can share it.
 
 Graduation: ≈ **15 BNB** worth of the quote → PancakeSwap V2, LP burned.
 
+## Launch in one command (`--dev-buy`, `--bond`)
+
+```bash
+# V3: create → the dev buys on the curve → (optional) bonds what it holds
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.5
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.5 --bond 0.3 --bond-days 30 [--bond-hold all|<tokens>|N%]
+# 打新: create (the dev's --shares are bought in it) → bond
+gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
+```
+
+- **One tx per run.** Each run prints the next tx (`launch.stage`: `create` → `dev-buy` → `bond` → `done`, with wrap /
+  approve steps in between). Preview it, show it, get the OK, `gang execute`, then run **the very same command** again.
+  Stop at `launch.stage: done`.
+- **Progress comes from the chain**: the run looks for a token this wallet created with this symbol since the plan, then
+  the dev's balance, then the bond. It never creates twice on its own: a run that finds no token yet says so (the create
+  may still be landing; wait and run again); only `--restart` builds a new create. Done stays done: running it again just
+  reports the launch.
+- **`--dev-buy`** is V3 only (as `gang v3 buy --amount`: quote, the 1% curve fee included, capped at 1% of supply). A 打新
+  dev buys with `--shares` in the create itself.
+- **`--bond`** posts a creator bond ([bond.md](bond.md)) right after: `--bond-hold` (default all of the dev's tokens),
+  `--bond-days` from graduation / launch. It needs GangBond on the network (testnet only for now) and is checked before
+  the create, so a launch never stops half way on a bad flag. Tell the user the bond rules before the first run.
+- `--note` goes on the create only (its launch manifesto); the buy and the bond carry none.
+
 ## Website and X links (`--website`, `--twitter`, `--description`)
 
 Optional. gang.fun shows them on the token page.

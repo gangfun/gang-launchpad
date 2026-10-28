@@ -20,6 +20,8 @@ gang list --kind fair [--status minting|launched|all]        # sales on gang.fun
 gang info --token <addr> [--testnet]                           # one sale from the chain
 gang status --token <addr> [--slippage 1] [--testnet]          # my shares; after launch my reward state + poolSellAll
 gang create --fair --name "My Token" --symbol MYT [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1] [--shares 1] [--logo ./avatar.png | --logo-uri URL] [--website URL] [--twitter @handle] [--description "…"] [--testnet]
+# + a creator bond in the same command: add --bond <quote> --bond-days <7-90> [--bond-hold all] (create, then the bond;
+#   run the same command again after each tx — create.md "Launch in one command", bond.md)
 gang mint --token <addr> --shares <n> [--min-shares <n>] [--testnet]
 gang withdraw --token <addr> (--shares <n> | --all) [--testnet]        # sell back at the mint price before it fills
                                                                    # (reverts if a 1–2% exit fee comes back before it lands)

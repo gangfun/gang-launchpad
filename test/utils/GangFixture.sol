@@ -91,7 +91,7 @@ abstract contract GangFixture is Test {
         quoteTok = new MockSPCXB();
         blq = new GangBlacklistQuote();
         agents = new MockAgentId();
-        pairFactory = new MockPairFactory();
+        pairFactory = MockPairFactory(_newPairFactory());
         MockPancakeV2Swap pancake = new MockPancakeV2Swap();
         pancake.setRefs(address(pairFactory), address(wbnb));
         pancakeRouter = address(pancake);
@@ -138,6 +138,12 @@ abstract contract GangFixture is Test {
         pad.setRouter(address(router), true);
         pad.setMigrator(address(migrator)); // last (A-1)
         vm.stopPrank();
+    }
+
+    /// @dev The Pancake V2 factory the migrator seeds pairs on; a suite that needs the pair's oracle passes one whose
+    ///      pairs keep cumulative prices (same getters as MockPair).
+    function _newPairFactory() internal virtual returns (address) {
+        return address(new MockPairFactory());
     }
 
     // ---------------------------------------------------------------- actors
