@@ -27,6 +27,7 @@
 |---|---|
 | **GangLaunchpad** (V3 and 打新, one pad) | `0x15CFD2dc8278Fb87a1783ef42111618E20874365` (block 130104322) |
 | **GangRouter** (proxy: the address users approve) | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
+| GangPadRegistry (proxy: aggregators find a token's pad and quote its curve) | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
 | GangTaxHandler (pool tax) | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |

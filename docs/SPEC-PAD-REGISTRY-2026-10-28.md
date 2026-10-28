@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（按 claude.ai 文档「Gang 聚合器接入说明」里规划的 registry 实现）
-- 性质：**测试网已部署（`0xB11B…e56e`，登记第 10 套 pad，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`），主网还没部署**。合约 `src/gang/GangPadRegistry.sol`，接口 `src/gang/interfaces/IGangPadRegistry.sol`，测试 `test/gang/GangPadRegistry.t.sol`，部署脚本 `script/DeployGangPadRegistry.s.sol`（自检 `script/GangPadRegistryDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §24。
+- 性质：**主网已部署 `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C`（owner = Safe，见 `docs/MAINNET-PAD-REGISTRY-2026-10-28.md`）；测试网 `0xB11B…e56e`（登记第 10 套 pad，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`）**。合约 `src/gang/GangPadRegistry.sol`，接口 `src/gang/interfaces/IGangPadRegistry.sol`，测试 `test/gang/GangPadRegistry.t.sol`，部署脚本 `script/DeployGangPadRegistry.s.sol`（自检 `script/GangPadRegistryDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §24。
 
 ## 一句话
 
@@ -75,5 +75,4 @@ DEPLOYER_PRIVATE_KEY=… GANG_PAD=… GANG_PAD_REGISTRY=<代理地址> forge scr
 
 ## 还没做
 
-- 主网部署。
-- README 地址表、CLI（`skill/gang-cli`）改用 registry 查 pad：当前 CLI 用的是固定的 pad 地址，暂时不用改。
+- CLI（`skill/gang-cli`）改用 registry 查 pad：当前 CLI 用的是固定的 pad 地址，暂时不用改；等出了新一代 pad 再改。
