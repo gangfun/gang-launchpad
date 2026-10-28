@@ -36,12 +36,13 @@
 | 项 | 主网 | 测试网 |
 |---|---|---|
 | 部署形态 | `TransparentUpgradeableProxy`，代理地址永久不变 | 同左 |
-| registry `owner`（`addPad`、两步转移） | GangRouter 现有的 48 小时 TimelockController（`0x3911…04C5`，提案 / 执行 / 取消都只给 Safe） | `OWNER` 环境变量，默认是部署钱包 |
-| ProxyAdmin 的 owner（升级） | 同一个时间锁 | 同上 |
-| 初始 pad | 部署时在 `initialize` 里登记 `GANG_PAD`，不用等时间锁 | 同左 |
+| registry `owner`（`addPad`、两步转移） | 平台 Safe `0x2866…B41E`（2/3），不经时间锁 | `OWNER` 环境变量，默认是部署钱包 |
+| ProxyAdmin 的 owner（升级） | 同一个 Safe | 同上 |
+| 初始 pad | 部署时在 `initialize` 里登记 `GANG_PAD` | 同左 |
 
 - 只增不删：登记后的 pad 不能删除，也不能改指向。紧急止损用 pad 自己的 `setRouter(路由, false)`，当块生效。
-- 登记时核对 pad 的 `VIRTUAL_TOKEN` 和 `PROTOCOL_FEE_BPS`。新一代 pad 改了曲线公式，就先经时间锁升级 registry 的报价逻辑，再登记 pad。
+- 没有时间锁：Safe 执行 `addPad` 或升级即生效，事前不公示。聚合器可以监控 registry 的 `PadAdded`、`OwnershipTransferStarted` 和代理的 `Upgraded`。
+- 登记时核对 pad 的 `VIRTUAL_TOKEN` 和 `PROTOCOL_FEE_BPS`。新一代 pad 改了曲线公式，就先由 Safe 升级 registry 的报价逻辑，再登记 pad。
 - 存储布局：slot 0 `owner`、1 `pendingOwner`、2 `_pads`、3 `isPad`、4–49 `__gap`（46 个）。新变量从 `__gap` 取槽，`test_layout_v1` 会锁住当前布局。
 
 ## 部署
@@ -50,7 +51,6 @@
 # 主网（部署钱包签名；多签在部署时什么都不用签；BSC_RPC_URL 供 --rpc-url bsc 使用）
 DEPLOYER_PRIVATE_KEY=<部署钱包私钥> \
 GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 \
-GANG_ROUTER=0xE040445690Aa56C8b68B7f7038C7b2562B5079C4 \
 GANG_MAINNET_OK=true \
 forge script script/DeployGangPadRegistry.s.sol --rpc-url bsc --broadcast --legacy --with-gas-price <当前 cast gas-price>
 
@@ -59,10 +59,10 @@ DEPLOYER_PRIVATE_KEY=… GANG_PAD=0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1 \
 forge script script/DeployGangPadRegistry.s.sol --rpc-url bsc_testnet --broadcast --legacy --with-gas-price 100000000
 
 # 重跑自检（不部署）
-DEPLOYER_PRIVATE_KEY=… GANG_PAD=… GANG_ROUTER=… GANG_PAD_REGISTRY=<代理地址> forge script script/DeployGangPadRegistry.s.sol --rpc-url bsc
+DEPLOYER_PRIVATE_KEY=… GANG_PAD=… GANG_PAD_REGISTRY=<代理地址> forge script script/DeployGangPadRegistry.s.sol --rpc-url bsc
 ```
 
-自检内容：代理代码、实现（本次构建的代码，已锁死）、ProxyAdmin（代理自己创建的、标准 OZ 代码、owner 正确）、registry 的 owner 和 pad 列表；主网还会按 GangRouter 部署的标准核对时间锁；最后确认 `padOf(pad)` 为 0、`padOf(pad 最后一个币)` 返回 pad。代码比对会屏蔽 metadata 哈希（审计说明 §24.4）。
+自检内容：代理代码、实现（本次构建的代码，已锁死）、ProxyAdmin（代理自己创建的、标准 OZ 代码、owner 正确）、registry 的 owner 和 pad 列表（主网必须是 Safe）；最后确认 `padOf(pad)` 为 0、`padOf(pad 最后一个币)` 返回 pad。代码比对会屏蔽 metadata 哈希（审计说明 §24.4）。
 
 部署后要做的事：把代理地址补进 README 的地址表和接入说明文档，并发给已接入的聚合器。
 

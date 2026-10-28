@@ -2,7 +2,7 @@
 
 - 日期：2026-10-26 Asia/Shanghai，2026-10-27 按合并后的合约重写 §1–§9；§19 记 V3 内盘不收税，§20 记把两个核心合并成一个内盘（GangLaunchpad）的改动，§1–§9 仍按合并前的两个核心写，以 §20 为准
 - 读者：外部审计方
-- **2026-10-28 §24：聚合器用的 pad registry（GangPadRegistry，可升级，48 小时时间锁）+ 部署自检的代码比对改为屏蔽 metadata 哈希**。新合约，内盘、代币、路由一行未改，改动列在 §24；§21、§23 里「比对 codehash / keccak」的描述以 §24.4 为准。
+- **2026-10-28 §24：聚合器用的 pad registry（GangPadRegistry，可升级，主网 owner 是 Safe）+ 部署自检的代码比对改为屏蔽 metadata 哈希**。新合约，内盘、代币、路由一行未改，改动列在 §24；§21、§23 里「比对 codehash / keccak」的描述以 §24.4 为准。
 - **2026-10-27 上线前 §22：参数调整**（V3 接收地址可以是发币人自己；打新出局线 60%–90%、单地址上限 0.25%–1%）。分支 `feat/launch-params`（基于 `main` `36d55df`），改动列在 §22。
 - **2026-10-27 晚 §21：GangRouter 改为可升级（TransparentUpgradeableProxy + 48 小时 TimelockController，Safe 是唯一的提案 / 执行 / 取消者）并新增 Pancake V2 外盘买卖入口**。分支 `feat/upgradeable-router`，改动列在 §21；§4.1 里 GangRouter「无 owner」一行以 §21 为准。
 - **2026-10-27 下午 §19：V3 内盘不收税**（内盘只收 1% 手续费，税只在外盘收；内盘分红路径随之删除，分红合约只剩外盘分红）。分支 `feat/v3-no-curve-tax`，改动列在 §19。
@@ -1166,7 +1166,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 ### 24.2 合约：`src/gang/GangPadRegistry.sol`
 
 - 部署形态和 GangRouter 相同（§21）：`TransparentUpgradeableProxy`，代理在构造时调用 `initialize(owner, pads)`，实现合约的构造函数调用 `_disableInitializers()`。聚合器只记代理地址，这个地址永久不变。
-- 权限：registry 的 `owner`（可调 `addPad`、两步转移 owner）和代理自己的 ProxyAdmin 的 owner，主网都是 GangRouter 现有的 48 小时 TimelockController（`0x3911…04C5`，提案 / 执行 / 取消都只给 Safe）。所以登记新 pad 和升级合约，上链前都会公开 48 小时。主网 pad 在 `initialize` 里直接登记，不用等。
+- 权限：registry 的 `owner`（可调 `addPad`、两步转移 owner）和代理自己的 ProxyAdmin 的 owner，主网都是平台 Safe `0x2866…B41E`（2/3）本身，不经时间锁：Safe 执行即生效。最初的方案是交给 GangRouter 的 48 小时 TimelockController，主网部署前（2026-10-28）改成了现在这样。主网 pad 在 `initialize` 里登记。
 - 只增不删：`addPad` 之后不能删除、也不能改指向。登记时检查 pad 是合约、没有重复、`VIRTUAL_TOKEN` 和 `PROTOCOL_FEE_BPS` 与 registry 报价用的常量一致（不一致回滚 `CurveMathMismatch`：先升级 registry 再登记）。紧急止损仍是 pad 自己的 `setRouter(路由, false)`。
 - `padOf(token)`：以 1 万 gas 上限 `staticcall` 代币的 `launchpad()`，只读返回数据的前 32 字节；返回的 pad 必须已登记，**并且** pad 的 `kindOf(token) != 0`，否则返回 0。指向真 pad 的假币、指向未登记合约的币、回滚的币、耗光 gas 的币都返回 0；返回超长数据的币只读前 32 字节，结果仍按登记和 `kindOf` 判断。代币没法让调用回滚。毕业 / 开盘后仍返回原 pad。`lookup(token)` 同时返回 pad 和 kind。
 - `previewBuy(token, trader, quoteIn)` → `(tokensOut, spent, fee, refund)`，`previewSell(token, trader, tokensIn)` → `(quoteOut, fee)`：在 pad 当前状态上逐行重复 `CurveLogic._prepBuy` / `sell` 的算法（先查钱包上限、1% 手续费、毕业截断、钱包上限截断、`ceilDiv` 的取整方向），钱包剩余额度直接读 pad 的 `walletRoom`。`buyFor` / `sellFor` 会回滚的情况（不是曲线币、已毕业、准入不过、钱包已满、数量为 0、`quoteIn` 超过 `type(uint256).max / 100`、卖出超过已售量）都返回 0；`trader = address(0)` 时按新钱包报价，不查准入。卖出预览不检查 trader 的余额和授权。
@@ -1179,13 +1179,13 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 |---|---|
 | 假币冒充 Gang 币，引聚合器把钱付给假 pad | `padOf` 要求 pad 已登记且 pad 自己列有这个币；假币返回 0 |
 | 恶意代币让 `padOf` 回滚或耗光 gas，卡住聚合器的批量查询 | 1 万 gas 上限的 `staticcall`，只拷 32 字节；失败、返回数据不足 32 字节、高位不为 0，都按非 Gang 币处理 |
-| 多签被盗后登记假 pad，或升级成恶意逻辑 | 两者都要过 48 小时时间锁，上链前公开可见。Safe 是 2/3，被控制后提案、执行、取消都在攻击者手里，这 48 小时的作用是给外界反应时间：聚合器监控时间锁的 `CallScheduled`、registry 的 `PadAdded` 和代理的 `Upgraded`，发现异常就停用 registry、改回固定地址 |
+| 多签被盗后登记假 pad，或升级成恶意逻辑 | 没有时间锁，Safe 执行就立即生效，聚合器事前看不到。能做的是事后发现：聚合器监控 registry 的 `PadAdded`、`OwnershipTransferStarted` 和代理的 `Upgraded`，发现异常就停用 registry、改回固定地址。另外 `padOf` 仍然要求 pad 自己列有这个币，所以登记一个假 pad 只能让「指向它的币」被识别；升级则可以改掉任何逻辑。这是选择 Safe 直接持有、不用时间锁所接受的风险 |
 | 新一代 pad 的曲线公式变了，报价出错 | `addPad` 核对曲线常量，不一致就拒绝登记，必须先升级 registry |
 | 报价和实际成交不一致 | fuzz 测试拿真实的 `buyFor` / `sellFor` 逐 wei 核对（24.5） |
 
 ### 24.4 部署自检的代码比对：屏蔽 metadata 哈希
 
-问题：在主网 fork 上跑 registry 的部署脚本时，§21 的时间锁自检报 `WiringCheck("router timelock code")`。逐字节对比后发现，主网的 TimelockController、ProxyAdmin、GangRouter 代理和实现、TokenDeployer，和本仓库当前构建的产物只差 Solidity metadata 里的 IPFS 哈希。这个哈希会随编译时的源文件集合和设置变化，代码本身没变。TokenDeployer 有两处差异：末尾一份，内嵌的 `GangToken` 创建码里还有一份。所以 §21 的 `DeployGangRouterUpgradeable` 和 §23 的 `DeployGang` 拿当前构建在主网重跑自检，都会误报。
+问题：在主网 fork 上跑 registry 的部署脚本时（当时主网 owner 还是时间锁，脚本会按 §21 核对它），§21 的时间锁自检报 `WiringCheck("router timelock code")`。逐字节对比后发现，主网的 TimelockController、ProxyAdmin、GangRouter 代理和实现、TokenDeployer，和本仓库当前构建的产物只差 Solidity metadata 里的 IPFS 哈希。这个哈希会随编译时的源文件集合和设置变化，代码本身没变。TokenDeployer 有两处差异：末尾一份，内嵌的 `GangToken` 创建码里还有一份。所以 §21 的 `DeployGangRouterUpgradeable` 和 §23 的 `DeployGang` 拿当前构建在主网重跑自检，都会误报。
 
 改法：`GangRouterDeployLib.sameCode(got, want)`。在 `want`（本次构建，可信）里找每个 metadata 的 IPFS 标记（`a2 64 'ipfs' 58 22 12 20`）；`got` 在同一位置必须也有这个标记，然后把标记后面的 32 字节哈希在两边的副本里都清零，再比对全部字节，长度也必须相同。使用的地方：代理代码（先回填 immutable `_admin`，再比对）、GangRouter 实现、ProxyAdmin、时间锁、TokenDeployer、GangPadRegistry 实现。
 
@@ -1193,14 +1193,14 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 
 ### 24.5 测试
 
-- `test/gang/GangPadRegistry.t.sol`（20 个）：部署自检与实现锁死、初始 pad 重复或 owner 为 0 时回滚；`padOf` 两种币都能识别、毕业后仍返回原 pad、各种假币返回 0、恶意代币（回滚、耗 gas、返回不是地址的字、4 KB 返回数据）不影响结果；`addPad` 只能经时间锁、只增不删、各种拒绝情况；两步转移 owner；`previewBuy` 覆盖普通买入、钱包上限截断、毕业截断（上限开 / 关）、各种返回 0 的情况；`previewSell` 同上；两个 fuzz 各 1,000 轮，拿真实的 `buyFor` / `sellFor` 逐 wei 核对成交量、退款、手续费；经时间锁升级后状态不变；存储布局快照。
+- `test/gang/GangPadRegistry.t.sol`（20 个）：部署自检与实现锁死、初始 pad 重复或 owner 为 0 时回滚；`padOf` 两种币都能识别、毕业后仍返回原 pad、各种假币返回 0、恶意代币（回滚、耗 gas、返回不是地址的字、4 KB 返回数据）不影响结果；`addPad` 只有 owner 能调（别人和 pad 自己都不行）、只增不删、各种拒绝情况；两步转移 owner；`previewBuy` 覆盖普通买入、钱包上限截断、毕业截断（上限开 / 关）、各种返回 0 的情况；`previewSell` 同上；两个 fuzz 各 1,000 轮，拿真实的 `buyFor` / `sellFor` 逐 wei 核对成交量、退款、手续费；只有 owner 能升级，升级后状态不变；存储布局快照。
 - `test/router/SameCode.t.sol`（3 个）：只改哈希（末尾或内嵌）判为相同；改代码字节、改标记本身、长度不同判为不同；输入不被修改；主网 fork 上 TokenDeployer、GangRouter 实现、ProxyAdmin、时间锁都能通过，并断言 TokenDeployer 用严格比对 codehash 会失败（时间锁、ProxyAdmin、路由代理的严格比对会失败，是写这一节时用 `cast` 读链上代码核对的；GangRouter 实现没有单独核对严格比对）。
 - `test/fork/PadRegistryTestnetFork.t.sol`（4 个，`BSC_TESTNET_RPC_URL`）：在测试网第 10 套 pad 已部署的字节码和真实状态上，报价和真实的 `buyFor` / `sellFor` 逐 wei 一致。覆盖（2026-10-28 的链上状态：9 个币，5 条还在内盘的 WBNB 曲线）每条在内盘曲线的小额买入、卖出，离毕业还远的曲线再加钱包上限截断，以及经真实 migrator / Pancake 的毕业截断；每个币的 `padOf` / `lookup` 都正确，准入不过的钱包和打新币返回 0。
 - 测试网 fork 模拟 `DeployGangPadRegistry`（没有广播）通过，`padOf(最后一个币)` 返回第 10 套 pad。
-- 主网 fork 模拟（没有广播）：`DeployGangPadRegistry` 通过，owner 读出是时间锁，`padOf(主网最后一个币)` 返回主网 pad；`DeployGangRouterUpgradeable` 重跑自检通过。
+- 主网 fork 模拟（没有广播）：`DeployGangPadRegistry` 通过，owner 是 Safe，`padOf(主网最后一个币)` 返回主网 pad；`DeployGangRouterUpgradeable` 重跑自检通过。
 
 ### 24.6 对外接口
 
 - 新函数：`padOf(address)` `0xba0cb939`、`lookup(address)` `0xd4b6b5da`、`isPad(address)` `0x05e23609`、`padCount()` `0x6a5e9d24`、`padAt(uint256)` `0x5ff80b76`、`pads()` `0x580c3777`、`previewBuy(address,address,uint256)` `0x370ed8c6`、`previewSell(address,address,uint256)` `0x0d687d9f`；管理：`addPad(address)` `0x01fd75a3`、`transferOwnership(address)` `0xf2fde38b`、`acceptOwnership()` `0x79ba5097`。
 - 新错误：`OnlyOwner()` `0x5fc483c5`、`NotPendingOwner()` `0x1853971c`、`ZeroAddress()` `0xd92e233d`、`NotAContract()` `0x09ee12d5`、`AlreadyPad()` `0x789c0e85`、`CurveMathMismatch()` `0x278b7648`。事件：`PadAdded(pad, index)`、`OwnershipTransferStarted`、`OwnershipTransferred`。
-- 规格：`docs/SPEC-PAD-REGISTRY-2026-10-28.md`。部署：`script/DeployGangPadRegistry.s.sol`（主网 owner 从 `GANG_ROUTER` 读出时间锁并按 §21 核对）。测试网已部署：`0xB11B83C83DEd269B040faecC1D61B4885BA8e56e`（登记第 10 套 pad，部署后重跑自检通过，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`）；主网还没部署。
+- 规格：`docs/SPEC-PAD-REGISTRY-2026-10-28.md`。部署：`script/DeployGangPadRegistry.s.sol`（主网 owner 固定为 Safe `M.OWNER_SAFE`，传别的 `OWNER` 回滚 `OwnerNotSafe`）。测试网已部署：`0xB11B83C83DEd269B040faecC1D61B4885BA8e56e`（登记第 10 套 pad，部署后重跑自检通过，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`）；主网还没部署。
