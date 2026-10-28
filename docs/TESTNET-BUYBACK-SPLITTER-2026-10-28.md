@@ -111,6 +111,7 @@ keeper（`7208423` 的 `keeper-module-work.sh`，macOS 自带的 bash 3.2，`MOD
 |---|---|
 | GangBuybackSplitterFactory v3（现行，CLI 内置） | [`0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1`](https://testnet.bscscan.com/address/0x0Ff5C8801BdeaDac374fC14fEd6e7B31977c9DA1)，实现合约 `0x666429D8978167F6003792c442a8e3958C6d5997`；部署 [`0x158da28e…f691`](https://testnet.bscscan.com/tx/0x158da28ea253c1e6059e2c8dc67e158229ce7920e5c5fbcd2388f4799b5bf691)（gas 2,435,455） |
 | 批量（`HANDLER_ADMIN` 已设，只有一笔） | `adminV2.setFactory(factoryV3, true)` [`0xb7aa2c37…68df`](https://testnet.bscscan.com/tx/0xb7aa2c37822ce1d1ae5d75d3d080267ffa564bf7f0df3fe34edb3cfd8b6868df)；脚本同时列出 v2 工厂仍被允许，附停用交易 |
+| 源码验证 | v2 管理合约、v3 工厂和实现合约已在 BscScan 测试网验证（2026-10-28，`--verifier-url "https://api.etherscan.io/v2/api?chainid=97"`） |
 | 停用 v2 工厂（可选那一笔） | `adminV2.setFactory(factoryV2, false)` [`0x5a03e66c…9caa`](https://testnet.bscscan.com/tx/0x5a03e66cf785ba6c2ba67489c7171b7b034902b8a3cb75f7d68264e29ece9caa) |
 
 CLI 一键发射 BBFL（`--buyback 50 --dev-buy 0.5`）：克隆 [`0x28585D12C24e36425bc82cA33f55cDAe10CE24f0`](https://testnet.bscscan.com/address/0x28585D12C24e36425bc82cA33f55cDAe10CE24f0)（[`0xba053cb4…c83c`](https://testnet.bscscan.com/tx/0xba053cb4ec36c56218c2f600d7ab41da22a2fe07d195dd13a46ca9e5d9f2c83c)）→ 建币 `0x693515C0669Ef28a61a095D8c898C85C2a03C454` → bind → dev 买入 → done。毕业（171 笔，全部成功），交易对 `0x07F2…8EfB`，报价币储备 15，所以门槛 = 0.0075。
