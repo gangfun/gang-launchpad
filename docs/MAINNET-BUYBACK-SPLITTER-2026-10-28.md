@@ -63,7 +63,7 @@ dev 可以把回购以外的那份打给别的地址（`payee`，建币时 `--bu
 
 演练（anvil 主网 fork，区块 130307708）：同一脚本部署 → 冒充多签 `setFactory` → 真实 Agent `0xf7A8…14aA` 以 40%、payee `0x…be1ef` 克隆（地址等于 `predict`，已加白，`moduleOf` = v2 工厂）→ 建 WBNB 币并 bind → 打入 1 WBNB 拆分：payee 收到 0.6、dev 0、回购余额 0.4 → `setPayee` 后再拆：新 payee 收到 0.6、旧的不变 → `setPayee(自己)` 回滚 `BadPayee`、陌生地址回滚 `NotDev` → v1 工厂仍能克隆。
 
-## v3：两块之间的间隔（`buyback-burn-v3`，GangBond 审计 H-1）——计划，未部署
+## v3：两块之间的间隔（`buyback-burn-v3`，GangBond 审计 H-1）——工厂已部署，多签批量待执行
 
 GangBond 审计（`docs/AUDIT-GANG-BOND-2026-10-29.md` H-1、I-5）发现：价格拉高并维持 10 分钟后，均价追上来，回购每个区块都能买一块，攻击者每块卖回，几秒就买光整笔余额。splitter 照搬了同一套回购逻辑，v1、v2 同样成立。v3 加 `CHUNK_GAP` = 4 分钟（两块之间至少隔 4 分钟，`lastBurnBlock` 改为 `lastBurnAt`，不到时间回滚 `BurnTooSoon`，`previewBurn` / `previewWork` 报不能买），和 GangBond PR #54 的修法一致。详见规格 §4。
 
@@ -78,11 +78,20 @@ GangBond 审计（`docs/AUDIT-GANG-BOND-2026-10-29.md` H-1、I-5）发现：价�
 
 毕业后风险等于当时攒着的回购余额：平时只有 keeper 两轮之间（5 分钟）的税；价格持续上涨时回购暂停，余额会越攒越多。v1 克隆改不了，也没法改接收地址（币的 recipient 建币时就定了）。
 
-**计划**（需要用户同意后执行）：
+| 项 | 值 |
+|---|---|
+| GangBuybackSplitterFactory v3 | [`0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd`](https://bscscan.com/address/0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd)，实现合约 [`0xeb5e6f5Dc90BE8A21F2c7a1286405b2738f8518d`](https://bscscan.com/address/0xeb5e6f5Dc90BE8A21F2c7a1286405b2738f8518d)（`buyback-burn-v3`，`CHUNK_GAP` 240）；两个都已在 BscScan 验证 |
+| 部署 | [`0xb7792075…0c48`](https://bscscan.com/tx/0xb779207594a3dd4bfed4f1bb6b68c521e3e9ad442a649c5da4347267e1eb0c48)，区块 130348202，gas 2,567,877，部署钱包 `0x4EEd…19d3` |
+| 多签批量 | `docs/MAINNET-BUYBACK-SPLITTER-V3-SAFE-BATCH-2026-10-29.json`，三笔 `GangHandlerAdmin.setFactory`：v3 `true`、v1 `0x6bcd…8546` `false`、v2 `0x9346…8F2f` `false`。calldata 和部署脚本打印的一致。**要等 keeper、indexer、网站都认 `buyback-burn-v3` 之后再执行** |
 
-1. 部署 v3 工厂（`DeployGangBuybackSplitterFactory.s.sol`，同一个管理合约），BscScan 验证工厂和实现合约。
-2. 多签批量：`setFactory(v3, true)`、`setFactory(v2 0x9346…8F2f, false)`、`setFactory(v1 0x6bcd…8546, false)`。停用 v1、v2 只影响新建（旧 CLI 发币会在 `listModule` 回滚 `NotFactory`），已有克隆照常工作。
-3. 发 CLI：主网工厂地址指向 v3，最低版本提到新版本（0.13 / 0.14 / 0.15 发带回购的币会失败）。
+演练（anvil 主网 fork，部署之后）：冒充多签执行三笔，全部成功 → v3 允许，v1、v2 不允许 → 真实 Agent `0xf7A8…14aA` 经 v3 `create(5000, salt, 0)`：克隆地址等于 `predict`，`moduleType` = `buyback-burn-v3`，`moduleOf` = v3 工厂，`CHUNK_GAP` 240（gas 334,682）→ 经 v2、v1 `create` 都回滚 `NotFactory` → handler owner 仍是管理合约，已有 v1 克隆不受影响。
+
+**计划**：
+
+
+1. ~~部署 v3 工厂，BscScan 验证~~（2026-10-29 已完成，见上表）。
+2. 多签批量（等第 4 步上线后执行）：`setFactory(v3, true)`、`setFactory(v2 0x9346…8F2f, false)`、`setFactory(v1 0x6bcd…8546, false)`。停用 v1、v2 只影响新建（旧 CLI 发币会在 `listModule` 回滚 `NotFactory`），已有克隆照常工作。
+3. 发 CLI（多签执行后）：主网工厂地址指向 v3，最低版本提到新版本（0.13 / 0.14 / 0.15 发带回购的币会失败）。
 4. 服务端和网站认 `buyback-burn-v3`：keeper `keeper-module-work.sh` 的 `NOT_NOW` 加 `BurnTooSoon`（v3 间隔内被别人抢先买了会这样回滚，不该报警）；indexer `src/splitters.js` 的 `BUYBACK_MODULES` 和网站 `src/buyback.js` 的类型列表加 v3（v3 有 payee，读 payee 的分支按 v2 处理）。这一步要在第 2 步之前上线。
 5. 现有 4 个 v1 币：通知两位 dev 风险和选项——保持不变（keeper 会及时买掉，风险是毕业后价格持续拉高、余额攒大时被高位卖给回购）；或 `gang buyback set --pct 0` 在 3 天公告后关掉回购（之后全部给 dev）。
 6. ~~测试网先走一遍~~：2026-10-29 已完成（PR #58 合并后）：测试网工厂 v6 `0x7E63…2BBe` 放行、v5 停用，CLI 发 GAPT、毕业、两块回购相隔 247 秒，间隔内回滚 `BurnTooSoon`。见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`「v6 工厂」。
