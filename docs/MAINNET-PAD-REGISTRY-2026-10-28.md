@@ -17,7 +17,7 @@ GangPadRegistry 已在 2026-10-28 部署到 BSC 主网，owner 是平台 Safe，
 | 部署钱包 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`（部署后对 registry 没有任何权限） |
 | 部署交易 | 实现合约 [`0xef4a408d…efa31`](https://bscscan.com/tx/0xef4a408d61511f723bf5481b95c21733f7a1808f40767cf7702811c95c0efa31)，gas 1,078,376；代理 [`0x81b413ca…cbc2`](https://bscscan.com/tx/0x81b413ca7af76b12396b2faba5e9ea32eba803cf01f761bea79427fe4b84cbc2)，gas 663,470；gas 价格 0.05 gwei（legacy） |
 | 广播记录 | `broadcast/DeployGangPadRegistry.s.sol/56/` |
-| 源码验证 | 未做（缺 BscScan API key） |
+| 源码验证 | 已在 BscScan 验证（2026-10-28）：实现合约 GangPadRegistry、代理 TransparentUpgradeableProxy（已标记为代理并指向实现合约）、ProxyAdmin 三个合约，源码取自 `1169dd7`，编译设置为 solc 0.8.28、via-ir、优化 200 次、cancun。验证前确认过：本地编译出的实现合约字节码与链上一致，包括 metadata |
 
 部署命令：`GANG_PAD=0x15CF…4365 GANG_MAINNET_OK=true forge script script/DeployGangPadRegistry.s.sol --rpc-url $BSC_RPC_URL --broadcast --legacy --with-gas-price 50000000`。`OWNER` 没有传，主网默认就是 Safe。多签在部署时什么都不用签。
 

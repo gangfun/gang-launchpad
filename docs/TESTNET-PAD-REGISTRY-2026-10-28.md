@@ -15,7 +15,7 @@ GangPadRegistry 已部署到 BSC 测试网，登记了第 10 套内盘。部署�
 | owner（`addPad`、升级） | `0xCa8e63434072B40d3dFE6f5e7Fd885F93A3200b6`（部署钱包，也是第 10 套的 owner；测试网没用时间锁） |
 | 已登记的 pad | 第 10 套 GangLaunchpad `0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1`（在 `initialize` 里登记） |
 | 部署交易 | 实现合约 [`0x13b681be…3758`](https://testnet.bscscan.com/tx/0x13b681bec4fd229015b0ee2bbd1eaaa48e227e7a166415cfa27a7e68ea763758)，gas 1,078,388；代理 [`0x4e0384ed…ff8d`](https://testnet.bscscan.com/tx/0x4e0384edc5991fdbba1918bf3f867627310077e17d865044314ed7cfe609ff8d)，gas 663,434；都在区块 139392144 |
-| 源码验证 | 未做（缺 BscScan API key） |
+| 源码验证 | 已在 BscScan 验证（2026-10-28）：实现合约 GangPadRegistry、代理 TransparentUpgradeableProxy（已标记为代理并指向实现合约）、ProxyAdmin 三个合约，源码取自 `9b8fa91`，编译设置为 solc 0.8.28、via-ir、优化 200 次、cancun。验证前确认过：本地编译出的实现合约字节码与链上一致，包括 metadata |
 
 ## 部署过程
 
