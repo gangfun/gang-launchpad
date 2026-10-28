@@ -70,16 +70,18 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 照搬 GangBond 的分块回购，参数和计算逐字一致，两边要一起改：
 
-- 每个区块最多一块；
+- 两块之间至少隔 `CHUNK_GAP` = 4 分钟（v3；不到时间回滚 `BurnTooSoon`，`previewBurn` / `previewWork` 都报不能买）。v1、v2 是每个区块最多一块，见下面「拉盘后卖给回购」；
 - 每块最多花掉交易对报价币储备的 `CHUNK_MAX_BPS` = 0.5%；
 - 与交易对自己的 TWAP 比：窗口 `TWAP_WINDOW` = 10 分钟，现价比均价高出 `MAX_PRICE_RISE_BPS` = 2% 以上就不买（返回 (0, 0)，不回滚）；
 - 超过 2 倍窗口没人调用，观测点从头开始，那一次只记观测点。
 
-所以谁来调都无法夹它，`minTokensOut` 可以填 0。keeper 定时调用即可（§6）；dev 或任何人也可以自己调。毕业前调用回滚 `NotTradable`（还没有交易对，而且毕业前根本不收税）。
+所以谁来调都无法在 2% 带宽以外夹它，`minTokensOut` 可以填 0。
+
+**拉盘后卖给回购（GangBond 审计 2026-10-29 H-1，v3 已修）**：价格保护只看「现价 ≤ 10 分钟均价 × 1.02」。攻击者把价格拉高并维持 10 分钟，均价追上来以后，v1 / v2 每个区块都能买一块，攻击者每块卖回同样数量，0.45 秒一块，回购余额几秒钟就被高价买光。v3 两块之间至少 4 分钟（keeper 每 5 分钟一跑，正常回购速度不变），攻击者要把高价维持到整笔回购买完（20% 池子的积压约 2 小时），期间所有持币人都能按高价卖给他。splitter 的积压平时只有 keeper 两轮之间的税，但价格持续上涨（自然或人为）时回购会暂停、积压会变大，所以同样要修。测试：`test_burn_oneChunkPerGap`、`test_burn_pumpAndHoldGetsOneChunkPerGap`（同样的攻击一分钟内 v3 只买 1 块；去掉间隔是 11 块）。keeper 定时调用即可（§6）；dev 或任何人也可以自己调。毕业前调用回滚 `NotTradable`（还没有交易对，而且毕业前根本不收税）。
 
 `previewBurn()` 返回这一次会不会买、花多少、销毁多少（已扣买入税）。
 
-`previewWork()`（模块接口）：能买时 `due = true`、`minOut` = 预览销毁量 − `WORK_SLIPPAGE_BPS`（1%）；不能买时，只有这次调用会记录或推进 TWAP 观测点才 `due`（`minOut` 0）——这一步正是价格检查恢复所需要的；没东西可买、没毕业、本区块已买过时都不 due。`work(minOut)` = `burnChunk(minOut)`。
+`previewWork()`（模块接口）：能买时 `due = true`、`minOut` = 预览销毁量 − `WORK_SLIPPAGE_BPS`（1%）；不能买时，只有这次调用会记录或推进 TWAP 观测点才 `due`（`minOut` 0）——这一步正是价格检查恢复所需要的；没东西可买、没毕业、距上一块不到 `CHUNK_GAP` 时都不 due。`work(minOut)` = `burnChunk(minOut)`。
 
 **最低金额**：拆分后的回购余额低于交易对报价币储备的 `WORK_MIN_BPS`（0.05%）时不 due——买和推进观测都不报。毕业后每笔卖出的 swap-back 都给回购合约打一点，没有门槛的话 keeper 每 10 分钟左右就要为一点点钱发一笔（约 20–35 万 gas）。攒够以后第一次调用记观测点（停了超过 20 分钟，观测重来），10 分钟后开始买。`burnChunk` 本身仍收任何金额，谁都可以手动调。
 
@@ -87,7 +89,7 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 ## 5. 其它规则
 
-- **收款地址（payee，v2）**：回购以外的那份打给 `payee`，不再固定是 dev。建币时 `--buyback-to <地址>` 指定（工厂 `create(bps, salt, payee)`，0 = dev）；之后 dev 随时 `setPayee` 更换，**立即生效**（这是 dev 自己那份钱，不影响持币人，所以不设公告期），发 `PayeeSet` 事件。更换前到账的报价币先按旧地址拆分；欠款（`devOwed`）和 `sweep` 都付给当时的 payee。比例仍只有 dev 能改。v1 回购合约（主网第一个工厂 `0x6bcd…8546` 克隆的，`moduleType` = `buyback-burn-v1`）没有 payee，永远付给 dev；v2 的 `moduleType` 是 `buyback-burn-v2`。CLI、indexer、网站两种都认。
+- **收款地址（payee，v2）**：回购以外的那份打给 `payee`，不再固定是 dev。建币时 `--buyback-to <地址>` 指定（工厂 `create(bps, salt, payee)`，0 = dev）；之后 dev 随时 `setPayee` 更换，**立即生效**（这是 dev 自己那份钱，不影响持币人，所以不设公告期），发 `PayeeSet` 事件。更换前到账的报价币先按旧地址拆分；欠款（`devOwed`）和 `sweep` 都付给当时的 payee。比例仍只有 dev 能改。v1 回购合约（主网第一个工厂 `0x6bcd…8546` 克隆的，`moduleType` = `buyback-burn-v1`）没有 payee，永远付给 dev；v2 的 `moduleType` 是 `buyback-burn-v2`，v3（加了 `CHUNK_GAP`）是 `buyback-burn-v3`，也有 payee。CLI、indexer、网站都要认这三种。
 
 - **绑定**：`bind(token)` 任何人可调，只能绑一次。要求：V3（curve）币、创建者是 dev、handler 里这个币的 recipient 是本合约。设成任何人可调，是为了防止 dev 故意不绑、再用 `sweep` 把报价币拿走。
 - **`sweep(asset)`**：绑定后，把绑定报价币以外的任何资产全部转给 payee（v1：dev）（别的币把它填成 recipient、用别的报价币付的税，或者别人误转进来的）。绑定前不能 sweep。用绑定报价币付的税，不管来自哪个币，都按比例拆分。
@@ -135,11 +137,11 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 - **重复的 salt**：同一个 dev 用同一个 salt 再克隆会因地址已被占用而失败（CREATE2 冲突会吃掉转发的全部 gas；钱包估算 gas 时就会失败，CLI 每次启动换新 salt）。
 - **管理合约是 handler owner 前面多的一层**：它出问题时多签仍能用 `exec` 把 owner 交回；它本身不可升级、只有三个入口。
 - **白名单地址对所有发币人开放**：别人也能把这个回购合约填成自己币的 recipient，但只会多给它钱（绑定报价币按比例拆分，其他资产 sweep 给 dev）；绑定只认 dev 自己的币。
-- **回购慢**：每块最多 0.5% 储备、每 10 分钟左右一块，大额税要分很多块；价格被拉高时会暂停，直到高价成为均价。
+- **回购慢**：每块最多 0.5% 储备、最快每 4 分钟一块（keeper 每 5 分钟一跑），大额税要分很多块；价格被拉高时会暂停，直到高价成为均价。
 - **报价币**：pad 接受的报价币（WBNB 或任意 18 位、不扣转账费的 ERC-20）都能用；黑名单和余额被扣的情况见 §5。
 
 ## 8. 测试
 
-- 单测 `test/gang/GangBuybackSplitter.t.sol` 26 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、收款地址（建币时指定、默认 dev、只有 dev 能改、不能改成 0、更换前到账的按旧地址拆分、`sweep` 给收款地址、拉黑的收款地址记欠款且换地址后补发给新地址）、sweep、外盘税端到端。
+- 单测 `test/gang/GangBuybackSplitter.t.sol` 28 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、收款地址（建币时指定、默认 dev、只有 dev 能改、不能改成 0、更换前到账的按旧地址拆分、`sweep` 给收款地址、拉黑的收款地址记欠款且换地址后补发给新地址）、sweep、外盘税端到端、两块之间的间隔（间隔内 `burnChunk` / `work` 回滚 `BurnTooSoon`、预览不 due，满 4 分钟恢复）、拉盘维持后每块卖回只能拿到一块。
 - 注意：`src/gang/**` 用 via-ir 单独编译，测试里 `new` 这些合约会变成 `vm.deployCode`，`vm.expectRevert` 看不到它的回滚（回滚会让测试直接当作通过）；构造函数的拒绝路径要经测试合约自己的 external 函数部署（`newFactory` / `newAdmin`）。
 - 测试网整轮见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`。

@@ -194,7 +194,7 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(sp.pad(), address(pad));
         assertEq(sp.taxHandler(), address(handler));
         assertEq(sp.factory(), address(factory));
-        assertEq(sp.moduleType(), bytes32("buyback-burn-v2"));
+        assertEq(sp.moduleType(), bytes32("buyback-burn-v3"));
         assertEq(sp.payee(), dev, "payee defaults to the dev");
         assertTrue(handler.isListed(s));
         assertEq(admin.moduleOf(s), address(factory));
@@ -551,7 +551,7 @@ contract GangBuybackSplitterTest is GangFixture {
             spent += q;
             chunks++;
             if (s.buybackLeft() > 0) {
-                vm.expectRevert(GangBuybackSplitter.BurnedThisBlock.selector);
+                vm.expectRevert(GangBuybackSplitter.BurnTooSoon.selector);
                 s.burnChunk(0);
             }
         }
@@ -562,6 +562,72 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(_bal(address(wbnb), address(s)), 0);
         vm.expectRevert(GangBuybackSplitter.NothingToBurn.selector);
         s.burnChunk(0);
+    }
+
+    /// @dev GangBond audit 2026-10-29 H-1: once a pumped price is the average, a chunk per block let a seller empty the
+    ///      buy-back in seconds; one chunk per CHUNK_GAP makes the pump last as long as the whole buy-back.
+    function test_burn_oneChunkPerGap() public {
+        (GangBuybackSplitter s,,) = _setup(address(wbnb), 10_000, true);
+        wbnb.mintUnlimited(address(s), 1 ether);
+        s.burnChunk(0);
+        _next(10 minutes);
+        (uint256 q,) = s.burnChunk(0);
+        assertGt(q, 0);
+        assertEq(s.lastBurnAt(), block.timestamp);
+        uint256 last = s.lastBurnAt();
+        uint64 gap = s.CHUNK_GAP();
+        // explicit times: block.timestamp read back in a loop of warps can be stale here
+        for (uint256 i = 1; i < gap; i += 12) {
+            vm.warp(last + i); // later blocks inside the gap, up to its last second
+            vm.roll(block.number + 1);
+            (bool ready,,) = s.previewBurn();
+            assertFalse(ready);
+            (bool due,) = s.previewWork();
+            assertFalse(due);
+            vm.expectRevert(GangBuybackSplitter.BurnTooSoon.selector);
+            s.burnChunk(0);
+            vm.expectRevert(GangBuybackSplitter.BurnTooSoon.selector);
+            s.work(0);
+        }
+        vm.warp(last + gap);
+        vm.roll(block.number + 1);
+        (bool ok,,) = s.previewBurn();
+        assertTrue(ok);
+        (bool due2,) = s.previewWork();
+        assertTrue(due2);
+        (q,) = s.burnChunk(0);
+        assertGt(q, 0);
+    }
+
+    /// @dev H-1 replayed: pump, hold until the average catches up, then sell into the buy-back every block. With the
+    ///      gap the buy-back spends one chunk in the next minute, not one per block (with no gap: 11).
+    function test_burn_pumpAndHoldGetsOneChunkPerGap() public {
+        (GangBuybackSplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        address pair = _curvePair(t);
+        (, uint256 rQ) = _reserves(t, pair);
+        wbnb.mintUnlimited(address(s), rQ / 5); // a backlog of 20% of the pool's quote
+        address attacker = _newAgent();
+        _poolBuy(t, address(wbnb), pair, attacker, (rQ * 414) / 1000); // ~1.7x the price (the mock buy takes half out)
+        s.burnChunk(0); // a fresh observation at the pumped price
+        _next(10 minutes);
+        uint256 start = vm.getBlockTimestamp(); // block.timestamp can read stale after warps here
+        uint256 left0 = s.buybackLeft();
+        uint256 chunks;
+        for (uint256 i; i < 133; i++) {
+            // a minute of 0.45 s blocks, everyone trying
+            vm.warp(start + (i * 45) / 100);
+            vm.roll(block.number + 1);
+            try s.burnChunk(0) returns (uint256 q, uint256 burned) {
+                if (q != 0) {
+                    chunks++;
+                    _poolSell(t, pair, attacker, burned); // sells the same back: the price stays up
+                }
+            } catch (bytes memory err) {
+                assertEq(bytes4(err), GangBuybackSplitter.BurnTooSoon.selector);
+            }
+        }
+        assertEq(chunks, 1);
+        assertLe(left0 - s.buybackLeft(), (rQ * 2 * 50) / 10_000, "one chunk of the pumped reserve");
     }
 
     function test_burn_skipsAfterPump() public {

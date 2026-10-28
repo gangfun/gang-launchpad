@@ -32,14 +32,16 @@ import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 ///         held (a seized or rebased balance) is taken from both held parts in proportion at the next split, so the
 ///         splitter keeps working on what it still has.
 ///         The buy-back is GangBond's: anyone (the keeper, through `previewWork` / `work`) calls `burnChunk`; one
-///         chunk per block, at most CHUNK_MAX_BPS of the pair's quote reserve, and none while the spot price is more
-///         than MAX_PRICE_RISE_BPS above the pair's own TWAP — so whoever calls it can't sandwich it, and
-///         `minTokensOut` is optional.
+///         chunk per CHUNK_GAP, at most CHUNK_MAX_BPS of the pair's quote reserve, and none while the spot price is
+///         more than MAX_PRICE_RISE_BPS above the pair's own TWAP — so whoever calls it can't sandwich it by more than
+///         that band, and `minTokensOut` is optional.
 /// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Reads the pad's and the handler's
 ///      public views and trades only with the token's pair; needs no role from the pad, token, vault or handler. Any
 ///      other token that names this contract as its recipient (a listed address is open to every creator) only adds
 ///      quote: in the bound quote it is split like the rest, in any other asset `sweep` sends it to the payee.
-///      v2 ("buyback-burn-v2") adds the payee; v1 clones (mainnet factory 0x6bcd…8546) pay the dev.
+///      v3 ("buyback-burn-v3") buys at most one chunk per CHUNK_GAP (GangBond audit 2026-10-29 H-1); v2 clones
+///      ("buyback-burn-v2", mainnet factory 0x9346…8F2f) and v1 clones (0x6bcd…8546, no payee: they pay the dev) buy
+///      one per block.
 contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -52,6 +54,10 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     uint256 public constant CHUNK_MAX_BPS = 50;
     /// @notice The buy-back compares the spot price with the pair's average over at least this long.
     uint32 public constant TWAP_WINDOW = 10 minutes;
+    /// @notice At most one buy-back chunk per this long (GangBond audit 2026-10-29 H-1): a price pushed up and held
+    ///         until the average catches up must be held through the whole buy-back, not a few seconds of 0.45 s blocks.
+    ///         Under the keeper's 5-minute runs, so the keeper's pace is unchanged.
+    uint64 public constant CHUNK_GAP = 4 minutes;
     /// @notice No buy-back while the spot price is more than this above that average.
     uint256 public constant MAX_PRICE_RISE_BPS = 200;
     /// @dev Pancake V2 fee (9975/10000 = 0.25%).
@@ -63,7 +69,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice `previewWork` is not due while the buy-back holds less than this share of the pair's quote reserve: each
     ///         swap-back pays a little, and a keeper tx for every trickle would cost more gas than it buys back.
     uint256 public constant WORK_MIN_BPS = 5;
-    bytes32 public constant MODULE_TYPE = "buyback-burn-v2";
+    bytes32 public constant MODULE_TYPE = "buyback-burn-v3";
 
     uint8 internal constant KIND_CURVE = 1;
 
@@ -92,7 +98,8 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     uint256 public buybackLeft;
     /// @notice The dev's part whose push to the payee failed, held here until `releaseDev`.
     uint256 public devOwed;
-    uint256 public lastBurnBlock;
+    /// @notice When the last chunk was bought (0: none yet).
+    uint64 public lastBurnAt;
 
     /// @dev The token's quote-per-token cumulative price (UQ112x112 × seconds, wrapping) at `at`.
     struct Obs {
@@ -137,7 +144,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     error CutLapsed();
     error NothingOwed();
     error NothingToBurn();
-    error BurnedThisBlock();
+    error BurnTooSoon();
     error NotTradable();
     error Slippage();
     error NotSweepable();
@@ -251,8 +258,8 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     }
 
     /// @notice Split what arrived, then spend one chunk of the buy-back on the token, straight from its pair, and send
-    ///         what arrives (after the buy tax) to 0xdead. One chunk per block, at most CHUNK_MAX_BPS of the pair's
-    ///         quote reserve. Returns (0, 0) without buying while the price check is not ready: the first call only
+    ///         what arrives (after the buy tax) to 0xdead. One chunk per CHUNK_GAP (sooner reverts BurnTooSoon), at most
+    ///         CHUNK_MAX_BPS of the pair's quote reserve. Returns (0, 0) without buying while the price check is not ready: the first call only
     ///         records an observation; later ones wait until TWAP_WINDOW has passed since it, and skip while the spot
     ///         price is more than MAX_PRICE_RISE_BPS above the average. After more than 2 × TWAP_WINDOW without a call
     ///         the observations start over (that call records only). Reverts NotTradable before graduation.
@@ -270,7 +277,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         _split();
         uint256 left = buybackLeft;
         if (left == 0) revert NothingToBurn();
-        if (lastBurnBlock == block.number) revert BurnedThisBlock();
+        if (_tooSoon()) revert BurnTooSoon();
         address p = pair;
         bool tokenIs0 = _tokenIs0;
         if (p == address(0)) {
@@ -291,7 +298,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         quoteIn = _chunkOf(left, rQ);
         if (quoteIn == 0) return (0, 0);
 
-        lastBurnBlock = block.number;
+        lastBurnAt = uint64(block.timestamp);
         left -= quoteIn;
         buybackLeft = left;
         uint256 out = _amountOut(quoteIn, rQ, rT);
@@ -344,8 +351,8 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice Due when `burnChunk` would buy a chunk (`minOut` = its burn less WORK_SLIPPAGE_BPS) or, while the price
     ///         check is not ready, when the call would record or roll the TWAP observation (`minOut` 0) — the call the
     ///         buy-back needs to get ready again. Not due with less than WORK_MIN_BPS of the pair's quote reserve to buy
-    ///         back (it waits for more tax; `burnChunk` still takes any amount by hand), before graduation, or twice a
-    ///         block.
+    ///         back (it waits for more tax; `burnChunk` still takes any amount by hand), before graduation, or within
+    ///         CHUNK_GAP of the last chunk.
     function previewWork() external view returns (bool due, uint256 minOut) {
         (bool ready,, uint256 tokensOut, bool moves, bool small) = _preview();
         if (small) return (false, 0);
@@ -359,7 +366,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     ///      pair's quote reserve.
     function _preview() internal view returns (bool ready, uint256 quoteIn, uint256 tokensOut, bool moves, bool small) {
         uint256 left = _buybackAfterSplit();
-        if (left == 0 || lastBurnBlock == block.number) return (false, 0, 0, false, true);
+        if (left == 0 || _tooSoon()) return (false, 0, 0, false, true);
         address p = pair;
         bool tokenIs0 = _tokenIs0;
         if (p == address(0)) {
@@ -431,6 +438,12 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         if (_cutLive()) emit BuybackBpsProposalCancelled(pendingBps);
         pendingAt = 0;
         pendingBps = 0;
+    }
+
+    /// @dev A chunk was bought less than CHUNK_GAP ago (none yet: never too soon).
+    function _tooSoon() internal view returns (bool) {
+        uint64 last = lastBurnAt;
+        return last != 0 && block.timestamp < last + CHUNK_GAP;
     }
 
     function _cutLive() internal view returns (bool) {
