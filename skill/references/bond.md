@@ -38,9 +38,12 @@ decision.
 
 `coverage = bond ÷ dumpValue`, where dumpValue is what selling X into the pair fetches now (after the sell tax, the
 0.25% DEX fee and price impact). ≥ 100%: dumping X loses money. It falls when the price rises; `toFullCover` says how
-much quote would bring it back to 100%. Tiers on gang.fun: ≥ 100% "押金全覆盖", 50–100% "押金", < 50% no badge.
+much quote would bring it back to 100%. Tiers on gang.fun: ≥ 100% green "押金全覆盖", 50–100% yellow "押金", < 50% a plain gray "押金"
+badge. The colours also need an allow-listed quote (WBNB, a QuoteRegistry quote, GANG) and an X of at least half the
+creator's balance when it was set; otherwise the badge stays gray (any other quote: no coverage shown, its value is
+unknown).
 Coverage is for display and screening only; it never decides where a bond goes. Before the pair there is no market
-to price X: no coverage, no badge — show the bond amount and X (% of supply) instead, and `--cover` is not available.
+to price X: no coverage, a gray badge — show the bond amount and X (% of supply) instead, and `--cover` is not available.
 
 ## Commands
 
