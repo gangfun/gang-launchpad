@@ -50,6 +50,19 @@ GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004
 # 应打印 "Safe batch: nothing to do (admin owns the handler, factory allowed)"
 ```
 
+## v2 工厂：收款地址（`buyback-burn-v2`，PR #53）
+
+dev 可以把回购以外的那份打给别的地址（`payee`，建币时 `--buyback-to`，之后随时 `set-payee`）。管理合约不变，只加一个工厂：
+
+| 项 | 值 |
+|---|---|
+| GangBuybackSplitterFactory v2 | [`0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f`](https://bscscan.com/address/0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f)，实现合约 [`0x5Ac016FF863BCbd2bC4c84B595A99A7D3eF9D94f`](https://bscscan.com/address/0x5Ac016FF863BCbd2bC4c84B595A99A7D3eF9D94f)；两个都已在 BscScan 验证 |
+| 部署 | [`0x0a2cd45b…13d1`](https://bscscan.com/tx/0x0a2cd45b3f26958ff135c7d8488a9a271a14329415b4ab267bb3a636521613d1)，区块 130307842，gas 2,540,839，部署钱包 `0x4EEd…19d3` |
+| 多签批量 | `docs/MAINNET-BUYBACK-SPLITTER-V2-SAFE-BATCH-2026-10-28.json`：一笔 `GangHandlerAdmin.setFactory(0x9346…8F2f, true)`，2026-10-28 已执行：[`0x8a6a7e09…100d`](https://bscscan.com/tx/0x8a6a7e09a0540fca0724cd3c7fec682078e674777b137d1b614f10c03ac2100d)，区块 130308783。执行后核对：v2 / v1 工厂都允许，handler owner 仍是管理合约，脚本检查模式「nothing to do」，真实 Agent 对 v2 `create(…, payee)` 的静态调用返回 `predict` 的地址（估算 gas 338,547） |
+| v1 工厂 `0x6bcd…8546` | 保持允许，直到 CLI 用户都换到 0.14.0（0.13.0 调的是 v1 的两参数 `create`）；之后可由多签 `setFactory(0x6bcd…8546, false)` 停用，它克隆出去的合约照常工作 |
+
+演练（anvil 主网 fork，区块 130307708）：同一脚本部署 → 冒充多签 `setFactory` → 真实 Agent `0xf7A8…14aA` 以 40%、payee `0x…be1ef` 克隆（地址等于 `predict`，已加白，`moduleOf` = v2 工厂）→ 建 WBNB 币并 bind → 打入 1 WBNB 拆分：payee 收到 0.6、dev 0、回购余额 0.4 → `setPayee` 后再拆：新 payee 收到 0.6、旧的不变 → `setPayee(自己)` 回滚 `BadPayee`、陌生地址回滚 `NotDev` → v1 工厂仍能克隆。
+
 ## 上主网前的演练（anvil 主网 fork，区块 130281857）
 
 - 同一个脚本在 fork 上部署，地址与上面一致；冒充多签按上表执行 3 笔，全部成功：handler 的 owner = 管理合约，管理合约 owner = 多签，工厂已允许。

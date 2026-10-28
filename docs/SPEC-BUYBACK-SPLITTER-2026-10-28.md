@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（产品规格 + 合约设计）
-- 代码：`src/gang/GangHandlerAdmin.sol`（handler 的 owner）、`src/gang/GangBuybackSplitterFactory.sol`、`src/gang/GangBuybackSplitter.sol`（克隆的实现）、`src/gang/interfaces/IGangRecipientModule.sol`（模块通用接口）；部署脚本 `script/DeployGangBuybackSplitterFactory.s.sol`；单测 `test/gang/GangBuybackSplitter.t.sol`（24 个）；CLI `gang create … --buyback <pct>`、`gang buyback …`；keeper gangfun-server `keeper/keeper-module-work.sh`
+- 代码：`src/gang/GangHandlerAdmin.sol`（handler 的 owner）、`src/gang/GangBuybackSplitterFactory.sol`、`src/gang/GangBuybackSplitter.sol`（克隆的实现）、`src/gang/interfaces/IGangRecipientModule.sol`（模块通用接口）；部署脚本 `script/DeployGangBuybackSplitterFactory.s.sol`；单测 `test/gang/GangBuybackSplitter.t.sol`（26 个）；CLI `gang create … --buyback <pct> [--buyback-to <addr>]`、`gang buyback …`；keeper gangfun-server `keeper/keeper-module-work.sh`
 - 测试网记录：`docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`
 - 来源：dev 需求（2026-10-28，经用户转达），用户确认：
   1. 只针对新币：dev 拿到的交易税，一部分回购，一部分到 dev 的地址；
@@ -87,9 +87,11 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 ## 5. 其它规则
 
+- **收款地址（payee，v2）**：回购以外的那份打给 `payee`，不再固定是 dev。建币时 `--buyback-to <地址>` 指定（工厂 `create(bps, salt, payee)`，0 = dev）；之后 dev 随时 `setPayee` 更换，**立即生效**（这是 dev 自己那份钱，不影响持币人，所以不设公告期），发 `PayeeSet` 事件。更换前到账的报价币先按旧地址拆分；欠款（`devOwed`）和 `sweep` 都付给当时的 payee。比例仍只有 dev 能改。v1 回购合约（主网第一个工厂 `0x6bcd…8546` 克隆的，`moduleType` = `buyback-burn-v1`）没有 payee，永远付给 dev；v2 的 `moduleType` 是 `buyback-burn-v2`。CLI、indexer、网站两种都认。
+
 - **绑定**：`bind(token)` 任何人可调，只能绑一次。要求：V3（curve）币、创建者是 dev、handler 里这个币的 recipient 是本合约。设成任何人可调，是为了防止 dev 故意不绑、再用 `sweep` 把报价币拿走。
-- **`sweep(asset)`**：绑定后，把绑定报价币以外的任何资产全部转给 dev（别的币把它填成 recipient、用别的报价币付的税，或者别人误转进来的）。绑定前不能 sweep。用绑定报价币付的税，不管来自哪个币，都按比例拆分。
-- **dev 收不到款**：报价币把 dev 拉黑时，推送失败不回滚，那部分记为 `devOwed`，回购照常进行；`releaseDev`（任何人可调）补发，dev 仍收不到时回滚，欠款不会丢。
+- **`sweep(asset)`**：绑定后，把绑定报价币以外的任何资产全部转给 payee（v1：dev）（别的币把它填成 recipient、用别的报价币付的税，或者别人误转进来的）。绑定前不能 sweep。用绑定报价币付的税，不管来自哪个币，都按比例拆分。
+- **收款方收不到款**：报价币把 payee（v1：dev）拉黑时，推送失败不回滚，那部分记为 `devOwed`，回购照常进行；`releaseDev`（任何人可调）补发给当时的 payee，仍收不到时回滚，欠款不会丢；v2 的 dev 也可以换一个能收款的 payee 再补发。
 - **余额被扣**：报价币余额少于账上应有的数（被没收、rebase）时，下一次拆分把差额按比例从回购余额和 dev 欠款两边扣（`Shortfall` 事件），合约继续能用。
 - **没有 owner、不可升级**：EIP-1167 克隆，实现合约由工厂部署（`pad` / `taxHandler` / `factory` 是实现里的 immutable，所有克隆共用）；`dev` 和初始比例由工厂在克隆的同一笔交易里 `initialize`（只有工厂能调、只能一次，实现合约本身不能初始化）。只读 pad 和 handler 的公开 view，只和这个币的交易对交易；不需要 pad、代币、分红金库、handler 给它任何权限。
 
@@ -138,6 +140,6 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 
 ## 8. 测试
 
-- 单测 `test/gang/GangBuybackSplitter.t.sol` 24 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、sweep、外盘税端到端。
+- 单测 `test/gang/GangBuybackSplitter.t.sol` 26 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、收款地址（建币时指定、默认 dev、只有 dev 能改、不能改成 0、更换前到账的按旧地址拆分、`sweep` 给收款地址、拉黑的收款地址记欠款且换地址后补发给新地址）、sweep、外盘税端到端。
 - 注意：`src/gang/**` 用 via-ir 单独编译，测试里 `new` 这些合约会变成 `vm.deployCode`，`vm.expectRevert` 看不到它的回滚（回滚会让测试直接当作通过）；构造函数的拒绝路径要经测试合约自己的 external 函数部署（`newFactory` / `newAdmin`）。
 - 测试网整轮见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`。

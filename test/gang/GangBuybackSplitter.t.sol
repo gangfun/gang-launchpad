@@ -44,7 +44,7 @@ contract GangBuybackSplitterTest is GangFixture {
     /// @dev The dev's splitter, from the factory (listed by the admin).
     function _splitter(address dev, uint16 bps) internal returns (GangBuybackSplitter s) {
         vm.prank(dev);
-        s = GangBuybackSplitter(factory.create(bps, bytes32(++_salt)));
+        s = GangBuybackSplitter(factory.create(bps, bytes32(++_salt), address(0)));
     }
 
     /// @dev The dev gets a splitter, creates a taxed V3 token paying it, buys on the curve, and anyone binds it.
@@ -146,7 +146,7 @@ contract GangBuybackSplitterTest is GangFixture {
         address dev = _newAgent();
         vm.prank(dev);
         vm.expectRevert(GangHandlerAdmin.NotFactory.selector);
-        factory.create(5_000, bytes32(0));
+        factory.create(5_000, bytes32(0), address(0));
         assertTrue(handler.isListed(address(s)));
         vm.prank(owner);
         admin.setFactory(address(factory), true);
@@ -167,26 +167,26 @@ contract GangBuybackSplitterTest is GangFixture {
         // only an Agent (only an Agent can create the token)
         vm.prank(makeAddr("notAgent"));
         vm.expectRevert(GangBuybackSplitterFactory.NotAgent.selector);
-        factory.create(5_000, bytes32(0));
+        factory.create(5_000, bytes32(0), address(0));
         address dev = _newAgent();
         vm.prank(dev);
         vm.expectRevert(GangBuybackSplitter.BadBps.selector);
-        factory.create(10_001, bytes32(0));
+        factory.create(10_001, bytes32(0), address(0));
 
         // the address is known before the clone, and is the dev's own: a salt is per dev, once
         bytes32 salt = keccak256("launch-1");
         address predicted = factory.predict(dev, salt);
         assertEq(predicted.code.length, 0);
         vm.prank(dev);
-        address s = factory.create(10_000, salt);
+        address s = factory.create(10_000, salt, address(0));
         assertEq(s, predicted);
         vm.prank(dev);
         vm.expectRevert(Errors.FailedDeployment.selector);
-        factory.create(10_000, salt);
+        factory.create(10_000, salt, address(0));
         address other = _newAgent();
         assertTrue(factory.predict(other, salt) != s);
         vm.prank(other);
-        assertEq(factory.create(1, salt), factory.predict(other, salt));
+        assertEq(factory.create(1, salt, address(0)), factory.predict(other, salt));
         GangBuybackSplitter sp = GangBuybackSplitter(s);
         assertEq(sp.dev(), dev);
         assertEq(sp.buybackBps(), 10_000);
@@ -194,21 +194,105 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(sp.pad(), address(pad));
         assertEq(sp.taxHandler(), address(handler));
         assertEq(sp.factory(), address(factory));
-        assertEq(sp.moduleType(), bytes32("buyback-burn-v1"));
+        assertEq(sp.moduleType(), bytes32("buyback-burn-v2"));
+        assertEq(sp.payee(), dev, "payee defaults to the dev");
         assertTrue(handler.isListed(s));
         assertEq(admin.moduleOf(s), address(factory));
         assertEq(factory.count(), 2);
         assertEq(factory.splitters()[0], s);
 
         // the implementation is never initialized; a clone only once, only by the factory
+        // a clone can't be its own payee (its predicted address)
+        bytes32 selfSalt = keccak256("self-payee");
+        address selfAt = factory.predict(dev, selfSalt);
+        vm.prank(dev);
+        vm.expectRevert(GangBuybackSplitter.BadPayee.selector);
+        factory.create(5_000, selfSalt, selfAt);
+
         GangBuybackSplitter impl = GangBuybackSplitter(factory.implementation());
         vm.expectRevert(GangBuybackSplitter.NotClone.selector);
-        impl.initialize(dev, 1);
+        impl.initialize(dev, 1, address(0));
         vm.expectRevert(GangBuybackSplitter.NotFactory.selector);
-        sp.initialize(dev, 1);
+        sp.initialize(dev, 1, address(0));
         vm.prank(address(factory));
         vm.expectRevert(GangBuybackSplitter.AlreadyInitialized.selector);
-        sp.initialize(dev, 1);
+        sp.initialize(dev, 1, address(0));
+    }
+
+    // ---------------------------------------------------------------- payee
+    /// @dev The dev's part goes to the payee: named at create, changed by the dev at once; quote that arrived before a
+    ///      change goes to the old payee, what is owed and swept to the payee of that moment.
+    function test_payee_atCreateAndChanged() public {
+        address dev = _newAgent();
+        address treasury = makeAddr("treasury");
+        vm.prank(dev);
+        GangBuybackSplitter s = GangBuybackSplitter(factory.create(3_000, bytes32(++_salt), treasury));
+        assertEq(s.payee(), treasury);
+        address t = _createV3(dev, address(wbnb), _tax(TAX, TAX, 5_000, address(s)));
+        s.bind(t);
+
+        uint256 dev0 = _bal(address(wbnb), dev);
+        wbnb.mintUnlimited(address(s), 10 ether);
+        s.split();
+        assertEq(_bal(address(wbnb), treasury), 7 ether, "the dev part to the payee");
+        assertEq(_bal(address(wbnb), dev), dev0, "nothing to the dev");
+        assertEq(s.buybackLeft(), 3 ether);
+
+        // only the dev changes it, never to 0
+        vm.prank(treasury);
+        vm.expectRevert(GangBuybackSplitter.NotDev.selector);
+        s.setPayee(treasury);
+        vm.prank(dev);
+        vm.expectRevert(GangBuybackSplitter.ZeroAddress.selector);
+        s.setPayee(address(0));
+        vm.prank(dev);
+        vm.expectRevert(GangBuybackSplitter.BadPayee.selector);
+        s.setPayee(address(s));
+
+        // what arrived before the change is split to the old payee first
+        address next = makeAddr("next");
+        wbnb.mintUnlimited(address(s), 10 ether);
+        vm.expectEmit(address(s));
+        emit GangBuybackSplitter.PayeeSet(treasury, next);
+        vm.prank(dev);
+        s.setPayee(next);
+        assertEq(_bal(address(wbnb), treasury), 14 ether);
+        assertEq(_bal(address(wbnb), next), 0);
+        wbnb.mintUnlimited(address(s), 10 ether);
+        s.split();
+        assertEq(_bal(address(wbnb), next), 7 ether);
+
+        // swept assets go to the payee too
+        quoteTok.mintUnlimited(address(s), 2 ether);
+        s.sweep(address(quoteTok));
+        assertEq(_bal(address(quoteTok), next), 2 ether);
+    }
+
+    /// @dev A payee the quote blacklists is owed, the buy-back is not held up; the owed part goes to the payee the dev
+    ///      names next.
+    function test_payee_owedGoesToTheCurrentPayee() public {
+        address dev = _newAgent();
+        address blocked = makeAddr("blocked");
+        vm.prank(dev);
+        GangBuybackSplitter s = GangBuybackSplitter(factory.create(5_000, bytes32(++_salt), blocked));
+        address t = _createV3(dev, address(blq), _tax(TAX, TAX, 5_000, address(s)));
+        s.bind(t);
+        blq.setBlocked(blocked, true);
+        blq.mint(address(s), 4 ether);
+        vm.expectEmit(address(s));
+        emit GangBuybackSplitter.DevOwed(2 ether);
+        s.split();
+        assertEq(s.devOwed(), 2 ether);
+        assertEq(s.buybackLeft(), 2 ether);
+        vm.expectRevert("blacklisted");
+        s.releaseDev();
+
+        address fresh = makeAddr("fresh");
+        vm.prank(dev);
+        s.setPayee(fresh);
+        assertEq(s.releaseDev(), 2 ether);
+        assertEq(_bal(address(blq), fresh), 2 ether);
+        assertEq(s.devOwed(), 0);
     }
 
     // ---------------------------------------------------------------- bind
@@ -780,9 +864,9 @@ contract GangBuybackSplitterTest is GangFixture {
         address dev = _newAgent();
         vm.prank(dev);
         vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(admin)));
-        factory.create(5_000, bytes32(0));
+        factory.create(5_000, bytes32(0), address(0));
         vm.prank(dev);
-        assertTrue(handler.isListed(factory2.create(5_000, bytes32(0))));
+        assertTrue(handler.isListed(factory2.create(5_000, bytes32(0), address(0))));
 
         // from a handler the Safe holds itself (the first takeover): handler.transferOwnership first
         vm.startPrank(owner);

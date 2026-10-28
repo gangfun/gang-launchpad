@@ -4,7 +4,7 @@
 
 | 版本 | 接入方式 | 本文 |
 |---|---|---|
-| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x0Ff5…9DA1`） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
+| 第二版（现行：管理合约 `0xBc2d…9a4d`、工厂 `0x08b9…a87D`，v2 回购模块带收款地址） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
 | 第一版 | 每个 dev 由平台部署一个回购合约，多签逐个 `list` 和 `setExcluded` | 第二部分（保留作记录；回购合约 `0xB43b…c0C9` 仍在白名单上，但不在 `modules()` 里，新 keeper 不管它） |
 
 - 链：BSC 测试网（chainId 97），2026-10-28
@@ -121,6 +121,32 @@ CLI 一键发射 BBFL（`--buyback 50 --dev-buy 0.5`）：克隆 [`0x28585D12C24
 | 11:13 | 铸 0.01 进回购合约（50%：回购部分 0.005 < 0.0075） | `false`；keeper「scanned 2 / 2, due 0」 | [`0xfa127004…f8bcb`](https://testnet.bscscan.com/tx/0xfa1270043a733b40ecbc6c4400991c067e0a6022b4004878fd17792fea7f8bcb) |
 | 11:13 | 再铸 0.01（回购部分 0.01） | `true, 0`：keeper 发 `work(0)`（拆分、记观测点），之后又不到点 | [`0x79bcd2d2…e7a1`](https://testnet.bscscan.com/tx/0x79bcd2d2affd3777fcc0652b84f05916909d8cadc051027e778ae9074669e7a1) |
 | 11:24 | 窗口满 | `work(127,635.02 枚)`：花 0.01，销毁 128,924.27 枚（等于预览值），回购余额清零 | [`0xf3efb4dd…5375`](https://testnet.bscscan.com/tx/0xf3efb4dd2e68437e31e82155ad653007ff169f0756e3bc23bd8ed53feff45375) |
+
+## v4 / v5 工厂：收款地址（`buyback-burn-v2`）
+
+v2 回购模块：回购以外的部分打给 `payee`（默认 dev，建币时 `--buyback-to` 指定，dev 随时 `setPayee`）。管理合约不变（v2），只换工厂：
+
+| 项 | 值 |
+|---|---|
+| GangBuybackSplitterFactory v5（现行，CLI 内置） | [`0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D`](https://testnet.bscscan.com/address/0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D)，实现合约 `0xD6e7122a815A7A4C017576d5374E1691D6BAb1Ac`；部署 [`0x96a5d70a…da43`](https://testnet.bscscan.com/tx/0x96a5d70aa801dbec448f7012e98d375f59bf0af2fc20544213f0b9767d89da43)，`setFactory` [`0x83aa3b0d…2409`](https://testnet.bscscan.com/tx/0x83aa3b0de4e6bc56ae10290884774220cf8205e27f8a8c18261ee1363eb92409)；停用 v4 [`0xb0b9dfe8…7f55`](https://testnet.bscscan.com/tx/0xb0b9dfe89462b5ba95f9b4705ea0ea62091f41ac09950826878fce0c5cab7f55)。比 v4 多一条：payee 不能是回购合约自己（`BadPayee`，自查时补上：付给自己会把 dev 那份在下次拆分里又拆一遍） |
+| GangBuybackSplitterFactory v4（已停用） | [`0x2a56B8Ee199827F2A8E241BC91def360569278Ec`](https://testnet.bscscan.com/address/0x2a56B8Ee199827F2A8E241BC91def360569278Ec)，实现合约 `0x980A1832B71995Ce8a1457362D077C7CeEE9C5Ca`；部署 [`0x8f65ccc8…6db2`](https://testnet.bscscan.com/tx/0x8f65ccc8697d17ab14c0abbda01df3519fdb01367930e961e78e422dcf1d6db2)（gas 2,534,545） |
+| `adminV2.setFactory(factoryV4, true)` | [`0x6bcb4fa3…3d41`](https://testnet.bscscan.com/tx/0x6bcb4fa382fa7fb631845b41980a1b6191bb181e97c469e74369dbda493e3d41) |
+| 停用 v3 工厂 | [`0x96b66604…c22a`](https://testnet.bscscan.com/tx/0x96b66604d2758526419d477411a8463345901739bfe84dbdad021092f209c22a) |
+
+CLI（`gang create … --buyback 50 --buyback-to 0x…be1ef`）：
+
+| 情况 | 结果 | 交易 |
+|---|---|---|
+| 克隆 | `buyback-burn-v2` 回购合约 [`0xE634ac01ACbe165b21ACE0301E423D223bbae2Df`](https://testnet.bscscan.com/address/0xE634ac01ACbe165b21ACE0301E423D223bbae2Df)，payee = `…be1ef` | [`0xd3702755…995b`](https://testnet.bscscan.com/tx/0xd37027552fcf2e860657ded003bd215bcd4dbbf8ab0f85c7ec3dcec6cd60995b) |
+| 改成别的 `--buyback-to`、或去掉它重跑 | 拒绝：这次启动的回购合约付给 `…BE1Ef` | — |
+| 地址校验和不对（大小写混写错） | 拒绝，提示写成校验和格式或全小写 | — |
+| 建币 PAYT `0xFC908B6191547E42C22D12f1fe94a0b3aA9a6a92` → bind → done | `buyback.payee` = `…BE1Ef` | [`0x30ceda74…b7fb`](https://testnet.bscscan.com/tx/0x30ceda74dca4d0e52c016bb973a31a0afbf21db600a03c192e941e647348b7fb)、[`0x29e66cc9…c226`](https://testnet.bscscan.com/tx/0x29e66cc904464ea45759b48cb039d2d0375543b07236416f76e6b9b58433c226) |
+| 铸 0.02 进回购合约、`split()` | payee 收到 0.01，dev 没收到，回购余额 0.01 | [`0x92d8485c…8952`](https://testnet.bscscan.com/tx/0x92d8485cea51f8b0db6b7106970623839ce0ec4da113ef24d5b327ea14708952) |
+| `gang buyback set-payee --to 0x…c0ffee` | 立即生效 | [`0x02eb46e6…276c`](https://testnet.bscscan.com/tx/0x02eb46e66e5f3dd5d68164edb60ed6858c19d9d4b8cd82b8bdcd80519d57276c) |
+| 再铸 0.02、`split()` | 新 payee 收到 0.01，旧 payee 不变 | [`0x65d9adc9…e7cf`](https://testnet.bscscan.com/tx/0x65d9adc9431627e97ebba1d9e059c867e1f7c3a3f110875dd6f25ac5a095e7cf) |
+| 陌生地址 `set-payee`、设成当前 payee、对 v1 回购合约（BBFL）`set-payee` | CLI 拒绝 | — |
+
+v5 复测：CLI `--buyback 40 --buyback-to 0x…be1ef` 发 PAY5 `0xD861D8F708f12f13AD926877B0050Cf255b4E4d3`（回购合约 `0x3f538e24e44EF0023a7DC84FD76bfB02fb4a2f95`，克隆 [`0xaf34a95c…b05d`](https://testnet.bscscan.com/tx/0xaf34a95c07572fa99bc211b8017c62ec1db6a97ee1de0b14092f10543268b05d)）；铸 0.01、`split()`：payee 收到 0.006，回购余额 0.004（[`0xbe85c7ed…d30c`](https://testnet.bscscan.com/tx/0xbe85c7ed5c8758454c00a4adb31c23d7149e6de6c3f59015a0450666e72ed30c)）；`setPayee(回购合约自己)` 回滚 `BadPayee`。
 
 ## 没测到
 

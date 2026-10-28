@@ -11,9 +11,12 @@ import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 
 /// @title GangBuybackSplitter (dev 税按比例回购销毁)
 /// @notice The tax recipient of one V3 (curve) token: the quote the tax handler pays it is split, `buybackBps` of it
-///         bought back from the token's pair and sent to 0xdead, the rest to the dev. A clone, set up in three steps:
-///         1. the dev calls GangBuybackSplitterFactory.create(bps) (the CLI's `--buyback`): the factory clones this
-///            implementation, `initialize`s it for the dev and has GangHandlerAdmin list it on the tax handler (a
+///         bought back from the token's pair and sent to 0xdead, the rest to the dev's `payee` (the dev itself unless
+///         it names another address; the dev can change it at any time — it is the dev's own share, holders are not
+///         affected). A clone, set up in three steps:
+///         1. the dev calls GangBuybackSplitterFactory.create(bps, salt, payee) (the CLI's `--buyback` [--buyback-to]):
+///            the factory clones this implementation, `initialize`s it for the dev and has GangHandlerAdmin list it on
+///            the tax handler (a
 ///            recipient other than the creator must be listed; the factory's clones all run this code over its pad);
 ///         2. the dev creates the token with it as `recipient`;
 ///         3. anyone `bind`s the token (once; the token's creator must be the dev and its recipient this contract —
@@ -24,18 +27,19 @@ import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 ///         Ratio changes (dev only): a higher buyback share applies at once; a lower one runs LOWER_NOTICE after it is
 ///         asked for (`applyBuybackBps`, anyone), so holders see a cut coming, and lapses unless applied within
 ///         CUT_TTL after that. Asking for the current ratio cancels a pending cut.
-///         The dev's part is pushed at the split; a push that fails (a quote that blacklists the dev) is owed
-///         (`devOwed`, `releaseDev`), so it never holds up the buy-back. A quote balance that shrinks under what is
+///         The dev's part is pushed to the payee at the split; a push that fails (a quote that blacklists the payee)
+///         is owed (`devOwed`, `releaseDev`, paid to the payee of that moment), so it never holds up the buy-back. A quote balance that shrinks under what is
 ///         held (a seized or rebased balance) is taken from both held parts in proportion at the next split, so the
 ///         splitter keeps working on what it still has.
 ///         The buy-back is GangBond's: anyone (the keeper, through `previewWork` / `work`) calls `burnChunk`; one
 ///         chunk per block, at most CHUNK_MAX_BPS of the pair's quote reserve, and none while the spot price is more
 ///         than MAX_PRICE_RISE_BPS above the pair's own TWAP — so whoever calls it can't sandwich it, and
 ///         `minTokensOut` is optional.
-/// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Reads the pad's and the handler's public views and trades only with the token's
-///      pair; needs no role from the pad, token, vault or handler. Any other token that names this contract as its
-///      recipient (a listed address is open to every creator) only adds quote: in the bound quote it is split like
-///      the rest, in any other asset `sweep` sends it to the dev.
+/// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Reads the pad's and the handler's
+///      public views and trades only with the token's pair; needs no role from the pad, token, vault or handler. Any
+///      other token that names this contract as its recipient (a listed address is open to every creator) only adds
+///      quote: in the bound quote it is split like the rest, in any other asset `sweep` sends it to the payee.
+///      v2 ("buyback-burn-v2") adds the payee; v1 clones (mainnet factory 0x6bcd…8546) pay the dev.
 contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -59,7 +63,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice `previewWork` is not due while the buy-back holds less than this share of the pair's quote reserve: each
     ///         swap-back pays a little, and a keeper tx for every trickle would cost more gas than it buys back.
     uint256 public constant WORK_MIN_BPS = 5;
-    bytes32 public constant MODULE_TYPE = "buyback-burn-v1";
+    bytes32 public constant MODULE_TYPE = "buyback-burn-v2";
 
     uint8 internal constant KIND_CURVE = 1;
 
@@ -69,8 +73,10 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     address public immutable factory;
     address internal immutable _self;
 
-    /// @notice The dev (set once by the factory).
+    /// @notice The dev (set once by the factory): changes the ratio and the payee.
     address public dev;
+    /// @notice Where the dev's part goes (the dev unless it named another address).
+    address public payee;
     /// @notice The bound token and its quote (0 until `bind`).
     address public token;
     bool internal _tokenIs0;
@@ -84,7 +90,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     uint64 public pendingAt;
     /// @notice Quote set aside for the buy-back and not spent yet.
     uint256 public buybackLeft;
-    /// @notice The dev's part whose push failed, held here until `releaseDev`.
+    /// @notice The dev's part whose push to the payee failed, held here until `releaseDev`.
     uint256 public devOwed;
     uint256 public lastBurnBlock;
 
@@ -113,6 +119,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     event BuybackBpsProposalCancelled(uint16 newBps);
     event BoughtBack(uint256 quoteIn, uint256 burned, uint256 left);
     event Swept(address indexed asset, uint256 amount);
+    event PayeeSet(address indexed oldPayee, address indexed newPayee);
 
     error ZeroAddress();
     error NotClone();
@@ -134,6 +141,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     error NotTradable();
     error Slippage();
     error NotSweepable();
+    error BadPayee();
 
     modifier onlyDev() {
         if (msg.sender != dev) revert NotDev();
@@ -149,16 +157,20 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         _self = address(this);
     }
 
-    /// @notice A clone's setup, by the factory in the tx that clones it.
-    function initialize(address dev_, uint16 buybackBps_) external {
+    /// @notice A clone's setup, by the factory in the tx that clones it (`payee_` 0 = the dev).
+    function initialize(address dev_, uint16 buybackBps_, address payee_) external {
         if (address(this) == _self) revert NotClone();
         if (msg.sender != factory) revert NotFactory();
         if (dev != address(0)) revert AlreadyInitialized();
         if (dev_ == address(0)) revert ZeroAddress();
         if (buybackBps_ > BPS) revert BadBps();
+        address to = payee_ == address(0) ? dev_ : payee_;
+        if (to == address(this)) revert BadPayee();
         dev = dev_;
+        payee = to;
         buybackBps = buybackBps_;
         emit BuybackBpsSet(0, buybackBps_);
+        emit PayeeSet(address(0), to);
     }
 
     function moduleType() external pure returns (bytes32) {
@@ -181,6 +193,17 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         pendingBps = newBps;
         pendingAt = at;
         emit BuybackBpsProposed(newBps, at);
+    }
+
+    /// @notice Send the dev's part to `newPayee` from now on (at once: it is the dev's own share). Quote that arrived
+    ///         before is split first and goes to the old payee; what is owed (`devOwed`) goes to the new one.
+    function setPayee(address newPayee) external onlyDev nonReentrant {
+        if (newPayee == address(0)) revert ZeroAddress();
+        // paying itself would loop the dev's part back into the next split
+        if (newPayee == address(this)) revert BadPayee();
+        _split();
+        emit PayeeSet(payee, newPayee);
+        payee = newPayee;
     }
 
     // ---------------------------------------------------------------- anyone
@@ -216,14 +239,14 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         _split();
     }
 
-    /// @notice Split first (a shortfall is shared before anything leaves), then push the dev's owed part (reverts while
-    ///         the dev still can't receive, so nothing owed is lost).
+    /// @notice Split first (a shortfall is shared before anything leaves), then push the dev's owed part to the payee
+    ///         (reverts while the payee still can't receive, so nothing owed is lost).
     function releaseDev() external nonReentrant returns (uint256 amount) {
         _split();
         amount = devOwed;
         if (amount == 0) revert NothingOwed();
         devOwed = 0;
-        IERC20(quote).safeTransfer(dev, amount);
+        IERC20(quote).safeTransfer(payee, amount);
         emit DevReleased(amount);
     }
 
@@ -287,13 +310,13 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         emit BoughtBack(quoteIn, burned, left);
     }
 
-    /// @notice Bound only: send the whole balance of any asset but the bound quote to the dev (another token's tax
+    /// @notice Bound only: send the whole balance of any asset but the bound quote to the payee (another token's tax
     ///         paid here in another quote, a stray transfer).
     function sweep(address asset) external nonReentrant {
         if (quote == address(0)) revert NotBound();
         if (asset == quote) revert NotSweepable();
         uint256 amount = IERC20(asset).balanceOf(address(this));
-        IERC20(asset).safeTransfer(dev, amount);
+        IERC20(asset).safeTransfer(payee, amount);
         emit Swept(asset, amount);
     }
 
@@ -377,7 +400,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         uint256 toBuyback = (incoming * buybackBps) / BPS;
         uint256 toDev = incoming - toBuyback;
         buybackLeft += toBuyback;
-        if (toDev != 0 && !_tryTransfer(quote, dev, toDev)) {
+        if (toDev != 0 && !_tryTransfer(quote, payee, toDev)) {
             devOwed += toDev;
             emit DevOwed(toDev);
         }
