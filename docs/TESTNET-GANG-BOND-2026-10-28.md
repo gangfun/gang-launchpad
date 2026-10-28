@@ -1,12 +1,20 @@
 # 测试网 · GangBond（Agent 押金承诺）
 
-GangBond 已部署到 BSC 测试网，挂在第 10 套内盘上。两枚币都走过了一遍：V3 币完整走完罚没流程（发押金 → 违约 → 举报 → 分块回购，按真实出块买完），打新币走完了除取回以外的全部操作。取回要等满 7 天，2026-11-05 之后再补测。
+GangBond 在 BSC 测试网部署了三版，都挂在第 10 套内盘上：
+
+| 版本 | 地址 | 区别 | 本文 |
+|---|---|---|---|
+| 第一版 | `0x587f563749A321624b5710d6D77010F183a65d7E` | 只能在毕业 / 开盘后押 | A、B 节 |
+| 第二版 | `0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716` | 发币后随时可押，承诺期从毕业 / 开盘起算；30 天兜底退款任何人可调 | C 节 |
+| 第三版（CLI 内置） | `0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3` | 同第二版，退款改成 dev 发起 + 3 天公告期（内部审查二） | D 节 |
+
+第一版：两枚币都走过了一遍：V3 币完整走完罚没流程（发押金 → 违约 → 举报 → 分块回购，按真实出块买完），打新币走完了除取回以外的全部操作。取回要等满 7 天，2026-11-05 之后再补测。
 
 - 链：BSC 测试网（chainId 97），2026-10-28
 - 规格：`docs/SPEC-GANG-BOND-2026-10-28.md`；PR #39
 - 驱动方式：CLI `gang bond … --testnet --calldata --from <addr>` 生成交易，`cast send --legacy` 签名发送（见文末「gas」）
 
-## 地址
+## 地址（第一版）
 
 | 项 | 值 |
 |---|---|
@@ -17,7 +25,7 @@ GangBond 已部署到 BSC 测试网，挂在第 10 套内盘上。两枚币都�
 | 举报人钱包 | `0x3FBf068ad90d1904857c14f8E3218cFD80B85376`（本次新建，只用于举报和回购） |
 | 源码验证 | 未做（缺 BscScan API key） |
 
-CLI 已内置这个地址（`skill/gang-cli/src/bond.js` 的 `TESTNET_BOND`），`gang bond … --testnet` 不需要设环境变量。
+CLI 现在内置的是第三版地址（见 D 节）；要操作第一版上的押金（比如 B 币 11-05 之后的取回），加 `GANG_TESTNET_BOND=0x587f563749A321624b5710d6D77010F183a65d7E`。
 
 ## A｜V3 币完整罚没流程
 
@@ -64,7 +72,46 @@ CLI 已内置这个地址（`skill/gang-cli/src/bond.js` 的 `TESTNET_BOND`）�
 | 卖出保护：`gang fair sell` 卖 2000 万 / 100 万 | 前者拒绝（`maxSellKeepingBond` 17,412,454），后者放行 | 只预览 |
 | 到期前取回 | CLI 拒绝（`NotDue`） | 只预览 |
 
-B 的押金还在生效，留着下次测取回：2026-11-05 04:08 UTC 之后执行 `gang bond settle --token 0x08DA…88C2 --testnet`，预期 0.661409 MockSPCXB 退回创建者，守约次数加 1。
+B 的押金还在生效，留着下次测取回：2026-11-05 04:08 UTC 之后执行 `GANG_TESTNET_BOND=0x587f563749A321624b5710d6D77010F183a65d7E gang bond settle --token 0x08DA…88C2 --testnet`（第一版合约），预期 0.661409 MockSPCXB 退回创建者，守约次数加 1。
+
+## C｜第二版：在内盘上押金
+
+| 项 | 值 |
+|---|---|
+| GangBond（第二版） | [`0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716`](https://testnet.bscscan.com/address/0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716) |
+| 部署交易 | [`0xdd50dbf4…4698`](https://testnet.bscscan.com/tx/0xdd50dbf47df86ff6f3a9ab61b4bad5254fc0373b157024f9c137add2111a4698)，区块 139370168，gas 2,732,393 |
+
+币 `0x10fF6DBa8c74c8Fa571094CA57F1E126B23Da935`：V3，还在内盘（距毕业约 15 WBNB），报价币 WBNB，创建者持有 211,116 枚。
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 内盘上 `post --cover 100` | CLI 拒绝：没有交易对，没法给 X 定价，要用 `--amount` | 只预览 |
+| `post`：押 0.01 BNB（原生 BNB），X = 150,000，7 天 | 成功，状态「待开始」：`deadline` 为空，可退款日期 2026-11-27，gas 202,919 | [`0x83cfdd08…a18b`](https://testnet.bscscan.com/tx/0x83cfdd083acf262a3e0af125833c551fd68b1ecebf7f6232fabd38aa4218a18b) |
+| 毕业前 `start` / `settle` / `refund` | CLI 分别提示：还没毕业 / 还没开始计时 / 要等满 30 天 | 只预览 |
+| `extend 3 天` | 成功，时长 7 → 10 天，仍待开始 | [`0xfef7e1a4…6721`](https://testnet.bscscan.com/tx/0xfef7e1a449546990eb0534cf7f81112b7020fa9feea5d38f9fdb12479c2a6721) |
+| 内盘卖出保护：卖 10 万 / 5 万 | 前者拒绝（`maxSellKeepingBond` 61,116），后者放行并带 `bondCheck` | 只预览 |
+| 创建者 `gang v3 sell --amount 100000 --break-bond`（内盘卖出） | 成功，余额 111,116 < X，链上 `isViolated = true` | [`0x77acd196…d50d`](https://testnet.bscscan.com/tx/0x77acd196323559ba855094379a3db3037f3c447f346b6461da3db381e3b2d50d) |
+| 举报人 `report`（内盘上） | 成功，举报人收到 0.0001 WBNB（1%），`burnLeft` 0.0099 | [`0x9e8f7229…9739`](https://testnet.bscscan.com/tx/0x9e8f722975569ebe7f29aaa89441b93616077ce8ed05e0ba70276611a9c47739) |
+| 毕业前 `burn` | 回滚 `NotTradable`；状态里写明等毕业，2026-11-27 前还没毕业就把报价币转 0xdead | 只预览 |
+
+这枚币要毕业得有人在内盘买满约 15 WBNB，测试网上没法凑齐，所以「毕业后开始计时」「30 天退款」「30 天后报价币转 0xdead」在单测和主网分叉上验证（规格文档「测试」一节）。2026-11-27 之后可以在这里补测报价币转 0xdead：`gang bond burn --token 0x10fF…a935 --testnet`。
+
+## E｜一条命令发射（`gang create --dev-buy --bond`、`gang fair create --bond`）
+
+同一条命令反复运行，每次签名发出它给出的那笔交易（GangBond 第三版）：
+
+| 命令 | 每次运行的结果 | 币 |
+|---|---|---|
+| `gang create --symbol BLT1449 --dev-buy 0.01 --bond 0.005 --bond-days 7` | 发币 → dev 内盘买入 2,107,826 枚 → 押金（X = 全部，待开始）→ done | [`0xA7F1…2e42`](https://testnet.bscscan.com/address/0xA7F1B8838ed7Be80D33Eef2025759a8b21Ea2e42) |
+| `gang fair create --symbol BFT1453 --shares 1 --bond 0.002 --bond-days 7` | 发币（含 1 份 dev 份额，50,000 枚）→ 押金（待开始）→ done | [`0xF8F7…d392`](https://testnet.bscscan.com/address/0xF8F7d668896BA0735e5e82CeA47B80Fb27f5d392) |
+| `gang create --symbol DBT1454 --dev-buy 0.002`（不押金） | 发币 → dev 内盘买入 422,233 枚 → done | [`0x48e9…eE74`](https://testnet.bscscan.com/address/0x48e93738985c06AafcA502Dc7e29722E4F68eE74) |
+
+测试中发现并修掉两个问题：
+
+- 完成后原先会删掉本地发射计划，再跑一次同一条命令就从头又发了一个币（测试网因此多出 `0x1153…9aAe`、`0x1AFD…37B5` 两个测试币）。现在完成后计划保留 7 天，再跑只会重复报告完成；要用同样的名称和代号再发，必须加 `--restart`。
+- 打新发币前的授权步骤被当成了「已发币」，下一次运行就去找新币，结果停住。现在只有发币那一笔预览成功才记计划。
+
+修复后，完成后再跑一次同一条命令，只返回 `done`，不生成交易。之后又加了一层：完成状态记进计划（连同找到的币地址），所以 dev 后来把币卖光（`DBT1454` 实测：内盘全部卖出，余额 0）再跑，仍然只报告完成，不会重新买入。
 
 ## gas：cast 发交易要用 legacy
 
@@ -75,6 +122,27 @@ CLI 的 `--calldata` 只输出 to / data / value，gas 由签名方决定；用 
 ## 本次没测到
 
 - 取回（`settle`）的真实上链：B 要等到 2026-11-05。取回逻辑在单测和主网分叉端到端里测过。
-- 原生 BNB 支付：两枚测试币的报价币都不是 WBNB。BNB 和 `--use-wbnb` 两条路径在主网分叉端到端里测过。
+- 第二 / 三版的毕业后开始计时、两步退款和报价币销毁：测试网凑不齐毕业，在单测和主网分叉上测过；C 币 2026-11-27 之后可补测报价币销毁。
+- 打新卖回份额的保护：测试网上没有正在打新、创建者持有份额的币，在主网分叉上测过。
+
+## D｜第三版：退款改成 dev 发起 + 3 天公告期
+
+| 项 | 值 |
+|---|---|
+| GangBond（第三版） | [`0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3`](https://testnet.bscscan.com/address/0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3) |
+| 部署交易 | [`0x0730733e…8851`](https://testnet.bscscan.com/tx/0x0730733e34c8667b65648cf52b07bf1de7c6df2c775f4671257e040b628a8851)，区块 139374309，gas 2,841,254 |
+
+同一枚内盘币 `0x10fF…a935`（创建者此时持有 111,116 枚）：
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| `post`：押 0.01 BNB，X = 100,000，7 天 | 成功，待开始，可申请退款的日期 2026-11-27，gas 202,980 | [`0x4491dbb1…82f5`](https://testnet.bscscan.com/tx/0x4491dbb16bae3391b01e26aca2369ce054567d9b5cca32871d8cd87038b282f5) |
+| 陌生人 `refund` | CLI 拒绝：只有创建者能申请 | 只预览 |
+| 创建者不满 30 天 `refund` | CLI 拒绝，给出可申请日期 | 只预览 |
+| 毕业前 `start` | CLI 拒绝 | 只预览 |
+| 内盘卖出保护：卖 2 万 / 5 千 | 前者拒绝（`maxSellKeepingBond` 11,116），后者放行 | 只预览 |
+
+这笔押金保持生效、没有违约，留着补测两步退款：2026-11-27 06:34 UTC 之后，创建者执行 `gang bond refund --token 0x10fF…a935 --testnet` 申请（开始 3 天公告期），3 天后再执行一次取回 0.01 WBNB。两步退款已在主网分叉上跑通（申请 → 公告期内执行被拒 → 3 天后取回）。
+- `--use-wbnb` 支付：在主网分叉端到端里测过（原生 BNB 支付已在 C 节上链）。
 - `baw` 签名：本次全部用 `--calldata` 加 cast 签名。
 - 服务端索引和 keeper：还没做。

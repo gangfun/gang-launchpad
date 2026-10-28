@@ -5,6 +5,7 @@ import { UA } from './version.js'
 import { walletFor } from './fair.js'
 import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets } from './gangpad.js'
 import { poolPayBnb, poolTrade } from './pool.js'
+import { bondGuard } from './bond.js'
 
 /**
  * `gang v3 …` — LaunchpadV3 (tax recipient): a token with its own buy / sell tax (1–5% each), a dividend share and a
@@ -491,6 +492,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (bal === 0n) fail('no balance to sell')
     const amount = flag('all') ? bal : parseUnits(parseAmount(fail, 'amount', opt('amount')), 18)
     if (amount > bal) fail('amount exceeds balance', { balance: formatUnits(bal, 18) })
+    // a bond posted on the curve already binds: a creator's curve sell below X breaks it
+    const guard = await bondGuard(ctx, { token, me, amount, testnet, breakBond: flag('break-bond'), settleFirst: flag('settle-first') }, rawOnly, summarize)
+    if (guard?.refuse) return out({ success: false, step: 'sell', wallet: me, ...guard.refuse })
     const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre.success ? { ...pre, ...notes.skipped() } : pre)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])
@@ -500,7 +504,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       step: 'sell', chainId: Number(ctx.chainId), token, amount: formatUnits(amount, 18), quote: c.quoteSymbol,
       expectOut: await units(ctx, c.quote, sim.result), minOut: await units(ctx, c.quote, minOut), curveTaxPct: 0,
       ...(c.sellTaxPct > 0 && { poolSellTaxPct: c.sellTaxPct }),
-      curveFeePct: (await feesOf(ctx)).curveFeePct, note: 'expectOut is after the 1% curve fee only (no tax on the curve; the sell tax applies only in the pool after graduation)',
+      curveFeePct: (await feesOf(ctx)).curveFeePct, ...guard?.info,
+      note: 'expectOut is after the 1% curve fee only (no tax on the curve; the sell tax applies only in the pool after graduation)',
     }, 'sell'))
   }
 

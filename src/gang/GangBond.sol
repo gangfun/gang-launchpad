@@ -67,19 +67,30 @@ interface IWBNBDeposit {
 }
 
 /// @title GangBond (Agent 押金承诺)
-/// @notice A creator of a GangLaunchpad token (V3 after graduation, 打新 after launch) posts a bond in the token's quote
-///         and promises its creating address holds at least `holdAmount` tokens until `deadline`. Two endings only:
+/// @notice A creator of a GangLaunchpad token posts a bond in the token's quote and promises its creating address holds
+///         at least `holdAmount` tokens. The bond can be posted any time after create — on the curve / during the 打新
+///         sale too — and the promise holds from the post. Its deadline is `duration` after the token reaches its
+///         Pancake pair (V3 graduation / 打新 launch): anyone `start`s the clock then (every other write does it too).
+///         Endings:
 ///         - `settle` (anyone, at or after the deadline, while the balance still meets the promise): the whole bond goes
 ///           back to the creator;
-///         - `report` (anyone, any time before settle, once the balance is below the promise): 1% to the reporter (none
-///           when the creator reports itself), the rest bought back from the token's Pancake pair in small chunks
-///           (`burnChunk`) and sent to 0xdead.
+///         - `report` (anyone, any time before settle, once the balance is below the promise — on the curve too): 1% to
+///           the reporter (none when the creator reports itself), the rest bought back from the token's pair in small
+///           chunks (`burnChunk`) and sent to 0xdead. Slashed before the pair: the buy-back waits for it; still no pair
+///           MAX_WAIT after the post, the rest goes to 0xdead as quote;
+///         - `refund` (creator, in two steps): posted before the pair and still no pair MAX_WAIT after the post, the
+///           creator `requestRefund`s; REFUND_NOTICE later, still no pair and the promise kept, `refund` returns the
+///           whole bond. The promise binds through the notice, and a graduation / launch during it cancels the request
+///           (the clock starts instead), so the bond can't be pulled unseen right before the pair. No other early
+///           withdrawal.
 ///         The time after the deadline and before `settle` still counts: a creator that sold before the deadline must
 ///         buy back before it can settle, and can be reported meanwhile.
 /// @dev Not upgradeable, no owner. Reads only the pad's and the token's public views and trades only with the token's
 ///      pair (the pad's `curves` / `sales` pair: an untaxed V3 token never sets `token.pair()`). Changes nothing in the
-///      pad, token, vault or tax handler and needs no role from them. The coverage views use the pair's spot reserves
-///      and never decide where a bond goes; the buy-back checks the spot price against the pair's own TWAP.
+///      pad, token, vault or tax handler and needs no role from them, so the pad can't tell it about a graduation: the
+///      clock starts at the first `start` (or other write) after it, which the keeper sends right away — a late start
+///      only makes the creator's commitment end later. The coverage views use the pair's spot reserves and never decide
+///      where a bond goes; the buy-back checks the spot price against the pair's own TWAP.
 contract GangBond is IGangBond, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -87,6 +98,10 @@ contract GangBond is IGangBond, ReentrancyGuard {
     uint256 public constant BPS = 10_000;
     uint64 public constant MIN_DURATION = 7 days;
     uint64 public constant MAX_DURATION = 90 days;
+    /// @notice Posted before the pair: how long the bond waits for it before `requestRefund` / the quote burn.
+    uint64 public constant MAX_WAIT = 30 days;
+    /// @notice A requested refund runs this long after the request (the promise binds meanwhile; buyers see it coming).
+    uint64 public constant REFUND_NOTICE = 3 days;
     /// @notice Reporter's share of the bond.
     uint256 public constant REPORTER_BPS = 100;
     /// @notice One buy-back chunk spends at most this share of the pair's quote reserve (as the tax handler's chunks).
@@ -106,7 +121,7 @@ contract GangBond is IGangBond, ReentrancyGuard {
     address public immutable pad;
     address public immutable wbnb;
 
-    /// @dev A token's pair and side, fixed once it graduated / launched (cached at its first `post`).
+    /// @dev A token's pair and side, fixed once it graduated / launched (cached the first time GangBond sees it live).
     struct Market {
         address pair;
         bool tokenIs0;
@@ -144,34 +159,39 @@ contract GangBond is IGangBond, ReentrancyGuard {
 
     // ---------------------------------------------------------------- creator
     /// @notice Post a bond: `amount` of the token's quote (WBNB quote: native BNB as msg.value works too), promising
-    ///         the creator holds at least `holdAmount` tokens until `deadline` (7–90 days from now).
-    function post(address token, uint256 amount, uint256 holdAmount, uint64 deadline) external payable nonReentrant {
-        (address creator, address quote, address pair) = _tradable(token);
+    ///         the creator holds at least `holdAmount` tokens from now until `duration` (7–90 days) after the token
+    ///         reaches its pair — from now when it already has.
+    function post(address token, uint256 amount, uint256 holdAmount, uint64 duration) external payable nonReentrant {
+        (address creator, address quote, address pair, bool live) = _padView(token);
         if (msg.sender != creator) revert NotCreator();
         Bond storage b = _bonds[token];
         if (b.state == State.Active || b.burnLeft != 0) revert BondLive();
         if (amount == 0) revert ZeroAmount();
-        if (deadline < block.timestamp + MIN_DURATION || deadline > block.timestamp + MAX_DURATION) {
-            revert BadDuration();
-        }
+        if (duration < MIN_DURATION || duration > MAX_DURATION) revert BadDuration();
         if (holdAmount == 0 || holdAmount > IERC20(token).balanceOf(creator)) revert BadHold();
-        if (marketOf[token].pair == address(0)) marketOf[token] = Market(pair, IBondPair(pair).token0() == token);
+        uint64 deadline;
+        if (live) {
+            _cacheMarket(token, pair);
+            deadline = uint64(block.timestamp) + duration;
+        }
 
         uint32 round = b.round + 1;
         _bonds[token] = Bond({
             creator: creator,
-            quote: quote,
-            round: round,
-            state: State.Active,
             postedAt: uint64(block.timestamp),
+            round: round,
+            quote: quote,
+            state: State.Active,
             deadline: deadline,
+            duration: duration,
+            refundAt: 0,
             amount: amount.toUint128(),
             holdAmount: holdAmount.toUint128(),
             burnLeft: 0
         });
         _history[creator].posted++;
         _pull(quote, amount);
-        emit BondPosted(token, creator, round, quote, amount, holdAmount, deadline);
+        emit BondPosted(token, creator, round, quote, amount, holdAmount, duration, deadline);
     }
 
     /// @notice Add to the bond (it can never be reduced).
@@ -179,6 +199,7 @@ contract GangBond is IGangBond, ReentrancyGuard {
         Bond storage b = _activeOf(token);
         if (msg.sender != b.creator) revert NotCreator();
         if (amount == 0) revert ZeroAmount();
+        _begin(token, b);
         uint128 total = (uint256(b.amount) + amount).toUint128();
         b.amount = total;
         _pull(b.quote, amount);
@@ -190,26 +211,45 @@ contract GangBond is IGangBond, ReentrancyGuard {
         Bond storage b = _activeOf(token);
         if (msg.sender != b.creator) revert NotCreator();
         if (newHoldAmount < b.holdAmount || newHoldAmount > IERC20(token).balanceOf(b.creator)) revert BadHold();
+        _begin(token, b);
         b.holdAmount = newHoldAmount.toUint128();
         emit HoldRaised(token, b.round, newHoldAmount);
     }
 
-    /// @notice Move the deadline later, at most MAX_DURATION from now.
-    function extend(address token, uint64 newDeadline) external nonReentrant {
+    /// @notice Lengthen the commitment by `by` seconds: before the pair, the duration (at most MAX_DURATION in all);
+    ///         after it, the deadline (at most MAX_DURATION from now).
+    function extend(address token, uint64 by) external nonReentrant {
         Bond storage b = _activeOf(token);
         if (msg.sender != b.creator) revert NotCreator();
-        if (newDeadline <= b.deadline || newDeadline > block.timestamp + MAX_DURATION) revert BadDuration();
-        b.deadline = newDeadline;
-        emit BondExtended(token, b.round, newDeadline);
+        if (by == 0) revert BadDuration();
+        _begin(token, b);
+        if (b.deadline == 0) {
+            if (b.duration + by > MAX_DURATION) revert BadDuration();
+        } else {
+            if (b.deadline + by > block.timestamp + MAX_DURATION) revert BadDuration();
+            b.deadline += by;
+        }
+        b.duration += by;
+        emit BondExtended(token, b.round, b.duration, b.deadline);
     }
 
     // ---------------------------------------------------------------- anyone
+    /// @notice The token reached its pair: start the clock of a bond posted before it (deadline = now + duration).
+    ///         Nothing to do once started; every other write starts it too.
+    function start(address token) external nonReentrant {
+        Bond storage b = _activeOf(token);
+        if (b.deadline != 0) return;
+        _begin(token, b);
+        if (b.deadline == 0) revert NotTradable();
+    }
+
     /// @notice The creator holds less than promised: slash the bond. 1% to the caller (none when the caller is the
-    ///         creator), the rest is left for `burnChunk`.
+    ///         creator), the rest is left for `burnChunk`. Works before the pair too.
     function report(address token) external nonReentrant {
         Bond storage b = _activeOf(token);
         uint256 bal = IERC20(token).balanceOf(b.creator);
         if (bal >= b.holdAmount) revert NotViolated();
+        _begin(token, b);
         uint256 reward = msg.sender == b.creator ? 0 : (uint256(b.amount) * REPORTER_BPS) / BPS;
         uint128 left = b.amount - uint128(reward);
         b.state = State.Slashed;
@@ -224,6 +264,8 @@ contract GangBond is IGangBond, ReentrancyGuard {
     ///         creator (never to the caller).
     function settle(address token) external nonReentrant {
         Bond storage b = _activeOf(token);
+        _begin(token, b);
+        if (b.deadline == 0) revert NotTradable();
         if (block.timestamp < b.deadline) revert NotDue();
         if (IERC20(token).balanceOf(b.creator) < b.holdAmount) revert Violated();
         // the pair holding fewer tokens than its reserve = mid flash swap: tokens borrowed from it must not pass
@@ -236,12 +278,42 @@ contract GangBond is IGangBond, ReentrancyGuard {
         emit BondSettled(token, b.round, b.creator, b.amount);
     }
 
+    /// @notice Posted before the pair and still no pair MAX_WAIT after the post: the creator asks for the bond back.
+    ///         It can run REFUND_NOTICE from now; until then the promise binds, and the pair coming cancels it.
+    function requestRefund(address token) external nonReentrant {
+        Bond storage b = _activeOf(token);
+        if (msg.sender != b.creator) revert NotCreator();
+        _requireNoPair(token, b);
+        if (b.refundAt != 0) revert AlreadyRequested();
+        if (block.timestamp < b.postedAt + MAX_WAIT) revert NotDue();
+        if (IERC20(token).balanceOf(b.creator) < b.holdAmount) revert Violated();
+        uint64 at = uint64(block.timestamp) + REFUND_NOTICE;
+        b.refundAt = at;
+        emit RefundRequested(token, b.round, at);
+    }
+
+    /// @notice A requested refund, REFUND_NOTICE on, still no pair and the promise kept: the bond goes back to the
+    ///         creator. Not counted as honored.
+    function refund(address token) external nonReentrant {
+        Bond storage b = _activeOf(token);
+        if (msg.sender != b.creator) revert NotCreator();
+        _requireNoPair(token, b);
+        if (b.refundAt == 0) revert NoRefundRequest();
+        if (block.timestamp < b.refundAt) revert NotDue();
+        if (IERC20(token).balanceOf(b.creator) < b.holdAmount) revert Violated();
+        b.state = State.Refunded;
+        IERC20(b.quote).safeTransfer(b.creator, b.amount);
+        emit BondRefunded(token, b.round, b.creator, b.amount);
+    }
+
     /// @notice Spend one chunk of a slashed bond on the token, straight from its pair, and send what arrives (after the
     ///         buy tax) to 0xdead. One chunk per token per block, at most CHUNK_MAX_BPS of the pair's quote reserve.
     ///         Returns (0, 0) without buying while the price check is not ready: the first call after a slash only
     ///         records an observation; later ones wait until TWAP_WINDOW has passed since it, and skip while the spot
     ///         price is more than MAX_PRICE_RISE_BPS above the average. After more than 2 × TWAP_WINDOW without a call
     ///         the observations start over (that call records only), so the average never spans a long idle stretch.
+    ///         Slashed before the pair: reverts NotTradable until it comes; still none MAX_WAIT after the post, the whole
+    ///         rest goes to 0xdead as quote (`burned` 0).
     /// @param minTokensOut Least tokens to burn (after the buy tax); checked only when a chunk is bought.
     function burnChunk(address token, uint256 minTokensOut)
         external
@@ -252,6 +324,18 @@ contract GangBond is IGangBond, ReentrancyGuard {
         if (b.state != State.Slashed || b.burnLeft == 0) revert NothingToBurn();
         if (lastBurnBlock[token] == block.number) revert BurnedThisBlock();
         Market memory m = marketOf[token];
+        if (m.pair == address(0)) {
+            (,, address pair, bool live) = _padView(token);
+            if (!live) {
+                if (block.timestamp < b.postedAt + MAX_WAIT) revert NotTradable();
+                quoteIn = b.burnLeft;
+                b.burnLeft = 0;
+                IERC20(b.quote).safeTransfer(DEAD, quoteIn);
+                emit BondBurned(token, b.round, quoteIn, 0, 0);
+                return (quoteIn, 0);
+            }
+            m = _cacheMarket(token, pair);
+        }
         (uint256 rT, uint256 rQ, uint256 cum) = _pairState(m);
         Twap memory w = _twaps[token];
         uint32 seen = w.recent.at;
@@ -289,18 +373,29 @@ contract GangBond is IGangBond, ReentrancyGuard {
         return b.state == State.Active && IERC20(token).balanceOf(b.creator) < b.holdAmount;
     }
 
-    /// @notice What the creator would get selling its promised holding into the pair now (Active bonds; 0 otherwise).
+    /// @inheritdoc IGangBond
+    function isLive(address token) external view returns (bool live) {
+        (,,, live) = _padView(token);
+    }
+
+    /// @notice What the creator would get selling its promised holding into the pair now (Active bonds of a token on its
+    ///         pair; 0 otherwise — before the pair there is no market to sell into).
     function dumpValue(address token) public view returns (uint256 quoteOut) {
         Bond storage b = _bonds[token];
         if (b.state != State.Active) return 0;
-        return quoteDump(token, b.holdAmount);
+        (Market memory m, bool live) = _liveMarket(token);
+        if (!live) return 0;
+        return _dump(token, m, b.holdAmount);
     }
 
-    /// @notice Bond ÷ dumpValue in bps (Active bonds; 0 otherwise). Above 10_000: dumping the holding loses money.
+    /// @notice Bond ÷ dumpValue in bps (Active bonds of a token on its pair; 0 otherwise). Above 10_000: dumping the
+    ///         holding loses money.
     function coverageBps(address token) external view returns (uint256) {
         Bond storage b = _bonds[token];
         if (b.state != State.Active) return 0;
-        uint256 dv = quoteDump(token, b.holdAmount);
+        (Market memory m, bool live) = _liveMarket(token);
+        if (!live) return 0;
+        uint256 dv = _dump(token, m, b.holdAmount);
         if (dv == 0) return type(uint256).max;
         return (uint256(b.amount) * BPS) / dv;
     }
@@ -312,17 +407,21 @@ contract GangBond is IGangBond, ReentrancyGuard {
 
     /// @inheritdoc IGangBond
     function quoteDump(address token, uint256 holdAmount) public view returns (uint256 quoteOut) {
-        Market memory m = _marketView(token);
-        (uint256 rT, uint256 rQ,) = _pairState(m);
-        uint256 xIn = holdAmount - (holdAmount * IBondToken(token).sellTaxBps()) / BPS;
-        return _amountOut(xIn, rT, rQ);
+        (Market memory m, bool live) = _liveMarket(token);
+        if (!live) revert NotTradable();
+        return _dump(token, m, holdAmount);
     }
 
     /// @inheritdoc IGangBond
     function previewBurn(address token) external view returns (bool ready, uint256 quoteIn, uint256 tokensOut) {
         Bond storage b = _bonds[token];
         if (b.state != State.Slashed || b.burnLeft == 0 || lastBurnBlock[token] == block.number) return (false, 0, 0);
-        (uint256 rT, uint256 rQ, uint256 cum) = _pairState(marketOf[token]);
+        (Market memory m, bool live) = _liveMarket(token);
+        if (!live) {
+            if (block.timestamp < b.postedAt + MAX_WAIT) return (false, 0, 0);
+            return (true, b.burnLeft, 0);
+        }
+        (uint256 rT, uint256 rQ, uint256 cum) = _pairState(m);
         (, ready) = _twapCheck(_twaps[token], cum, rT, rQ);
         if (!ready) return (false, 0, 0);
         quoteIn = _chunkOf(b.burnLeft, rQ);
@@ -337,10 +436,30 @@ contract GangBond is IGangBond, ReentrancyGuard {
         if (b.state != State.Active) revert NotActive();
     }
 
-    /// @dev The creator, quote and pair of a graduated V3 token or a launched 打新 token.
-    function _tradable(address token) internal view returns (address creator, address quote, address pair) {
+    /// @dev Start the clock of a pending bond once its token is on the pair (deadline = now + duration); a requested
+    ///      refund is void from then.
+    function _begin(address token, Bond storage b) internal {
+        if (b.deadline != 0) return;
+        (,, address pair, bool live) = _padView(token);
+        if (!live) return;
+        _cacheMarket(token, pair);
+        uint64 deadline = uint64(block.timestamp) + b.duration;
+        b.deadline = deadline;
+        b.refundAt = 0;
+        emit BondStarted(token, b.round, deadline);
+    }
+
+    /// @dev A refund needs the bond still pending and the token still off its pair.
+    function _requireNoPair(address token, Bond storage b) internal view {
+        if (b.deadline != 0) revert AlreadyLive();
+        (,,, bool live) = _padView(token);
+        if (live) revert AlreadyLive();
+    }
+
+    /// @dev The creator, quote and pair of a pad token, and whether it is on its pair yet (V3 graduated / 打新
+    ///      launched; the pair is 0 before that).
+    function _padView(address token) internal view returns (address creator, address quote, address pair, bool live) {
         uint8 kind = IGangPadBondView(pad).kindOf(token);
-        bool live;
         if (kind == KIND_CURVE) {
             (creator, quote,,,,, live,,,, pair,) = IGangPadBondView(pad).curves(token);
         } else if (kind == KIND_FAIR) {
@@ -348,14 +467,28 @@ contract GangBond is IGangBond, ReentrancyGuard {
         } else {
             revert UnknownToken();
         }
-        if (!live) revert NotTradable();
     }
 
-    function _marketView(address token) internal view returns (Market memory m) {
+    function _cacheMarket(address token, address pair) internal returns (Market memory m) {
         m = marketOf[token];
         if (m.pair != address(0)) return m;
-        (,, address pair) = _tradable(token);
-        return Market(pair, IBondPair(pair).token0() == token);
+        m = Market(pair, IBondPair(pair).token0() == token);
+        marketOf[token] = m;
+    }
+
+    /// @dev The token's market when it is on its pair (cached, or read from the pad without caching).
+    function _liveMarket(address token) internal view returns (Market memory m, bool live) {
+        m = marketOf[token];
+        if (m.pair != address(0)) return (m, true);
+        (,, address pair, bool l) = _padView(token);
+        if (!l) return (m, false);
+        return (Market(pair, IBondPair(pair).token0() == token), true);
+    }
+
+    function _dump(address token, Market memory m, uint256 holdAmount) internal view returns (uint256) {
+        (uint256 rT, uint256 rQ,) = _pairState(m);
+        uint256 xIn = holdAmount - (holdAmount * IBondToken(token).sellTaxBps()) / BPS;
+        return _amountOut(xIn, rT, rQ);
     }
 
     /// @dev Reserves (token side, quote side) and the quote-per-token cumulative price as of this block.
