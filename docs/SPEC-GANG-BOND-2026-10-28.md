@@ -98,4 +98,4 @@ GangBond 不可升级、没有 owner，构造时写死 `pad`（GangLaunchpad）�
 - 测试网 B 币的取回（2026-11-05 之后）。
 - 网站（gang-web-legacy）：币详情页押金面板和举报按钮、行情页标识和「有押金」筛选、创建者记录、文案。
 - 服务端（gangfun-server）：索引 10 个事件、`/bonds` 接口、行情列表带押金和覆盖率（以及「退款申请中」）、keeper（毕业 / 开盘时 `start`、举报、取回、每 10 分钟回购）。
-- CLI 把发币流程和押金串成一步（create → 内盘买入 → post）。
+

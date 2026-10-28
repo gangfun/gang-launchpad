@@ -86,6 +86,9 @@ gang bond settle --token <addr>                                  # anyone, after
 gang bond refund --token <addr>                                  # creator: no pair 30 days after the post → ask, then 3 days later get it back
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # push one buy-back chunk / decode GangBond events
 #   A creator's gang v3 sell (curve or pool) / gang fair sell / gang fair withdraw below X is refused unless --break-bond (past T: --settle-first)
+# Launch in one command: one tx per run — execute it, run the very same command again, until launch.stage = done
+gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]  # V3: create → dev buy → bond
+gang fair create … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>                 # 打新: create (dev shares) → bond
 gang execute --request-id <id>
 gang tx --hash <0x..>
 ```

@@ -96,6 +96,23 @@ B 的押金还在生效，留着下次测取回：2026-11-05 04:08 UTC 之后执
 
 这枚币要毕业得有人在内盘买满约 15 WBNB，测试网上没法凑齐，所以「毕业后开始计时」「30 天退款」「30 天后报价币转 0xdead」在单测和主网分叉上验证（规格文档「测试」一节）。2026-11-27 之后可以在这里补测报价币转 0xdead：`gang bond burn --token 0x10fF…a935 --testnet`。
 
+## E｜一条命令发射（`gang create --dev-buy --bond`、`gang fair create --bond`）
+
+同一条命令反复运行，每次签名发出它给出的那笔交易（GangBond 第三版）：
+
+| 命令 | 每次运行的结果 | 币 |
+|---|---|---|
+| `gang create --symbol BLT1449 --dev-buy 0.01 --bond 0.005 --bond-days 7` | 发币 → dev 内盘买入 2,107,826 枚 → 押金（X = 全部，待开始）→ done | [`0xA7F1…2e42`](https://testnet.bscscan.com/address/0xA7F1B8838ed7Be80D33Eef2025759a8b21Ea2e42) |
+| `gang fair create --symbol BFT1453 --shares 1 --bond 0.002 --bond-days 7` | 发币（含 1 份 dev 份额，50,000 枚）→ 押金（待开始）→ done | [`0xF8F7…d392`](https://testnet.bscscan.com/address/0xF8F7d668896BA0735e5e82CeA47B80Fb27f5d392) |
+| `gang create --symbol DBT1454 --dev-buy 0.002`（不押金） | 发币 → dev 内盘买入 422,233 枚 → done | [`0x48e9…eE74`](https://testnet.bscscan.com/address/0x48e93738985c06AafcA502Dc7e29722E4F68eE74) |
+
+测试中发现并修掉两个问题：
+
+- 完成后原先会删掉本地发射计划，再跑一次同一条命令就从头又发了一个币（测试网因此多出 `0x1153…9aAe`、`0x1AFD…37B5` 两个测试币）。现在完成后计划保留 7 天，再跑只会重复报告完成；要用同样的名称和代号再发，必须加 `--restart`。
+- 打新发币前的授权步骤被当成了「已发币」，下一次运行就去找新币，结果停住。现在只有发币那一笔预览成功才记计划。
+
+修复后，完成后再跑一次同一条命令，只返回 `done`，不生成交易。
+
 ## gas：cast 发交易要用 legacy
 
 `cast send` 默认发 EIP-1559 交易，只用 `--gas-price` 的话，小费（priority fee）是 1 wei。Chapel 验证者要求小费至少 0.1 gwei（官方节点的报错：`gas tip cap 1, minimum needed 100000000`），所以这些交易会一直卡在 publicnode 的内存池里不被打包，后面的 nonce 也跟着堵住。用 `cast send --legacy --gas-price 1gwei`，经官方节点 `https://data-seed-prebsc-1-s1.bnbchain.org:8545` 发送，就能正常打包。

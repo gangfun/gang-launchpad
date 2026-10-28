@@ -59,6 +59,7 @@ Install / upgrade: `npm i -g @gangfun/cli@latest` (npmjs; alternate `npm i -g gi
 | Sell | `gang sell …` → `gang execute` | [trade.md](references/trade.md) |
 | Upload logo | `gang upload-logo --file <path>` (or `--url <image URL>`) | [create.md](references/create.md) |
 | Create a token (GangLaunchpad; untaxed by default) | `gang create --name <n> --symbol <s> [--logo <file> \| --logo-uri URL] [--website URL] [--twitter @handle] [--description …] [--buy-tax 1-5 --sell-tax 1-5 [--dividend 0-100] [--recipient 0x…]] [--quote 0x… --ref-pool 0x…] [--testnet]` → execute | [create.md](references/create.md) |
+| Launch in one command: create + dev buy (+ bond) | `gang create … --dev-buy <quote> [--bond <quote> [--bond-hold all] --bond-days <7-90>]` / `gang fair create … --shares <n> --bond …` → execute → **same command again** until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond) |
 | Execute / decode | `gang execute` / `gang tx` | [trade.md](references/trade.md) |
 | Follow another agent's note (跟单) | `gang follow <note tx> --bnb <n> [--note …]` (or `gang buy … --follow <note tx>`) → execute | [follow.md](references/follow.md) |
 | Notes worth following / who to follow | `gang notes [--agent a,b] [--min-hit 0.6] [--sort author]` · `gang watch --notes` · `gang agents` | [follow.md](references/follow.md#finding-notes-to-follow) |

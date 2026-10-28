@@ -18,6 +18,7 @@ import { UA, checkUpdate } from './version.js'
 import { runFair } from './fair.js'
 import { runV3 } from './v3.js'
 import { runBond } from './bond.js'
+import { isLaunch, runLaunch } from './launch.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { MERGED_ERRORS_ABI, kindOf, padNets } from './gangpad.js'
@@ -231,6 +232,16 @@ const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet
                                          --logo-uri images are copied to gang.fun first (logoURI is permanent on-chain;
                                          other hosts expire). --keep-logo-uri puts a permanent URL (e.g. ipfs://) on-chain as is;
                                          gang.fun files (ipfs://<cid>, cdn.gang.fun/ipfs/<cid>) always go on as ipfs://<cid>
+  LAUNCH in one command (one tx per run: execute it, then run the very same command again until launch.stage = done):
+  gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]
+                                         V3: create → the dev buys on the curve (--dev-buy, as gang v3 buy) → bonds what it
+                                         holds (--bond-hold, default all; gang bond post). Wrap / approve steps come in between
+  gang fair create … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
+                                         打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
+                                         chain (a token this wallet created with this symbol since the plan); a run that finds
+                                         none never creates again by itself (the first may still be landing): --restart does.
+                                         Done stays done: running it again only reports. --note goes on the create only;
+                                         --bond needs GangBond on the network (testnet only for now), checked before the create
   NOTES on GangLaunchpad: gang create / gang v3 create|buy|sell / gang fair create|mint|withdraw take
                                          [--note "<why>" [--conf 0-100] [--reveal-after 1-72h]] as gang buy / sell (a create's
                                          note is its launch manifesto); gang v3 buy also --follow <note tx>. Mainnet only;
@@ -654,6 +665,8 @@ const createGateAgent = (me) =>
 
 // what `gang v3` / `gang fair` (and `gang create`) get from here; each call adds its `notes` (padNotes)
 const PAD_IO = { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, checkMeta: parseMeta, resolveMeta: resolveMetaUri }
+/** `gang create … --dev-buy … [--bond …]` / `gang fair create … --bond …`: one command, one tx per run (launch.js). */
+const LAUNCH_DEPS = { io: PAD_IO, runV3, runFair, runBond, padNotes: (kind, sub, pre) => padNotes(kind, sub, pre) }
 
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'quote', 'buy',
@@ -671,8 +684,10 @@ async function main() {
   }
   switch (cmd) {
     case 'fair':
+      if (args[1] === 'create' && isLaunch('fair', flag)) return runLaunch('fair', LAUNCH_DEPS)
       return runFair(args[1], { ...PAD_IO, notes: padNotes('fair', args[1]) })
     case 'v3':
+      if (args[1] === 'create' && isLaunch('v3', flag)) return runLaunch('v3', LAUNCH_DEPS)
       return runV3(args[1], { ...PAD_IO, notes: padNotes('v3', args[1]) })
     case 'bond':
       return runBond(args[1], { opt, flag, out, fail, summarize: summarizePreview })
@@ -937,6 +952,7 @@ async function main() {
       if (flag('pair-or-quote') || flag('pair')) {
         fail('--pair-or-quote was removed (CLI ≤0.3.0 encoded a create the contract does not have). Use --quote <ERC-20> --ref-pool <Pancake pair/pool holding it>; omit both for WBNB.')
       }
+      if (isLaunch('v3', flag)) return runLaunch('v3', LAUNCH_DEPS)
       return runV3('create', { ...PAD_IO, notes: padNotes('v3', 'create') })
     }
     case 'execute': {
