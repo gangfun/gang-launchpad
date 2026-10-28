@@ -18,7 +18,7 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
 
 // BSC 56, factory v2 (payee; docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md). v1 was 0x6bcd…8546 (2-argument create)
 export const MAINNET_SPLITTER_FACTORY = '0x93467Cb38B9Cb7f6EF3b67d2226Eb8b77ca58F2f'
-export const TESTNET_SPLITTER_FACTORY = '0x08b9E2Cf5F666b55F262239b19e25de25b8ba87D'
+export const TESTNET_SPLITTER_FACTORY = '0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe'
 /** The factory's clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 and v3 their payee; v3 buys at
  *  most one chunk per 4 minutes (GangBond audit H-1). */
 export const BUYBACK_TYPE = 'buyback-burn-v3'
