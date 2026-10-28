@@ -1,13 +1,107 @@
 # 测试网 · GangBuybackSplitter（dev 税按比例回购销毁）
 
-回购合约挂在第 10 套内盘上，走完了接入的全部步骤：部署并检查 → 多签 `list` 和 `setExcluded` → dev 建币时 recipient 填它 → `bind` → 毕业 → 池子里卖出交税 → keeper `process` → 拆分 → `burnChunk` 买入并销毁。比例调整（提高、申请下调、取消下调）和部署脚本的检查模式也都在链上跑过。
+第 10 套内盘上跑了两版：
+
+| 版本 | 接入方式 | 本文 |
+|---|---|---|
+| 第二版（现行） | GangHandlerAdmin 接管 handler 的 owner，dev 用 CLI `gang create … --buyback <pct>` 自己克隆回购合约（工厂在同一笔交易里加白），keeper 走通用的 `previewWork` / `work` | 第一部分 |
+| 第一版 | 每个 dev 由平台部署一个回购合约，多签逐个 `list` 和 `setExcluded` | 第二部分（保留作记录；回购合约 `0xB43b…c0C9` 仍在白名单上，但不在 `modules()` 里，新 keeper 不管它） |
+
+- 链：BSC 测试网（chainId 97），2026-10-28
+- 规格：`docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md`
+- 发交易：`cast send --legacy --gas-price 0.1gwei`（原因见 `docs/TESTNET-GANG-BOND-2026-10-28.md`「gas」）；CLI 步骤用 `--calldata --from` 取出交易，cast 签名发送
+
+# 第一部分 · 第二版：管理合约 + 工厂 + CLI
+
+## 部署（`script/DeployGangBuybackSplitterFactory.s.sol`）
+
+| 项 | 值 |
+|---|---|
+| GangHandlerAdmin | [`0x4FcF8C9F7e43987A9080C832Aadf95F40f4ca2a3`](https://testnet.bscscan.com/address/0x4FcF8C9F7e43987A9080C832Aadf95F40f4ca2a3)，owner = `0xCa8e…00b6`（第 10 套 owner），handler = `0xe190…Ca7c` |
+| GangBuybackSplitterFactory | [`0x2EBecb75D7C929912800f12ef7b52A63A14CA80E`](https://testnet.bscscan.com/address/0x2EBecb75D7C929912800f12ef7b52A63A14CA80E)，实现合约 `0x220D7dd2A0C16df599d6Cdef60Ebd8cb3340EEef` |
+| 部署 | admin [`0xb128d292…0fb3`](https://testnet.bscscan.com/tx/0xb128d2923d341f33a1d43ca4dcdaf99e9ece483dd836b44dbdd4a009b5630fb3)（gas 636,160）、工厂 + 实现 [`0x8a0d207c…8c18`](https://testnet.bscscan.com/tx/0x8a0d207cf80693e5a2a30bd24494d6de58cbfba85f9f6fa15a0bafec62e68c18)（gas 2,381,506） |
+| 批量（测试网由 owner 钱包直接执行，主网是多签） | `handler.transferOwnership(admin)` [`0x9f022d40…f2b5`](https://testnet.bscscan.com/tx/0x9f022d40f521c947b36cbad981ea8091b98e311f53e6690a66741b5eb4f0f2b5)、`admin.exec(acceptOwnership())` [`0x9c808002…ed41`](https://testnet.bscscan.com/tx/0x9c80800206bf418493185420212702dc1f0cd7b81894c0e4b421aa958e99ed41)、`admin.setFactory(factory, true)` [`0x1fcfe132…574b`](https://testnet.bscscan.com/tx/0x1fcfe1324b48df33f27aa350b46f3a89376bdbf9e2bb0b51300711e150d4574b) |
+
+**第 10 套 handler 的 owner 现在是 GangHandlerAdmin。** owner 钱包对 handler 的管理操作（list / delist、换 keeper 等）要经 `admin.exec(<calldata>)`。交回：`admin.exec(transferOwnership(0xCa8e…00b6))`，再由 owner 钱包调 `handler.acceptOwnership()`（交回后工厂就不能再加白，CLI 的 `--buyback` 在测试网上会失败）。
+
+## CLI 一键发射（`gang create … --buyback 50`）
+
+```
+gang create --name "Buyback Factory Test" --symbol BBFT --buy-tax 3 --sell-tax 3 --dividend 50 --buyback 50 --dev-buy 0.5 \
+  --quote 0x02B3dE73aF2c1F99c7EFbDb65bcB960AACF4CF1c --testnet --calldata --from 0xCa8e…00b6
+```
+
+同一条命令跑了 5 次：
+
+| `launch.stage` | 结果 | 交易 |
+|---|---|---|
+| `buyback-splitter` | 克隆回购合约 [`0xBCb5334145535502aC819903B0a0304fF5CE8A39`](https://testnet.bscscan.com/address/0xBCb5334145535502aC819903B0a0304fF5CE8A39)（50%），同一笔里加白，gas 347,453 | [`0xcb284f3e…7129`](https://testnet.bscscan.com/tx/0xcb284f3e122e269cd5960c024143921d886dc4491f0a9d00253151de8c4a7129) |
+| `create` | BBST 之后的新币 BBFT [`0x25EFfB4D210AfEa703258222f50D9CF28b72Dc46`](https://testnet.bscscan.com/address/0x25EFfB4D210AfEa703258222f50D9CF28b72Dc46)，route 的 recipient = 回购合约，gas 1,710,223 | [`0xfa607316…9610`](https://testnet.bscscan.com/tx/0xfa6073167e345ac0523712b8710491196039fc81d5138d1e6be750c4bc599610) |
+| `bind` | gas 103,462 | [`0x7d431e13…d29b`](https://testnet.bscscan.com/tx/0x7d431e13ce56be2d238f78543392f4457b0f93621507c840ab00610fd9afd29b) |
+| `dev-buy` | 买到 1% 上限 | [`0x0b7d1ca1…4e44`](https://testnet.bscscan.com/tx/0x0b7d1ca1f7565efea4db91314e5ca44804787daa4ff9eac43597ae20312e4e44) |
+| `done` | 报告里带 `buyback`（回购合约、比例、待回购金额） | — |
+
+`gang v3 info --token 0x25EF…Dc46` 的 `recipientLabel` 是 `buyback-burn-v1`，并在 `buyback` 下给出同样的状态。
+
+比例（`gang buyback …`）：
+
+| 命令 | 结果 | 交易 |
+|---|---|---|
+| `set --pct 60` | 立即生效 | [`0x314a8b58…1e52`](https://testnet.bscscan.com/tx/0x314a8b5857361ea1d95a99e5b7526fed889390e790bfeafb4df9c7f8c7fe1e52) |
+| `set --pct 40` | `ask-cut`：`pendingCut` = 40%，10-31 10:27 起可执行、11-07 作废 | [`0x0bc517c7…c8d2`](https://testnet.bscscan.com/tx/0x0bc517c7a11b852838d9a00bd3937a1309cf4505815f746dff52814c8ea4c8d2) |
+| `apply` | CLI 拒绝：3 天公告期没到 | 只预览 |
+| `set --pct 60` | 取消下调，`pendingCut` 为空 | [`0x91d0d6ff…ce2a`](https://testnet.bscscan.com/tx/0x91d0d6ff5160f647197a18a4a8d555156fb9b3157a8291858ce8b117aafdce2a) |
+| 别的地址 `set` | CLI 拒绝：只有 dev 能改 | 只预览 |
+
+## 毕业、交税、keeper（gangfun-server `keeper/keeper-module-work.sh`）
+
+- 毕业：79 个测试 Agent 各买 1%，169 笔全部成功，1,947 万 gas；交易对 `0xc57f4DE5C6A0728402fbEEF08778fe80d56808e7`。买家剩下的 gas 收回（79 笔，0.004787 tBNB）。
+- 交税：dev 在池子里卖 3 次各 200 万枚，`process` 卖完剩下的 6 万枚累计税（[`0xae823ed9…8127`](https://testnet.bscscan.com/tx/0xae823ed9aa59475c4db12cf5160aa826c987ecc586d43e78206c06603a778127)）。回购合约待拆分 0.005397。
+- keeper（分支 `feat/buyback-burn-keeper` 的 `keeper-module-work.sh`，本机运行，`PADS=t10:…`，测试网钥匙当 keeper）：从 `handler.owner()` = admin 的 `modules()` 找到 1 个模块。
+
+| 时间（UTC） | `previewWork` | keeper | 交易 |
+|---|---|---|---|
+| 10:36 | due，`minOut` 0（第一次观测） | dry-run 通过；`--broadcast` 发 `work(0)`：按 60% 拆分（回购 0.0032381），记观测点 | [`0x84d59202…ec1a`](https://testnet.bscscan.com/tx/0x84d59202a8958f1746113d2b084c87fd101424568d2583b8972d7fda5453ec1a) |
+| 10:36 | not due | 不发 | — |
+| 10:46 | due，`minOut` = 预览销毁量 × 99% | `work(43,862.85 枚)`：花 0.0032381，销毁 44,305.91 枚（等于预览值），回购余额清零 | [`0x5a2b0230…b689`](https://testnet.bscscan.com/tx/0x5a2b0230797e7cda4e46e3812cae28db0b4d309ad16b50f92e7db972c876b689) |
+| 10:46 | not due | 不发 | — |
+
+这一版没有从分红中排除回购合约（规格 §6）。
+
+## 没测到
+
+- 下调公告期满后执行（`gang buyback apply`）：BBFT 上的下调已取消；要等 3 天。单测覆盖执行、作废、取消。
+- `gang buyback release` / `bind` 单独用：launch 里的 bind 已上链；release 要报价币拉黑 dev，单测覆盖。
+- 拉盘后暂停、恢复：第一版的 keeper 一节在链上测过（同样的合约逻辑），`previewWork` 在拉盘后的行为由单测 `test_work_dueWhenItActs` 覆盖。
+- 主网：要多签执行第 2 步的批量（handler owner 转给管理合约），并在服务器上装 `keeper-module-work.sh` 的 cron。
+
+## 复跑
+
+```sh
+# 管理合约 + 工厂（打印多签批量；测试网上 owner 钱包是部署者时直接执行）
+GANG_PAD=0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1 DEPLOYER_PRIVATE_KEY=… \
+  forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com \
+  --broadcast --slow --legacy --with-gas-price 100000000
+# 只核对已部署的
+GANG_PAD=… HANDLER_ADMIN=0x4FcF…a2a3 SPLITTER_FACTORY=0x2EBe…A80E \
+  forge script script/DeployGangBuybackSplitterFactory.s.sol --rpc-url https://bsc-testnet-rpc.publicnode.com
+# keeper（gangfun-server）
+PADS=t10:0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1@0 BSC_RPC=https://bsc-testnet-rpc.publicnode.com \
+  keeper/keeper-module-work.sh            # dry-run；--broadcast 要 KEEPER_PRIVATE_KEY = EXPECTED_KEEPER，GAS_ARGS="--legacy --gas-price 100000000"
+```
+
+# 第二部分 · 第一版：逐个部署、多签 list
+
+以下是第一版的记录（合约代码与现行版本的拆分 / 回购规则相同，只是构造方式不同；部署脚本 `script/DeployGangBuybackSplitter.s.sol` 已换成 `DeployGangBuybackSplitterFactory.s.sol`，keeper 一节用的 `keeper-buyback-burn.sh` 已换成 `keeper-module-work.sh`）。
+
+第一版回购合约挂在第 10 套内盘上，走完了接入的全部步骤：部署并检查 → 多签 `list` 和 `setExcluded` → dev 建币时 recipient 填它 → `bind` → 毕业 → 池子里卖出交税 → keeper `process` → 拆分 → `burnChunk` 买入并销毁。比例调整（提高、申请下调、取消下调）和部署脚本的检查模式也都在链上跑过。
 
 - 链：BSC 测试网（chainId 97），2026-10-28
 - 规格：`docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md`
 - 合约：`src/gang/GangBuybackSplitter.sol`；部署 / 检查脚本：`script/DeployGangBuybackSplitter.s.sol`
 - 发交易：`cast send --legacy --gas-price 0.1gwei`（原因见 `docs/TESTNET-GANG-BOND-2026-10-28.md`「gas」）
 
-## 地址
+### 地址
 
 | 项 | 值 |
 |---|---|
@@ -21,7 +115,7 @@
 
 测试网上 dev 和平台 owner 是同一个钱包（第 10 套的 owner `0xCa8e…00b6`，持有 Agent ID）：`list` / `setExcluded` 用它签名，建币、改比例也用它。主网上两者分开：dev 只签建币和改比例，`list` / `setExcluded` 由 Safe 执行。
 
-## 接入
+### 接入
 
 | 步骤 | 结果 | 交易 |
 |---|---|---|
@@ -31,13 +125,13 @@
 | dev `create`（recipient = 回购合约） | 成功，gas 1,622,424 | [`0xa5728340…ec15`](https://testnet.bscscan.com/tx/0xa5728340e6adf2dd2d685ad8bae19188e06afaff3bd2bc33c33ec66b8a4fec15) |
 | `bind(BBST)` | 成功，`token` / `quote` 写入，gas 98,547 | [`0xb14b4703…9247`](https://testnet.bscscan.com/tx/0xb14b47039d163c90e0575c561511048f96a7af6f1384e990ec7fe20e3a199247) |
 
-## 毕业、交税、拆分
+### 毕业、交税、拆分
 
 - 毕业：dev 在内盘买到 1% 上限（1,000 万枚），之后 79 个测试 Agent（`GangTestnetE2E` 的 `gang-v3-testnet` 钱包）各买到 1%，最后一笔毕业建池。共 163 笔（含给买家预付 gas），1,950 万 gas，全部成功；最后一笔 [`0x8a3975bf…c088`](https://testnet.bscscan.com/tx/0x8a3975bf10c7216ca6201bbc53d580cfebf0a93af1248cd18c5b08e8793dc088)。买家剩下的 gas 随后收回（80 笔转账，共 0.009163 tBNB）。
 - 交税：dev 在池子里卖 3 次，每次 200 万枚（[`0x49ac208e…dee8`](https://testnet.bscscan.com/tx/0x49ac208e8096886f041c1ea59fc58c6fc427e5045b8059bde5faa9ce05b2dee8)、[`0xb2f31209…30af`](https://testnet.bscscan.com/tx/0xb2f312099d2a3af446eb9fa9507758feb25d42a08487d5c62582d28edefe30af)、[`0x8d90ae72…f080`](https://testnet.bscscan.com/tx/0x8d90ae726f664e9e3da33367c429927534050806226568e3e3905f62c7c3f080)）。卖出途中 handler 的 swap-back 卖掉了一部分累计税，回购合约已收到 0.003632 MockSPCXB。
 - `process(BBST, 60,000 枚, minQuoteOut = 预估 × 97%)`：把剩下的累计税卖完，回购合约再收到 0.001764，待拆分合计 0.005397。gas 298,892，[`0x43bb28f6…c986`](https://testnet.bscscan.com/tx/0x43bb28f69c5f9a3e0c7965be53d1a8ffa07c9fc1accf076ff899e9258208c986)。`minQuoteOut` 填 0 会被拒绝（`ZeroAmount`）。
 
-## 回购（`burnChunk`）
+### 回购（`burnChunk`）
 
 | 时间（UTC） | 结果 | 花费（MockSPCXB） | 销毁（枚） | 剩余 `buybackLeft` | gas | 交易 |
 |---|---|---|---|---|---|---|
@@ -48,7 +142,7 @@
 - 交易对报价币储备约 14.57，单块上限 0.5% ≈ 0.0728，所以这次一块就买完。
 - 买完后回购合约持有 0 枚代币、0 报价币，金库里的份额为 0（已排除，回购途中没有写份额）。再调 `burnChunk` 报 `NothingToBurn`，`releaseDev` 报 `NothingOwed`。
 
-## 比例调整与部署脚本检查
+### 比例调整与部署脚本检查
 
 | 步骤 | 结果 | 交易 |
 |---|---|---|
@@ -62,7 +156,7 @@
 
 当前状态：比例 6000，没有待执行的下调。
 
-## keeper（gangfun-server `keeper/keeper-buyback-burn.sh`）
+### keeper（gangfun-server `keeper/keeper-buyback-burn.sh`）
 
 脚本在 gangfun-server 分支 `feat/buyback-burn-keeper`（`90d0d54`），本机运行，配置 `PADS=t10:0xFebF…5BB1@…`，测试网钥匙当 keeper（`EXPECTED_KEEPER` 设成它），`GAS_ARGS="--legacy --gas-price 100000000"`。回购合约从 handler 白名单里自动找到（演示金库没有被误认）。为了有东西可买，直接往回购合约铸 MockSPCXB 当作到账的税（比例此时是 6000）。
 
@@ -77,18 +171,18 @@
 
 本机有 `flock` 但没有 `/run`，所以测试时设了 `KEEPER_LOCK`；服务器上用默认的 `/run/gang-keeper.lock`，和其它任务共用。
 
-## 花费
+### 花费
 
 整轮约 2,737 万 gas，按 0.1 gwei 合 0.0027 tBNB；其中毕业的 163 笔占 1,950 万。
 
-## 本次没测到（在单测里覆盖：`test/gang/GangBuybackSplitter.t.sol`，22 个）
+### 本次没测到（在单测里覆盖：`test/gang/GangBuybackSplitter.t.sol`，22 个）
 
 - 下调公告期满后执行（`applyBuybackBps`）、过期作废：要等 3 天 / 10 天。
 - dev 被报价币拉黑时记为欠款（`devOwed`）、之后 `releaseDev`；余额被扣时两部分按比例分摊。
 - 滑点保护（`minTokensOut`）的回滚。价格被拉高时跳过、之后恢复，已在上面 keeper 一节上链测过。
 - `sweep` 别的资产。
 
-## 复跑
+### 复跑
 
 ```sh
 # 部署 + 检查（打印 Safe 批量）

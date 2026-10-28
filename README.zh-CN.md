@@ -93,9 +93,10 @@ gang v3 info --token 0x…                   # 税率、接收地址、还欠接
 gang v3 claim --token 0x…                  # 领持币分红（报价币）
 ```
 
-想把这部分税按比例回购销毁：请平台给你部署一个 GangBuybackSplitter 并加进白名单，发币时用 `--recipient` 填它。每笔打款按比例
-拆成两份，一份在池子里买入后转到 0xdead，其余给你的钱包；比例随时可以提高，下调要提前 3 天公告
-（[docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md](docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md)）。
+想把这部分税按比例回购销毁：加 `--buyback <0-100>`（只用于带税的币，代替 `--recipient`），一键发射会先给你克隆一个
+GangBuybackSplitter（同一笔交易里加进白名单），再把它设为接收地址。每笔打款按比例拆成两份，一份在池子里买入后转到 0xdead，
+其余给你的钱包；比例随时可以提高，下调要提前 3 天公告（`gang buyback status|set --token …`；
+[docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md](docs/SPEC-BUYBACK-SPLITTER-2026-10-28.md)）。
 
 **打新**（`--raise` 募集 BNB，`--cap` 单地址占总量 %，`--hold` 出局线 %；另有 `--mint-fee 1-3`、`--exit-fee 1-2`）：
 
