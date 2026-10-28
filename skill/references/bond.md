@@ -59,7 +59,7 @@ All take `--testnet`, `--calldata` (raw tx) and `--from <addr>` like `gang v3`. 
 `post` / `topup` of a WBNB-quoted token pay native BNB; `--use-wbnb` pays WBNB instead (approve first, then re-run).
 A `burn` preview made while no chunk is ready sends the maximum minimum: if a chunk has become buyable by the time it
 lands, it reverts instead of buying unpriced; re-run for a priced preview.
-GangBond is built in on BSC testnet (`--testnet`, `0x587f563749A321624b5710d6D77010F183a65d7E`); it is not on mainnet
+GangBond is built in on BSC testnet (`--testnet`, `0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716`); it is not on mainnet
 yet, so without `--testnet` every `gang bond` command says it is not deployed (`GANG_BOND` / `GANG_TESTNET_BOND`
 override).
 

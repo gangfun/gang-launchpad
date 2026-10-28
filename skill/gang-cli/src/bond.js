@@ -15,10 +15,11 @@ import { bawAddress } from './baw.js'
  * Env: GANG_BOND (mainnet), GANG_TESTNET_BOND (testnet) override the addresses below.
  */
 
-// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139343423, over the set-10 pad (docs/TESTNET-GANG-BOND-2026-10-28.md).
+// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139370168, over the set-10 pad — the version that takes bonds
+// from create on (the first one, 0x587f…5d7E, took them only after the pair; docs/TESTNET-GANG-BOND-2026-10-28.md).
 // Mainnet: not deployed yet (GANG_BOND overrides either)
 export const MAINNET_BOND = null
-export const TESTNET_BOND = '0x587f563749A321624b5710d6D77010F183a65d7E'
+export const TESTNET_BOND = '0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716'
 
 export const BOND_ABI = parseAbi([
   'function post(address token, uint256 amount, uint256 holdAmount, uint64 duration) payable',
@@ -301,7 +302,10 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     step(ctx, { from: me(), to: ctx.bond, data: encodeFunctionData({ abi: BOND_ABI, functionName, args }), value }, { chainId, token, bondContract: ctx.bond, ...extra }, rawOnly, summarize)
 
   if (sub === 'status') {
-    return out({ success: true, chainId, bondContract: ctx.bond, ...pub, ...(!m.live && { note: `the token is not on PancakeSwap yet (${m.kind === 'v3' ? 'not graduated' : 'not launched'}): a bond can be posted after that` }) })
+    // no bond yet on a token before its pair: say a bond can be posted now (the view's own notes win otherwise)
+    const before = view.state === 'none' && !m.live
+      && { note: `the token is not on PancakeSwap yet (${m.kind === 'v3' ? 'not graduated' : 'not launched'}): its creator can post a bond now; the --days clock starts when it ${m.kind === 'v3' ? 'graduates' : 'launches'}` }
+    return out({ success: true, chainId, bondContract: ctx.bond, ...pub, ...before })
   }
 
   if (sub === 'report') {
