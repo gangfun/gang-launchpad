@@ -37,6 +37,9 @@ contract DividendVault is Ownable2Step {
     error ZeroAddress();
     error UnknownToken();
     error NothingToClaim();
+    /// @dev Depositing with zero total shares would strand the reward forever: accRewardPerShare
+    ///      cannot accrue without a denominator, and a share appearing later never catches up.
+    error NoShares();
 
     constructor(address owner_) Ownable(owner_) {
         excluded[address(0)] = true;
@@ -91,11 +94,13 @@ contract DividendVault is Ownable2Step {
         _onlyLaunchpadOrOperator();
         if (quoteOf[token] == address(0)) revert UnknownToken();
         if (amount == 0) return;
-        IERC20(quoteOf[token]).safeTransferFrom(msg.sender, address(this), amount);
         uint256 ts = totalShares[token];
-        if (ts > 0) {
-            accRewardPerShare[token] += (amount * 1e18) / ts;
-        }
+        // Revert instead of silently stranding: the reward would sit here unclaimable forever
+        // (no denominator to accrue against; shares registered later never catch up). The caller
+        // (PostGradTaxHandler.process) keeps the tokens accrued and can retry once a holder qualifies.
+        if (ts == 0) revert NoShares();
+        IERC20(quoteOf[token]).safeTransferFrom(msg.sender, address(this), amount);
+        accRewardPerShare[token] += (amount * 1e18) / ts;
         emit RewardDeposited(token, amount);
     }
 
