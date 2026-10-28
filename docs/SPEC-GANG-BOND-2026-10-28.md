@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（按 claude.ai 文档「Agent 押金承诺规格草案」2026-10-27 版实现；待定问题全部按草案「建议」一栏）
-- 性质：**测试网已部署（当前版本 `0xd6a8…1086`，含 2026-10-29 审计修复；更早的 `0x587f…5d7E`、`0x5a99…d716`、`0xB034…EBE3` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`），禁止主网广播**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
+- 性质：**测试网已部署（当前版本 `0xd6a8…1086`，含 2026-10-29 审计修复；更早的 `0x587f…5d7E`、`0x5a99…d716`、`0xB034…EBE3` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`）；主网 2026-10-29 已部署 `0xf26F…C817`（同一份代码，见 `docs/MAINNET-GANG-BOND-2026-10-29.md`）**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
 
 ## 一句话
 
@@ -100,8 +100,7 @@ GangBond 不可升级、没有 owner，构造时写死 `pad`（GangLaunchpad）�
 
 ## 还没做
 
-- 主网部署和 CLI 里的主网地址（测试网已部署并内置）；BscScan 源码验证。
+- BscScan 源码验证（主网、测试网都没做，缺 API key）。
 - 测试网 B 币的取回（2026-11-05 之后）。
-- 网站（gang-web-legacy）：币详情页押金面板和举报按钮、行情页标识和「有押金」筛选、创建者记录、文案。
-- 服务端（gangfun-server）：索引 10 个事件、`/bonds` 接口、行情列表带押金和覆盖率（以及「退款申请中」）、keeper（毕业 / 开盘时 `start`、举报、取回、每 10 分钟回购）。
+- 网站、服务端、keeper 已做（gang-web-legacy #10 / #11，gangfun-server #14 / #15）；正式站上线见 `docs/MAINNET-GANG-BOND-2026-10-29.md`。
 
