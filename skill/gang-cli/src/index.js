@@ -717,10 +717,17 @@ const amountIo = (io) => (flag('bnb') && !flag('amount')
 // every result of a routed V3 / 打新 command says which kind ran (V2 / Soft results carry their own kind already)
 const tagKind = (kind) => (o) => out(o && typeof o === 'object' && !('kind' in o) ? { kind, ...o } : o)
 
+/** --token: missing and malformed told apart (viem refuses a mixed-case address whose checksum is wrong). */
+const tokenArg = () => {
+  const token = opt('token')
+  if (!token || token.startsWith('--')) fail('--token <address> required')
+  if (!isAddress(token)) fail('--token must be a 0x address (40 hex; in mixed case the checksum must be right, or write it all in lower case)', { got: token })
+  return token
+}
+
 /** gang <verb> --token <addr>: the kind's code for it, or why it does not apply. */
 async function routed(verb) {
-  const token = opt('token')
-  if (!isAddress(token ?? '')) fail('--token <address> required', { got: token ?? null })
+  const token = tokenArg()
   // refused before any RPC: both --amount and --bnb, a malformed --note / --conf / --reveal-after, a bad --follow (the
   // note itself is built again by the kind's code)
   if (verb === 'buy') spendArg()
@@ -978,8 +985,8 @@ async function main() {
     case 'release':
       return routed(cmd)
     case 'quote': {
-      const token = opt('token'), bnb = spendArg()
-      if (!isAddress(token ?? '') || !bnb) fail('--token <address> and --amount required (Soft archive: BNB; V2: quote ERC-20 amount; --bnb is the older name)')
+      const token = tokenArg(), bnb = spendArg()
+      if (!bnb) fail('--amount required (Soft archive: BNB; V2: quote ERC-20 amount; --bnb is the older name)')
       if ((await padKind(token, 'quote')) !== 'legacy') {
         fail('gang quote prices V2 / Soft / U / S curve buys; on GangLaunchpad, gang buy simulates the trade and shows expectTokens (nothing is sent before gang execute)', { token })
       }
