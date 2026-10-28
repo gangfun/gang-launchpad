@@ -740,6 +740,8 @@ async function routed(verb) {
       return buy(token, amount, parseNote(), parseFollow())
     }
     if (verb === 'sell') return legacySell(token)
+    // a note goes on a trade only (as on V3 / 打新, where padNotes refuses it on info / status)
+    if (flag('note')) fail(`--note applies to buy / sell on ${KIND_NAMES.legacy} only`)
     // no wallet needed (baw is optional here): with one, the result also shows its balance
     if (verb === 'info') return out({ success: true, ...(await tokenInfo(token, myAddress() ?? undefined)) })
     if (verb === 'status') {

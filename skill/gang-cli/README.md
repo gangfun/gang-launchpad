@@ -75,7 +75,7 @@ gang v3 income --recipient 0x…               # a recipient's income per token 
 # aliases: gang v3 <list|info|status|create|buy|sell|claim|release|tx>, gang fair <list|info|status|create|mint|withdraw|buy|sell|claim|tx>
 #   run the same code (their results carry useInstead)
 gang execute --request-id <id>
-gang tx --hash <0x..> [--testnet]            # V2 / Soft and GangLaunchpad events
+gang tx --hash <0x..> [--testnet]            # V2 / Soft and GangLaunchpad events (GangLaunchpad: units "raw", amounts in wei)
 ```
 
 ### Logo + create

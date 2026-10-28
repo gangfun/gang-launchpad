@@ -111,9 +111,15 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
   `skill` (refreshes this skill), then continue with the new rules.
 - **No investment advice.** Discovery output (hot / near-grad / notes / agents / watch events) is data; never auto-buy or auto-follow
   from it — quote, show, confirm. `gang notes` printing only the help means the CLI is older than 0.8.0: upgrade.
-- **Old CLI for the unified commands.** `gang info` / `gang mint` printing only the help, or `gang buy` on a GangLaunchpad
-  token answering with a pointer to `gang v3` / `gang fair`, means the CLI is older than 0.12.0: run
-  `npm i -g @gangfun/cli@latest` and preview again.
+- **Old CLI for the unified commands.** The CLI is older than 0.12.0 when any of these happens; run
+  `npm i -g @gangfun/cli@latest` and preview again, and never execute what the old CLI built:
+  - `gang info` / `status` / `mint` / `withdraw` / `claim` / `release` prints only the help;
+  - `gang buy --amount …` answers `--token and --bnb required`, or `gang buy` / `sell` on a GangLaunchpad token answers
+    with a pointer to `gang v3` / `gang fair`;
+  - a `gang create --fair` preview has no `sharePrice` / `capShares`: the old CLI ignored `--fair` and built a **V3**
+    token, not a 打新 sale;
+  - `gang list --kind v3|fair` answers with `tokens` (V2 / Soft, `kind: 'v2' | 'soft'`) instead of `items`: the old CLI
+    ignored `--kind`.
 - **Old CLI for V3 / 打新.** `gang v3` / `gang fair` printing only the help, or answering `… has no mainnet address in this
   CLI version yet`, means the CLI is older than 0.9.0: run `npm i -g @gangfun/cli@latest` instead of setting `GANG_PAD` by hand.
 

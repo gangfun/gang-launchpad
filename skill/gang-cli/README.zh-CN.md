@@ -65,7 +65,7 @@ gang v3 income --recipient 0x…               # 接收地址按币统计的到�
 # 别名：gang v3 <list|info|status|create|buy|sell|claim|release|tx>、gang fair <list|info|status|create|mint|withdraw|buy|sell|claim|tx>
 #   跑的是同一套代码（结果里带 useInstead）
 gang execute --request-id <id>
-gang tx --hash <0x..> [--testnet]            # 解析 V2 / Soft 和 GangLaunchpad 的事件
+gang tx --hash <0x..> [--testnet]            # 解析 V2 / Soft 和 GangLaunchpad 的事件（GangLaunchpad 的带 units "raw"，金额是 wei）
 ```
 
 ### Logo + 发币
