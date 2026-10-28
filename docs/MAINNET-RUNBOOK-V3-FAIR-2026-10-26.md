@@ -57,6 +57,8 @@ export OWNER=0x2866369F7acEFC9760bdE7779362fae5cD68B41E   # 平台 Safe（2/3）
 # 脚本结束时 7 个合约 owner = 部署钱包、pendingOwner = Safe，日志列出这 7 个地址并打印一份 Safe Transaction Builder JSON（§3）
 # 可选：
 #   RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<名称>"   部署时就列入白名单；不填则之后由 owner handler.list
+#                   （现行主网：handler 的 owner 是 GangHandlerAdmin，Safe 调 GangHandlerAdmin.exec(list(addr, label))；
+#                   docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md）
 #   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（201 上 keeper 私钥对应的地址）；主网填别的地址必须再加
 #                   KEEPER_OVERRIDE_OK=true，否则回滚 KeeperNotDefault（setKeeper 一生一次，填错要走 48 小时时间锁）
 #   BURNER=0x… / FEE_VAULT=0x…   新手续费池的回购合约 / 金库；不填或填 0 = 照抄 V2 手续费池 0xBDDd…F111 的。
