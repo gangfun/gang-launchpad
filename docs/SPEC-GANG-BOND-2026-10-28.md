@@ -100,7 +100,7 @@ GangBond 不可升级、没有 owner，构造时写死 `pad`（GangLaunchpad）�
 
 ## 还没做
 
-- BscScan 源码验证（主网、测试网都没做，缺 API key）。
+- 源码验证：主网 `0xf26F…C817` 和测试网第四版 `0xd6a8…1086` 已在 BscScan 验证（2026-10-29）；更早的三版测试网合约没做。
 - 测试网 B 币的取回（2026-11-05 之后）。
 - 网站、服务端、keeper 已做（gang-web-legacy #10 / #11，gangfun-server #14 / #15）；正式站上线见 `docs/MAINNET-GANG-BOND-2026-10-29.md`。
 

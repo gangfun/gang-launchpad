@@ -13,7 +13,7 @@
 | 构造参数 | pad = 在用的 GangLaunchpad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，wbnb = `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
 | 部署钱包 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3` |
 | 部署脚本 | `script/DeployGangBond.s.sol`（主网要求 `GANG_PAD` 等于在用 pad），记录在 `broadcast/DeployGangBond.s.sol/56/` |
-| 源码验证 | 未做（缺 BscScan API key） |
+| 源码验证 | 已验证（2026-10-29，`forge verify-contract`，Etherscan v2 接口；solc 0.8.28，优化 200 runs） |
 
 部署后从链上读回：`pad`、`wbnb` 和上表一致；`CHUNK_GAP` 240、`SETTLE_DELAY` 3600、`MAX_WAIT` 2592000。合约没有 owner，不可升级，部署后也没有要配的东西。
 
@@ -30,5 +30,4 @@
 ## 以后要做
 
 - 私有通道换 QuickNode：在 QuickNode 后台给正式站的 BSC 节点开 **Merkle – MEV Protection** 插件，确认它支持 BSC 后，把 `KEEPER_PRIVATE_RPC` 换成同一个 QuickNode 地址，然后重启 `gang-keeper-bond-watch`。
-- BscScan 源码验证。
 - `GangBuybackSplitter` 复制了同一套回购逻辑，已经在主网上（工厂 v1 / v2，见 `docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md`）。审计 I-5（拉盘后卖给回购）对它同样成立，要尽快按时间限速出新版。

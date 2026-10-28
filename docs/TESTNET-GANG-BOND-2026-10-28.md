@@ -24,7 +24,7 @@ GangBond 在 BSC 测试网部署了四版，都挂在第 10 套内盘上：
 | 构造参数 | pad = 第 10 套 GangLaunchpad `0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1`，wbnb = `0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd` |
 | 部署 / 创建者钱包 | `0xCa8e63434072B40d3dFE6f5e7Fd885F93A3200b6`（第 10 套 owner，两枚测试币的创建者） |
 | 举报人钱包 | `0x3FBf068ad90d1904857c14f8E3218cFD80B85376`（本次新建，只用于举报和回购） |
-| 源码验证 | 未做（缺 BscScan API key） |
+| 源码验证 | 第一版未做；第四版 `0xd6a8…1086` 已验证（2026-10-29） |
 
 CLI 现在内置的是第三版地址（见 D 节）；要操作第一版上的押金（比如 B 币 11-05 之后的取回），加 `GANG_TESTNET_BOND=0x587f563749A321624b5710d6D77010F183a65d7E`。
 
