@@ -10,8 +10,8 @@ import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 /// @notice impl  = GangPadRegistry (its constructor locks it: never initializable)
 ///         proxy = TransparentUpgradeableProxy(impl, owner, initialize(owner, pads)) — initialized in its own
 ///                 constructor (no front-run window); it deploys its ProxyAdmin (owner = `owner`)
-///         On mainnet `owner` is the platform's existing 48 h TimelockController (the one that owns GangRouter's
-///         ProxyAdmin): it owns both the registry (addPad) and the registry's ProxyAdmin (upgrades).
+///         On mainnet `owner` is the platform Safe (2 of 3): it owns both the registry (addPad) and the registry's
+///         ProxyAdmin (upgrades), with no timelock.
 /// @dev Internal functions only (inlined into the calling script: `new` broadcasts from its deployer).
 library GangPadRegistryDeployLib {
     struct Registry {

@@ -4,7 +4,6 @@ pragma solidity 0.8.28;
 import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {
     ITransparentUpgradeableProxy,
@@ -102,29 +101,27 @@ contract NextPad {
     }
 }
 
-/// @notice GangPadRegistry as deployed (proxy, ProxyAdmin and registry owned by the router's 48 h timelock, the pad
-///         registered in `initialize`): discovery that look-alikes cannot fool and tokens cannot break, append-only
-///         registration through the timelock, quotes that match `buyFor` / `sellFor` to the wei, upgrades that keep
-///         the state, and the storage layout.
+/// @notice GangPadRegistry as deployed on mainnet (proxy, ProxyAdmin and registry owned by the Safe, `owner` here; the
+///         pad registered in `initialize`): discovery that look-alikes cannot fool and tokens cannot break, append-only
+///         registration by the owner only, quotes that match `buyFor` / `sellFor` to the wei, upgrades by the owner
+///         only that keep the state, and the storage layout.
 contract GangPadRegistryTest is GangFixture {
     bytes32 internal constant BUY_TOPIC = keccak256("Buy(address,address,uint256,uint256,uint256,uint256,uint256)");
     bytes32 internal constant SELL_TOPIC = keccak256("Sell(address,address,uint256,uint256,uint256,uint256,uint256)");
 
     GangPadRegistry internal reg;
     G.Registry internal stack;
-    TimelockController internal tl;
     RegistryAggregator internal agg;
     address internal creator;
     address internal trader;
     address internal human = makeAddr("human"); // no Agent ID
-    uint256 internal _salt;
+    address internal stranger = makeAddr("stranger");
 
     function setUp() public {
         _deployGang(makeAddr("keeper"));
-        tl = TimelockController(payable(routerStack.timelock));
         address[] memory pads = new address[](1);
         pads[0] = address(pad);
-        stack = G.deploy(address(tl), pads);
+        stack = G.deploy(owner, pads);
         reg = GangPadRegistry(stack.proxy);
 
         agg = new RegistryAggregator(pad, address(wbnb));
@@ -136,23 +133,6 @@ contract GangPadRegistryTest is GangFixture {
     }
 
     // ---------------------------------------------------------------- helpers
-    /// @dev The Safe (`owner`) schedules `data` on `target` through the timelock, waits 48 h, executes it.
-    function _timelocked(address target, bytes memory data) internal {
-        _executeScheduled(target, data, _scheduleAndWait(target, data));
-    }
-
-    function _scheduleAndWait(address target, bytes memory data) internal returns (bytes32 salt) {
-        salt = bytes32(++_salt);
-        vm.prank(owner);
-        tl.schedule(target, 0, data, bytes32(0), salt, R.MAINNET_MIN_DELAY);
-        vm.warp(vm.getBlockTimestamp() + R.MAINNET_MIN_DELAY);
-    }
-
-    function _executeScheduled(address target, bytes memory data, bytes32 salt) internal {
-        vm.prank(owner);
-        tl.execute(target, 0, data, bytes32(0), salt);
-    }
-
     function _v3() internal returns (address) {
         return _createV3(creator, address(0), _tax(0, 0, 0, address(0)));
     }
@@ -210,9 +190,9 @@ contract GangPadRegistryTest is GangFixture {
     function test_deploy_checkPasses_andIsLocked() public {
         address[] memory pads = new address[](1);
         pads[0] = address(pad);
-        G.check(stack, address(tl), pads);
-        assertEq(reg.owner(), address(tl));
-        assertEq(ProxyAdmin(stack.proxyAdmin).owner(), address(tl));
+        G.check(stack, owner, pads);
+        assertEq(reg.owner(), owner);
+        assertEq(ProxyAdmin(stack.proxyAdmin).owner(), owner);
         assertEq(reg.pads(), pads);
 
         vm.expectRevert(Initializable.InvalidInitialization.selector);
@@ -227,15 +207,11 @@ contract GangPadRegistryTest is GangFixture {
         pads[1] = address(pad);
         address impl = address(new GangPadRegistry());
         vm.expectRevert(IGangPadRegistry.AlreadyPad.selector);
-        new TransparentUpgradeableProxy(
-            impl, address(tl), abi.encodeCall(GangPadRegistry.initialize, (address(tl), pads))
-        );
+        new TransparentUpgradeableProxy(impl, owner, abi.encodeCall(GangPadRegistry.initialize, (owner, pads)));
 
         pads = new address[](0);
         vm.expectRevert(IGangPadRegistry.ZeroAddress.selector);
-        new TransparentUpgradeableProxy(
-            impl, address(tl), abi.encodeCall(GangPadRegistry.initialize, (address(0), pads))
-        );
+        new TransparentUpgradeableProxy(impl, owner, abi.encodeCall(GangPadRegistry.initialize, (address(0), pads)));
     }
 
     // ================================================================ discovery
@@ -284,7 +260,7 @@ contract GangPadRegistryTest is GangFixture {
 
         // the bomb really completes under the cap: once a registered pad lists it, its first word resolves
         NextPad next = new NextPad(1_066_666_666_666_666_666_666_666_667, 100);
-        vm.prank(address(tl));
+        vm.prank(owner);
         reg.addPad(address(next));
         OddReturnToken bomb = new OddReturnToken(address(next), true);
         next.list(address(bomb), 1);
@@ -297,20 +273,22 @@ contract GangPadRegistryTest is GangFixture {
     }
 
     // ================================================================ registration
-    function test_addPad_onlyThroughTheTimelock_appendOnly() public {
+    function test_addPad_onlyOwner_appendOnly() public {
         NextPad next = new NextPad(1_066_666_666_666_666_666_666_666_667, 100);
         FakeGangToken tok = new FakeGangToken(address(next));
         next.list(address(tok), 1);
 
-        vm.prank(owner); // the Safe itself is not the owner: the timelock is
+        vm.prank(stranger);
+        vm.expectRevert(IGangPadRegistry.OnlyOwner.selector);
+        reg.addPad(address(next));
+        vm.prank(address(pad)); // not even the pad itself
         vm.expectRevert(IGangPadRegistry.OnlyOwner.selector);
         reg.addPad(address(next));
 
-        bytes memory call = abi.encodeCall(GangPadRegistry.addPad, (address(next)));
-        bytes32 salt = _scheduleAndWait(address(reg), call);
         vm.expectEmit(true, false, false, true, address(reg));
         emit IGangPadRegistry.PadAdded(address(next), 1);
-        _executeScheduled(address(reg), call, salt);
+        vm.prank(owner);
+        reg.addPad(address(next));
 
         assertTrue(reg.isPad(address(next)));
         assertEq(reg.padCount(), 2);
@@ -320,7 +298,7 @@ contract GangPadRegistryTest is GangFixture {
     }
 
     function test_addPad_refusals() public {
-        vm.startPrank(address(tl));
+        vm.startPrank(owner);
         vm.expectRevert(IGangPadRegistry.AlreadyPad.selector);
         reg.addPad(address(pad));
         vm.expectRevert(IGangPadRegistry.ZeroAddress.selector);
@@ -338,8 +316,12 @@ contract GangPadRegistryTest is GangFixture {
 
     function test_ownership_twoStep() public {
         address next = makeAddr("nextOwner");
-        _timelocked(address(reg), abi.encodeCall(GangPadRegistry.transferOwnership, (next)));
-        assertEq(reg.owner(), address(tl));
+        vm.prank(stranger);
+        vm.expectRevert(IGangPadRegistry.OnlyOwner.selector);
+        reg.transferOwnership(stranger);
+        vm.prank(owner);
+        reg.transferOwnership(next);
+        assertEq(reg.owner(), owner);
         assertEq(reg.pendingOwner(), next);
 
         vm.expectRevert(IGangPadRegistry.NotPendingOwner.selector);
@@ -476,23 +458,22 @@ contract GangPadRegistryTest is GangFixture {
     }
 
     // ================================================================ upgrade
-    function test_upgrade_throughTimelock_keepsState() public {
+    function test_upgrade_onlyOwner_keepsState() public {
         NextPad next = new NextPad(1_066_666_666_666_666_666_666_666_667, 100);
-        _timelocked(address(reg), abi.encodeCall(GangPadRegistry.addPad, (address(next))));
+        vm.prank(owner);
+        reg.addPad(address(next));
         address c = _v3();
 
         address impl2 = address(new GangPadRegistry());
         ProxyAdmin admin = ProxyAdmin(stack.proxyAdmin);
-        vm.prank(owner);
+        vm.prank(stranger);
         vm.expectRevert();
         admin.upgradeAndCall(ITransparentUpgradeableProxy(address(reg)), impl2, "");
 
-        _timelocked(
-            address(admin),
-            abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(address(reg)), impl2, ""))
-        );
+        vm.prank(owner);
+        admin.upgradeAndCall(ITransparentUpgradeableProxy(address(reg)), impl2, "");
         assertEq(R.implementationOf(address(reg)), impl2);
-        assertEq(reg.owner(), address(tl));
+        assertEq(reg.owner(), owner);
         assertEq(reg.padCount(), 2);
         assertEq(reg.padAt(0), address(pad));
         assertEq(reg.padAt(1), address(next));

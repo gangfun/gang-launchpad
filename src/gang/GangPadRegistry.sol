@@ -47,10 +47,9 @@ interface IGangTokenPad {
 ///         `buyFor` / `sellFor` to the wei; pads with other curve constants are refused at `addPad` until the registry
 ///         is upgraded to quote them.
 ///         Deployed as the logic of a TransparentUpgradeableProxy: aggregators keep the proxy address for good. On
-///         mainnet both the proxy's ProxyAdmin and this registry's `owner` are the platform's 48 h TimelockController
-///         (proposer / executor / canceller = the Safe), so a new pad and a new version are public 48 h before they
-///         count. The pads registered at deploy go in through `initialize`. The registry holds no funds and calls
-///         nothing that writes.
+///         mainnet both the proxy's ProxyAdmin and this registry's `owner` are the platform Safe (2 of 3, no
+///         timelock); aggregators can watch `PadAdded` and the proxy's `Upgraded`. The pads registered at deploy go in
+///         through `initialize`. The registry holds no funds and calls nothing that writes.
 /// @dev STORAGE LAYOUT (proxy storage). Upgrade rule: a new variable takes its slot from `__gap` (declared right before
 ///      it) and the gap shrinks by the same number of slots; never reorder, retype or remove a variable, and never
 ///      change the inheritance list:
@@ -98,7 +97,7 @@ contract GangPadRegistry is IGangPadRegistry, Initializable {
     }
 
     /// @notice Run once, by the proxy's constructor (TransparentUpgradeableProxy's `_data`), in the deploy transaction.
-    /// @param owner_ Registers pads and hands the role on (mainnet: the platform's 48 h timelock).
+    /// @param owner_ Registers pads and hands the role on (mainnet: the platform Safe).
     /// @param pads_  Pads registered at deploy (mainnet: the live GangLaunchpad), with the same checks as `addPad`.
     function initialize(address owner_, address[] calldata pads_) external initializer {
         if (owner_ == address(0)) revert ZeroAddress();

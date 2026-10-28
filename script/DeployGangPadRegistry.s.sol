@@ -6,22 +6,22 @@ import {VmSafe} from "forge-std/Vm.sol";
 import {GangMainnetRefs as M, GangTestnetRefs as T} from "../config/GangDeployRefs.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
-import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangPadRegistryDeployLib as G} from "./GangPadRegistryDeployLib.sol";
 
 /// @title DeployGangPadRegistry — the upgradeable pad registry aggregators read (`padOf`, `isPad`, curve quotes)
 /// @notice Deploys implementation → TransparentUpgradeableProxy initialized with the owner and the live pad, then reads
 ///         everything back (GangPadRegistryDeployLib.check) and refuses to finish if anything differs. Nothing on the
 ///         pad changes: the registry only reads it.
-///         Mainnet: the owner (registry and its ProxyAdmin) is GangRouter's 48 h TimelockController, read from the
-///         router proxy and checked as the router deploy checks it (only the Safe proposes / executes / cancels).
-/// @dev Env: DEPLOYER_PRIVATE_KEY, GANG_PAD; mainnet: GANG_ROUTER (the router proxy whose timelock becomes the
-///      owner); testnet: OWNER (default the deployer); GANG_PAD_REGISTRY (re-run: deploy nothing, only check that
+///         Mainnet: the owner (registry and its ProxyAdmin) is the platform Safe itself (M.OWNER_SAFE, 2 of 3), no
+///         timelock: a new pad or a new version takes effect as soon as the Safe executes it.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, GANG_PAD; OWNER (mainnet: default and only accepted value the Safe, else
+///      OwnerNotSafe; testnet: default the deployer); GANG_PAD_REGISTRY (re-run: deploy nothing, only check that
 ///      proxy); mainnet broadcast needs GANG_MAINNET_OK=true.
 contract DeployGangPadRegistry is Script {
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
     error WiringCheck(string what);
+    error OwnerNotSafe(address owner);
 
     function run() external returns (G.Registry memory r) {
         bool mainnet = block.chainid == 56;
@@ -35,26 +35,10 @@ contract DeployGangPadRegistry is Script {
         address pad = vm.envAddress("GANG_PAD");
         if (IGangPad(pad).wbnb() != (mainnet ? M.WBNB : T.WBNB)) revert WiringCheck("pad.wbnb");
 
-        address owner;
-        if (mainnet) {
-            R.Router memory router = R.load(vm.envAddress("GANG_ROUTER"));
-            R.checkTimelock(
-                router,
-                R.Expect({
-                    pad: pad,
-                    wbnb: M.WBNB,
-                    pancakeRouter: M.PANCAKE_V2_ROUTER,
-                    pancakeFactory: M.PANCAKE_V2_FACTORY,
-                    safe: M.OWNER_SAFE,
-                    deployer: deployer,
-                    minDelay: R.MAINNET_MIN_DELAY,
-                    mainnet: true
-                })
-            );
-            owner = router.timelock;
-        } else {
-            owner = vm.envOr("OWNER", deployer);
-        }
+        address owner = vm.envOr("OWNER", mainnet ? M.OWNER_SAFE : deployer);
+        // mainnet: the registry and its upgrades belong to the platform Safe and nobody else
+        if (mainnet && owner != M.OWNER_SAFE) revert OwnerNotSafe(owner);
+        if (mainnet && owner.code.length == 0) revert WiringCheck("owner safe code");
 
         address[] memory pads = new address[](1);
         pads[0] = pad;
