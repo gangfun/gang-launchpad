@@ -21,12 +21,13 @@ interface IOwnable2Step {
 ///         prints the Safe batch that is still to do, in order:
 ///         1. `handler.transferOwnership(admin)` and `admin.exec(acceptOwnership())` — the admin becomes the tax
 ///            handler's owner (once per handler; the Safe stays the admin's owner and does everything else through
-///            `admin.exec`);
+///            `admin.exec`). When an older GangHandlerAdmin owns the handler (a new admin version), the first call is
+///            `oldAdmin.exec(transferOwnership(admin))` instead;
 ///         2. `admin.setFactory(factory, true)` — the factory may list the splitters it clones.
 ///         On testnet, when the deployer is the handler's owner (set 10: the deployer wallet), the batch is sent by
 ///         the script itself. A later module kind / version: deploy its factory with HANDLER_ADMIN set (step 2 only).
 /// @dev Env: GANG_PAD (mainnet: must be the live pad); HANDLER_ADMIN, SPLITTER_FACTORY (optional, existing ones);
-///      ADMIN_OWNER (default: the handler's owner now — the Safe; the admin's owner if it took over already);
+///      ADMIN_OWNER (default: whoever holds the handler now — the Safe, or the owner of the older admin holding it);
 ///      DEPLOYER_PRIVATE_KEY (unless both exist); mainnet broadcast needs GANG_MAINNET_OK=true.
 contract DeployGangBuybackSplitterFactory is Script {
     /// @notice The live GangLaunchpad on BSC 56 (docs/MAINNET-GANG-2026-10-27.md).
@@ -53,8 +54,7 @@ contract DeployGangBuybackSplitterFactory is Script {
             uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
             vm.startBroadcast(pk);
             if (address(admin) == address(0)) {
-                address handlerOwner = IOwnable2Step(handler).owner();
-                admin = new GangHandlerAdmin(vm.envOr("ADMIN_OWNER", handlerOwner), handler);
+                admin = new GangHandlerAdmin(vm.envOr("ADMIN_OWNER", ownerBehind(handler)), handler);
             }
             if (address(factory) == address(0)) factory = new GangBuybackSplitterFactory(pad, address(admin));
             vm.stopBroadcast();
@@ -67,7 +67,7 @@ contract DeployGangBuybackSplitterFactory is Script {
         // testnet: the deployer owns the handler and the admin — do the batch here
         if (!mainnet && batch.length != 0) {
             uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
-            if (vm.addr(pk) == admin.owner() && vm.addr(pk) == IOwnable2Step(handler).owner()) {
+            if (vm.addr(pk) == admin.owner() && vm.addr(pk) == ownerBehind(handler)) {
                 vm.startBroadcast(pk);
                 _apply(handler, address(admin), address(factory));
                 vm.stopBroadcast();
@@ -92,10 +92,25 @@ contract DeployGangBuybackSplitterFactory is Script {
         if (impl.pad() != pad) revert WiringCheck("implementation.pad");
         if (impl.taxHandler() != handler) revert WiringCheck("implementation.taxHandler");
         if (impl.factory() != factory) revert WiringCheck("implementation.factory");
-        // the admin's owner must be whoever owns the handler now (before the takeover) or will after it
-        address handlerOwner = IOwnable2Step(handler).owner();
-        if (handlerOwner != admin && GangHandlerAdmin(admin).owner() != handlerOwner) {
+        // before the takeover the admin's owner must be whoever holds the handler now: the Safe, or the Safe behind
+        // an older admin
+        if (IOwnable2Step(handler).owner() != admin && GangHandlerAdmin(admin).owner() != ownerBehind(handler)) {
             revert WiringCheck("admin.owner");
+        }
+    }
+
+    /// @notice The handler's owner, or the owner of the GangHandlerAdmin that owns it.
+    function ownerBehind(address handler) public view returns (address) {
+        address o = IOwnable2Step(handler).owner();
+        return _isAdminOf(o, handler) ? GangHandlerAdmin(o).owner() : o;
+    }
+
+    function _isAdminOf(address who, address handler) internal view returns (bool) {
+        if (who.code.length == 0) return false;
+        try GangHandlerAdmin(who).handler() returns (address h) {
+            return h == handler;
+        } catch {
+            return false;
         }
     }
 
@@ -107,7 +122,13 @@ contract DeployGangBuybackSplitterFactory is Script {
         calls = new bytes[]((owned ? 0 : 2) + (allowed ? 0 : 1));
         uint256 i;
         if (!owned) {
-            calls[i++] = abi.encodePacked(handler, abi.encodeCall(IOwnable2Step.transferOwnership, (admin)));
+            address current = IOwnable2Step(handler).owner();
+            calls[i++] = _isAdminOf(current, handler)
+                ? abi.encodePacked(
+                    current,
+                    abi.encodeCall(GangHandlerAdmin.exec, (abi.encodeCall(IOwnable2Step.transferOwnership, (admin))))
+                )
+                : abi.encodePacked(handler, abi.encodeCall(IOwnable2Step.transferOwnership, (admin)));
             calls[i++] = abi.encodePacked(
                 admin, abi.encodeCall(GangHandlerAdmin.exec, (abi.encodeCall(IOwnable2Step.acceptOwnership, ())))
             );
@@ -118,8 +139,13 @@ contract DeployGangBuybackSplitterFactory is Script {
     }
 
     function _apply(address handler, address admin, address factory) internal {
-        if (IOwnable2Step(handler).owner() != admin) {
-            IOwnable2Step(handler).transferOwnership(admin);
+        address current = IOwnable2Step(handler).owner();
+        if (current != admin) {
+            if (_isAdminOf(current, handler)) {
+                GangHandlerAdmin(current).exec(abi.encodeCall(IOwnable2Step.transferOwnership, (admin)));
+            } else {
+                IOwnable2Step(handler).transferOwnership(admin);
+            }
             GangHandlerAdmin(admin).exec(abi.encodeCall(IOwnable2Step.acceptOwnership, ()));
         }
         if (!GangHandlerAdmin(admin).isFactory(factory)) GangHandlerAdmin(admin).setFactory(factory, true);
@@ -136,7 +162,9 @@ contract DeployGangBuybackSplitterFactory is Script {
             console.log("Safe batch: nothing to do (admin owns the handler, factory allowed)");
             return;
         }
-        console.log("Safe batch (owner of the handler, then of the admin), in order:");
+        console.log(
+            "Safe batch (the Safe: owner of the handler or of the admin holding it, and of the new admin), in order:"
+        );
         for (uint256 i; i < batch.length; i++) {
             bytes memory c = batch[i];
             address to;

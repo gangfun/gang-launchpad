@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Errors} from "@openzeppelin/contracts/utils/Errors.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {TwapMockPairFactory} from "../mocks/TwapMockPair.sol";
 import {GangBuybackSplitter} from "../../src/gang/GangBuybackSplitter.sol";
@@ -19,6 +20,7 @@ contract GangBuybackSplitterTest is GangFixture {
     address keeper = makeAddr("keeper");
     GangHandlerAdmin admin;
     GangBuybackSplitterFactory factory;
+    uint256 _salt;
 
     uint16 constant TAX = 300;
 
@@ -42,7 +44,7 @@ contract GangBuybackSplitterTest is GangFixture {
     /// @dev The dev's splitter, from the factory (listed by the admin).
     function _splitter(address dev, uint16 bps) internal returns (GangBuybackSplitter s) {
         vm.prank(dev);
-        s = GangBuybackSplitter(factory.create(bps));
+        s = GangBuybackSplitter(factory.create(bps, bytes32(++_salt)));
     }
 
     /// @dev The dev gets a splitter, creates a taxed V3 token paying it, buys on the curve, and anyone binds it.
@@ -127,13 +129,24 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(admin.moduleCount(), 1);
         assertEq(admin.modules()[0], address(s));
 
+        // modules() a page at a time
+        GangBuybackSplitter s2 = _splitter(_newAgent(), 5_000);
+        GangBuybackSplitter s3 = _splitter(_newAgent(), 5_000);
+        address[] memory page = admin.modulesFrom(1, 5);
+        assertEq(page.length, 2);
+        assertEq(page[0], address(s2));
+        assertEq(page[1], address(s3));
+        assertEq(admin.modulesFrom(0, 1).length, 1);
+        assertEq(admin.modulesFrom(3, 1).length, 0);
+        assertEq(admin.modulesFrom(9, 1).length, 0);
+
         // a stopped factory can't list any more (its clones stay listed); allowed again, it is not listed twice
         vm.prank(owner);
         admin.setFactory(address(factory), false);
         address dev = _newAgent();
         vm.prank(dev);
         vm.expectRevert(GangHandlerAdmin.NotFactory.selector);
-        factory.create(5_000);
+        factory.create(5_000, bytes32(0));
         assertTrue(handler.isListed(address(s)));
         vm.prank(owner);
         admin.setFactory(address(factory), true);
@@ -154,14 +167,26 @@ contract GangBuybackSplitterTest is GangFixture {
         // only an Agent (only an Agent can create the token)
         vm.prank(makeAddr("notAgent"));
         vm.expectRevert(GangBuybackSplitterFactory.NotAgent.selector);
-        factory.create(5_000);
+        factory.create(5_000, bytes32(0));
         address dev = _newAgent();
         vm.prank(dev);
         vm.expectRevert(GangBuybackSplitter.BadBps.selector);
-        factory.create(10_001);
+        factory.create(10_001, bytes32(0));
 
+        // the address is known before the clone, and is the dev's own: a salt is per dev, once
+        bytes32 salt = keccak256("launch-1");
+        address predicted = factory.predict(dev, salt);
+        assertEq(predicted.code.length, 0);
         vm.prank(dev);
-        address s = factory.create(10_000);
+        address s = factory.create(10_000, salt);
+        assertEq(s, predicted);
+        vm.prank(dev);
+        vm.expectRevert(Errors.FailedDeployment.selector);
+        factory.create(10_000, salt);
+        address other = _newAgent();
+        assertTrue(factory.predict(other, salt) != s);
+        vm.prank(other);
+        assertEq(factory.create(1, salt), factory.predict(other, salt));
         GangBuybackSplitter sp = GangBuybackSplitter(s);
         assertEq(sp.dev(), dev);
         assertEq(sp.buybackBps(), 10_000);
@@ -172,8 +197,7 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(sp.moduleType(), bytes32("buyback-burn-v1"));
         assertTrue(handler.isListed(s));
         assertEq(admin.moduleOf(s), address(factory));
-        assertEq(factory.lastOf(dev), s);
-        assertEq(factory.count(), 1);
+        assertEq(factory.count(), 2);
         assertEq(factory.splitters()[0], s);
 
         // the implementation is never initialized; a clone only once, only by the factory
@@ -683,45 +707,69 @@ contract GangBuybackSplitterTest is GangFixture {
     }
 
     // ---------------------------------------------------------------- deploy script
-    /// @dev The script's check and Safe batch, from a handler the Safe still owns to a factory that lists.
+    /// @dev The script's check and Safe batch: refusals, moving the handler from an older admin, and the first takeover
+    ///      from the Safe; each printed batch works as printed.
     function test_script_checkAndBatch() public {
         DeployGangBuybackSplitterFactory script = new DeployGangBuybackSplitterFactory();
         // the fixture's admin owns the handler and allows its factory: nothing to do
         script.check(address(pad), address(admin), address(factory));
         assertEq(script.pendingBatch(address(admin), address(factory)).length, 0);
 
-        // a second admin while the first owns the handler is refused
-        GangHandlerAdmin other = new GangHandlerAdmin(owner, address(handler));
-        GangBuybackSplitterFactory otherFactory = new GangBuybackSplitterFactory(address(pad), address(other));
+        // an admin someone else owns is refused; a factory over another admin, or no factory, too
+        GangHandlerAdmin rogue = new GangHandlerAdmin(makeAddr("notTheSafe"), address(handler));
+        GangBuybackSplitterFactory rogueFactory = new GangBuybackSplitterFactory(address(pad), address(rogue));
         vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "admin.owner"));
-        script.check(address(pad), address(other), address(otherFactory));
+        script.check(address(pad), address(rogue), address(rogueFactory));
         vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "factory.admin"));
-        script.check(address(pad), address(admin), address(otherFactory));
+        script.check(address(pad), address(admin), address(rogueFactory));
         vm.expectRevert(abi.encodeWithSelector(DeployGangBuybackSplitterFactory.WiringCheck.selector, "factory.code"));
         script.check(address(pad), address(admin), makeAddr("eoa"));
 
-        // the Safe holds the handler again (as before the takeover): the batch is takeover + allow, and works as printed
+        // a new admin version while the old one holds the handler: the old admin hands it over, as printed
+        assertEq(script.ownerBehind(address(handler)), owner);
+        GangHandlerAdmin admin2 = new GangHandlerAdmin(owner, address(handler));
+        GangBuybackSplitterFactory factory2 = new GangBuybackSplitterFactory(address(pad), address(admin2));
+        script.check(address(pad), address(admin2), address(factory2));
+        bytes[] memory batch = script.pendingBatch(address(admin2), address(factory2));
+        assertEq(batch.length, 3);
+        (address first,) = _split(batch[0]);
+        assertEq(first, address(admin), "the old admin hands over");
+        _runAsSafe(batch);
+        assertEq(handler.owner(), address(admin2));
+        assertEq(script.pendingBatch(address(admin2), address(factory2)).length, 0);
+        script.check(address(pad), address(admin2), address(factory2));
+        // the old admin's factory can't list any more; the new one's can
+        address dev = _newAgent();
+        vm.prank(dev);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, address(admin)));
+        factory.create(5_000, bytes32(0));
+        vm.prank(dev);
+        assertTrue(handler.isListed(factory2.create(5_000, bytes32(0))));
+
+        // from a handler the Safe holds itself (the first takeover): handler.transferOwnership first
         vm.startPrank(owner);
-        admin.exec(abi.encodeCall(Ownable.transferOwnership, (owner)));
+        admin2.exec(abi.encodeCall(Ownable.transferOwnership, (owner)));
         handler.acceptOwnership();
         vm.stopPrank();
-        script.check(address(pad), address(other), address(otherFactory));
-        bytes[] memory batch = script.pendingBatch(address(other), address(otherFactory));
+        GangHandlerAdmin admin3 = new GangHandlerAdmin(owner, address(handler));
+        GangBuybackSplitterFactory factory3 = new GangBuybackSplitterFactory(address(pad), address(admin3));
+        script.check(address(pad), address(admin3), address(factory3));
+        batch = script.pendingBatch(address(admin3), address(factory3));
         assertEq(batch.length, 3);
+        (first,) = _split(batch[0]);
+        assertEq(first, address(handler));
+        _runAsSafe(batch);
+        assertEq(handler.owner(), address(admin3));
+        assertEq(script.pendingBatch(address(admin3), address(factory3)).length, 0);
+    }
+
+    function _runAsSafe(bytes[] memory batch) internal {
         for (uint256 i; i < batch.length; i++) {
             (address to, bytes memory data) = _split(batch[i]);
             vm.prank(owner);
             (bool ok,) = to.call(data);
             assertTrue(ok);
         }
-        assertEq(handler.owner(), address(other));
-        assertEq(script.pendingBatch(address(other), address(otherFactory)).length, 0);
-        script.check(address(pad), address(other), address(otherFactory));
-
-        // and the new factory's clones are listed
-        address dev = _newAgent();
-        vm.prank(dev);
-        assertTrue(handler.isListed(otherFactory.create(5_000)));
     }
 
     function _split(bytes memory c) internal pure returns (address to, bytes memory data) {

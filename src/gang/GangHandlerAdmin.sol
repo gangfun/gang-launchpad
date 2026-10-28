@@ -16,7 +16,9 @@ interface IHandlerListing {
 ///           handing the handler back: `exec(transferOwnership(safe))`, then the Safe accepts);
 ///         - `setFactory`: allow a factory (a new kind or version of module) or stop one (its modules stay listed —
 ///           a token's recipient is fixed at create — `exec(delist)` drops one).
-///         Taking over: the Safe calls `handler.transferOwnership(admin)`, then `admin.exec(acceptOwnership())`.
+///         Taking over: the Safe calls `handler.transferOwnership(admin)`, then `admin.exec(acceptOwnership())`; from an
+///         older admin: `oldAdmin.exec(transferOwnership(admin))`, then `admin.exec(acceptOwnership())` (the older
+///         admin's modules stay listed; its factories are allowed here again only if wanted).
 /// @dev Not upgradeable: it holds the handler's owner role, so it stays this small. A factory is trusted to pass only
 ///      modules it deployed (audited before it is allowed); `moduleOf` records which one did, for the keeper and the site.
 contract GangHandlerAdmin is Ownable2Step {
@@ -85,6 +87,17 @@ contract GangHandlerAdmin is Ownable2Step {
     /// @notice Every module listed through here, oldest first.
     function modules() external view returns (address[] memory) {
         return _modules;
+    }
+
+    /// @notice Up to `count` modules from index `from` (a page of `modules()`, which only grows).
+    function modulesFrom(uint256 from, uint256 count) external view returns (address[] memory page) {
+        uint256 n = _modules.length;
+        if (from >= n) return page;
+        if (count > n - from) count = n - from;
+        page = new address[](count);
+        for (uint256 i; i < count; i++) {
+            page[i] = _modules[from + i];
+        }
     }
 
     function moduleCount() external view returns (uint256) {
