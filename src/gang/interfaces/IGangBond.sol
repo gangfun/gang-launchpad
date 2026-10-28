@@ -24,7 +24,9 @@ interface IGangBond {
         State state;
         uint64 deadline; // T; 0 while pending (the token not on its pair yet)
         uint64 duration; // T − start; the commitment after the token reaches its pair
-        uint64 refundAt; // pending, no pair MAX_WAIT after the post: when the creator's requested refund may run (0: none)
+        // when a requested step may run (0: none): pending, no pair MAX_WAIT after the post — the creator's refund;
+        // started, past the deadline — the settle
+        uint64 requestAt;
         uint128 amount; // the bond, in quote
         uint128 holdAmount; // X: tokens the creator promises to hold
         uint128 burnLeft; // quote slashed but not yet spent on buy-back
@@ -39,6 +41,7 @@ interface IGangBond {
     // anyone (requestRefund / refund: creator only)
     function start(address token) external;
     function report(address token) external;
+    function requestSettle(address token) external;
     function settle(address token) external;
     function requestRefund(address token) external;
     function refund(address token) external;
@@ -77,6 +80,7 @@ interface IGangBond {
     event BondReported(
         address indexed token, uint32 round, address indexed reporter, uint256 balance, uint256 reward, uint256 burnLeft
     );
+    event SettleRequested(address indexed token, uint32 round, uint64 settleAt);
     event BondSettled(address indexed token, uint32 round, address indexed creator, uint256 amount);
     event RefundRequested(address indexed token, uint32 round, uint64 refundAt);
     event BondRefunded(address indexed token, uint32 round, address indexed creator, uint256 amount);
@@ -96,16 +100,19 @@ interface IGangBond {
     error BadValue();
     error FeeOnTransferQuote();
     error NotViolated();
-    /// @notice `settle` / `refund` while the creator holds less than `holdAmount`: the bond is violated, `report` it.
+    /// @notice `requestSettle` / `settle` / `refund` while the creator holds less than `holdAmount`: the bond is violated,
+    ///         `report` it.
     error Violated();
     error NotDue();
     /// @notice `requestRefund` / `refund`: the token reached its pair, so the bond runs (`start`) instead.
     error AlreadyLive();
     error AlreadyRequested();
     error NoRefundRequest();
-    /// @notice `settle` while the token's pair is mid flash swap (holds fewer tokens than its reserve).
+    error NoSettleRequest();
+    /// @notice `requestSettle` / `settle` while the token's pair is mid flash swap (holds fewer tokens than its reserve).
     error FlashSwapActive();
     error NothingToBurn();
-    error BurnedThisBlock();
+    /// @notice `burnChunk` less than CHUNK_GAP after the last chunk bought.
+    error BurnTooSoon();
     error Slippage();
 }
