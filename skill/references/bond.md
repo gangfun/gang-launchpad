@@ -11,7 +11,7 @@ decision.
 - **The clock**: the promise binds from the post. T = the moment the token reaches its pair (V3 graduation / 打新 launch)
   + N days (7–90); posted after that, T = post + N days. GangBond can't be told about a graduation, so anyone starts the
   clock with `gang bond start` (the keeper does it at once; any other bond write does it too).
-- **Who**: only the token's creator posts, tops up, raises X or extends. Start, report, settle, refund and burn are open
+- **Who**: only the token's creator posts, tops up, raises X, extends or refunds. Start, report, settle and burn are open
   to anyone.
 - **Endings**:
   - **settle** — at or after T, while the creator still holds ≥ X: the whole bond goes back to the creator (whoever sends
@@ -20,8 +20,10 @@ decision.
     bond (none when the creator reports itself); the rest buys the token back from its pair in chunks and sends it to
     0xdead. Slashed before the pair, the buy-back waits for it; if there is still no pair 30 days after the post, the
     rest goes to 0xdead as quote.
-  - **refund** — posted before the pair, still no pair 30 days after the post, X still held: the whole bond goes back to
-    the creator (not counted as honored).
+  - **refund** — posted before the pair and still no pair 30 days after the post: the creator asks (`gang bond refund`),
+    which starts a 3-day notice shown on gang.fun; X still binds through it, and a graduation / launch voids the request
+    (the clock starts instead). After the notice, still no pair and X held, the creator runs it again and gets the whole
+    bond back (not counted as honored). So a bond can't be pulled unseen right before graduation.
   There is **no other early withdrawal**. Selling on the curve, selling 打新 shares back, or moving tokens to another own
   wallet all count as a breach.
 - **Buy-back** (`gang bond burn`, also the keeper every 10 minutes): one chunk per block, at most 0.5% of the pair's
@@ -51,7 +53,7 @@ to price X: no coverage, no badge — show the bond amount and X (% of supply) i
 | `gang bond start --token <addr>` | anyone | the token graduated / launched: start the clock (deadline = now + N days) |
 | `gang bond report --token <addr>` | anyone | simulated first; nothing is built when the creator still holds ≥ X |
 | `gang bond settle --token <addr>` | anyone | after T while X is held |
-| `gang bond refund --token <addr>` | anyone | posted before the pair, no pair 30 days after the post, X held |
+| `gang bond refund --token <addr>` | creator | posted before the pair, no pair 30 days after the post: first run asks (3-day notice), a run after the notice gets the bond back |
 | `gang bond burn --token <addr> [--slippage 1]` | anyone | one buy-back chunk (or the observation / a skip, see above); slashed before the pair and still none 30 days after the post: the rest to 0xdead as quote |
 | `gang bond tx --hash <0x..>` | anyone | decode GangBond events |
 
@@ -59,7 +61,7 @@ All take `--testnet`, `--calldata` (raw tx) and `--from <addr>` like `gang v3`. 
 `post` / `topup` of a WBNB-quoted token pay native BNB; `--use-wbnb` pays WBNB instead (approve first, then re-run).
 A `burn` preview made while no chunk is ready sends the maximum minimum: if a chunk has become buyable by the time it
 lands, it reverts instead of buying unpriced; re-run for a priced preview.
-GangBond is built in on BSC testnet (`--testnet`, `0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716`); it is not on mainnet
+GangBond is built in on BSC testnet (`--testnet`, `0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3`); it is not on mainnet
 yet, so without `--testnet` every `gang bond` command says it is not deployed (`GANG_BOND` / `GANG_TESTNET_BOND`
 override).
 

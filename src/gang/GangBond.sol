@@ -78,8 +78,11 @@ interface IWBNBDeposit {
 ///           the reporter (none when the creator reports itself), the rest bought back from the token's pair in small
 ///           chunks (`burnChunk`) and sent to 0xdead. Slashed before the pair: the buy-back waits for it; still no pair
 ///           MAX_WAIT after the post, the rest goes to 0xdead as quote;
-///         - `refund` (anyone): posted before the pair, still no pair MAX_WAIT after the post, promise kept — the whole
-///           bond goes back to the creator. There is no other early withdrawal.
+///         - `refund` (creator, in two steps): posted before the pair and still no pair MAX_WAIT after the post, the
+///           creator `requestRefund`s; REFUND_NOTICE later, still no pair and the promise kept, `refund` returns the
+///           whole bond. The promise binds through the notice, and a graduation / launch during it cancels the request
+///           (the clock starts instead), so the bond can't be pulled unseen right before the pair. No other early
+///           withdrawal.
 ///         The time after the deadline and before `settle` still counts: a creator that sold before the deadline must
 ///         buy back before it can settle, and can be reported meanwhile.
 /// @dev Not upgradeable, no owner. Reads only the pad's and the token's public views and trades only with the token's
@@ -95,8 +98,10 @@ contract GangBond is IGangBond, ReentrancyGuard {
     uint256 public constant BPS = 10_000;
     uint64 public constant MIN_DURATION = 7 days;
     uint64 public constant MAX_DURATION = 90 days;
-    /// @notice Posted before the pair: how long the bond waits for it before `refund` / the quote burn.
+    /// @notice Posted before the pair: how long the bond waits for it before `requestRefund` / the quote burn.
     uint64 public constant MAX_WAIT = 30 days;
+    /// @notice A requested refund runs this long after the request (the promise binds meanwhile; buyers see it coming).
+    uint64 public constant REFUND_NOTICE = 3 days;
     /// @notice Reporter's share of the bond.
     uint256 public constant REPORTER_BPS = 100;
     /// @notice One buy-back chunk spends at most this share of the pair's quote reserve (as the tax handler's chunks).
@@ -179,6 +184,7 @@ contract GangBond is IGangBond, ReentrancyGuard {
             state: State.Active,
             deadline: deadline,
             duration: duration,
+            refundAt: 0,
             amount: amount.toUint128(),
             holdAmount: holdAmount.toUint128(),
             burnLeft: 0
@@ -272,14 +278,28 @@ contract GangBond is IGangBond, ReentrancyGuard {
         emit BondSettled(token, b.round, b.creator, b.amount);
     }
 
-    /// @notice Posted before the pair and the pair never came: MAX_WAIT after the post, while the promise still holds,
-    ///         the bond goes back to the creator (never to the caller). Not counted as honored.
+    /// @notice Posted before the pair and still no pair MAX_WAIT after the post: the creator asks for the bond back.
+    ///         It can run REFUND_NOTICE from now; until then the promise binds, and the pair coming cancels it.
+    function requestRefund(address token) external nonReentrant {
+        Bond storage b = _activeOf(token);
+        if (msg.sender != b.creator) revert NotCreator();
+        _requireNoPair(token, b);
+        if (b.refundAt != 0) revert AlreadyRequested();
+        if (block.timestamp < b.postedAt + MAX_WAIT) revert NotDue();
+        if (IERC20(token).balanceOf(b.creator) < b.holdAmount) revert Violated();
+        uint64 at = uint64(block.timestamp) + REFUND_NOTICE;
+        b.refundAt = at;
+        emit RefundRequested(token, b.round, at);
+    }
+
+    /// @notice A requested refund, REFUND_NOTICE on, still no pair and the promise kept: the bond goes back to the
+    ///         creator. Not counted as honored.
     function refund(address token) external nonReentrant {
         Bond storage b = _activeOf(token);
-        if (b.deadline != 0) revert AlreadyLive();
-        (,,, bool live) = _padView(token);
-        if (live) revert AlreadyLive();
-        if (block.timestamp < b.postedAt + MAX_WAIT) revert NotDue();
+        if (msg.sender != b.creator) revert NotCreator();
+        _requireNoPair(token, b);
+        if (b.refundAt == 0) revert NoRefundRequest();
+        if (block.timestamp < b.refundAt) revert NotDue();
         if (IERC20(token).balanceOf(b.creator) < b.holdAmount) revert Violated();
         b.state = State.Refunded;
         IERC20(b.quote).safeTransfer(b.creator, b.amount);
@@ -416,7 +436,8 @@ contract GangBond is IGangBond, ReentrancyGuard {
         if (b.state != State.Active) revert NotActive();
     }
 
-    /// @dev Start the clock of a pending bond once its token is on the pair (deadline = now + duration).
+    /// @dev Start the clock of a pending bond once its token is on the pair (deadline = now + duration); a requested
+    ///      refund is void from then.
     function _begin(address token, Bond storage b) internal {
         if (b.deadline != 0) return;
         (,, address pair, bool live) = _padView(token);
@@ -424,7 +445,15 @@ contract GangBond is IGangBond, ReentrancyGuard {
         _cacheMarket(token, pair);
         uint64 deadline = uint64(block.timestamp) + b.duration;
         b.deadline = deadline;
+        b.refundAt = 0;
         emit BondStarted(token, b.round, deadline);
+    }
+
+    /// @dev A refund needs the bond still pending and the token still off its pair.
+    function _requireNoPair(address token, Bond storage b) internal view {
+        if (b.deadline != 0) revert AlreadyLive();
+        (,,, bool live) = _padView(token);
+        if (live) revert AlreadyLive();
     }
 
     /// @dev The creator, quote and pair of a pad token, and whether it is on its pair yet (V3 graduated / 打新

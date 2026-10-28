@@ -655,19 +655,47 @@ contract GangBondTest is GangFixture {
         assertEq(wbnb.balanceOf(address(bond)), 0);
     }
 
-    function test_refund_noPairWithinWait() public {
+    function test_refund_requestThenNotice() public {
         (address t, address creator) = _v3OnCurve();
         uint64 posted = uint64(block.timestamp);
         _postPending(t, creator, 0.5 ether, 30 days);
 
         vm.warp(posted + 30 days - 1);
+        vm.prank(creator);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.requestRefund(t);
+        vm.warp(posted + 30 days);
+        vm.prank(reporter);
+        vm.expectRevert(IGangBond.NotCreator.selector); // only the creator asks
+        bond.requestRefund(t);
+        vm.prank(creator);
+        vm.expectRevert(IGangBond.NoRefundRequest.selector);
+        bond.refund(t);
+
+        uint64 at = uint64(block.timestamp + 3 days);
+        vm.expectEmit(address(bond));
+        emit IGangBond.RefundRequested(t, 1, at);
+        vm.prank(creator);
+        bond.requestRefund(t);
+        assertEq(bond.bondOf(t).refundAt, at);
+        vm.prank(creator);
+        vm.expectRevert(IGangBond.AlreadyRequested.selector);
+        bond.requestRefund(t);
+
+        // the notice: the promise still binds and the refund can't run yet
+        vm.warp(at - 1);
+        vm.prank(creator);
         vm.expectRevert(IGangBond.NotDue.selector);
         bond.refund(t);
-        vm.warp(posted + 30 days);
+        vm.warp(at);
+        vm.prank(reporter);
+        vm.expectRevert(IGangBond.NotCreator.selector);
+        bond.refund(t);
+
         uint256 before = wbnb.balanceOf(creator);
         vm.expectEmit(address(bond));
         emit IGangBond.BondRefunded(t, 1, creator, 0.5 ether);
-        vm.prank(reporter); // anyone; the bond goes to the creator
+        vm.prank(creator);
         bond.refund(t);
         assertEq(wbnb.balanceOf(creator) - before, 0.5 ether);
         assertEq(uint8(bond.bondOf(t).state), uint8(IGangBond.State.Refunded));
@@ -679,6 +707,43 @@ contract GangBondTest is GangFixture {
         // a refunded round is over: the creator may post again
         _postPending(t, creator, 0.1 ether, 7 days);
         assertEq(bond.bondOf(t).round, 2);
+        assertEq(bond.bondOf(t).refundAt, 0);
+    }
+
+    /// @dev Review M (2026-10-28): the bond can't be pulled unseen right before the pair. During the notice the promise
+    ///      still binds (a breach can be reported) and graduating voids the request: the clock starts instead.
+    function test_refund_noticeBindsAndGraduationVoidsIt() public {
+        (address t, address creator) = _v3OnCurve();
+        uint64 posted = uint64(block.timestamp);
+        _postPending(t, creator, 0.5 ether, 30 days);
+        vm.warp(posted + 30 days);
+        vm.prank(creator);
+        bond.requestRefund(t);
+
+        _graduate(t); // within the notice
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        vm.prank(creator);
+        vm.expectRevert(IGangBond.AlreadyLive.selector);
+        bond.refund(t);
+        bond.start(t);
+        assertEq(bond.bondOf(t).deadline, vm.getBlockTimestamp() + 30 days);
+        assertEq(bond.bondOf(t).refundAt, 0, "the pair voids the request");
+
+        // breach during a notice on another token: reportable, and no refund
+        (address t2, address c2) = _v3OnCurve();
+        uint64 p2 = uint64(vm.getBlockTimestamp()); // block.timestamp can read stale after vm.warp (via-ir)
+        _postPending(t2, c2, 0.5 ether, 30 days);
+        vm.warp(p2 + 30 days);
+        vm.prank(c2);
+        bond.requestRefund(t2);
+        _curveSell(t2, c2, 1 ether);
+        vm.warp(vm.getBlockTimestamp() + 3 days);
+        vm.prank(c2);
+        vm.expectRevert(IGangBond.Violated.selector);
+        bond.refund(t2);
+        vm.prank(reporter);
+        bond.report(t2);
+        assertEq(uint8(bond.bondOf(t2).state), uint8(IGangBond.State.Slashed));
     }
 
     function test_refund_refusedWhenBrokenOrLive() public {
@@ -687,15 +752,58 @@ contract GangBondTest is GangFixture {
         _postPending(t, creator, 0.5 ether, 30 days);
         vm.warp(posted + 30 days);
         _curveSell(t, creator, 1 ether);
+        vm.prank(creator);
         vm.expectRevert(IGangBond.Violated.selector);
-        bond.refund(t);
+        bond.requestRefund(t);
 
+        // past MAX_WAIT, then the pair comes: the bond runs, no refund
         (address t2, address c2) = _v3OnCurve();
+        uint64 p2 = uint64(vm.getBlockTimestamp()); // block.timestamp can read stale after vm.warp (via-ir)
         _postPending(t2, c2, 0.5 ether, 30 days);
+        vm.warp(p2 + 31 days);
         _graduate(t2);
-        vm.warp(block.timestamp + 30 days);
+        vm.prank(c2);
         vm.expectRevert(IGangBond.AlreadyLive.selector);
-        bond.refund(t2);
+        bond.requestRefund(t2);
+        bond.start(t2);
+        assertEq(bond.bondOf(t2).deadline, block.timestamp + 30 days);
+    }
+
+    /// @dev Review gap: slashed before the pair, the pair comes after MAX_WAIT but before the first burnChunk — the rest
+    ///      is bought back, never burned as quote.
+    function test_preGrad_slashed_lateGraduation_stillBuysBack() public {
+        (address t, address creator) = _v3OnCurve();
+        uint64 posted = uint64(block.timestamp);
+        _postPending(t, creator, 0.5 ether, 30 days);
+        _curveSell(t, creator, _bal(t, creator));
+        vm.prank(reporter);
+        bond.report(t);
+        vm.warp(posted + 40 days);
+        _graduate(t);
+        (bool ready,,) = bond.previewBurn(t); // live, market not cached yet: needs an observation first
+        assertFalse(ready);
+        uint256 deadBefore = wbnb.balanceOf(bond.DEAD());
+        (uint256 q, uint256 burned) = bond.burnChunk(t, 0);
+        assertEq(q + burned, 0, "records the observation, no quote burn");
+        assertEq(wbnb.balanceOf(bond.DEAD()), deadBefore);
+        _next(10 minutes);
+        (q, burned) = bond.burnChunk(t, 0);
+        assertGt(burned, 0);
+    }
+
+    /// @dev Review gap: on the pair but not started, a reverted settle leaves nothing behind; extend takes the started
+    ///      branch (it starts the clock first).
+    function test_preGrad_liveNotStarted_settleAndExtend() public {
+        (address t, address creator) = _v3OnCurve();
+        _postPending(t, creator, 0.5 ether, 30 days);
+        _graduate(t);
+        vm.expectRevert(IGangBond.NotDue.selector);
+        bond.settle(t);
+        assertEq(bond.bondOf(t).deadline, 0, "the reverted settle started nothing");
+        vm.prank(creator);
+        bond.extend(t, 10 days);
+        assertEq(bond.bondOf(t).deadline, block.timestamp + 40 days);
+        assertEq(bond.bondOf(t).duration, 40 days);
     }
 
     /// @dev 打新 before launch: selling shares back is a breach; launch starts the clock.

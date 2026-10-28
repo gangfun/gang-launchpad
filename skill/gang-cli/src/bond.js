@@ -15,11 +15,11 @@ import { bawAddress } from './baw.js'
  * Env: GANG_BOND (mainnet), GANG_TESTNET_BOND (testnet) override the addresses below.
  */
 
-// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139370168, over the set-10 pad — the version that takes bonds
-// from create on (the first one, 0x587f…5d7E, took them only after the pair; docs/TESTNET-GANG-BOND-2026-10-28.md).
-// Mainnet: not deployed yet (GANG_BOND overrides either)
+// script/DeployGangBond.s.sol. Testnet: 2026-10-28, block 139374309, over the set-10 pad — bonds from create on, refunds
+// asked for by the creator with a 3-day notice (earlier testnet versions: 0x587f…5d7E after the pair only, 0x5a99…d716
+// without the notice; docs/TESTNET-GANG-BOND-2026-10-28.md). Mainnet: not deployed yet (GANG_BOND overrides either)
 export const MAINNET_BOND = null
-export const TESTNET_BOND = '0x5a99F3eFf9D34cc8785f7D375eb565bDe7F2d716'
+export const TESTNET_BOND = '0xB034cFeb81Cbd29EE3d0CD6a0885766B6F10EBE3'
 
 export const BOND_ABI = parseAbi([
   'function post(address token, uint256 amount, uint256 holdAmount, uint64 duration) payable',
@@ -29,9 +29,10 @@ export const BOND_ABI = parseAbi([
   'function start(address token)',
   'function report(address token)',
   'function settle(address token)',
+  'function requestRefund(address token)',
   'function refund(address token)',
   'function burnChunk(address token, uint256 minTokensOut) returns (uint256 quoteIn, uint256 burned)',
-  'function bondOf(address token) view returns ((address creator, uint64 postedAt, uint32 round, address quote, uint8 state, uint64 deadline, uint64 duration, uint128 amount, uint128 holdAmount, uint128 burnLeft))',
+  'function bondOf(address token) view returns ((address creator, uint64 postedAt, uint32 round, address quote, uint8 state, uint64 deadline, uint64 duration, uint64 refundAt, uint128 amount, uint128 holdAmount, uint128 burnLeft))',
   'function isViolated(address token) view returns (bool)',
   'function isLive(address token) view returns (bool)',
   'function dumpValue(address token) view returns (uint256)',
@@ -40,7 +41,7 @@ export const BOND_ABI = parseAbi([
   'function quoteDump(address token, uint256 holdAmount) view returns (uint256)',
   'function previewBurn(address token) view returns (bool ready, uint256 quoteIn, uint256 tokensOut)',
   'function MIN_DURATION() view returns (uint64)', 'function MAX_DURATION() view returns (uint64)',
-  'function REPORTER_BPS() view returns (uint256)', 'function MAX_WAIT() view returns (uint64)',
+  'function REPORTER_BPS() view returns (uint256)', 'function MAX_WAIT() view returns (uint64)', 'function REFUND_NOTICE() view returns (uint64)',
   'event BondPosted(address indexed token, address indexed creator, uint32 round, address quote, uint256 amount, uint256 holdAmount, uint64 duration, uint64 deadline)',
   'event BondStarted(address indexed token, uint32 round, uint64 deadline)',
   'event BondToppedUp(address indexed token, uint32 round, uint256 added, uint256 amount)',
@@ -48,12 +49,13 @@ export const BOND_ABI = parseAbi([
   'event BondExtended(address indexed token, uint32 round, uint64 duration, uint64 deadline)',
   'event BondReported(address indexed token, uint32 round, address indexed reporter, uint256 balance, uint256 reward, uint256 burnLeft)',
   'event BondSettled(address indexed token, uint32 round, address indexed creator, uint256 amount)',
+  'event RefundRequested(address indexed token, uint32 round, uint64 refundAt)',
   'event BondRefunded(address indexed token, uint32 round, address indexed creator, uint256 amount)',
   'event BondBurned(address indexed token, uint32 round, uint256 quoteIn, uint256 tokensBurned, uint256 burnLeft)',
   'error ZeroAddress()', 'error UnknownToken()', 'error NotTradable()', 'error NotCreator()', 'error BondLive()',
   'error NotActive()', 'error ZeroAmount()', 'error BadDuration()', 'error BadHold()', 'error BadValue()',
   'error FeeOnTransferQuote()', 'error NotViolated()', 'error Violated()', 'error NotDue()', 'error NothingToBurn()',
-  'error BurnedThisBlock()', 'error Slippage()', 'error FlashSwapActive()', 'error AlreadyLive()',
+  'error BurnedThisBlock()', 'error Slippage()', 'error FlashSwapActive()', 'error AlreadyLive()', 'error AlreadyRequested()', 'error NoRefundRequest()',
   'error SafeCastOverflowedUintDowncast(uint8 bits, uint256 value)', 'error SafeERC20FailedOperation(address token)',
 ])
 
@@ -77,6 +79,8 @@ const HINTS = {
   NotViolated: 'the creator still holds at least X: nothing to report',
   Violated: 'the creator holds less than X: the bond cannot be settled or refunded, only reported',
   AlreadyLive: 'the token reached its pair: the bond runs (gang bond start) instead of being refunded',
+  AlreadyRequested: 'a refund is already requested: it can run once its 3-day notice is over',
+  NoRefundRequest: 'request the refund first (gang bond refund asks for it; it runs 3 days later)',
   NotDue: 'the deadline has not passed yet',
   NothingToBurn: 'no slashed bond with buy-back left on this token',
   BurnedThisBlock: 'a chunk was already bought for this token in this block: try the next block',
@@ -86,6 +90,7 @@ const HINTS = {
 
 const STATES = ['none', 'active', 'slashed', 'settled', 'refunded']
 const MAX_WAIT = 30 * 86_400 // GangBond.MAX_WAIT
+const REFUND_NOTICE = 3 * 86_400 // GangBond.REFUND_NOTICE
 const BPS = 10_000n
 const TOTAL_SUPPLY = 1_000_000_000n * 10n ** 18n
 const DAY = 86_400
@@ -188,9 +193,13 @@ async function bondView(ctx, token, m) {
         clock: `starts when the token ${m.kind === 'v3' ? 'graduates' : 'launches'}: deadline = that moment + ${days(b.duration)} days`,
         ...(m.live
           ? { note: `the token is on its pair: anyone can start the clock (gang bond start --token ${token}); any other bond write starts it too` }
-          : { refundableFrom: new Date(refundAt * 1000).toISOString(), coverageNote: 'no coverage before the pair: shown once it trades on PancakeSwap' }),
+          : { refundRequestFrom: new Date(refundAt * 1000).toISOString(), coverageNote: 'no coverage before the pair: shown once it trades on PancakeSwap' }),
+        ...(b.refundAt !== 0n && !m.live && {
+          refundRequested: true, refundRunsAt: new Date(Number(b.refundAt) * 1000).toISOString(),
+          refundNote: 'the creator asked for the bond back: it can be withdrawn from refundRunsAt if the token still has no pair; the promise binds until then, and graduation / launch cancels the request',
+        }),
         ...violatedNote,
-        ...(!violated && !m.live && raw.now >= refundAt && { note: `no pair within 30 days of the post and X is held: anyone can refund it to the creator (gang bond refund --token ${token})` }),
+        ...(!violated && !m.live && raw.now >= refundAt && b.refundAt === 0n && { note: `no pair within 30 days of the post and X is held: the creator can ask for the bond back (gang bond refund --token ${token}); it runs 3 days later` }),
       })
       return { ...v, _raw: raw }
     }
@@ -326,7 +335,7 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
   if (sub === 'start') {
     if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
     if (!raw.pending) return fail('the clock is already running', { deadline: view.deadline })
-    if (!m.live) return fail(`the token has not ${m.kind === 'v3' ? 'graduated' : 'launched'} yet: the clock starts when it reaches its pair`, { refundableFrom: view.refundableFrom })
+    if (!m.live) return fail(`the token has not ${m.kind === 'v3' ? 'graduated' : 'launched'} yet: the clock starts when it reaches its pair`, { refundRequestFrom: view.refundRequestFrom })
     const sim = await simulate(ctx, me(), 'start', [token])
     if (sim.failed) return out({ success: false, step: 'start', ...sim.failed })
     return out(send('start', [token], {
@@ -336,21 +345,32 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
   }
 
   if (sub === 'refund') {
+    // creator only, two steps: request (30 days without a pair since the post), then refund after a 3-day notice
     if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
+    if (!same(me(), b.creator)) return fail('only the creator can ask for its bond back', { wallet: me(), creator: b.creator })
     if (!raw.pending || m.live) return fail(HINTS.AlreadyLive, { deadline: view.deadline })
-    const refundAt = Number(b.postedAt) + MAX_WAIT
-    if (raw.now < refundAt) return fail('a refund needs 30 days without a pair since the post', { refundableFrom: view.refundableFrom, secondsLeft: refundAt - raw.now })
-    if (view.violated) return fail(HINTS.Violated, { creatorBalance: view.creatorBalance, holdTokens: view.holdTokens, hint: `gang bond report --token ${token}${net}` })
+    if (view.violated) return fail(HINTS.Violated, { creatorBalance: view.creatorBalance, holdTokens: view.holdTokens })
+    if (b.refundAt === 0n) {
+      const requestAt = Number(b.postedAt) + MAX_WAIT
+      if (raw.now < requestAt) return fail('a refund can be asked for only 30 days after the post without a pair', { refundRequestFrom: view.refundRequestFrom, secondsLeft: requestAt - raw.now })
+      const sim = await simulate(ctx, me(), 'requestRefund', [token])
+      if (sim.failed) return out({ success: false, step: 'request-refund', ...sim.failed })
+      return out(send('requestRefund', [token], {
+        step: 'request-refund', bond: view.bond, quote: view.quote, refundRunsAbout: new Date((raw.now + REFUND_NOTICE) * 1000).toISOString(),
+        note: 'step 1 of 2: starts a 3-day notice (shown on gang.fun). Keep holding X: a breach can still be reported, and if the token graduates / launches meanwhile the request is void and the clock starts. Then run gang bond refund again',
+      }))
+    }
+    if (raw.now < Number(b.refundAt)) return fail('the refund notice is not over yet', { refundRunsAt: view.refundRunsAt, secondsLeft: Number(b.refundAt) - raw.now })
     const sim = await simulate(ctx, me(), 'refund', [token])
     if (sim.failed) return out({ success: false, step: 'refund', ...sim.failed })
-    return out(send('refund', [token], { step: 'refund', creator: b.creator, refund: view.bond, quote: view.quote, note: 'no pair within 30 days of the post: the bond goes back to the creator, whoever sends this (not counted as honored)' }))
+    return out(send('refund', [token], { step: 'refund', refund: view.bond, quote: view.quote, note: 'step 2 of 2: no pair after the notice, X held: the bond comes back to you (not counted as honored)' }))
   }
 
   if (sub === 'settle') {
     if (view.state !== 'active') return fail(HINTS.NotActive, { ...pub })
     if (raw.pending) {
       return fail(m.live ? 'the clock has not started: settle comes duration days after it' : 'the token is not on its pair yet: settle comes after graduation / launch + the duration', {
-        durationDays: view.durationDays, hint: m.live ? `gang bond start --token ${token}${net}` : `if there is still no pair 30 days after the post: gang bond refund --token ${token}${net}`,
+        durationDays: view.durationDays, hint: m.live ? `gang bond start --token ${token}${net}` : `if there is still no pair 30 days after the post, the creator can ask for the bond back: gang bond refund --token ${token}${net} (it runs 3 days later)`,
       })
     }
     if (raw.now < Number(b.deadline)) return fail(HINTS.NotDue, { deadline: view.deadline, secondsLeft: Number(b.deadline) - raw.now })
@@ -416,11 +436,11 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
           }
         : {
             clock: `starts when the token ${m.kind === 'v3' ? 'graduates' : 'launches'}: deadline = that moment + ${days} days`,
-            refundableFrom: new Date((raw.now + MAX_WAIT) * 1000).toISOString(),
+            refundRequestFrom: new Date((raw.now + MAX_WAIT) * 1000).toISOString(),
             coverageNote: 'no coverage before the pair: gang.fun shows the bond amount and X until it trades on PancakeSwap',
           }),
       warning: `from now until settled after ${until}, keep at least ${tokens(hold)} tokens in ${m.creator}: below that anyone can report it, the reporter takes 1% and the rest of the bond buys back and burns the token.`
-        + (m.live ? ' There is no early withdrawal.' : ' There is no early withdrawal; only if the token has no pair 30 days after this post, and X is still held, it can be refunded.')
+        + (m.live ? ' There is no early withdrawal.' : ' There is no early withdrawal; only if the token has no pair 30 days after this post can you ask for it back, and it comes back 3 days after asking if the token still has no pair and X is still held.')
         + ` ${CLI_ONLY}`,
     }, pay.value))
   }

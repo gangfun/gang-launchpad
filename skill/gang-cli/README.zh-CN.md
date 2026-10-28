@@ -73,7 +73,7 @@ gang bond status --token <addr>                                  # 状态（待�
 gang bond start --token <addr>                                   # 任何人，毕业 / 开盘后开始计时
 gang bond report --token <addr>                                  # 任何人，余额低于 X 时举报：拿押金 1%，其余回购销毁
 gang bond settle --token <addr>                                  # 任何人，T 之后余额仍达标：押金退回创建者
-gang bond refund --token <addr>                                  # 任何人：押后 30 天仍未开盘且余额达标，押金退回创建者
+gang bond refund --token <addr>                                  # 创建者：押后 30 天仍未开盘，先申请，3 天公告期后再执行一次取回
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # 推进一块回购销毁 / 解析 GangBond 事件
 #   创建者用 gang v3 sell（内盘或外盘）/ gang fair sell / gang fair withdraw 卖到低于 X 会被拒，除非加 --break-bond（过了 T：--settle-first 先取回）
 gang execute --request-id <id>
@@ -191,7 +191,7 @@ gang agents --window 30d --sort follow
 | `GANG_UPDATE_URL` | 新版本检查查询的地址，默认 `https://registry.npmjs.org/@gangfun/cli/latest`；npmjs 慢或打不开时，可以换成 npm 镜像的 `…/@gangfun/cli/latest` |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | 覆盖合并后的内盘合约 GangLaunchpad（主网 / 测试网），`gang v3` 和 `gang fair` 共用（默认：主网 `0x15CF…4365`，测试网第 10 套 `0xFebF…5BB1`）。旧名 `GANG_V3_PAD` / `GANG_FAIR_PAD`、`GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` 仍可用（别名） |
 | `GANG_TESTNET_RPC_URL` | 测试网 RPC；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
-| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond（押金承诺，`gang bond`）。测试网已内置（`0x5a99…d716`）；主网尚未部署 |
+| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond（押金承诺，`gang bond`）。测试网已内置（`0xB034…EBE3`）；主网尚未部署 |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter 代理（用原生 BNB 买 V3 / 打新，以及已毕业币的所有外盘买卖）；旧名 `GANG_ROUTER_TESTNET` 仍可用。默认：主网 `0xE040…79C4`，测试网第 10 套 `0x6bB6…C9F6` |
 
 ## 版本

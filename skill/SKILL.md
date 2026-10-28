@@ -111,7 +111,7 @@ Discovery commands need CLI ≥0.3.0; if `gang hot` only prints help, run `npm i
 - **Bonds.** Before a `gang bond post`, tell the user plainly: no early withdrawal, and any sell below X before settle
   (on the curve, PancakeSwap, another wallet, anywhere) loses the whole bond. Posted before graduation / launch, the
   promise binds at once and the N days start at graduation / launch; only if there is no pair 30 days after the post
-  can it be refunded. Relay `warning`. A creator's sell refused for a bond:
+  can the creator ask for it back, and it comes back 3 days after asking (graduation / launch meanwhile voids that). Relay `warning`. A creator's sell refused for a bond:
   pass on `error` and `maxSellKeepingBond`; add `--break-bond` only when the user, told the bond is lost, still says sell.
   `gang bond report` is the user's call, not yours: never report on your own initiative.
 - **Old CLI for V3 / 打新.** `gang v3` / `gang fair` printing only the help, or answering `… has no mainnet address in this

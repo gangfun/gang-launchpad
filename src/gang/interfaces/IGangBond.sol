@@ -24,6 +24,7 @@ interface IGangBond {
         State state;
         uint64 deadline; // T; 0 while pending (the token not on its pair yet)
         uint64 duration; // T − start; the commitment after the token reaches its pair
+        uint64 refundAt; // pending, no pair MAX_WAIT after the post: when the creator's requested refund may run (0: none)
         uint128 amount; // the bond, in quote
         uint128 holdAmount; // X: tokens the creator promises to hold
         uint128 burnLeft; // quote slashed but not yet spent on buy-back
@@ -35,10 +36,11 @@ interface IGangBond {
     function raiseHold(address token, uint256 newHoldAmount) external;
     function extend(address token, uint64 by) external;
 
-    // anyone
+    // anyone (requestRefund / refund: creator only)
     function start(address token) external;
     function report(address token) external;
     function settle(address token) external;
+    function requestRefund(address token) external;
     function refund(address token) external;
     function burnChunk(address token, uint256 minTokensOut) external returns (uint256 quoteIn, uint256 burned);
 
@@ -76,6 +78,7 @@ interface IGangBond {
         address indexed token, uint32 round, address indexed reporter, uint256 balance, uint256 reward, uint256 burnLeft
     );
     event BondSettled(address indexed token, uint32 round, address indexed creator, uint256 amount);
+    event RefundRequested(address indexed token, uint32 round, uint64 refundAt);
     event BondRefunded(address indexed token, uint32 round, address indexed creator, uint256 amount);
     event BondBurned(address indexed token, uint32 round, uint256 quoteIn, uint256 tokensBurned, uint256 burnLeft);
 
@@ -96,8 +99,10 @@ interface IGangBond {
     /// @notice `settle` / `refund` while the creator holds less than `holdAmount`: the bond is violated, `report` it.
     error Violated();
     error NotDue();
-    /// @notice `refund`: the token reached its pair, so the bond runs (`start`) instead.
+    /// @notice `requestRefund` / `refund`: the token reached its pair, so the bond runs (`start`) instead.
     error AlreadyLive();
+    error AlreadyRequested();
+    error NoRefundRequest();
     /// @notice `settle` while the token's pair is mid flash swap (holds fewer tokens than its reserve).
     error FlashSwapActive();
     error NothingToBurn();

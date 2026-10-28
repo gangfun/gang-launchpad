@@ -83,7 +83,7 @@ gang bond status --token <addr>                                  # state, pendin
 gang bond start --token <addr>                                   # anyone, once graduated / launched: start the --days clock
 gang bond report --token <addr>                                  # anyone, below X: 1% to you, the rest buys back and burns
 gang bond settle --token <addr>                                  # anyone, after T while X is held: the bond goes back to the creator
-gang bond refund --token <addr>                                  # anyone: no pair 30 days after the post, X held → back to the creator
+gang bond refund --token <addr>                                  # creator: no pair 30 days after the post → ask, then 3 days later get it back
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # push one buy-back chunk / decode GangBond events
 #   A creator's gang v3 sell (curve or pool) / gang fair sell / gang fair withdraw below X is refused unless --break-bond (past T: --settle-first)
 gang execute --request-id <id>
@@ -218,7 +218,7 @@ gang agents --window 30d --sort follow
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | Override the merged GangLaunchpad (mainnet / testnet) behind both `gang v3` and `gang fair` (defaults: mainnet `0x15CF…4365`, testnet set 10 `0xFebF…5BB1`). Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
 | `GANG_TESTNET_RPC_URL` | Testnet RPC; old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
-| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Testnet built in (`0x5a99…d716`); mainnet not deployed yet |
+| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Testnet built in (`0xB034…EBE3`); mainnet not deployed yet |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
 
 ## Version

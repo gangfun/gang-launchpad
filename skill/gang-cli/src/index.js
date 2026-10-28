@@ -325,7 +325,9 @@ BOND (押金承诺, GangBond; any GangLaunchpad token, from create on; GANG_BOND
   gang bond report --token <addr>        anyone, when the creator holds less than X: 1% of the bond to you, the rest buys
                                          back and burns the token (simulated first; nothing is sent when not violated)
   gang bond settle --token <addr>        anyone, after the deadline while X is held: the bond goes back to the creator
-  gang bond refund --token <addr>        anyone: posted before the pair, still no pair 30 days later, X held → back to the creator
+  gang bond refund --token <addr>        creator, posted before the pair and still no pair 30 days later: run it once to ask
+                                         (a 3-day notice: X still binds, graduation / launch voids it), again after it to
+                                         get the bond back
   gang bond burn --token <addr> [--slippage 1]
                                          anyone: one buy-back chunk of a slashed bond (≤ 0.5% of the pair's quote side; waits
                                          for a 10-minute average and skips when the price is > 2% above it). Slashed before the
