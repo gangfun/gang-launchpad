@@ -8,7 +8,7 @@ Every token row has the same fields. If the list reached the page cap (2000 toke
 
 | Field | Meaning |
 |---|---|
-| `track` / `quote` | `v2` or `soft`. `quote` is the unit for `raised`, `remaining` and the `--bnb` flag of `gang quote/buy` (GANG, BNCB, BNB…) |
+| `track` / `quote` | `v2` or `soft`. `quote` is the unit for `raised`, `remaining` and the `--amount` flag of `gang quote/buy` (GANG, BNCB, BNB…) |
 | `progressPct`, `remaining`, `remainingUsd` | Graduation progress and how much quote is still needed |
 | `volume24hUsd`, `trades24h`, `holders` | Activity. USD makes tokens with different quotes comparable |
 | `ageMin`, `createdAt`, `lastTradeAt` | Freshness (unix seconds) |
