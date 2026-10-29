@@ -56,6 +56,7 @@ library FlywheelPostLogic {
         mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
         mapping(address => uint256) storage owedDev,
         IGangLaunchpad.Deps memory d,
+        address trader,
         address token,
         uint256 shares,
         uint256 minTokensOut,
@@ -67,8 +68,8 @@ library FlywheelPostLogic {
         if (s.creator == address(0)) revert IFlywheelPad.UnknownToken();
         if (!s.launched) revert IFlywheelPad.NotLaunched();
         if (!s.postMint) revert IFlywheelPad.PostMintOff();
-        FlywheelLogic._requireAgent(s.gate, msg.sender);
-        IFlywheelPad.Account storage a = accounts[token][msg.sender];
+        FlywheelLogic._requireAgent(s.gate, trader);
+        IFlywheelPad.Account storage a = accounts[token][trader];
 
         Quote memory q;
         q.accepted = FlywheelLogic._acceptable(s, a, shares, type(uint256).max);
@@ -94,24 +95,25 @@ library FlywheelPostLogic {
         uint256 net = q.paid - q.devCut;
         uint256 b = _buyPart(s.buyBps, net, spot, blockStart, rQ);
         uint256 bought = b == 0 ? 0 : _buy(pair, token, s.quote, b, rT, rQ);
+        if (bought == 0) b = 0; // a buy too small to get a token (nothing was sent): it joins the liquidity (B-I1)
         _addLiquidity(pair, token, s.quote, net - b);
 
         uint32 n = q.accepted.toUint32();
         a.used += n;
         s.totalShares += n;
-        FlywheelLogic.refer(s, accounts, token, msg.sender, a, referrer);
+        FlywheelLogic.refer(s, accounts, token, trader, a, referrer);
 
         // tokens first, against the old baseline (a delivery in two parts must not look like a sale below the hold
         // line); then the new baseline — from zero for a wallet that was out — and one share sync
-        _deliver(token, msg.sender, q.tokensOut, bought);
-        if (IFlyHandler(d.taxHandler).isOut(token, msg.sender)) {
+        _deliver(token, trader, q.tokensOut, bought);
+        if (IFlyHandler(d.taxHandler).isOut(token, trader)) {
             a.baseline = 0;
-            IFlyHandler(d.taxHandler).requalify(token, msg.sender);
+            IFlyHandler(d.taxHandler).requalify(token, trader);
         }
         a.baseline += q.tokensOut;
-        IFlyHandler(d.taxHandler).syncShares(token, msg.sender, msg.sender);
+        IFlyHandler(d.taxHandler).syncShares(token, trader, trader);
         tokensOut = q.tokensOut;
-        emit IFlywheelPad.PostMinted(token, msg.sender, q.accepted, q.paid, q.fee, q.devCut, q.tokensOut, b);
+        emit IFlywheelPad.PostMinted(token, trader, q.accepted, q.paid, q.fee, q.devCut, q.tokensOut, b);
     }
 
     /// @notice Price multiple (×100) of the share numbered `n` (pre-launch shares count): flat, the standard table
@@ -136,14 +138,21 @@ library FlywheelPostLogic {
     }
 
     // ---------------------------------------------------------------- internal
+    /// @dev A sliding window (audit B-L1: a fixed window let a wallet spend its allowance at a window's end and again
+    ///      at the next one's start): what the wallet minted decays linearly to zero over PACE_WINDOW, and the decayed
+    ///      amount plus this mint must stay within PACE_POOL_BPS of the pool's quote. `windowStart` = last update.
     function _pace(IFlywheelPad.Account storage a, uint256 paid, uint256 rQ) private {
-        if (block.timestamp >= uint256(a.windowStart) + PACE_WINDOW) {
-            a.windowStart = uint64(block.timestamp);
-            a.windowSpent = 0;
-        }
-        uint256 total = uint256(a.windowSpent) + paid;
+        uint256 total = recentSpent(a) + paid;
         if (total * BPS > rQ * PACE_POOL_BPS) revert IFlywheelPad.PaceExceeded();
+        a.windowStart = uint64(block.timestamp);
         a.windowSpent = total.toUint128();
+    }
+
+    /// @notice What the wallet minted recently, decayed linearly over PACE_WINDOW since its last mint.
+    function recentSpent(IFlywheelPad.Account storage a) internal view returns (uint256) {
+        uint256 elapsed = block.timestamp - a.windowStart;
+        if (elapsed >= PACE_WINDOW) return 0;
+        return (uint256(a.windowSpent) * (PACE_WINDOW - elapsed)) / PACE_WINDOW;
     }
 
     /// @dev The quote to buy: `buyBps` of the pool money, cut to what lifts the price to PUSH_BPS over the lower of the
@@ -215,5 +224,33 @@ library FlywheelPostLogic {
     function _reserves(address pair, address token) private view returns (uint256 rT, uint256 rQ) {
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
         (rT, rQ) = IUniswapV2PairLite(pair).token0() == token ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+    }
+}
+
+/// @title FlywheelPostLogicView — the checks `mintPost` makes, for the pad's `previewMintPost` (no state written)
+library FlywheelPostLogicView {
+    function prices(address handler, address token)
+        internal
+        view
+        returns (uint256 spot, uint256 blockStart, uint256 average)
+    {
+        return IFlyHandler(handler).prices(token);
+    }
+
+    function allowed(
+        IFlywheelPad.Account storage a,
+        uint256 paid,
+        uint256 spot,
+        uint256 average,
+        address pair,
+        address token
+    ) internal view returns (bool) {
+        if (spot * FlywheelPostLogic.BPS < average * (FlywheelPostLogic.BPS - FlywheelPostLogic.MAX_DROP_BPS)) {
+            return false;
+        }
+        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
+        uint256 rQ = IUniswapV2PairLite(pair).token0() == token ? uint256(r1) : uint256(r0);
+        return (FlywheelPostLogic.recentSpent(a) + paid) * FlywheelPostLogic.BPS
+            <= rQ * FlywheelPostLogic.PACE_POOL_BPS;
     }
 }

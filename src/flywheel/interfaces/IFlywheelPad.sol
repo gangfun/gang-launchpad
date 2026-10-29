@@ -104,6 +104,7 @@ interface IFlywheelPad {
     event V3FactorySet(address factory);
     event TwapWindowUpdated(uint32 window);
     event BridgePoolSet(address indexed asset, address pool);
+    event RouterSet(address indexed router, bool enabled);
 
     error ZeroAddress();
     error ZeroAmount();
@@ -128,4 +129,7 @@ interface IFlywheelPad {
     error NothingOwed();
     error BnbNotQuote();
     error BnbShort();
+    error OnlyRouter();
+    error TraderNotOrigin();
+    error RouterNeedsGate();
 }

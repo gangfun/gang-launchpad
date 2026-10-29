@@ -288,6 +288,10 @@ contract GangFlywheelPadTest is FlywheelFixture {
         vm.roll(vm.getBlockNumber() + 1);
         vm.expectRevert(IFlywheelPad.PaceExceeded.selector);
         pad.mintPost(t, 10, 0, address(0));
+        // sliding, not fixed: a moment later the allowance has hardly come back (no burst at a window's edge)
+        vm.warp(vm.getBlockTimestamp() + 2);
+        vm.expectRevert(IFlywheelPad.PaceExceeded.selector);
+        pad.mintPost(t, 10, 0, address(0));
         vm.warp(vm.getBlockTimestamp() + 30 minutes);
         pad.mintPost(t, 10, 0, address(0));
         vm.stopPrank();

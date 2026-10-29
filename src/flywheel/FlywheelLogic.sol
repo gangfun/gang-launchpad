@@ -16,6 +16,7 @@ import {IFlywheelPad} from "./interfaces/IFlywheelPad.sol";
 interface IFlyToken {
     function padMint(address to, uint256 amount) external;
     function reclaim(address from, uint256 amount) external;
+    function pullFor(address owner, address spender, uint256 amount) external;
     function unlock(address migrator) external;
     function setPair(address pair) external;
 }
@@ -173,6 +174,7 @@ library FlywheelLogic {
         mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
         mapping(address => uint256) storage owedDev,
         IGangLaunchpad.Deps memory d,
+        address trader,
         address token,
         uint256 shares,
         uint256 minShares,
@@ -181,8 +183,8 @@ library FlywheelLogic {
     ) external returns (uint256 spent) {
         if (shares == 0) revert IFlywheelPad.ZeroAmount();
         IFlywheelPad.Sale storage s = minting(sales, token);
-        _requireAgent(s.gate, msg.sender);
-        return _mint(c, sales, accounts, owedDev, d, msg.sender, token, shares, minShares, referrer, bnbIn);
+        _requireAgent(s.gate, trader);
+        return _mint(c, sales, accounts, owedDev, d, trader, token, shares, minShares, referrer, bnbIn);
     }
 
     function withdraw(
@@ -190,12 +192,14 @@ library FlywheelLogic {
         mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
         mapping(address => uint256) storage owedFee,
         IGangLaunchpad.Deps memory d,
+        address trader,
+        bool viaCaller,
         address token,
         uint256 shares,
         uint256 minPayout
     ) external returns (uint256 payout) {
         IFlywheelPad.Sale storage s = minting(sales, token);
-        IFlywheelPad.Account storage a = accounts[token][msg.sender];
+        IFlywheelPad.Account storage a = accounts[token][trader];
         if (shares == 0 || shares > a.preShares) revert IFlywheelPad.BadAmount();
         uint256 principal = shares * s.basePrice;
         uint256 fee = (principal * exitFeeBps(s)) / BPS;
@@ -209,11 +213,13 @@ library FlywheelLogic {
         s.totalShares -= n;
         uint256 tokens = shares * TOKENS_PER_SHARE;
         a.baseline -= tokens;
-        IFlyToken(token).reclaim(msg.sender, tokens);
-        _setShareOnExit(d, token, msg.sender, a.baseline);
+        // direct: the pad takes the tokens back; via a listed router: with the allowance the trader gave the router
+        if (viaCaller) IFlyToken(token).pullFor(trader, msg.sender, tokens);
+        else IFlyToken(token).reclaim(trader, tokens);
+        _setShareOnExit(d, token, trader, a.baseline);
         IERC20(s.quote).safeTransfer(msg.sender, payout);
         _exitFeeToPlatform(owedFee, d, s.quote, fee);
-        emit IFlywheelPad.Withdrawn(token, msg.sender, shares, payout, fee);
+        emit IFlywheelPad.Withdrawn(token, trader, shares, payout, fee);
     }
 
     /// @notice The creator opens the pool before the sale fills, once at least 30% is sold.

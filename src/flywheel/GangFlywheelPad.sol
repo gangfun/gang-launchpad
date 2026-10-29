@@ -16,7 +16,8 @@ import {PadCommon} from "../gang/PadCommon.sol";
 import {IFlywheelPad} from "./interfaces/IFlywheelPad.sol";
 import {IFlywheelPadView} from "./interfaces/IFlywheelPadView.sol";
 import {FlywheelLogic} from "./FlywheelLogic.sol";
-import {FlywheelPostLogic} from "./FlywheelPostLogic.sol";
+import {FlywheelPostLogic, FlywheelPostLogicView} from "./FlywheelPostLogic.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 interface IWBNBLike {
     function deposit() external payable;
@@ -37,12 +38,20 @@ interface IWBNBLike {
 /// @dev The two paths live in external libraries (FlywheelLogic, FlywheelPostLogic) run by delegatecall, so the pad
 ///      stays under EIP-170. Shared contracts: SharedMigrator, SharedDividendVault (this pad's floor: 1,000 tokens),
 ///      SharedPlatformFeeBucket, QuoteRegistry; its own MintTokenDeployer and FlywheelTaxHandler.
+///      Aggregators: the pad is listed in GangPadRegistry (`lookup(token)` → this pad, kind 3), trades through the
+///      `…For` entries as a listed router for the wallet that sent the transaction (as GangLaunchpad, AUDIT-BRIEF §23),
+///      and quotes with `previewMint` / `previewWithdraw` / `previewMintPost`.
 contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant TOTAL_SHARES = FlywheelLogic.TOTAL_SHARES;
     uint256 public constant TOKENS_PER_SHARE = FlywheelLogic.TOKENS_PER_SHARE;
     uint8 public constant KIND = FlywheelLogic.KIND;
+    /// @notice GangPadRegistry.addPad checks these against its curve quoter before listing a pad. This pad has no curve
+    ///         (`kindOf` is never 1), so the registry never quotes a curve here: they only let it list the pad, so that
+    ///         `lookup(token)` finds this pad's tokens (kind 3).
+    uint256 public constant VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667;
+    uint256 public constant PROTOCOL_FEE_BPS = 100;
 
     QuoteRegistry public immutable quoteRegistry;
     SharedDividendVault public immutable dividendVault;
@@ -53,6 +62,9 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
 
     IGangLaunchpad.Config internal _config;
     mapping(address => address) public bridgePoolOf;
+    /// @notice Entry contracts (GangRouter, listed aggregators) that may mint (paying) and sell back (with the trader's
+    ///         token allowance to them) for the wallet that sent the transaction.
+    mapping(address router => bool) public routers;
     mapping(address token => uint8) public kindOf;
     mapping(address token => Sale) internal _sales;
     mapping(address token => mapping(address user => Account)) public accounts;
@@ -127,6 +139,12 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         emit TwapWindowUpdated(window);
     }
 
+    function setRouter(address router_, bool enabled) external onlyOwner {
+        if (router_ == address(0)) revert ZeroAddress();
+        routers[router_] = enabled;
+        emit RouterSet(router_, enabled);
+    }
+
     /// @notice Canonical `asset`/WBNB pool used to express `asset` in BNB. pool = 0 removes it.
     function setBridgePool(address asset, address pool) external onlyOwner {
         if (asset == address(0) || asset == wbnb) revert ZeroAddress();
@@ -165,7 +183,22 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         nonReentrant
         returns (uint256 spent)
     {
-        spent = FlywheelLogic.mint(_config, _sales, accounts, owedDev, _deps(), token, shares, minShares, referrer, 0);
+        spent = FlywheelLogic.mint(
+            _config, _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minShares, referrer, 0
+        );
+    }
+
+    /// @notice A listed router mints for `trader`, the wallet that sent the transaction; the router pays (approve the
+    ///         exact `previewMint` cost + fee). Shares, tokens, gate and quota are the trader's.
+    function mintFor(address trader, address token, uint256 shares, uint256 minShares, address referrer)
+        external
+        nonReentrant
+        returns (uint256 spent)
+    {
+        _forTrader(trader, token);
+        spent = FlywheelLogic.mint(
+            _config, _sales, accounts, owedDev, _deps(), trader, token, shares, minShares, referrer, 0
+        );
     }
 
     /// @notice Pre-launch mint of a WBNB sale paid in BNB; what is not spent comes back.
@@ -177,14 +210,25 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     {
         _wrap(token);
         spent = FlywheelLogic.mint(
-            _config, _sales, accounts, owedDev, _deps(), token, shares, minShares, referrer, msg.value
+            _config, _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minShares, referrer, msg.value
         );
         _refund(spent);
     }
 
     /// @notice Before the sale fills (or opens early): sell `shares` back at the mint price, less the exit fee.
     function withdraw(address token, uint256 shares, uint256 minPayout) external nonReentrant returns (uint256 payout) {
-        payout = FlywheelLogic.withdraw(_sales, accounts, owedFee, _deps(), token, shares, minPayout);
+        payout = FlywheelLogic.withdraw(_sales, accounts, owedFee, _deps(), msg.sender, false, token, shares, minPayout);
+    }
+
+    /// @notice A listed router sells back `trader`'s shares (the wallet that sent the transaction): the tokens move with
+    ///         the allowance the trader gave the router, the payout goes to the router.
+    function withdrawFor(address trader, address token, uint256 shares, uint256 minPayout)
+        external
+        nonReentrant
+        returns (uint256 payout)
+    {
+        _forTrader(trader, token);
+        payout = FlywheelLogic.withdraw(_sales, accounts, owedFee, _deps(), trader, true, token, shares, minPayout);
     }
 
     /// @notice The creator opens the pool before the sale fills, once at least 30% of the shares are sold.
@@ -205,8 +249,22 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         nonReentrant
         returns (uint256 tokensOut, uint256 spent)
     {
-        (tokensOut, spent) =
-            FlywheelPostLogic.mintPost(_sales, accounts, owedDev, _deps(), token, shares, minTokensOut, referrer, 0);
+        (tokensOut, spent) = FlywheelPostLogic.mintPost(
+            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, referrer, 0
+        );
+    }
+
+    /// @notice A listed router mints after launch for `trader`, the wallet that sent the transaction; the router pays,
+    ///         the tokens are the trader's.
+    function mintPostFor(address trader, address token, uint256 shares, uint256 minTokensOut, address referrer)
+        external
+        nonReentrant
+        returns (uint256 tokensOut, uint256 spent)
+    {
+        _forTrader(trader, token);
+        (tokensOut, spent) = FlywheelPostLogic.mintPost(
+            _sales, accounts, owedDev, _deps(), trader, token, shares, minTokensOut, referrer, 0
+        );
     }
 
     /// @notice Post-launch mint of a WBNB sale paid in BNB; what is not spent comes back.
@@ -218,7 +276,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     {
         _wrap(token);
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), token, shares, minTokensOut, referrer, msg.value
+            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, referrer, msg.value
         );
         _refund(spent);
     }
@@ -273,6 +331,54 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         return (uint256(s.basePrice) * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + shares)) / 100;
     }
 
+    /// @notice What `mint(token, shares, 0, …)` by `user` would accept and cost now (cost excludes the fee); zeros when
+    ///         the sale no longer takes pre-launch mints.
+    function previewMint(address token, address user, uint256 shares)
+        external
+        view
+        returns (uint256 accepted, uint256 cost, uint256 fee)
+    {
+        Sale storage s = _sales[token];
+        if (s.creator == address(0) || s.launched || s.filledAt != 0) return (0, 0, 0);
+        accepted = FlywheelLogic._acceptable(s, accounts[token][user], shares, TOTAL_SHARES - s.sold);
+        cost = accepted * s.basePrice;
+        fee = (cost * s.mintFeeBps) / 10_000;
+    }
+
+    /// @notice What `withdraw(token, shares, 0)` by `user` would pay out and charge now (zeros if it would revert).
+    function previewWithdraw(address token, address user, uint256 shares)
+        external
+        view
+        returns (uint256 payout, uint256 fee)
+    {
+        Sale storage s = _sales[token];
+        if (s.creator == address(0) || s.launched || s.filledAt != 0) return (0, 0);
+        if (shares == 0 || shares > accounts[token][user].preShares) return (0, 0);
+        uint256 principal = shares * s.basePrice;
+        fee = (principal * FlywheelLogic.exitFeeBps(s)) / 10_000;
+        payout = principal - fee;
+    }
+
+    /// @notice What `mintPost(token, shares, 0, …)` by `user` would accept, cost (price and fee) and deliver if sent
+    ///         now; `ok` false when it would be refused (not launched / minting off / no quota / price more than 10%
+    ///         below its average / the wallet's pace).
+    function previewMintPost(address token, address user, uint256 shares)
+        external
+        view
+        returns (uint256 accepted, uint256 paid, uint256 fee, uint256 tokensOut, bool ok)
+    {
+        Sale storage s = _sales[token];
+        if (!s.launched || !s.postMint) return (0, 0, 0, 0, false);
+        Account storage a = accounts[token][user];
+        accepted = FlywheelLogic._acceptable(s, a, shares, type(uint256).max);
+        if (accepted == 0) return (0, 0, 0, 0, false);
+        paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
+        fee = (paid * s.mintFeeBps) / 10_000;
+        (uint256 spot, uint256 blockStart, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
+        tokensOut = Math.mulDiv(paid, 1 << 112, spot > blockStart ? spot : blockStart);
+        ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token);
+    }
+
     /// @notice The exit fee a sell-back pays now (0 once the sale has been stale for 7 days).
     function exitFeeBpsOf(address token) external view returns (uint256) {
         return FlywheelLogic.exitFeeBps(_sales[token]);
@@ -304,6 +410,14 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     }
 
     // ---------------------------------------------------------------- internal
+    /// @dev Who may act for `trader` (§23): a listed router, for the wallet that sent the transaction, on a gated sale
+    ///      (ungated, a router could still only name tx.origin, but the gate check mirrors GangLaunchpad's A-2).
+    function _forTrader(address trader, address token) internal view {
+        if (!routers[msg.sender]) revert OnlyRouter();
+        if (trader != tx.origin) revert TraderNotOrigin();
+        if (_sales[token].gate == address(0)) revert RouterNeedsGate();
+    }
+
     function _deps() internal view returns (IGangLaunchpad.Deps memory) {
         return IGangLaunchpad.Deps({
             quoteRegistry: address(quoteRegistry),
