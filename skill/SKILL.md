@@ -46,6 +46,7 @@ It never holds keys.
 1. `gang version`. If it prints only the help, or a version below **0.16.5**, the CLI is **older than these rules**:
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
+   <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->
 2. `gang preflight`; relay each `issues[].fix` ([preflight.md](references/preflight.md)).
 
 Any result carrying `update: { current, latest, cmd, skill }` means the same: tell the user, run `cmd` and `skill`,

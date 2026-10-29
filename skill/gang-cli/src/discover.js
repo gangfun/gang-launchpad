@@ -57,7 +57,9 @@ export function parseDuration(raw, name) {
 }
 
 const WBNB = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'
-export const TRACKS = ['all', 'v3', 'fair', 'v2', 'soft']
+// BSC USDT / USDC: $1 when no V2 row prices them
+const STABLES = ['0x55d398326f99059ff775485246999027b3197955', '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d']
+const TRACKS = ['all', 'v3', 'fair', 'v2', 'soft']
 // detail route per track (V2 / Soft details both live under /tokens) and trades route
 const DETAIL = { v2: '/tokens', soft: '/tokens', v3: '/v3/tokens', fair: '/fair/sales' }
 const TRADES = { v2: '/stocks/tokens', soft: '/tokens', v3: '/v3/tokens', fair: '/fair/sales' }
@@ -89,7 +91,7 @@ function gangRow(r, quoteUsdOf) {
     priceUsd: r.priceUsd ?? (quoteUsd ? num(r.priceQuote) * quoteUsd : null), fdvUsd: inUsd('fdvUsd', 'fdvQuote'),
     volume24hUsd: inUsd('volume24hUsd', 'volume24hQuote'), trades24h: num(r.trades24h), trades: num(r.trades),
     holders: r.holders != null ? num(r.holders) : fair ? num(r.participants) : null,
-    ...(fair && { sharePrice: w(r.sharePrice),sharesLeft: num(r.sharesLeft), minWalletsLeft: num(r.minWalletsLeft) }),
+    ...(fair && { sharePrice: w(r.sharePrice), sharesLeft: num(r.sharesLeft), minWalletsLeft: num(r.minWalletsLeft) }),
     createdAt: r.createdAt, ageMin: r.createdAt ? Math.floor((now() - r.createdAt) / 60) : null,
     lastTradeAt: r.lastTradeAt || r.lastActivityAt || null, creatorHandle: r.creatorHandle || null, logoUrl: r.logoUrl || null,
     website: r.website && !websiteError(r.website) ? r.website : null,
@@ -144,18 +146,21 @@ export async function fetchMarket(track = 'all', stop) {
   if (!TRACKS.includes(track)) throw new Error(`--track must be ${TRACKS.join(', ')} (got ${track})`)
   const none = { rows: [], truncated: false }
   const want = (t) => track === 'all' || track === t
-  // the GangLaunchpad list rows have no USD: the V2 / Soft rows price their quotes, so they are read for v3 / fair too
-  const prices = want('v3') || want('fair')
+  // the GangLaunchpad list rows have no USD: the V2 / Soft rows price their quotes. A track not listed is read for that
+  // only, one page and best effort: no truncation, and a failure just leaves the USD fields null
+  const priced = want('v3') || want('fair')
+  const prices = (path) => get(`${path}${path.includes('?') ? '&' : '?'}limit=200`, stop).then((p) => ({ rows: p?.items || [] }), () => none)
   const [v3, fair, v2, soft] = await Promise.all([
     want('v3') ? pages('/v3/tokens?status=all', stop) : none,
     want('fair') ? pages('/fair/sales?status=all', stop) : none,
-    want('v2') || prices ? pages('/stocks/tokens', stop) : none,
-    want('soft') || prices ? pages('/tokens?sort=new', stop) : none,
+    want('v2') ? pages('/stocks/tokens', stop) : priced ? prices('/stocks/tokens') : none,
+    want('soft') ? pages('/tokens?sort=new', stop) : priced ? prices('/tokens?sort=new') : none,
   ])
   const usdOf = new Map()
   for (const r of v2.rows) if (num(r.quoteUsd) > 0 && r.quoteAddress) usdOf.set(r.quoteAddress.toLowerCase(), num(r.quoteUsd))
   const bnbUsd = soft.rows.find((r) => num(r.bnbUsd) > 0)?.bnbUsd
   if (!usdOf.has(WBNB) && bnbUsd) usdOf.set(WBNB, num(bnbUsd))
+  for (const a of STABLES) if (!usdOf.has(a)) usdOf.set(a, 1)
   const quoteUsdOf = (a) => (a ? usdOf.get(a.toLowerCase()) ?? null : null)
   const seen = new Map()
   const rows = [...v3.rows, ...fair.rows, ...(want('v2') ? v2.rows : []), ...(want('soft') ? soft.rows : [])]
