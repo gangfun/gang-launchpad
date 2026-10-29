@@ -367,8 +367,10 @@ contract GangBond is IGangBond, ReentrancyGuard {
         lastBurnAt[token] = uint64(block.timestamp);
         uint128 left = b.burnLeft - uint128(quoteIn);
         b.burnLeft = left;
-        uint256 out = _amountOut(quoteIn, rQ, rT);
         IERC20(b.quote).safeTransfer(m.pair, quoteIn);
+        // price what the pair actually holds over its reserve: a quote that taxes transfers into pairs delivers less
+        // than `quoteIn`, and pricing `quoteIn` would fail the pair's K check on every chunk
+        uint256 out = _amountOut(IERC20(b.quote).balanceOf(m.pair) - rQ, rQ, rT);
         // a chunk too small to buy one token unit is left in the pair as a donation (only ever a last dust chunk)
         if (out != 0) {
             uint256 before = IERC20(token).balanceOf(address(this));
