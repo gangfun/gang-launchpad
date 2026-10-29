@@ -10,7 +10,7 @@ description: |
   tax token with a tax recipient / 税收接收地址 / 买卖税.
 metadata:
   author: gangfun
-  version: '0.16.1'
+  version: '0.16.2'
   requires:
     bins: [baw, gang]
   install:
