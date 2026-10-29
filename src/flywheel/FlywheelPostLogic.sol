@@ -19,8 +19,8 @@ interface IFlyPair {
 
 /// @title FlywheelPostLogic — GangFlywheelPad's post-launch mint
 /// @notice External library (delegatecalled by the pad). A wallet mints within its quota (shared with pre-launch) at the
-///         tier price per share; it gets the share's money worth of tokens at the higher of the pair's price now and at
-///         the block's start (a same-block dump can't make a mint cheaper). The mint fee goes to the platform, the
+///         tier price per share; it gets the share's money worth of tokens at the highest of the pair's price now, at
+///         the block's start and 1% under the TWAP (a dump can't make a mint cheaper, in the same block or the next). The mint fee goes to the platform, the
 ///         dev's cut to the creator, and everything else into the pool: `buyBps` of it buys from the pair (never
 ///         pushing the price more than 0.8% above the lower of the price now and the block's start, so neither one mint
 ///         nor several in a block can be sold back at a profit), the rest is added as liquidity with newly minted
@@ -36,6 +36,10 @@ library FlywheelPostLogic {
     uint256 internal constant PUSH_BPS = 80;
     /// @notice Minting is refused while the pair's price is more than this below its TWAP.
     uint256 internal constant MAX_DROP_BPS = 1_000;
+    /// @notice A mint never prices the buyer below its TWAP by more than this: a dump in one block followed by mints in
+    ///         the next (where the dumped price is the block's start) wins at most this, which the mint fee (≥ 1%)
+    ///         already takes back (review R2-2 M-1).
+    uint256 internal constant TWAP_FLOOR_BPS = 100;
     /// @notice One wallet's mints per PACE_WINDOW stay within this share of the pool's quote reserve.
     uint256 internal constant PACE_POOL_BPS = 200;
     uint256 internal constant PACE_WINDOW = 30 minutes;
@@ -91,7 +95,7 @@ library FlywheelPostLogic {
         PadCommon.toPlatform(d, s.quote, q.fee);
         FlywheelLogic.payDev(owedDev, s, token, q.devCut);
 
-        q.tokensOut = Math.mulDiv(q.paid, 1 << 112, spot > blockStart ? spot : blockStart);
+        q.tokensOut = Math.mulDiv(q.paid, 1 << 112, buyerPrice(spot, blockStart, average));
         if (q.tokensOut < minTokensOut) revert IFlywheelPad.Slippage();
         uint256 net = q.paid - q.devCut;
         uint256 b = _buyPart(s.buyBps, net, spot, blockStart, rQ);
@@ -115,6 +119,14 @@ library FlywheelPostLogic {
         IFlyHandler(d.taxHandler).syncShares(token, trader, trader);
         tokensOut = q.tokensOut;
         emit IFlywheelPad.PostMinted(token, trader, q.accepted, q.paid, q.fee, q.devCut, q.tokensOut, b);
+    }
+
+    /// @notice The price a mint gives tokens at: the highest of the pair's price now, at the block's start (no
+    ///         same-block dump-then-mint) and 1% under the TWAP (no dump-in-one-block, mint-in-the-next).
+    function buyerPrice(uint256 spot, uint256 blockStart, uint256 average) internal pure returns (uint256 p) {
+        p = spot > blockStart ? spot : blockStart;
+        uint256 floor = (average * (BPS - TWAP_FLOOR_BPS)) / BPS;
+        if (floor > p) p = floor;
     }
 
     /// @notice Price multiple (×100) of the share numbered `n` (pre-launch shares count): flat, the standard table

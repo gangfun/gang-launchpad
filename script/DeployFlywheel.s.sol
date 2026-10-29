@@ -70,6 +70,7 @@ contract DeployFlywheel is Script {
         address keeper = vm.envOr("KEEPER", mainnet ? M.KEEPER : me);
         Shared memory sh = _shared(vm.envAddress("GANG_PAD"));
         sh.padRegistry = vm.envOr("GANG_PAD_REGISTRY", mainnet ? MAINNET_PAD_REGISTRY : TESTNET_PAD_REGISTRY);
+        _requireFactory(sh, mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY);
         console.log("=== DeployFlywheel chain", block.chainid, "===");
         console.log("deployer", me);
         console.log("owner", owner);
@@ -164,6 +165,12 @@ contract DeployFlywheel is Script {
         if (!SharedPlatformFeeBucket(sh.bucket).operators(o.pad)) revert NotWired("bucket.setOperator(pad)");
         if (!SharedPlatformFeeBucket(sh.bucket).operators(o.handler)) revert NotWired("bucket.setOperator(handler)");
         if (!GangPadRegistry(sh.padRegistry).isPad(o.pad)) revert NotWired("padRegistry.addPad(pad)");
+    }
+
+    /// @dev The pad buys from the pairs the migrator seeds with Pancake V2's 0.25% fee hard-coded (review R2-2 I-3):
+    ///      the migrator must use the same factory as the pad (the official Pancake V2 one of the chain).
+    function _requireFactory(Shared memory sh, address factory) internal view {
+        if (address(SharedMigrator(sh.migrator).factory()) != factory) revert NotWired("migrator factory != Pancake V2");
     }
 
     function _handOver(Own memory o, address owner, address me) internal {

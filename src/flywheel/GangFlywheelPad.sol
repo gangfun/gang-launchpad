@@ -380,7 +380,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
         fee = (paid * s.mintFeeBps) / 10_000;
         (uint256 spot, uint256 blockStart, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
-        tokensOut = Math.mulDiv(paid, 1 << 112, spot > blockStart ? spot : blockStart);
+        tokensOut = Math.mulDiv(paid, 1 << 112, FlywheelPostLogic.buyerPrice(spot, blockStart, average));
         // the buyer's tokens and the liquidity's are minted: at most twice tokensOut must fit under the cap
         ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token)
             && 2 * tokensOut <= IMintRoom(token).mintRoom();
