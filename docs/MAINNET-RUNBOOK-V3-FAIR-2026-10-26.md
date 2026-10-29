@@ -59,7 +59,7 @@ export OWNER=0x2866369F7acEFC9760bdE7779362fae5cD68B41E   # 平台 Safe（2/3）
 #   RECIPIENT=0x<合作方金库> RECIPIENT_LABEL="<名称>"   部署时就列入白名单；不填则之后由 owner handler.list
 #                   （现行主网：handler 的 owner 是 GangHandlerAdmin，Safe 调 GangHandlerAdmin.exec(list(addr, label))；
 #                   docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md）
-#   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（201 上 keeper 私钥对应的地址）；主网填别的地址必须再加
+#   KEEPER=0x…      默认 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7（正式站 keeper 的地址）；主网填别的地址必须再加
 #                   KEEPER_OVERRIDE_OK=true，否则回滚 KeeperNotDefault（setKeeper 一生一次，填错要走 48 小时时间锁）
 #   BURNER=0x… / FEE_VAULT=0x…   新手续费池的回购合约 / 金库；不填或填 0 = 照抄 V2 手续费池 0xBDDd…F111 的。
 #                   部署时就按它接线，脚本最后也按它核对（R5-5）；主网覆盖成和 V2 不同的地址时日志打 WARN 行
@@ -89,7 +89,7 @@ GANG_MAINNET_OK=true forge script script/DeployGang.s.sol --rpc-url $R --broadca
 | **最后** | `pad.setMigrator(migrator)`：开放发币（A-1：前面全部接好之后才开放） |
 | 交接 | 7 个合约 `transferOwnership(OWNER)`（OWNER = 部署钱包时跳过） |
 
-日志里记下（`--- GANG ADDRESSES ---` 一段）：`GANG_PAD`、`GANG_PAD_BLOCK`、`GANG_TAX_HANDLER`、`GANG_ROUTER`（代理：内盘登记它、用户调用它，以后升级也不变）、`GANG_ROUTER_IMPL`、`GANG_ROUTER_PROXY_ADMIN`、`GANG_ROUTER_TIMELOCK`、`QUOTE_REGISTRY`、`PLATFORM_BUCKET`、`DIVIDEND_VAULT`、`MIGRATOR`、`TOKEN_DEPLOYER`、`AGENT_ID`、`USDT_REF_POOL`。后面的 `--- server env ---` 一段（`# indexer.env` / `# keeper/.env` 两行注释下面每行一条，可以原样贴）就是 §4、§5 要填的行。
+日志里记下（`--- GANG ADDRESSES ---` 一段）：`GANG_PAD`、`GANG_PAD_BLOCK`、`GANG_TAX_HANDLER`、`GANG_ROUTER`（代理：内盘登记它、用户调用它，以后升级也不变）、`GANG_ROUTER_IMPL`、`GANG_ROUTER_PROXY_ADMIN`、`GANG_ROUTER_TIMELOCK`、`QUOTE_REGISTRY`、`PLATFORM_BUCKET`、`DIVIDEND_VAULT`、`MIGRATOR`、`TOKEN_DEPLOYER`、`AGENT_ID`、`USDT_REF_POOL`。后面的 `--- server env ---` 一段是服务端和 keeper 要用的配置（§4、§5），交给私有的 gangfun-server 那边填。
 `GANG_PAD_BLOCK` 是模拟时的区块，不晚于实际上链区块，可以直接当索引 / keeper 的起始区块；要精确值看 `broadcast/DeployGang.s.sol/56/run-latest.json` 里 `GangLaunchpad` 那笔 receipt 的 `blockNumber`。
 
 **脚本结束时的自检 `_check`**（任何一项不对直接报 `WiringCheck("<项>")`，广播的交易已经上链，但不要往下做，先查原因）：
@@ -246,59 +246,26 @@ for w in $SAFE $DEP; do c $GANG_ROUTER_TIMELOCK "hasRole(bytes32,address)(bool)"
 
 ---
 
-## 4. 服务端（正式站 201 indexer.env，不进仓库）
+## 4. 服务端
 
-合并后 V3 和打新是同一个内盘：两组变量填**同一个地址、同一个部署区块**（服务端 `feat/one-pad` 支持）。索引器的两条轨道各扫一遍同一个地址，按事件 topic0 分开（两个 `Created` 是不同的重载，topic0 不同）。值直接抄部署日志 `--- server env ---` 那一段：
+合并后 V3 和打新是同一个内盘：索引器的两条轨道指向**同一个地址、同一个部署区块**，各扫一遍，按事件 topic0 分开（两个 `Created` 是不同的重载，topic0 不同）。服务端要先合入合并配套的改动（审计说明 §20.10；合并方案 §8.1），否则两种币共用的基类事件会重复记账。具体配置和上线步骤在私有的 gangfun-server 里维护。
 
-```
-GANG_V3_PAD=<GANG_PAD>
-GANG_V3_START_BLOCK=<GANG_PAD_BLOCK>
-GANG_V3_CHAIN_ID=56
-GANG_V3_RPC_URLS=<§0 #5 的 RPC>
-GANG_FAIR_PAD=<GANG_PAD>                   # 和 GANG_V3_PAD 同一个地址
-GANG_FAIR_START_BLOCK=<GANG_PAD_BLOCK>     # 同一个区块
-GANG_FAIR_CHAIN_ID=56
-GANG_FAIR_RPC_URLS=<§0 #5 的 RPC>
-```
-
-服务端要先合入合并配套的改动（审计说明 §20.10；合并方案 §8.1）：
-- 处理合约上两种币共用的基类事件（`TaxChunkSold`、`HolderConversionDeferred`、`ShareWriteFailed`）按币过滤到各自的轨道，否则会重复记账。
-- `postgrad_events` 的唯一键加上轨道（数据库迁移）：按报价币记的 `PlatformOwed` / `PlatformFlushed` 两条轨道都要能落库。
-
-重启索引服务后检查：
+上线后检查公开接口：
 - `/fair/config`、`/v3/config` 返回 `enabled: true`，两个接口里的内盘地址、区块、`taxHandler`、`vault` 都相同。
-- `/burn` 列出了新的 SharedPlatformFeeBucket（索引器从内盘的 `platformBucket()` 自动发现，按地址去重）。
+- `/burn` 列出了新的 SharedPlatformFeeBucket（索引器从内盘的 `platformBucket()` 自动发现）。
 - 一个 V3 币只出现在 V3 列表里，一个打新币只出现在打新列表里。
-- `/health?strict=1` 返回 200（健康检查会轮询它）。
+- `/health?strict=1` 返回 200。
 
 网站上「打新」「税收币」入口由这两个接口决定，不用另外改前端。
 
 ---
 
-## 5. keeper（正式站 keeper/.env 与 crontab，不进仓库）
+## 5. keeper
 
-```
-KEEPER_PRIVATE_KEY=…                       # keeper 钱包 0xB6f1…cFc7
-BSC_RPC_URL=<发交易用的 RPC，最好私有>
-LOGS_RPC=<§0 #5，必须能查日志；keeper 启动时先探测，查不了直接 exit 9>
-# 合并内盘：一条 PADS=label:pad@部署区块（同时算 V3 和打新）。keeper 从 pad 读 taxHandler() / platformBucket()，处理合约和手续费池都不用另外填
-PADS=gang:<GANG_PAD>@<GANG_PAD_BLOCK>
-V3_PADS=                                   # 留空：合并后的 pad 只写在 PADS 里（或者两条都填同一个地址，keeper 同样按一个合并内盘处理）
-FAIR_PADS=                                 # 留空
-EXPECTED_KEEPER=0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7
-SLIPPAGE_BPS=150                           # 每块的最低成交额 = 这一块的报价 × (1 − 1.5%)
-MAX_CHUNKS_PER_RUN=20                      # 每个币每次运行最多卖 20 块（每块 ≤ 池子代币储备 0.5%）
-ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报警打到 stderr 并非零退出
-```
-
-- `TAX_HANDLERS` / `TAX_ROUTERS` 留空：内盘的处理合约会自动接上（GangTaxHandler 同时负责两种币的外盘税和 V3 接收地址欠款补发）。
-- **keeper 脚本要先合入合并配套的改动**：两个份额补写循环原来用 `launchpadOf == pad && quoteOf != 0` 挑币，合并后两种币都满足。V3 的循环要加 `kindOf(t) == 1`，打新的加 `kindOf(t) == 2`（读内盘的 `kindOf(address)(uint8)`），否则会按 V3 的余额规则处理打新币，反复「补写失败」后报警。
-- `PADS` / `V3_PADS` / `FAIR_PADS` 全空时 `keeper-tax-process.sh` 以 7 退出并报警；只有确实不该跑的机器才设 `TAX_PROCESS_DISABLED=1`。
-- 平台费：`keeper-v2-platform.sh` 会从内盘读出新的 SharedPlatformFeeBucket、从索引器取报价币清单，不用往 `PLATFORM_BUCKETS` 里手填；它只调固定路径的 `collectPlatform`（新手续费池没有 `collectPlatformSmart`）。V2 那三个分账合约照旧在默认清单里（V2 的分红 / 存量税按用户决定不处理，脚本不会对 V2 币调 `process`）。
-- crontab 用仓库里的 `keeper/crontab.txt`：所有任务都经 `cron-run.sh` 包一层（非零退出就报警）；外盘税 `*/10 * * * *`；健康检查 `keeper-health.sh` 每 30 分钟。
-- keeper 地址必须等于 GangTaxHandler 和新手续费池的 `keeper()`（部署脚本已按 `KEEPER` 设好）。
-- 后续建议：发交易单独用私有 RPC（`BSC_RPC_URL`），读和查日志用 `LOGS_RPC`，降低分块卖出被夹的风险。
-- `collectPlatform(quote, minGangOut)` 的 `minGangOut` 合约不设下限，完全靠 keeper 按链上报价给（审计说明 K-20）：keeper 热钱包被盗时，这一笔回购可被夹。keeper 钱包只放够付 gas 的 BNB；怀疑被盗时多签立即 `proposeKeeper(新地址)`（48 小时后 `acceptKeeper`），在此之前多签可以自己 `collectPlatform`，并在服务器上停掉 keeper 的 cron。时间锁约束的是**换 keeper**，不约束多签：多签本来就能直接 `process` / `collectPlatform`。
+- keeper 钱包 `0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7`，必须等于 GangTaxHandler 和新手续费池的 `keeper()`（部署脚本已按 `KEEPER` 设好）。
+- keeper 负责外盘税分块卖出、V3 接收地址欠款补发、份额补写、平台费回购和健康检查；合并内盘只按一个内盘处理，份额补写要按内盘的 `kindOf` 区分 V3 币和打新币。配置和定时任务在私有的 gangfun-server 里维护。
+- 发交易建议走私有 RPC，降低分块卖出被夹的风险。
+- `collectPlatform(quote, minGangOut)` 的 `minGangOut` 合约不设下限，完全靠 keeper 按链上报价给（审计说明 K-20）：keeper 热钱包被盗时，这一笔回购可被夹。keeper 钱包只放够付 gas 的 BNB；怀疑被盗时多签立即 `proposeKeeper(新地址)`（48 小时后 `acceptKeeper`），在此之前多签可以自己 `collectPlatform`，并停掉 keeper。时间锁约束的是**换 keeper**，不约束多签：多签本来就能直接 `process` / `collectPlatform`。
 
 ---
 
@@ -318,9 +285,8 @@ ALERT_TG_CHAT_ID=<§0 #6>                   # 报警发运维群；不配时报�
 ## 7. 上线检查
 
 **上线当天（不等第一个币毕业）**：
-- [ ] 在服务器上以 root 手动干跑一次 `keeper-tax-process.sh`（不带 `--broadcast`）：首行显示 `merged_pads=…`（按 §5 用 `PADS` 时；两条列表填同一地址时是 `v3_pads=… fair_pads=…` 同一个地址），处理合约只出现一次、`known_tokens=…`，没有 ERROR；份额补写循环只列 V3 币 / 只列打新币（`kindOf` 过滤生效）
-- [ ] `crontab -l` 里有 `*/10` 的 tax-process、`*/30` 的 keeper-health，所有任务都经 `cron-run.sh`
-- [ ] 手动跑一次 `keeper-health.sh`：输出 `ok`；再故意让它报一次（例如临时把 `MIN_KEEPER_BNB` 设得比余额高），确认运维群收到报警
+- [ ] keeper 干跑一次外盘税任务（不发交易）：合并内盘只出现一次，没有报错；份额补写只列对应种类的币（`kindOf` 过滤生效）
+- [ ] keeper 的定时任务和健康检查都已上线；故意触发一次报警，确认能收到
 - [ ] `/v3/config`、`/fair/config`、`/burn`、`/health?strict=1` 都正常（§4）
 
 **第一批真实交易后**：
@@ -434,4 +400,4 @@ V2、V3、打新三种币只要有 Pancake V2 交易对都能用（审计说明 
 - 外盘税不变（卖出时自动小额换、keeper 分块补位、交税时记账），§5 的 keeper 和 §8 的日常运维照旧。
 - 分红合约只剩外盘分红：`depositReward` / `accRewardPerShare` / `rewardDebt` / `RewardDeposited` 已删除。索引器里订阅共用分红合约 `RewardDeposited` 的地方不会再收到事件（不报错）。
 - §7「第一批真实交易后」的第一条已按此改：内盘只看 1% 手续费，`TaxPaid` 要等毕业后第一笔外盘税。
-- 测试网第 8 套按这版合约部署（用户来做），239 再切一次。
+- 测试网第 8 套按这版合约部署（用户来做），测站再切一次。

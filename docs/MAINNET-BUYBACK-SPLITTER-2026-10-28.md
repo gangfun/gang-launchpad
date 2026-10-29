@@ -114,7 +114,7 @@ v1–v3 按 `quoteIn` 算买入量。报价币如果对「转进交易对」收�
 
 1. ~~多签执行上面的批量~~（已执行，见上）。
 2. CLI：主网工厂地址已写进 `skill/gang-cli/src/buyback.js`（`MAINNET_SPLITTER_FACTORY`），批量已执行，可以发版。
-3. keeper：正式服务器 crontab 加 `keeper/crontab.txt` 里 `module-work` 那一行（`.env` 沿用 tax-process 的 `PADS` / `V3_PADS`、`KEEPER_PRIVATE_KEY`、`EXPECTED_KEEPER`，不用新增配置）；测站同样，或设 `MODULE_WORK_DISABLED=1`。
+3. keeper：正式站和测站加上回购模块的定时任务（配置沿用外盘税任务，不用新增；在私有的 gangfun-server 里维护）。
 4. ~~BscScan 源码验证~~（2026-10-28 已完成：GangHandlerAdmin、GangBuybackSplitterFactory、GangBuybackSplitter 实现合约三个都已验证，solc 0.8.28、优化 200 次、cancun；BscScan 接口读回的合约名和源码都对）。用的命令如下；这个 forge 版本要显式写 Etherscan v2 的 `chainid`，否则会先提交到 Sourcify、再因缺 `chainid` 报错（`--verifier etherscan --verifier-url "https://api.etherscan.io/v2/api?chainid=56" --chain-id 56`）：
 
 ```sh
