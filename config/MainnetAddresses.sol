@@ -31,6 +31,10 @@ library MainnetAddresses {
     address internal constant PLATFORM_FEE_BUCKET_V2 = 0xBDDd8F275D7Cb65f5454D0bEDf0463792878F111;
     address internal constant POST_GRAD_TAX_HANDLER_V2 = 0xa2bd8e511Cf01aA8F9693a841FD6ee6E30253e29;
     address internal constant POOL_CHECK_V2 = 0xd2B159820749f178503E4faBCB18A7Ae4492bDb3;
-    /// @notice Reused by LaunchpadV2. Not the LaunchpadU / LaunchpadS burners.
+    /// @notice Retired 2026-10-26 (could not collect GANG-quoted fees). Was shared by the V2 and U buckets.
     address internal constant BUYBACK_BURNER_V2 = 0x2aC14C462901F990ae7647D6AcafEaf50Cc8f8dF;
+
+    // ---- Platform burner behind the V2 / U / S PlatformFeeBuckets (2026-10-26, block 129919401) ----
+    // docs/MAINNET-BUYBACK-BURNER-2026-10-26.md
+    address internal constant GANG_BUYBACK_BURNER = 0x38120bf40F8F19E6cc60622Bc7C5B005dfe5363B;
 }
