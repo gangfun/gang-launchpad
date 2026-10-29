@@ -61,7 +61,7 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         uint256 x = (rT * 512) / 10_000 * 100 / 98;
         if (x > bag) x = bag;
         _poolSell(t, whale, x);
-        (uint256 spot,, uint256 avg) = handler.prices(t);
+        (uint256 spot,,, uint256 avg) = pad.prices(t);
         assertLt(spot, (avg * 9_100) / 10_000); // the dump passed 9% but stays above the 10% gate
 
         // block N+1, same second (BSC: several blocks per timestamp)

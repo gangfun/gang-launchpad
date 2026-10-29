@@ -34,10 +34,10 @@ interface IPairCumulative {
 ///         - **Launch protection.** Until `protectionOf.until`, a buy from the pair must go to an Agent ID holder (the
 ///           sale's gate) and each wallet's total buys in the window stay within the cap (counted per wallet, not by
 ///           balance, so moving tokens out does not reopen it).
-///         - **Price oracle.** Every pool trade (and every pad call to `observe`) records the price at the block's first
-///           touch (`blockStartPrice`) and, at most every OBS_GRANULARITY, an observation of the pair's cumulative
-///           price. `twap` is the average over at least TWAP_WINDOW; within the first window after launch the time
-///           before launch counts at the launch price.
+///         - **Price oracle (raw data).** Every pool trade (and every pad call to `observe`) records the price at the
+///           block's first touch (`blockRefOf`), the highest such price over the current and the previous PEAK_EPOCH
+///           (`peakOf`), and, at most every OBS_GRANULARITY, an observation of the pair's cumulative price. The pad's
+///           FlywheelOracle library turns them into the block-start price, the recent high and the 30-minute TWAP.
 /// @dev Must be the shared dividend vault's operator for its pad and a SharedPlatformFeeBucket operator. Runs inside token
 ///      transfers: never reverts because of a recipient or the vault; the protection checks are the only reverts a
 ///      trade can get from here (besides the base's flash-swap refusal).
@@ -52,6 +52,8 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
     uint256 public constant PLATFORM_BPS = 2_500;
     uint32 public constant TWAP_WINDOW = 30 minutes;
     uint32 public constant OBS_GRANULARITY = 5 minutes;
+    /// @notice The recent high covers the current and the previous epoch of this length (60–120 s back).
+    uint32 public constant PEAK_EPOCH = 60;
     uint256 internal constant OBS_SLOTS = 8;
 
     struct Route {
@@ -84,6 +86,12 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         uint224 price;
     }
 
+    /// @dev The highest block-start price of `epoch` (block.timestamp / PEAK_EPOCH); `prev` = of the epoch before it.
+    struct Peak {
+        uint32 epoch;
+        uint224 high;
+    }
+
     PlatformFeeBucket public immutable platformBucket;
 
     /// @notice The one pad that registers tokens and defines baselines.
@@ -102,6 +110,8 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
     mapping(address token => mapping(address user => uint256)) public boughtInWindow;
     mapping(address token => Oracle) public oracleOf;
     mapping(address token => BlockRef) public blockRefOf;
+    mapping(address token => Peak) public peakOf;
+    mapping(address token => uint256) public peakPrevOf;
     mapping(address token => Observation[OBS_SLOTS]) internal _obs;
 
     event LaunchpadSet(address indexed launchpad);
@@ -169,6 +179,7 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
             Oracle({launchedAt: uint32(block.timestamp), last: 0, launchPrice: price, launchCumulative: cum});
         _obs[token][0] = Observation({timestamp: uint32(block.timestamp), cumulative: cum});
         blockRefOf[token] = BlockRef({blockNumber: uint32(block.number), price: price});
+        peakOf[token] = Peak({epoch: uint32(block.timestamp / PEAK_EPOCH), high: price});
         emit Launched(token, protectedUntil, gate, cap, price);
     }
 
@@ -180,56 +191,11 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         }
     }
 
-    // ---------------------------------------------------------------- oracle
+    // ---------------------------------------------------------------- oracle (raw data; FlywheelOracle reads it)
     /// @notice Record the block's first-touch price and, when due, an observation. Anyone (the pad calls it on mints).
     function observe(address token) external {
         if (oracleOf[token].launchedAt == 0) revert NotLaunched();
         _touch(token, IFlywheelToken(token).pair());
-    }
-
-    /// @notice Pair price now, UQ112x112 quote per token.
-    function spotPrice(address token) public view returns (uint256) {
-        address pair = IFlywheelToken(token).pair();
-        if (pair == address(0)) revert NoPair();
-        return _spot(pair, token);
-    }
-
-    /// @notice Price at this block's first touch (the spot price if nothing touched the pair yet this block).
-    function blockStartPrice(address token) public view returns (uint256) {
-        BlockRef memory b = blockRefOf[token];
-        if (b.blockNumber == uint32(block.number)) return b.price;
-        return spotPrice(token);
-    }
-
-    /// @notice Average price over at least the last TWAP_WINDOW (UQ112x112). Within the first window after launch, the
-    ///         time before launch counts at the launch price.
-    function twap(address token) public view returns (uint256) {
-        Oracle memory o = oracleOf[token];
-        if (o.launchedAt == 0) revert NotLaunched();
-        address pair = IFlywheelToken(token).pair();
-        uint256 nowCum = _cumulative(pair, token);
-        uint32 now32 = uint32(block.timestamp);
-        uint32 age = now32 - o.launchedAt;
-        unchecked {
-            if (age < TWAP_WINDOW) {
-                return (uint256(o.launchPrice) * (TWAP_WINDOW - age) + (nowCum - o.launchCumulative)) / TWAP_WINDOW;
-            }
-            // the newest observation at least a window old: the ring holds OBS_SLOTS ≥ OBS_GRANULARITY apart, so once
-            // the launch observation is overwritten the oldest one is ≥ 35 minutes old — there always is one
-            uint32 target = now32 - TWAP_WINDOW;
-            Observation memory best = Observation({timestamp: o.launchedAt, cumulative: o.launchCumulative});
-            Observation[OBS_SLOTS] storage ring = _obs[token];
-            for (uint256 i; i < OBS_SLOTS; i++) {
-                Observation memory ob = ring[i];
-                if (ob.timestamp != 0 && ob.timestamp <= target && ob.timestamp > best.timestamp) best = ob;
-            }
-            return (nowCum - best.cumulative) / (now32 - best.timestamp);
-        }
-    }
-
-    /// @notice Spot, block-start and TWAP prices in one call (UQ112x112).
-    function prices(address token) external view returns (uint256 spot, uint256 blockStart, uint256 average) {
-        return (spotPrice(token), blockStartPrice(token), twap(token));
     }
 
     function observation(address token, uint256 i) external view returns (uint32 timestamp, uint256 cumulative) {
@@ -335,6 +301,16 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         if (b.blockNumber != uint32(block.number)) {
             b.blockNumber = uint32(block.number);
             b.price = price;
+            // the recent high, from block-start prices only (a pump inside one block does not raise it)
+            Peak storage k = peakOf[token];
+            uint32 epoch = uint32(block.timestamp / PEAK_EPOCH);
+            if (k.epoch != epoch) {
+                peakPrevOf[token] = k.epoch + 1 == epoch ? k.high : 0;
+                k.epoch = epoch;
+                k.high = price;
+            } else if (price > k.high) {
+                k.high = price;
+            }
         }
         uint8 last = o.last;
         if (block.timestamp >= uint256(_obs[token][last].timestamp) + OBS_GRANULARITY) {

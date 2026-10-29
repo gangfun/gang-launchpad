@@ -222,9 +222,8 @@ contract FlywheelForkTest is Test {
         vm.warp(vm.getBlockTimestamp() + 40 minutes);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
-        uint256 avg = handler.twap(t);
+        (uint256 spot,,, uint256 avg) = pad.prices(t);
         assertGt(avg, 0);
-        (uint256 spot,,) = handler.prices(t);
         assertApproxEqRel(avg, spot, 0.2e18);
     }
 }

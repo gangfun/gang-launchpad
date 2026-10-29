@@ -18,6 +18,7 @@ import {IFlywheelPadView} from "./interfaces/IFlywheelPadView.sol";
 import {FlywheelLogic} from "./FlywheelLogic.sol";
 import {FlywheelPostLogic, FlywheelPostLogicView} from "./FlywheelPostLogic.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {FlywheelOracle} from "./FlywheelOracle.sol";
 
 interface IMintRoom {
     function mintRoom() external view returns (uint256);
@@ -379,11 +380,11 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         if (accepted == 0) return (0, 0, 0, 0, false);
         paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
         fee = (paid * s.mintFeeBps) / 10_000;
-        (uint256 spot, uint256 blockStart, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
-        tokensOut = Math.mulDiv(paid, 1 << 112, FlywheelPostLogic.buyerPrice(spot, blockStart, average));
-        // the buyer's tokens and the liquidity's are minted: at most twice tokensOut must fit under the cap
+        (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
+        tokensOut = Math.mulDiv(paid, 1 << 112, FlywheelPostLogic.buyerPrice(spot, blockStart, high, average));
+        // minted: at most the buyer's tokens plus the liquidity's (at most `paid` of quote at spot)
         ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token)
-            && 2 * tokensOut <= IMintRoom(token).mintRoom();
+            && tokensOut + Math.mulDiv(paid, 1 << 112, spot) <= IMintRoom(token).mintRoom();
     }
 
     /// @notice The exit fee a sell-back pays now (0 once the sale has been stale for 7 days).
@@ -391,9 +392,23 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         return FlywheelLogic.exitFeeBps(_sales[token]);
     }
 
-    function checkConfig(FlyConfig calldata cfg, uint256 devShares) external pure returns (bool ok, string memory) {
+    /// @notice Every reason `create` would refuse `cfg` now (with the Agent ID gate as currently set).
+    function checkConfig(FlyConfig calldata cfg, uint256 devShares) external view returns (bool ok, string memory) {
         string memory reason = FlywheelLogic.checkConfig(cfg, devShares);
+        if (bytes(reason).length == 0 && !_config.agentGateEnabled && cfg.devCutBps != 0) {
+            reason = "devCutBps must be 0 when ungated";
+        }
         return (bytes(reason).length == 0, reason);
+    }
+
+    /// @notice The prices mints are checked and priced with (UQ112x112, quote per token): spot, this block's start, the
+    ///         recent high (highest block-start price of the last one to two minutes) and the 30-minute TWAP.
+    function prices(address token)
+        external
+        view
+        returns (uint256 spot, uint256 blockStart, uint256 high, uint256 average)
+    {
+        return FlywheelOracle.prices(taxHandler, token);
     }
 
     function isAgent(address account) external view returns (bool) {

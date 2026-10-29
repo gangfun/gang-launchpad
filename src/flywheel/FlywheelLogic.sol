@@ -27,7 +27,6 @@ interface IFlyHandler {
     function onLaunch(address token, uint64 protectedUntil, address gate, uint256 cap) external;
     function requalify(address token, address user) external;
     function observe(address token) external;
-    function prices(address token) external view returns (uint256 spot, uint256 blockStart, uint256 average);
     function isOut(address token, address user) external view returns (bool);
     function syncShares(address token, address from, address to) external;
 }

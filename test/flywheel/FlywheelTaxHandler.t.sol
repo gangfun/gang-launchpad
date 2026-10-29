@@ -12,6 +12,7 @@ import {IFlywheelPadView} from "../../src/flywheel/interfaces/IFlywheelPadView.s
 import {TwapMockPair, TwapMockPairFactory} from "../mocks/TwapMockPair.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
+import {OracleView} from "./OracleView.sol";
 
 /// @dev The pad's side of the handler, without the sale: deploys a token, hands out "minted" tokens with baselines
 ///      before launch (writing vault shares itself, as the pad does while the token is locked), seeds the pair and
@@ -112,6 +113,7 @@ contract FlywheelTaxHandlerTest is Test {
     PadStub pad;
     GangMintToken token;
     TwapMockPair pair;
+    OracleView oracle;
 
     address owner = makeAddr("owner");
     address feeVault = makeAddr("feeVault");
@@ -135,6 +137,7 @@ contract FlywheelTaxHandlerTest is Test {
         handler = new FlywheelTaxHandler(owner, address(vault), address(bucket), address(0));
         deployer = new MintTokenDeployer(owner);
         pad = new PadStub(vault, handler, deployer, factory, quote);
+        oracle = new OracleView(address(handler));
         vm.startPrank(owner);
         handler.setLaunchpad(address(pad));
         handler.setKeeper(keeper);
@@ -329,31 +332,31 @@ contract FlywheelTaxHandlerTest is Test {
     function test_twapStartsAtTheLaunchPriceAndMovesSlowly() public {
         _create(100);
         _launch(0);
-        uint256 p0 = handler.spotPrice(address(token));
-        assertEq(handler.twap(address(token)), p0);
+        uint256 p0 = oracle.spotPrice(address(token));
+        assertEq(oracle.twap(address(token)), p0);
         vm.warp(vm.getBlockTimestamp() + 60);
         _sell(alice, 30_000 ether); // spot drops several %
-        uint256 spot = handler.spotPrice(address(token));
+        uint256 spot = oracle.spotPrice(address(token));
         assertLt(spot, (p0 * 95) / 100);
         vm.warp(vm.getBlockTimestamp() + 1);
-        uint256 t = handler.twap(address(token));
+        uint256 t = oracle.twap(address(token));
         assertGt(t, (p0 * 99) / 100); // 1 second of a low price in a 30-minute window
     }
 
     function test_twapAfterTheFirstWindowUsesObservations() public {
         _create(100);
         _launch(0);
-        uint256 p0 = handler.spotPrice(address(token));
+        uint256 p0 = oracle.spotPrice(address(token));
         for (uint256 i; i < 12; i++) {
             vm.warp(vm.getBlockTimestamp() + 5 minutes);
             vm.roll(vm.getBlockNumber() + 1);
             handler.observe(address(token));
         }
-        assertApproxEqRel(handler.twap(address(token)), p0, 1e12);
+        assertApproxEqRel(oracle.twap(address(token)), p0, 1e12);
         _buy(carol, 2 ether); // price up ~40%
-        uint256 p1 = handler.spotPrice(address(token));
+        uint256 p1 = oracle.spotPrice(address(token));
         vm.warp(vm.getBlockTimestamp() + 15 minutes);
-        uint256 t = handler.twap(address(token));
+        uint256 t = oracle.twap(address(token));
         assertGt(t, p0);
         assertLt(t, p1);
     }
@@ -363,12 +366,12 @@ contract FlywheelTaxHandlerTest is Test {
         _launch(0);
         vm.roll(vm.getBlockNumber() + 1);
         vm.warp(vm.getBlockTimestamp() + 3);
-        uint256 before = handler.spotPrice(address(token));
+        uint256 before = oracle.spotPrice(address(token));
         _sell(alice, 20_000 ether);
-        assertEq(handler.blockStartPrice(address(token)), before);
-        assertLt(handler.spotPrice(address(token)), before);
+        assertEq(oracle.blockStartPrice(address(token)), before);
+        assertLt(oracle.spotPrice(address(token)), before);
         vm.roll(vm.getBlockNumber() + 1);
-        assertEq(handler.blockStartPrice(address(token)), handler.spotPrice(address(token)));
+        assertEq(oracle.blockStartPrice(address(token)), oracle.spotPrice(address(token)));
     }
 
     // ------------------------------------------------------------ access
@@ -389,5 +392,39 @@ contract FlywheelTaxHandlerTest is Test {
         vm.prank(address(0xBEEF));
         vm.expectRevert(FlywheelTaxHandler.UnknownToken.selector);
         handler.notifyTax(address(0xBEEF), alice, bob, 1, 100);
+    }
+
+    function test_recentHighKeepsTheLastMinutesBlockStartPrices() public {
+        _create(100);
+        _launch(0);
+        vm.warp(vm.getBlockTimestamp() + 120);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(address(token));
+        uint256 before = oracle.spotPrice(address(token));
+        _sell(alice, 30_000 ether); // a dump in this block
+        vm.roll(vm.getBlockNumber() + 1); // next block: its start is the dumped price
+        handler.observe(address(token));
+        assertLt(oracle.blockStartPrice(address(token)), before);
+        assertEq(oracle.recentHigh(address(token)), before); // the pre-dump block start is still the recent high
+        vm.warp(vm.getBlockTimestamp() + 121);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(address(token));
+        assertEq(oracle.recentHigh(address(token)), oracle.spotPrice(address(token))); // two minutes on: gone
+    }
+
+    function test_aPumpInsideOneBlockDoesNotRaiseTheRecentHigh() public {
+        _create(100);
+        _launch(0);
+        vm.warp(vm.getBlockTimestamp() + 120);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(address(token));
+        _buy(carol, 2 ether); // pump ...
+        uint256 peak = oracle.spotPrice(address(token));
+        _sell(carol, token.balanceOf(carol)); // ... and back, same block
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(address(token));
+        uint256 nextStart = oracle.spotPrice(address(token)); // the next block's start (taxes left in the pool)
+        assertEq(oracle.recentHigh(address(token)), nextStart); // block-start prices only
+        assertLt(oracle.recentHigh(address(token)), (peak * 9) / 10); // the in-block peak was never recorded
     }
 }

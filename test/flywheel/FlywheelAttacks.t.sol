@@ -219,13 +219,14 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         address b = _newAgent();
         _poolBuy(t, b, 2 ether);
         vm.roll(vm.getBlockNumber() + 1);
-        uint256 before = handler.spotPrice(t);
+        (uint256 before,,,) = pad.prices(t);
         uint256 chunk = handler.maxChunk(t);
         assertGt(chunk, 0);
         vm.prank(keeper);
         handler.process(t, chunk, 1);
-        assertLt(handler.spotPrice(t), before);
-        assertEq(handler.blockStartPrice(t), before);
+        (uint256 spotNow, uint256 blockStart,,) = pad.prices(t);
+        assertLt(spotNow, before);
+        assertEq(blockStart, before);
     }
 
     /// @dev R2-1 L-2: an ungated sale takes no dev cut (quotas can't bound a creator using fresh wallets).
