@@ -81,6 +81,8 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 `previewBurn()` 返回这一次会不会买、花多少、销毁多少（已扣买入税）。
 
+**报价币对「转进交易对」收税（GangBond 复审 L-1，v4 代码已修、未部署）**：v1–v3 按 `quoteIn` 算买入量，交易对实际收到的少于 `quoteIn`，每块都过不了 Pancake 的 K 检查，回购那一份永远卡在合约里（`sweep` 不能取报价币）。v4 先转账，再按交易对的报价币余额减储备（实际收到的）算买入量；`minTokensOut` 是按整块 `quoteIn` 预估的（预览看不到转账税），按「实际收到 / `quoteIn`」缩小后再比，否则 keeper 的 `minOut` 每次都会 `Slippage`。对每笔转账都收税的报价币，拆分账目照样对得上（dev 那份到手少了报价币自己的税），pad 本来也拒绝这种报价币（首次买入 `FeeOnTransferQuote`）。只对转进交易对收税的报价币能过 pad 的检查，所以 v4 修的是这一种。主网现有回购币都用 WBNB / GANG，不受影响；CLI 0.16.3 起 `--buyback` 只接受 WBNB、GANG 和 QuoteRegistry 里的报价币。v4 等下次回购合约有别的改动时一起部署。测试：`test/gang/GangBuybackSplitterPairTax.t.sol`。
+
 `previewWork()`（模块接口）：能买时 `due = true`、`minOut` = 预览销毁量 − `WORK_SLIPPAGE_BPS`（1%）；不能买时，只有这次调用会记录或推进 TWAP 观测点才 `due`（`minOut` 0）——这一步正是价格检查恢复所需要的；没东西可买、没毕业、距上一块不到 `CHUNK_GAP` 时都不 due。`work(minOut)` = `burnChunk(minOut)`。
 
 **最低金额**：拆分后的回购余额低于交易对报价币储备的 `WORK_MIN_BPS`（0.05%）时不 due——买和推进观测都不报。毕业后每笔卖出的 swap-back 都给回购合约打一点，没有门槛的话 keeper 每 10 分钟左右就要为一点点钱发一笔（约 20–35 万 gas）。攒够以后第一次调用记观测点（停了超过 20 分钟，观测重来），10 分钟后开始买。`burnChunk` 本身仍收任何金额，谁都可以手动调。
@@ -89,7 +91,7 @@ recipient 只能是创建者自己或 handler owner `list` 过的地址（`Curve
 
 ## 5. 其它规则
 
-- **收款地址（payee，v2）**：回购以外的那份打给 `payee`，不再固定是 dev。建币时 `--buyback-to <地址>` 指定（工厂 `create(bps, salt, payee)`，0 = dev）；之后 dev 随时 `setPayee` 更换，**立即生效**（这是 dev 自己那份钱，不影响持币人，所以不设公告期），发 `PayeeSet` 事件。更换前到账的报价币先按旧地址拆分；欠款（`devOwed`）和 `sweep` 都付给当时的 payee。比例仍只有 dev 能改。v1 回购合约（主网第一个工厂 `0x6bcd…8546` 克隆的，`moduleType` = `buyback-burn-v1`）没有 payee，永远付给 dev；v2 的 `moduleType` 是 `buyback-burn-v2`，v3（加了 `CHUNK_GAP`）是 `buyback-burn-v3`，也有 payee。CLI、indexer、网站都要认这三种。
+- **收款地址（payee，v2）**：回购以外的那份打给 `payee`，不再固定是 dev。建币时 `--buyback-to <地址>` 指定（工厂 `create(bps, salt, payee)`，0 = dev）；之后 dev 随时 `setPayee` 更换，**立即生效**（这是 dev 自己那份钱，不影响持币人，所以不设公告期），发 `PayeeSet` 事件。更换前到账的报价币先按旧地址拆分；欠款（`devOwed`）和 `sweep` 都付给当时的 payee。比例仍只有 dev 能改。v1 回购合约（主网第一个工厂 `0x6bcd…8546` 克隆的，`moduleType` = `buyback-burn-v1`）没有 payee，永远付给 dev；v2 的 `moduleType` 是 `buyback-burn-v2`，v3（加了 `CHUNK_GAP`）是 `buyback-burn-v3`，也有 payee。CLI、indexer、网站都要认这三种。代码里的 v4（`buyback-burn-v4`，按交易对实际收到的报价币计价，见 §4）还没部署，部署时它们要再认 v4。
 
 - **绑定**：`bind(token)` 任何人可调，只能绑一次。要求：V3（curve）币、创建者是 dev、handler 里这个币的 recipient 是本合约。设成任何人可调，是为了防止 dev 故意不绑、再用 `sweep` 把报价币拿走。
 - **`sweep(asset)`**：绑定后，把绑定报价币以外的任何资产全部转给 payee（v1：dev）（别的币把它填成 recipient、用别的报价币付的税，或者别人误转进来的）。绑定前不能 sweep。用绑定报价币付的税，不管来自哪个币，都按比例拆分。
@@ -138,10 +140,11 @@ gang create --name … --symbol … --buy-tax 3 --sell-tax 3 [--dividend 50] --b
 - **管理合约是 handler owner 前面多的一层**：它出问题时多签仍能用 `exec` 把 owner 交回；它本身不可升级、只有三个入口。
 - **白名单地址对所有发币人开放**：别人也能把这个回购合约填成自己币的 recipient，但只会多给它钱（绑定报价币按比例拆分，其他资产 sweep 给 dev）；绑定只认 dev 自己的币。
 - **回购慢**：每块最多 0.5% 储备、最快每 4 分钟一块（keeper 每 5 分钟一跑），大额税要分很多块；价格被拉高时会暂停，直到高价成为均价。
-- **报价币**：pad 接受的报价币（WBNB 或任意 18 位、不扣转账费的 ERC-20）都能用；黑名单和余额被扣的情况见 §5。
+- **报价币**：pad 接受的报价币（WBNB 或任意 18 位、不扣转账费的 ERC-20）都能用；黑名单和余额被扣的情况见 §5。只对转进交易对收税的报价币能过 pad 的检查，已部署的 v1–v3 用它会卡住回购，v4 修了（§4）。
 
 ## 8. 测试
 
 - 单测 `test/gang/GangBuybackSplitter.t.sol` 28 个：管理合约（接管、`exec` 转发与报错原样返回、交回 owner、工厂增删、只有允许的工厂能加白、不重复、`modulesFrom` 分页）、工厂（只给 Agent、比例越界、地址等于 `predict`、同一 dev 重复 salt 被拒而别的 dev 可用、克隆状态、实现不能初始化、克隆只能由工厂初始化一次）、绑定检查、按比例拆分和边界、提高立即生效、下调公告 / 作废 / 取消、毕业前拒绝、分块买完、拉盘后跳过、滑点、ERC-20 报价币、不排除分红也分不到、`previewWork` / `work`（观测、窗口内不 due、可买时的 `minOut`、本区块已买、拉盘后推进观测）、dev 被拉黑、两种余额被扣、`previewWork` 低于最低金额不 due（手动 `burnChunk` 照常）、部署脚本（`check` 各项；从旧管理合约迁移和从多签首次接管两种批量，按打印的执行后生效；迁移后旧工厂不能再加白；同一管理合约换工厂时只要 `setFactory`、列出仍允许的旧工厂）、收款地址（建币时指定、默认 dev、只有 dev 能改、不能改成 0、更换前到账的按旧地址拆分、`sweep` 给收款地址、拉黑的收款地址记欠款且换地址后补发给新地址）、sweep、外盘税端到端、两块之间的间隔（间隔内 `burnChunk` / `work` 回滚 `BurnTooSoon`、预览不 due，满 4 分钟恢复）、拉盘维持后每块卖回只能拿到一块。
+- 单测 `test/gang/GangBuybackSplitterPairTax.t.sol` 3 个（复审 L-1）：对转进交易对收税 5% 的报价币，keeper 按 `previewWork` / `work` 买到底；缩放后的 `minTokensOut` 仍拦得住过高的值；对每笔转账收税的报价币，拆分账目对得上、回购买完、不欠 dev。改回按 `quoteIn` 计价时三个都以 `K` 失败，去掉 `minTokensOut` 缩放时三个都以 `Slippage` 失败。
 - 注意：`src/gang/**` 用 via-ir 单独编译，测试里 `new` 这些合约会变成 `vm.deployCode`，`vm.expectRevert` 看不到它的回滚（回滚会让测试直接当作通过）；构造函数的拒绝路径要经测试合约自己的 external 函数部署（`newFactory` / `newAdmin`）。
 - 测试网整轮见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`。
