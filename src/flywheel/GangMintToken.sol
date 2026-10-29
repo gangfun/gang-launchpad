@@ -6,14 +6,14 @@ import {IGangTaxHandler} from "../gang/interfaces/IGangTaxHandler.sol";
 import {TokenURI} from "../launchpad-v3/TokenURI.sol";
 
 /// @title GangMintToken (持续打新 / continuous-mint tokens)
-/// @notice GangToken with a growing supply. It starts with `startSupply` minted to its launchpad (the pre-launch shares
-///         and the pool's tokens); once the pair exists, only the launchpad can mint more (`padMint`, for post-launch
-///         mints), never above `maxSupply`. Everything else is GangToken's: locked until launch (`reclaim` / `pullFor`
-///         only while locked), pool tax on pair trades (buy `buyTaxBps`, sell `sellTaxBps`) → the handler
-///         (`notifyTax`), the handler's sell-time chunk (`swapBack`), share syncing on every transfer (`syncShares`),
-///         launchpad / handler excluded from tax, no owner.
+/// @notice GangToken with a growing supply: tokens exist only once minted. Only the launchpad mints (`padMint`): to
+///         minters as they mint (before and after launch), and the pool's tokens at launch and with each post-launch
+///         mint — never above `maxSupply`. Everything else is GangToken's: locked until launch (`reclaim` / `pullFor`
+///         only while locked; a mint to a minter is not a transfer, so the lock does not stop it), pool tax on pair
+///         trades (buy `buyTaxBps`, sell `sellTaxBps`) → the handler (`notifyTax`), the handler's sell-time chunk
+///         (`swapBack`), share syncing on every transfer (`syncShares`), launchpad / handler excluded, no owner.
 /// @dev The launchpad's power is fixed: the handler, the rates and the cap are set at construction; `unlock` and
-///      `setPair` run once each at launch; `padMint` only mints after launch and only up to the cap.
+///      `setPair` run once each at launch; `padMint` only up to the cap.
 contract GangMintToken is ERC20, TokenURI {
     uint256 public constant BPS = 10_000;
     /// @notice Gas cap for the handler's sell-time chunk. A chunk that runs out because the caller sent too little gas
@@ -76,14 +76,14 @@ contract GangMintToken is ERC20, TokenURI {
         uint256 maxSupply_
     ) ERC20(name_, symbol_) TokenURI(uri_) {
         if (launchpad_ == address(0)) revert ZeroAddress();
-        if (startSupply_ == 0 || startSupply_ > maxSupply_) revert BadSupply();
+        if (maxSupply_ == 0 || startSupply_ > maxSupply_) revert BadSupply();
         maxSupply = maxSupply_;
         launchpad = launchpad_;
         taxHandler = taxHandler_;
         buyTaxBps = buyTaxBps_;
         sellTaxBps = sellTaxBps_;
         reclaimable = reclaimable_;
-        _mint(launchpad_, startSupply_);
+        if (startSupply_ != 0) _mint(launchpad_, startSupply_);
         if (buyTaxBps_ != 0 || sellTaxBps_ != 0) {
             if (taxHandler_ == address(0)) revert ZeroAddress();
             isExcluded[launchpad_] = true;
@@ -139,10 +139,9 @@ contract GangMintToken is ERC20, TokenURI {
         emit PairSet(pair_);
     }
 
-    /// @notice After launch only: mint `amount` to `to` for a post-launch mint (the buyer's tokens, or the tokens added
-    ///         to the pool with the mint's quote). Untaxed (a mint, not a pool trade); syncs `to`'s share.
+    /// @notice Mint `amount` to `to`: a minter's tokens, or the pool's. Untaxed (a mint, not a pool trade); once the pair
+    ///         is set it syncs `to`'s share.
     function padMint(address to, uint256 amount) external onlyLaunchpad {
-        if (locked) revert StillLocked();
         if (totalSupply() + amount > maxSupply) revert CapExceeded();
         _mint(to, amount);
     }

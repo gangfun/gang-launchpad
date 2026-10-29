@@ -7,7 +7,7 @@ import {MintTokenDeployer} from "../../src/flywheel/MintTokenDeployer.sol";
 import {HookRecorder} from "../gang/GangToken.t.sol";
 
 /// @notice GangMintToken on its own: GangToken's rules (lock, reclaim, pullFor, pool tax, hooks) plus a starting supply
-///         below the cap and `padMint`, which only the pad can call, only after launch, up to `maxSupply`.
+///         (0 allowed) and `padMint`, which only the pad can call, before or after launch, up to `maxSupply`.
 contract GangMintTokenTest is Test {
     MintTokenDeployer deployer;
     HookRecorder hooks;
@@ -54,20 +54,27 @@ contract GangMintTokenTest is Test {
         deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, START, CAP);
     }
 
-    function test_constructorRefusesStartAboveCapOrZero() public {
+    function test_constructorRefusesStartAboveCapOrZeroCap() public {
         vm.startPrank(pad);
         vm.expectRevert(GangMintToken.BadSupply.selector);
         deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, CAP + 1, CAP);
         vm.expectRevert(GangMintToken.BadSupply.selector);
-        deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, 0, CAP);
+        deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, 0, 0);
         vm.stopPrank();
     }
 
-    function test_padMintOnlyAfterLaunch() public {
-        GangMintToken t = _deploy(100);
+    function test_zeroStartSupplyMintsAsMintersMintWhileLocked() public {
         vm.prank(pad);
-        vm.expectRevert(GangMintToken.StillLocked.selector);
-        t.padMint(alice, 1 ether);
+        GangMintToken t =
+            GangMintToken(deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, 0, CAP));
+        assertEq(t.totalSupply(), 0);
+        vm.prank(pad);
+        t.padMint(alice, 3 ether); // a pre-launch mint: allowed although transfers are locked
+        assertEq(t.balanceOf(alice), 3 ether);
+        assertEq(hooks.calls(), 0); // no pair yet: no hooks
+        vm.prank(alice);
+        vm.expectRevert(GangMintToken.TransfersLocked.selector);
+        t.transfer(pad, 1 ether);
     }
 
     function test_padMintOnlyByPad() public {
