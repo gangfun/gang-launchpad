@@ -56,6 +56,8 @@ interface IFlywheelPad {
         uint16 maxMulX100;
         bool postMint;
         bool launched;
+        uint64 discountAt; // global budget of mints priced above spot: last update
+        uint128 discountSpent; // … what they paid, decaying over 30 minutes
     }
 
     /// @notice One wallet in one sale.
@@ -121,6 +123,7 @@ interface IFlywheelPad {
     error Slippage();
     error PriceBelowAverage();
     error PriceBelowRecentHigh();
+    error DiscountBudgetExceeded();
     error PaceExceeded();
     error PostMintOff();
     error MigratorNotSet();

@@ -37,6 +37,7 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
 
     /// @dev seconds the dumped price is held before minting
     uint256 internal holdFor;
+    uint256 internal mintedCount;
 
     /// @param rampSteps 3-minute steps, each a third-party buy of `stepBps` of the quote reserve (0 = flat market)
     function _run(IFlywheelPad.FlyConfig memory c, uint256 rampSteps, uint256 stepBps, uint256 nWallets, uint256 mintsEach)
@@ -98,6 +99,7 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
             for (uint256 k; k < mintsEach; k++) {
                 try pad.mintPost(t, 10, 0, address(0)) {
                     minted++;
+                    mintedCount++;
                 } catch {
                     break;
                 }
@@ -105,7 +107,7 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
             vm.stopPrank();
         }
         mq0;
-        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.005 ether);
+        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.02 ether);
 
         uint256 p1 = _price(t);
         (int256 q1, int256 v1) = _wealth(t, p1);
@@ -131,35 +133,41 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
         holdFor = 61;
         (, int256 b) = _run(_agentMint(), 20, 200, 60, 1);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_hot_agentMint60_hold3min() public {
         holdFor = 180;
         (, int256 b) = _run(_agentMint(), 20, 200, 60, 1);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_up_agentMint60_hold61s() public {
         holdFor = 61;
         (, int256 b) = _run(_agentMint(), 20, 100, 60, 1);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_hot_wide20x8_hold61s() public {
         holdFor = 61;
         (, int256 b) = _run(_wide(), 20, 200, 20, 8);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_hot_wide20x8_hold3min() public {
         holdFor = 180;
         (, int256 b) = _run(_wide(), 20, 200, 20, 8);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_up_wide20x8_hold61s() public {
         holdFor = 61;
         (, int256 b) = _run(_wide(), 20, 100, 20, 8);
         assertLt(b, 0, "held dump-then-mint paid");
+        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 }

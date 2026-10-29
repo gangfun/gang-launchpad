@@ -104,7 +104,7 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
             vm.stopPrank();
         }
         mq0;
-        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.005 ether);
+        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.02 ether);
 
         uint256 p1 = _price(t);
         (int256 q1, int256 v1) = _wealth(t, p1);

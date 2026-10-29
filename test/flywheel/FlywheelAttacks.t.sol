@@ -108,19 +108,23 @@ contract FlywheelAttacksTest is FlywheelFixture {
         uint256 q0 = wbnb.balanceOf(w);
         uint256 bag = IERC20(t).balanceOf(w);
         _poolSell(t, w, bag);
-        // nobody trades for 31 minutes; observations keep coming from pokes
-        for (uint256 i; i < 7; i++) {
+        // nobody trades for 45 minutes (the TWAP and the recent high come down); observations keep coming from pokes
+        for (uint256 i; i < 9; i++) {
             vm.warp(vm.getBlockTimestamp() + 5 minutes);
             vm.roll(vm.getBlockNumber() + 1);
             handler.observe(t);
         }
         vm.warp(vm.getBlockTimestamp() + 1 minutes);
         vm.roll(vm.getBlockNumber() + 1);
+        uint256 minted;
         vm.startPrank(w);
         for (uint256 i; i < 10; i++) {
-            try pad.mintPost(t, 10, 0, address(0)) {} catch {} // the whole quota, 10 per mint (refused: fine)
+            try pad.mintPost(t, 10, 0, address(0)) {
+                minted++;
+            } catch {} // the whole quota, 10 per mint, as far as pace and budget allow
         }
         vm.stopPrank();
+        assertGt(minted, 0, "the patient attack never got to mint");
         // buy back to the starting bag
         uint256 have = IERC20(t).balanceOf(w);
         uint256 spentBack;
@@ -298,39 +302,74 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertFalse(ok);
     }
 
-    /// @dev Re-review R3 L-2: after a real drop, mints are refused (not silently priced at the old high) until the
-    ///      recent high has decayed to within 5% of the price; the preview says so.
-    function test_aRealDropPausesMintingForAFewMinutes() public {
-        address t = _create(_wide(), 1);
+    /// @dev After a real drop of ~8%: a mint is priced at the floor (above the pool, never silently far above: more
+    ///      than 10% under the recent high it is refused) and counts against the global budget for such mints.
+    function test_aRealDropPricesMintsAtTheFloorWithinTheBudget() public {
+        address t = _dropped(92);
+        (uint256 spot,, uint256 high, uint256 avg) = pad.prices(t);
+        uint256 floor = ((high > avg ? high : avg) * 99) / 100;
+        assertLt(spot, floor);
+        address a = _newAgent();
+        (, uint256 paid,, uint256 out, bool ok) = pad.previewMintPost(t, a, 10);
+        assertTrue(ok);
+        assertApproxEqRel(out, (paid << 112) / floor, 1e12); // priced at the floor, not at spot
+        vm.prank(a);
+        (uint256 got,) = pad.mintPost(t, 10, 0, address(0));
+        assertEq(got, out);
+    }
+
+    /// @dev Re-review R4 M-1: below the floor, all wallets together mint at most 2% of the pool's quote per 30 minutes.
+    function test_mintsBelowTheFloorShareOneBudget() public {
+        address t = _dropped(93);
+        (, uint256 rQ) = _res(t);
+        uint256 budget = (rQ * 200) / 10_000;
+        uint256 total;
+        bool refused;
+        for (uint256 i; i < 200; i++) {
+            address w = _newAgent();
+            vm.prank(w);
+            try pad.mintPost(t, 10, 0, address(0)) returns (uint256, uint256 spent) {
+                total += (spent * 100) / 101; // paid, without the 1% fee
+            } catch (bytes memory err) {
+                assertEq(bytes4(err), IFlywheelPad.DiscountBudgetExceeded.selector);
+                refused = true;
+                break;
+            }
+        }
+        assertTrue(refused);
+        assertLe(total, budget);
+        assertGt(total, (budget * 8) / 10);
+        // it refills over 30 minutes
+        vm.warp(vm.getBlockTimestamp() + 30 minutes);
+        vm.roll(vm.getBlockNumber() + 1);
+        address late = _newAgent();
+        (,,,, bool ok) = pad.previewMintPost(t, late, 10);
+        if (ok) {
+            vm.prank(late);
+            pad.mintPost(t, 10, 0, address(0));
+        }
+    }
+
+    /// @dev A sale where an outside seller just pushed the price down to `pct`% of where it stood for an hour.
+    function _dropped(uint256 pct) internal returns (address t) {
+        t = _create(_wide(), 1);
         _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + 600);
         address seller = _newAgent();
         _poolBuy(t, seller, 3 ether);
-        vm.warp(vm.getBlockTimestamp() + 1 hours); // the buy is old news: the TWAP has it
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
-        // sell enough for an ~8% drop (within the 10% TWAP gate, beyond the 5% high gap)
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
         (uint256 p0,,,) = pad.prices(t);
-        for (uint256 i; i < 200; i++) {
+        for (uint256 i; i < 300; i++) {
             (uint256 sp,,,) = pad.prices(t);
-            if (sp * 100 <= p0 * 92) break;
+            if (sp * 100 <= p0 * pct) break;
             (uint256 rT,) = _res(t);
-            _poolSell(t, seller, rT / 500);
+            _poolSell(t, seller, rT / 1_000);
         }
         vm.roll(vm.getBlockNumber() + 1);
         vm.warp(vm.getBlockTimestamp() + 3);
-        address a = _newAgent();
-        (,,,, bool ok) = pad.previewMintPost(t, a, 10);
-        assertFalse(ok);
-        vm.prank(a);
-        vm.expectRevert(IFlywheelPad.PriceBelowRecentHigh.selector);
-        pad.mintPost(t, 10, 0, address(0));
-        // the high decays 0.5% a minute: about 6 minutes later it is within 5% of the price again
-        vm.warp(vm.getBlockTimestamp() + 7 minutes);
-        vm.roll(vm.getBlockNumber() + 1);
-        (,,,, ok) = pad.previewMintPost(t, a, 10);
-        assertTrue(ok);
-        vm.prank(a);
-        pad.mintPost(t, 10, 0, address(0));
     }
 }

@@ -40,9 +40,14 @@ library FlywheelPostLogic {
     /// @notice A mint never prices the buyer more than this under the recent high or the TWAP: a dump wins at most
     ///         this, which the mint fee (≥ 1%) takes back, plus 0.5% per minute it is held (review R2-2 M-1, re-reviews).
     uint256 internal constant TWAP_FLOOR_BPS = 100;
-    /// @notice Minting is refused while the pair's price is more than this below the recent high (a real drop pauses
-    ///         minting for a few minutes instead of pricing buyers far above the pool; re-review R3 L-1 / L-2).
-    uint256 internal constant HIGH_GAP_BPS = 500;
+    /// @notice Minting is refused while the pair's price is more than this below the recent high (a buyer is never
+    ///         priced far above the pool; re-review R3 L-2; widened from 5% after R4 M-2 — the budget below bounds the
+    ///         attack instead).
+    uint256 internal constant HIGH_GAP_BPS = 1_000;
+    /// @notice While spot is under the price floor (so a mint is priced above the pool — the only state a dump can
+    ///         profit from), all wallets together mint at most this share of the pool's quote reserve per PACE_WINDOW
+    ///         (decaying): what any number of Agent IDs can take from a held dump is capped (re-review R4 M-1).
+    uint256 internal constant DISCOUNT_POOL_BPS = 200;
     /// @notice One wallet's mints per PACE_WINDOW stay within this share of the pool's quote reserve.
     uint256 internal constant PACE_POOL_BPS = 200;
     uint256 internal constant PACE_WINDOW = 30 minutes;
@@ -93,6 +98,7 @@ library FlywheelPostLogic {
         address pair = s.pair;
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         _pace(a, q.paid, rQ);
+        if (spot < floorPrice(high, average)) _discount(s, q.paid, rQ);
 
         spent = q.paid + q.fee;
         FlywheelLogic.collect(s.quote, spent, bnbIn);
@@ -126,16 +132,27 @@ library FlywheelPostLogic {
     }
 
     /// @notice The price a mint gives tokens at: the highest of the pair's price now, at the block's start (no
-    ///         same-block dump-then-mint), 1% under the decaying recent high of block-start prices (no dump-then-mint
-    ///         a block or a few minutes later, also while the price runs above its TWAP) and 1% under the 30-minute TWAP.
+    ///         same-block dump-then-mint) and the floor — 1% under the higher of the decaying recent high and the
+    ///         30-minute TWAP (no dump-then-mint a block or minutes later, also while the price runs above its TWAP).
     function buyerPrice(uint256 spot, uint256 blockStart, uint256 high, uint256 average)
         internal
         pure
         returns (uint256 p)
     {
         p = spot > blockStart ? spot : blockStart;
-        uint256 floor = ((high > average ? high : average) * (BPS - TWAP_FLOOR_BPS)) / BPS;
+        uint256 floor = floorPrice(high, average);
         if (floor > p) p = floor;
+    }
+
+    function floorPrice(uint256 high, uint256 average) internal pure returns (uint256) {
+        return ((high > average ? high : average) * (BPS - TWAP_FLOOR_BPS)) / BPS;
+    }
+
+    /// @notice What all wallets minted recently below the floor, decayed linearly over PACE_WINDOW.
+    function recentDiscount(IFlywheelPad.Sale storage s) internal view returns (uint256) {
+        uint256 elapsed = block.timestamp - s.discountAt;
+        if (elapsed >= PACE_WINDOW) return 0;
+        return (uint256(s.discountSpent) * (PACE_WINDOW - elapsed)) / PACE_WINDOW;
     }
 
     /// @notice Price multiple (×100) of the share numbered `n` (pre-launch shares count): flat, the standard table
@@ -168,6 +185,13 @@ library FlywheelPostLogic {
         if (total * BPS > rQ * PACE_POOL_BPS) revert IFlywheelPad.PaceExceeded();
         a.windowStart = uint64(block.timestamp);
         a.windowSpent = total.toUint128();
+    }
+
+    function _discount(IFlywheelPad.Sale storage s, uint256 paid, uint256 rQ) private {
+        uint256 total = recentDiscount(s) + paid;
+        if (total * BPS > rQ * DISCOUNT_POOL_BPS) revert IFlywheelPad.DiscountBudgetExceeded();
+        s.discountAt = uint64(block.timestamp);
+        s.discountSpent = total.toUint128();
     }
 
     /// @notice What the wallet minted recently, decayed linearly over PACE_WINDOW since its last mint.
@@ -260,6 +284,7 @@ library FlywheelPostLogicView {
     }
 
     function allowed(
+        IFlywheelPad.Sale storage s,
         IFlywheelPad.Account storage a,
         uint256 paid,
         uint256 spot,
@@ -276,6 +301,11 @@ library FlywheelPostLogicView {
         }
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
         uint256 rQ = IUniswapV2PairLite(pair).token0() == token ? uint256(r1) : uint256(r0);
+        if (
+            spot < FlywheelPostLogic.floorPrice(high, average)
+                && (FlywheelPostLogic.recentDiscount(s) + paid) * FlywheelPostLogic.BPS
+                    > rQ * FlywheelPostLogic.DISCOUNT_POOL_BPS
+        ) return false;
         return (FlywheelPostLogic.recentSpent(a) + paid) * FlywheelPostLogic.BPS
             <= rQ * FlywheelPostLogic.PACE_POOL_BPS;
     }

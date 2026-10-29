@@ -35,8 +35,8 @@ interface IPairCumulative {
 ///           sale's gate) and each wallet's total buys in the window stay within the cap (counted per wallet, not by
 ///           balance, so moving tokens out does not reopen it).
 ///         - **Price oracle (raw data).** Every pool trade (and every pad call to `observe`) records the price at the
-///           block's first touch (`blockRefOf`), a recent high of those block-start prices that decays by
-///           PEAK_DECAY_BPS_PER_MIN (`peakOf`), and, at most every OBS_GRANULARITY, an observation of the pair's
+///           block's first touch (`blockRefOf`), a recent high of block-start prices that held for two blocks, decaying
+///           by PEAK_DECAY_BPS_PER_MIN (`peakOf`), and, at most every OBS_GRANULARITY, an observation of the pair's
 ///           cumulative price. The pad's FlywheelOracle library turns them into the block-start price, the recent high
 ///           (decayed to now) and the 30-minute TWAP.
 /// @dev Must be the shared dividend vault's operator for its pad and a SharedPlatformFeeBucket operator. Runs inside token
@@ -281,7 +281,8 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         return bal < base ? bal : base;
     }
 
-    /// @notice `high` decayed by PEAK_DECAY_BPS_PER_MIN over `elapsed` seconds (to 0 after 200 minutes).
+    /// @notice `high` decayed by PEAK_DECAY_BPS_PER_MIN over `elapsed` seconds (linear on the stored value; as every
+    ///         block's first touch re-stores it, it compounds while the pair trades).
     function decayedHigh(uint256 high, uint256 elapsed) public pure returns (uint256) {
         uint256 cut = elapsed * PEAK_DECAY_BPS_PER_MIN;
         uint256 full = 60 * BPS;
@@ -307,14 +308,15 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         uint224 price = _spot(pair, token);
         BlockRef storage b = blockRefOf[token];
         if (b.blockNumber != uint32(block.number)) {
+            // the recent high, from block-start prices that held for two blocks in a row (a pump inside a block, or
+            // one block start pushed up, does not raise it; re-review R4 L-1): decayed to now, then raised
+            uint256 held = b.price < price ? b.price : price;
             b.blockNumber = uint32(block.number);
             b.price = price;
-            // the recent high, from block-start prices only (a pump inside one block does not raise it): decayed to now,
-            // then raised to this block's start
             Peak storage k = peakOf[token];
             uint256 high = decayedHigh(k.high, block.timestamp - k.time);
             k.time = uint32(block.timestamp);
-            k.high = uint224(price > high ? price : high);
+            k.high = uint224(held > high ? held : high);
         }
         uint8 last = o.last;
         if (block.timestamp >= uint256(_obs[token][last].timestamp) + OBS_GRANULARITY) {

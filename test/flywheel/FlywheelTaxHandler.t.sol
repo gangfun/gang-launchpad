@@ -420,13 +420,14 @@ contract FlywheelTaxHandlerTest is Test {
         vm.warp(vm.getBlockTimestamp() + 120);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(address(token));
+        uint256 start = oracle.spotPrice(address(token));
         _buy(carol, 2 ether); // pump ...
         uint256 peak = oracle.spotPrice(address(token));
         _sell(carol, token.balanceOf(carol)); // ... and back, same block
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(address(token));
-        uint256 nextStart = oracle.spotPrice(address(token)); // the next block's start (taxes left in the pool)
-        assertEq(oracle.recentHigh(address(token)), nextStart); // block-start prices only
+        // block-start prices only, and only once the next block starts there too: still the pre-pump start
+        assertEq(oracle.recentHigh(address(token)), start);
         assertLt(oracle.recentHigh(address(token)), (peak * 9) / 10); // the in-block peak was never recorded
     }
 }
