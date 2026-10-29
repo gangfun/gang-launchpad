@@ -194,7 +194,7 @@ contract GangBuybackSplitterTest is GangFixture {
         assertEq(sp.pad(), address(pad));
         assertEq(sp.taxHandler(), address(handler));
         assertEq(sp.factory(), address(factory));
-        assertEq(sp.moduleType(), bytes32("buyback-burn-v3"));
+        assertEq(sp.moduleType(), bytes32("buyback-burn-v4"));
         assertEq(sp.payee(), dev, "payee defaults to the dev");
         assertTrue(handler.isListed(s));
         assertEq(admin.moduleOf(s), address(factory));

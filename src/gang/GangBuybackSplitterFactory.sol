@@ -23,7 +23,7 @@ interface IModuleLister {
 /// @dev No owner, not upgradeable. A new version of the module is a new factory (the Safe allows it on the admin; the
 ///      old one can be stopped there, its clones keep working).
 contract GangBuybackSplitterFactory {
-    string public constant LABEL = "buyback-burn-v3";
+    string public constant LABEL = "buyback-burn-v4";
 
     address public immutable pad;
     address public immutable admin;

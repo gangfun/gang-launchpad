@@ -39,7 +39,9 @@ import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 ///      public views and trades only with the token's pair; needs no role from the pad, token, vault or handler. Any
 ///      other token that names this contract as its recipient (a listed address is open to every creator) only adds
 ///      quote: in the bound quote it is split like the rest, in any other asset `sweep` sends it to the payee.
-///      v3 ("buyback-burn-v3") buys at most one chunk per CHUNK_GAP (GangBond audit 2026-10-29 H-1); v2 clones
+///      v4 ("buyback-burn-v4") prices each chunk on what the pair received (re-review L-1: a quote that taxes
+///      transfers into pairs made v3 and older fail every chunk). v3 ("buyback-burn-v3", mainnet factory
+///      0xf1d5…F1Cd) buys at most one chunk per CHUNK_GAP (GangBond audit 2026-10-29 H-1); v2 clones
 ///      ("buyback-burn-v2", mainnet factory 0x9346…8F2f) and v1 clones (0x6bcd…8546, no payee: they pay the dev) buy
 ///      one per block.
 contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
@@ -69,7 +71,7 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice `previewWork` is not due while the buy-back holds less than this share of the pair's quote reserve: each
     ///         swap-back pays a little, and a keeper tx for every trickle would cost more gas than it buys back.
     uint256 public constant WORK_MIN_BPS = 5;
-    bytes32 public constant MODULE_TYPE = "buyback-burn-v3";
+    bytes32 public constant MODULE_TYPE = "buyback-burn-v4";
 
     uint8 internal constant KIND_CURVE = 1;
 
@@ -263,7 +265,8 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
     ///         records an observation; later ones wait until TWAP_WINDOW has passed since it, and skip while the spot
     ///         price is more than MAX_PRICE_RISE_BPS above the average. After more than 2 × TWAP_WINDOW without a call
     ///         the observations start over (that call records only). Reverts NotTradable before graduation.
-    /// @param minTokensOut Least tokens to burn (after the buy tax); checked only when a chunk is bought.
+    /// @param minTokensOut Least tokens to burn (after the buy tax) for the whole chunk, scaled to the share of it the
+    ///        pair received (a quote taxing the transfer delivers less); checked only when a chunk is bought.
     function burnChunk(uint256 minTokensOut) external nonReentrant returns (uint256 quoteIn, uint256 burned) {
         return _burnChunk(minTokensOut);
     }
@@ -301,8 +304,12 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
         lastBurnAt = uint64(block.timestamp);
         left -= quoteIn;
         buybackLeft = left;
-        uint256 out = _amountOut(quoteIn, rQ, rT);
         IERC20(quote).safeTransfer(p, quoteIn);
+        // price what the pair actually holds over its reserve (re-review L-1, as GangBond): a quote that taxes
+        // transfers into pairs delivers less than `quoteIn`, and pricing `quoteIn` would fail the pair's K check
+        uint256 bal = IERC20(quote).balanceOf(p);
+        uint256 got = bal > rQ ? bal - rQ : 0;
+        uint256 out = _amountOut(got, rQ, rT);
         // a chunk too small to buy one token unit is left in the pair as a donation (only ever a last dust chunk)
         if (out != 0) {
             // bought here, not straight to 0xdead: the token exempts 0xdead from its tax, and the buy-back is a pool
@@ -311,7 +318,9 @@ contract GangBuybackSplitter is IGangRecipientModule, ReentrancyGuard {
             if (tokenIs0) IBondPair(p).swap(out, 0, address(this), "");
             else IBondPair(p).swap(0, out, address(this), "");
             burned = IERC20(token).balanceOf(address(this)) - before;
-            if (burned < minTokensOut) revert Slippage();
+            // `minTokensOut` is for the whole `quoteIn` (the previews can't see a transfer tax): scale it to what
+            // the pair got, so such a quote is still guarded instead of failing every keeper call
+            if (burned * quoteIn < minTokensOut * got) revert Slippage();
             IERC20(token).safeTransfer(DEAD, burned);
         }
         emit BoughtBack(quoteIn, burned, left);

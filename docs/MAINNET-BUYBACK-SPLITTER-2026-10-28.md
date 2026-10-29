@@ -96,6 +96,12 @@ GangBond 审计（`docs/AUDIT-GANG-BOND-2026-10-29.md` H-1、I-5）发现：价�
 5. 现有 4 个 v1 币：通知两位 dev 风险和选项——保持不变（keeper 会及时买掉，风险是毕业后价格持续拉高、余额攒大时被高位卖给回购）；或 `gang buyback set --pct 0` 在 3 天公告后关掉回购（之后全部给 dev）。
 6. ~~测试网先走一遍~~：2026-10-29 已完成（PR #58 合并后）：测试网工厂 v6 `0x7E63…2BBe` 放行、v5 停用，CLI 发 GAPT、毕业、两块回购相隔 247 秒，间隔内回滚 `BurnTooSoon`。见 `docs/TESTNET-BUYBACK-SPLITTER-2026-10-28.md`「v6 工厂」。
 
+## v4：按交易对实际收到的报价币计价（`buyback-burn-v4`，GangBond 复审 L-1）（代码已合入，未部署）
+
+v1–v3 按 `quoteIn` 算买入量。报价币如果对「转进交易对」收税，交易对收到的少于 `quoteIn`，每块回购都过不了 K 检查，回购那一份永远卡住。v4 按交易对实际收到的计价，`minTokensOut` 按实际收到的比例缩小（规格 §4）。
+
+不部署的理由（2026-10-29 决定）：pad 已经拒绝每笔转账都收税的报价币，只有「只对转进交易对收税」的能用上；主网 QuoteRegistry 目前没有登记任何报价币，现有 5 个回购币（4 个 v1、1 个 v3 `0x2f84…20d3`）都用 WBNB / GANG；CLI 0.16.3 起 `--buyback` 只接受 WBNB、GANG 和 QuoteRegistry 里的报价币。真的触发时只卡住那一个币的回购部分，没人能拿走，dev 那份照常到账。新工厂、多签、服务端 / 网站 / CLI 各发一版的成本不值得，等回购合约下次有别的改动时一起部署。部署时照 v3 的流程：部署脚本、BscScan 验证、多签 `setFactory(v4, true)` + `setFactory(v3 0xf1d5…F1Cd, false)`（在服务端、网站认 `buyback-burn-v4` 之后）、CLI 改工厂地址。往 QuoteRegistry 加报价币之前，先确认它转进交易对时不收税。
+
 ## 上主网前的演练（anvil 主网 fork，区块 130281857）
 
 - 同一个脚本在 fork 上部署，地址与上面一致；冒充多签按上表执行 3 笔，全部成功：handler 的 owner = 管理合约，管理合约 owner = 多签，工厂已允许。

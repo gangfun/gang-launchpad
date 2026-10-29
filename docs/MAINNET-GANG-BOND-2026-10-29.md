@@ -38,4 +38,4 @@
 
 ## 以后要做
 
-- `GangBuybackSplitter` v3（工厂 `0xf1d5…31Cd`）的 `work()` 也按 `quoteIn` 算买入量，L-1 对它同样成立：报价币对转进交易对收税时，回购那一份会卡住。要不要出新版由 splitter 的负责人决定。
+- ~~`GangBuybackSplitter` v3（工厂 `0xf1d5…31Cd`）的 `work()` 也按 `quoteIn` 算买入量，L-1 对它同样成立~~：v4（`buyback-burn-v4`）的代码已修（同样按交易对实际收到的计价，另外把 `minTokensOut` 按实际收到的比例缩小），暂不部署，理由见 `docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md`「v4」。
