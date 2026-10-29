@@ -1,6 +1,7 @@
-import { createPublicClient, http, formatEther, formatUnits, parseEther, encodeFunctionData, decodeEventLog, decodeErrorResult, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, http, formatEther, parseEther, encodeFunctionData, decodeEventLog, isAddress, zeroAddress } from 'viem'
 import { bsc } from 'viem/chains'
-import { SOFT_ABI, V2_ABI, ERC20_ABI, WBNB_ABI } from './abi.js'
+import { SOFT_ABI, V2_ABI, S_ABI, ERC20_ABI, WBNB_ABI } from './abi.js'
+import { kindOf, padNets } from './gangpad.js'
 
 export const ADDR = {
   v2: '0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E',
@@ -10,11 +11,8 @@ export const ADDR = {
   wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
 }
 
-const FORBIDDEN_CREATE = new Set([ADDR.soft, ADDR.u, ADDR.s].map((a) => a.toLowerCase()))
-
 export const CONFIG = {
   rpc: process.env.GANG_RPC_URL || 'https://bsc-dataseed.binance.org',
-  launchpad: process.env.GANG_LAUNCHPAD || ADDR.v2,
   chainId: '56',
 }
 
@@ -26,25 +24,19 @@ export { parseEther, encodeFunctionData, isAddress, zeroAddress }
 const erc = (address, functionName, args = []) => client.readContract({ address, abi: ERC20_ABI, functionName, args })
 const read = (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args })
 
-export function assertCreateTarget(addr = CONFIG.launchpad) {
-  const a = String(addr || '').toLowerCase()
-  if (a !== ADDR.v2.toLowerCase()) {
-    throw new Error(
-      `create refused: only LaunchpadV2 ${ADDR.v2} (got ${addr}). ` +
-      `Soft/LaunchpadU/LaunchpadS are not create routes — buy/sell/claim existing only. ` +
-      `Unset GANG_LAUNCHPAD or set it to V2.`,
-    )
-  }
-}
-
 const PADS = [
   { id: 'v2', address: ADDR.v2, kind: 'v2', abi: V2_ABI },
   { id: 'soft', address: ADDR.soft, kind: 'soft', abi: SOFT_ABI },
   { id: 'u', address: ADDR.u, kind: 'v2', abi: V2_ABI },
-  { id: 's', address: ADDR.s, kind: 'v2', abi: V2_ABI },
+  { id: 's', address: ADDR.s, kind: 'v2', abi: S_ABI }, // 9-field Curve (no taxed): see S_ABI
 ]
 
-/** Resolve which pad hosts `token` by probing curves(token).creator != 0. */
+const GANG_POINTER = {
+  v3: (t) => `a GangLaunchpad V3 (bonding-curve) token: gang info|buy|sell|status --token ${t} trade it (re-run if this was an RPC hiccup)`,
+  fair: (t) => `a GangLaunchpad 打新 (fair-mint) token: gang info|status --token ${t}; before launch gang mint / withdraw, after it gang buy / sell (re-run if this was an RPC hiccup)`,
+}
+
+/** Resolve which pad hosts `token` by probing curves(token).creator != 0; a GangLaunchpad token is pointed at its command. */
 export async function resolvePad(token) {
   for (const pad of PADS) {
     try {
@@ -55,6 +47,9 @@ export async function resolvePad(token) {
       }
     } catch { /* wrong ABI shape or empty */ }
   }
+  // tokens from `gang create` / `gang fair create` live on GangLaunchpad, which these commands don't trade
+  const kind = await kindOf({ pad: padNets('v3').mainnet.pad, read }, token)
+  if (GANG_POINTER[kind]) throw new Error(`${token} is ${GANG_POINTER[kind](token)}`)
   throw new Error(
     `not a Gang token on known pads (V2/Soft/U/S): ${token}. ` +
     `Upgrade: npm i -g @gangfun/cli@latest  OR  npm i -g github:gangfun/cli`,
@@ -71,9 +66,18 @@ function v2InfoFromCurve(c) {
   return { kind: 'v2', creator, raised: realQuote, sold, graduated, pair, quote, gradAmt, taxed, virtualQuote, refPair }
 }
 
+/** LaunchpadS: no `taxed` field — every S token is a TaxLaunchToken (1% pool tax). */
+function sInfoFromCurve(c) {
+  const [creator, quote, realQuote, sold, gradAmt, virtualQuote, graduated, pair, refPair] = c
+  return { kind: 'v2', creator, raised: realQuote, sold, graduated, pair, quote, gradAmt, taxed: true, virtualQuote, refPair }
+}
+
+/** The curve of a resolved pad in one shape, whatever the pad's layout. */
+const curveInfo = (pad) => (pad.kind === 'soft' ? softInfoFromCurve(pad.curve) : pad.id === 's' ? sInfoFromCurve(pad.curve) : v2InfoFromCurve(pad.curve))
+
 export async function tokenInfo(token, me) {
   const pad = await resolvePad(token)
-  const base = pad.kind === 'soft' ? softInfoFromCurve(pad.curve) : v2InfoFromCurve(pad.curve)
+  const base = curveInfo(pad)
   const [name, symbol] = await Promise.all([erc(token, 'name'), erc(token, 'symbol')])
   let locked = null
   try { locked = await erc(token, 'locked') } catch { /* */ }
@@ -211,7 +215,7 @@ export async function quoteBuy(token, buyer, amountHuman) {
       quotePath: 'onchain-quoteBuy' }
   }
   // Unique path: LaunchpadV2.sol _prepBuy / _tokensOut / _quoteInFor (no on-chain quoteBuy view).
-  const base = v2InfoFromCurve(pad.curve)
+  const base = curveInfo(pad)
   let room = null
   try { room = await read(pad.address, pad.abi, 'walletRoom', [token, buyer]) } catch { /* */ }
   const q = v2QuoteBuyFromCurve(base, gross, room)
@@ -229,7 +233,7 @@ export async function quoteSell(token, tokensIn) {
       tokensInFmt: fmtTok(tokensIn), outFmt: fmt(bnbToUser), feeFmt: fmt(fee), unit: 'BNB',
       quotePath: 'onchain-quoteSell' }
   }
-  const base = v2InfoFromCurve(pad.curve)
+  const base = curveInfo(pad)
   const q = v2QuoteSellFromCurve(base, tokensIn)
   return { kind: 'v2', pad: pad.id, padAddress: pad.address, quote: base.quote, tokensIn, out: q.out, fee: q.fee,
     tokensInFmt: fmtTok(tokensIn), outFmt: fmt(q.out), feeFmt: fmt(q.fee), unit: 'quote',
@@ -255,58 +259,38 @@ export const calldata = {
   v2Sell: (token, tokensIn, minQuoteOut) => encodeFunctionData({ abi: V2_ABI, functionName: 'sell', args: [token, tokensIn, minQuoteOut] }),
   approve: (spender, amount) => encodeFunctionData({ abi: ERC20_ABI, functionName: 'approve', args: [spender, amount] }),
   wrap: () => encodeFunctionData({ abi: WBNB_ABI, functionName: 'deposit' }),
-  createV2: (name, symbol, logoURI, taxed, quote, refPool) =>
-    encodeFunctionData({ abi: V2_ABI, functionName: 'create', args: [name, symbol, logoURI, taxed, quote, refPool] }),
 }
 
 /**
- * Dry-run a create from the agent wallet (eth_call) before baw preview, so a bad quote / refPool / gate fails
- * here with the contract's error name instead of an opaque preview rejection.
- * → { ok: true, gradAmt, tokenIfNext } | { ok: false, reverted: true, error: <ContractError> } | { ok: false, reverted: false, error }
- * `reverted: false` means the RPC failed, not the create: retrying with the same flags is fine.
+ * Events of the logs that decode with one of `abis`, each with the emitting contract: GangLaunchpad logs, which `gang tx`
+ * reads beside the V2 / Soft / U / S pads'. Integers stay as on chain (strings), marked `units: 'raw'`: amounts are in wei
+ * (18 decimals), bps / shares / counts as they are; the V2 / Soft events are formatted (no `units`).
  */
-export async function preflightCreate(from, data, quote, refPool) {
-  let gradAmt, r
-  try {
-    gradAmt = await read(ADDR.v2, V2_ABI, 'graduationAmountOf', [quote, refPool])
-    r = await client.call({ account: from, to: ADDR.v2, data })
-  } catch (e) {
-    return { ok: false, ...callFailure(e) }
+export function decodeLogs(logs, abis) {
+  const events = []
+  for (const log of logs) {
+    for (const abi of abis) {
+      try {
+        const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
+        events.push({ event: ev.eventName, contract: log.address, units: 'raw', ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })
+        break
+      } catch { /* other contract / event */ }
+    }
   }
-  // CREATE address: only right if no other create lands first
-  const tokenIfNext = r.data && r.data.length >= 66 ? `0x${r.data.slice(-40)}` : null
-  return { ok: true, gradAmt: await fmtQuote(quote, gradAmt), tokenIfNext }
+  return events
 }
 
-/** Quote units with the quote's decimals; raw integer if the token has no readable decimals(). */
-async function fmtQuote(quote, amount) {
-  if (quote === zeroAddress || quote.toLowerCase() === ADDR.wbnb.toLowerCase()) return formatUnits(amount, 18)
-  try { return formatUnits(amount, Number(await erc(quote, 'decimals'))) } catch { return `${amount} (raw units)` }
-}
-
-function callFailure(e) {
-  const raw = e?.walk?.((x) => typeof x?.data === 'string' && x.data.startsWith('0x'))?.data
-  if (raw && raw.length >= 10) {
-    try { return { reverted: true, error: decodeErrorResult({ abi: V2_ABI, data: raw }).errorName } } catch { /* not one of ours */ }
-  }
-  const named = e?.walk?.((x) => x?.data?.errorName)?.data?.errorName
-  if (named) return { reverted: true, error: named }
-  // empty revert data: viem only names it ExecutionRevertedError when the node's text matches, so also accept
-  // JSON-RPC code 3 (the standard execution-error code) or any "revert" in the chain; everything else is the RPC
-  const revert = e?.walk?.((x) => ['ExecutionRevertedError', 'ContractFunctionRevertedError'].includes(x?.name) ||
-    x?.code === 3 || /revert/i.test(x?.details || x?.shortMessage || ''))
-  // a revert carries the node's own words; the "RPC Request failed." wrapper text would read like a network error
-  if (revert) return { reverted: true, error: revert.details || revert.shortMessage || 'execution reverted' }
-  return { reverted: false, error: [e?.shortMessage, e?.details].filter(Boolean).join(' — ') || e?.message || String(e) }
-}
-
-export async function decodeTx(hash) {
+/** `extraAbis`: decoders for logs not from the V2 / Soft / U / S pads (see decodeLogs). */
+export async function decodeTx(hash, extraAbis = []) {
   const r = await client.waitForTransactionReceipt({ hash, timeout: 120_000 })
   const events = []
   const known = new Map(PADS.map((p) => [p.address.toLowerCase(), p]))
   for (const log of r.logs) {
     const pad = known.get(log.address.toLowerCase())
-    if (!pad) continue
+    if (!pad) {
+      events.push(...decodeLogs([log], extraAbis))
+      continue
+    }
     try {
       const ev = decodeEventLog({ abi: pad.abi, data: log.data, topics: log.topics })
       const a = Object.fromEntries(Object.entries(ev.args).map(([k, v]) => {

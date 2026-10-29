@@ -10,7 +10,10 @@ library MainnetAddresses {
     address internal constant MIGRATOR = 0xFcB6278b6FE3f2e3F567bb49cBf8d8883bcE96E9;
     address internal constant GANG = 0x0c6302401aa5325C2E36F170f52C00B1d220B405;
     address internal constant FEE_VAULT = 0x3464aa1097Aa46502Db847E4c6d0A2D52a871Af4;
-    address internal constant OWNER = 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3;
+    /// @dev Safe 1.5.0 multisig (2 of 3). Moved from the EOA 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3 on 2026-10-27:
+    ///      the V1 / V2 / S / U contracts were transferOwnership'd to it (the Safe accepts); 0x4EEd stays the deploy
+    ///      wallet. The historical EOA is kept in LaunchpadV2DeployRefs.LEGACY_OWNER.
+    address internal constant OWNER = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
     address internal constant AGENT_ID_REGISTRY = 0x60B9262456dE011F7d15a54CdD8c48bAaa8B022F;
 
     // ---- Shared Pancake / WBNB ----

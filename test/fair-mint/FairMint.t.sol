@@ -6,15 +6,17 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {QuoteRegistry} from "../../src/launchpad-v2/QuoteRegistry.sol";
-import {DividendVault} from "../../src/launchpad-v2/DividendVault.sol";
+import {SharedDividendVault} from "../../src/common/SharedDividendVault.sol";
 import {PlatformFeeBucket} from "../../src/launchpad-v2/PlatformFeeBucket.sol";
-import {MigratorV2} from "../../src/launchpad-v2/MigratorV2.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {PoolCheck} from "../../src/launchpad-v2/PoolCheck.sol";
 import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 import {MockPairFactory, MockPair} from "../../src/launchpad-v2/mocks/MockPairFactory.sol";
-import {FairMintPad} from "../../src/fair-mint/FairMintPad.sol";
-import {FairToken, FairTokenDeployer} from "../../src/fair-mint/FairToken.sol";
-import {HolderRewardHandler} from "../../src/fair-mint/HolderRewardHandler.sol";
+import {GangLaunchpad as FairMintPad} from "../../src/gang/GangLaunchpad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {GangToken as FairToken} from "../../src/gang/GangToken.sol";
+import {GangTaxHandler as HolderRewardHandler} from "../../src/gang/GangTaxHandler.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Quote that burns 1% on every transfer.
@@ -36,11 +38,12 @@ contract FeeOnTransferQuote is ERC20("FoT", "FOT") {
 /// @notice FairMintPad + FairToken + HolderRewardHandler on mocks. No broadcast.
 contract FairMintTest is Test {
     QuoteRegistry internal registry;
-    DividendVault internal vault;
+    SharedDividendVault internal vault;
     PlatformFeeBucket internal bucket;
     HolderRewardHandler internal handler;
     FairMintPad internal pad;
-    MigratorV2 internal migrator;
+    SharedMigrator internal migrator;
+    TokenDeployer internal tokenDeployer;
     MockPairFactory internal factory;
     MockSPCXB internal wbnb;
     MockAgentId internal agents;
@@ -60,30 +63,32 @@ contract FairMintTest is Test {
         factory = new MockPairFactory();
         agents = new MockAgentId();
         registry = new QuoteRegistry(owner);
-        vault = new DividendVault(owner);
+        vault = new SharedDividendVault(owner);
         bucket = new PlatformFeeBucket(owner, feeVault);
-        handler = new HolderRewardHandler(owner, address(vault), address(bucket));
-        FairTokenDeployer deployer = new FairTokenDeployer();
+        handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
+        tokenDeployer = new TokenDeployer(owner);
         pad = new FairMintPad(
             owner,
             address(registry),
             address(vault),
             address(bucket),
             address(handler),
-            address(deployer),
+            address(tokenDeployer),
             address(wbnb),
             address(factory)
         );
-        migrator = new MigratorV2(address(factory), address(pad));
+        migrator = new SharedMigrator(owner, address(factory));
 
         vm.startPrank(owner);
-        vault.setLaunchpad(address(pad));
-        vault.setOperator(address(handler), true);
+        vault.setLaunchpad(address(pad), true);
+        vault.setOperator(address(handler), address(pad));
+        migrator.addLaunchpad(address(pad));
+        tokenDeployer.setLaunchpad(address(pad), true);
         bucket.setLaunchpad(address(pad));
         bucket.setOperator(address(handler), true);
         pad.setMigrator(address(migrator));
         pad.setAgentGate(true, address(agents));
-        handler.setPad(address(pad));
+        handler.setLaunchpad(address(pad));
         handler.setKeeper(owner);
         vm.stopPrank();
 
@@ -104,15 +109,14 @@ contract FairMintTest is Test {
         if (agents.balanceOf(who) == 0) _fund(who);
     }
 
-    function _cfg() internal pure returns (FairMintPad.MintConfig memory) {
-        return FairMintPad.MintConfig({
-            raiseBnb: 15 ether, capBps: 50, duration: 24 hours, holdBps: 5000, mintFeeBps: 100, exitFeeBps: 100
-        });
+    function _cfg() internal pure returns (IGangLaunchpad.MintConfig memory) {
+        return
+            IGangLaunchpad.MintConfig({raiseBnb: 15 ether, capBps: 50, holdBps: 6000, mintFeeBps: 100, exitFeeBps: 100});
     }
 
     function _create() internal returns (address token) {
         vm.prank(dev);
-        token = pad.create("Fair", "FAIR", "ipfs://logo", address(0), address(0), _cfg(), 1);
+        token = pad.create("Fair", "FAIR", "ipfs://logo", "ipfs://meta.json", address(0), address(0), _cfg(), 1);
     }
 
     /// @dev dev holds 1 share; minters 0..98 take 100 each (9,900); minter 99 takes the last 99.
@@ -127,11 +131,11 @@ contract FairMintTest is Test {
     function _sale(address token)
         internal
         view
-        returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 escrowedFee, address pair)
+        returns (uint256 capShares, uint256 sold, bool launched, uint256 sharePrice, uint256 lastMintAt, address pair)
     {
-        (,, uint16 cap,,, uint16 sold_, bool launched_,,,,, uint128 price, uint128 fee, address pair_,) =
+        (, uint64 last, uint16 cap,,, uint16 sold_, bool launched_,,,, uint128 price, address pair_,,) =
             pad.sales(token);
-        return (cap, sold_, launched_, price, fee, pair_);
+        return (cap, sold_, launched_, price, last, pair_);
     }
 
     function _sell(address token, address who, uint256 amount) internal {
@@ -170,70 +174,231 @@ contract FairMintTest is Test {
         assertEq(IERC20(t).balanceOf(dev), TPS);
         assertEq(pad.baselineOf(t, dev), TPS);
         assertEq(vault.shares(t, dev), TPS);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Minting));
-        assertEq(wbnb.balanceOf(address(pad)), SHARE_PRICE + SHARE_PRICE / 100);
-        assertEq(vault.minimumShareBalance(), 10_000 ether);
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Minting));
+        assertEq(wbnb.balanceOf(address(pad)), SHARE_PRICE, "pad keeps only principal");
+        assertEq(bucket.accruedQuote(address(wbnb)), SHARE_PRICE / 100, "mint fee to the platform at once");
+        (,,,, uint256 last,) = _sale(t);
+        assertEq(last, block.timestamp, "the creator's mint counts as activity");
+        assertEq(vault.minimumShareBalanceOf(address(pad)), 10_000 ether);
     }
 
     function test_create_rejectsOutOfBounds() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.raiseBnb = 4 ether;
         _expectBadConfig(c, 1, "raiseBnb must be 5-50 BNB");
         c = _cfg();
         c.raiseBnb = 51 ether;
         _expectBadConfig(c, 1, "raiseBnb must be 5-50 BNB");
         c = _cfg();
-        c.capBps = 51;
-        _expectBadConfig(c, 1, "capBps must be 10-50 (0.1%-0.5%)");
+        c.capBps = 101; // 1.01%
+        _expectBadConfig(c, 1, "capBps must be 25-100 (0.25%-1%)");
         c = _cfg();
-        c.capBps = 9;
-        _expectBadConfig(c, 1, "capBps must be 10-50 (0.1%-0.5%)");
+        c.capBps = 24;
+        _expectBadConfig(c, 1, "capBps must be 25-100 (0.25%-1%)");
         c = _cfg();
-        c.duration = 73 hours;
-        _expectBadConfig(c, 1, "duration must be 1-72 hours");
+        c.holdBps = 9001; // 90.01%
+        _expectBadConfig(c, 1, "holdBps must be 6000-9000");
         c = _cfg();
-        c.duration = 1 hours - 1;
-        _expectBadConfig(c, 1, "duration must be 1-72 hours");
-        c = _cfg();
-        c.holdBps = 8001;
-        _expectBadConfig(c, 1, "holdBps must be 3000-8000");
-        c = _cfg();
-        c.holdBps = 2999;
-        _expectBadConfig(c, 1, "holdBps must be 3000-8000");
+        c.holdBps = 5999; // 59.99%
+        _expectBadConfig(c, 1, "holdBps must be 6000-9000");
         c = _cfg();
         c.mintFeeBps = 99;
-        _expectBadConfig(c, 1, "mintFeeBps must be 100-500 (1%-5%)");
+        _expectBadConfig(c, 1, "mintFeeBps must be 100-300 (1%-3%)");
         c = _cfg();
-        c.mintFeeBps = 501;
-        _expectBadConfig(c, 1, "mintFeeBps must be 100-500 (1%-5%)");
+        c.mintFeeBps = 301;
+        _expectBadConfig(c, 1, "mintFeeBps must be 100-300 (1%-3%)");
         c = _cfg();
         c.exitFeeBps = 99;
-        _expectBadConfig(c, 1, "exitFeeBps must be 100-500 (1%-5%)");
+        _expectBadConfig(c, 1, "exitFeeBps must be 100-200 (1%-2%)");
         c = _cfg();
-        c.exitFeeBps = 501;
-        _expectBadConfig(c, 1, "exitFeeBps must be 100-500 (1%-5%)");
+        c.exitFeeBps = 201;
+        _expectBadConfig(c, 1, "exitFeeBps must be 100-200 (1%-2%)");
         _expectBadConfig(_cfg(), 0, "devShares must be 1..cap");
         _expectBadConfig(_cfg(), 101, "devShares must be 1..cap");
     }
 
-    function _expectBadConfig(FairMintPad.MintConfig memory c, uint256 devShares, string memory reason) internal {
+    // ---------------------------------------------------------------- launch ranges (2026-10-27, AUDIT-BRIEF §22)
+    /// @notice Hold line 60% and 90% are the bounds and both create; 59.99% / 90.01% are refused (above).
+    function test_launchParams_holdLineBounds() public {
+        uint16[2] memory ok = [uint16(6_000), uint16(9_000)];
+        for (uint256 i; i < 2; i++) {
+            IGangLaunchpad.MintConfig memory c = _cfg();
+            c.holdBps = ok[i];
+            (bool good, string memory reason) = pad.checkConfig(c, 1);
+            assertTrue(good, reason);
+            vm.prank(dev);
+            address t = pad.create("H", "H", "", "", address(0), address(0), c, 1);
+            assertEq(pad.holdBpsOf(t), ok[i]);
+        }
+        assertEq(pad.MIN_HOLD_BPS(), 6_000);
+        assertEq(pad.MAX_HOLD_BPS(), 9_000);
+        // the vault floor stays below one share at the lowest hold line: 50,000 × 60% = 30,000 > 10,000
+        assertGt((TPS * pad.MIN_HOLD_BPS()) / 10_000, pad.MIN_SHARE_BALANCE());
+    }
+
+    /// @notice Cap 1% (100 bps) is the new top: 200 shares (10M tokens) per wallet; 0.25% stays 50 shares.
+    function test_launchParams_capBounds() public {
+        assertEq(pad.MIN_CAP_BPS(), 25);
+        assertEq(pad.MAX_CAP_BPS(), 100);
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.capBps = 100;
+        (bool good, string memory reason) = pad.checkConfig(c, 200);
+        assertTrue(good, reason);
+        (good, reason) = pad.checkConfig(c, 201);
+        assertFalse(good);
+        assertEq(reason, "devShares must be 1..cap");
         vm.prank(dev);
-        vm.expectRevert(abi.encodeWithSelector(FairMintPad.BadConfig.selector, reason));
-        pad.create("X", "X", "", address(0), address(0), c, devShares);
+        address t = pad.create("C", "C", "", "", address(0), address(0), c, 200);
+        (uint256 cap,,,,,) = _sale(t);
+        assertEq(cap, 200, "1% = 200 shares");
+        assertEq(IERC20(t).balanceOf(dev), 200 * TPS);
+        assertEq(200 * TPS, pad.TOTAL_SUPPLY() / 100, "200 shares = 1% of supply");
+        vm.prank(dev);
+        vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
+        pad.mint(t, 1, 1);
+
+        c.capBps = 25;
+        vm.prank(dev);
+        t = pad.create("D", "D", "", "", address(0), address(0), c, 1);
+        (cap,,,,,) = _sale(t);
+        assertEq(cap, 50, "0.25% = 50 shares");
+    }
+
+    /// @notice At the 1% cap, 50 wallets of 200 shares each fill the sale and launch it.
+    function test_launchParams_fiftyWalletsAtOnePercentFill() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.capBps = 100;
+        c.holdBps = 9_000;
+        vm.prank(dev);
+        address t = pad.create("F", "F", "", "", address(0), address(0), c, 200);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            assertEq(pad.mint(t, 200, 200), 200);
+            assertEq(pad.baselineOf(t, m), 200 * TPS);
+        }
+        (, uint256 sold, bool launched,,, address pair) = _sale(t);
+        assertEq(sold, 10_000);
+        assertTrue(launched, "50 x 1% fills the sale");
+        assertTrue(pair != address(0));
+        assertEq(wbnb.balanceOf(address(pad)), 0, "the whole raise went to the pair");
+
+        // the 90% line: down to exactly 90% keeps the share, below it is out for good
+        address m0 = _minter(0);
+        _sell(t, m0, (200 * TPS) / 10);
+        assertFalse(handler.isOut(t, m0));
+        assertEq(vault.shares(t, m0), (200 * TPS * 9) / 10);
+        _sell(t, m0, 1 ether);
+        assertTrue(handler.isOut(t, m0));
+        assertEq(vault.shares(t, m0), 0);
+    }
+
+    function _cfg1pct() internal pure returns (IGangLaunchpad.MintConfig memory c) {
+        c = IGangLaunchpad.MintConfig({
+            raiseBnb: 15 ether, capBps: 100, holdBps: 9_000, mintFeeBps: 100, exitFeeBps: 100
+        });
+    }
+
+    /// @notice At the 1% cap the last fill is cut to the shares left and only those are charged.
+    function test_launchParams_lastFillTruncatedAtCap200() public {
+        vm.prank(dev);
+        address t = pad.create("T", "T", "", "", address(0), address(0), _cfg1pct(), 150);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            pad.mint(t, 200, 200);
+        }
+        (, uint256 sold,,,,) = _sale(t);
+        assertEq(sold, 9_950);
+        address last = _minter(49);
+        (uint256 acc, uint256 cost, uint256 fee) = pad.previewMint(t, last, 200);
+        assertEq(acc, 50);
+        vm.prank(last);
+        vm.expectRevert(IGangLaunchpad.Slippage.selector);
+        pad.mint(t, 200, 200);
+        uint256 before = wbnb.balanceOf(last);
+        vm.prank(last);
+        assertEq(pad.mint(t, 200, 50), 50);
+        assertEq(before - wbnb.balanceOf(last), cost + fee, "charged for 50 only");
+        (,, bool launched,,,) = _sale(t);
+        assertTrue(launched);
+    }
+
+    /// @notice At cap 200 a full withdraw-and-remint by one wallet still does not restart the stale clock.
+    function test_launchParams_staleNotRestartedByRemint200() public {
+        vm.prank(dev);
+        address t = pad.create("S", "S", "", "", address(0), address(0), _cfg1pct(), 1);
+        address a = _minter(0);
+        vm.prank(a);
+        pad.mint(t, 200, 200); // sold 201 >= 1 + 10: restart, mark 201
+        vm.warp(block.timestamp + 7 days);
+        assertEq(pad.exitFeeBpsOf(t), 0);
+        vm.prank(a);
+        pad.withdraw(t, 200, 0);
+        vm.prank(a);
+        pad.mint(t, 200, 200); // back to 201: not >= 211
+        assertEq(pad.exitFeeBpsOf(t), 0, "no restart");
+        address b = _minter(1);
+        vm.prank(b);
+        pad.mint(t, 10, 10); // 211: real progress restarts
+        assertEq(pad.exitFeeBpsOf(t), 100);
+    }
+
+    /// @notice The handler's eligibleShare matches the vault share on both sides of the 90% line.
+    function test_launchParams_eligibleShareAt90() public {
+        vm.prank(dev);
+        address t = pad.create("E", "E", "", "", address(0), address(0), _cfg1pct(), 200);
+        for (uint256 i; i < 49; i++) {
+            address m = _minter(i);
+            vm.prank(m);
+            pad.mint(t, 200, 200);
+        }
+        address m0 = _minter(0);
+        vm.prank(m0);
+        IERC20(t).transfer(stranger, 1_000_000 ether); // exactly 10% of 10M
+        assertEq(handler.eligibleShare(t, m0), 9_000_000 ether);
+        assertEq(vault.shares(t, m0), 9_000_000 ether);
+        vm.prank(m0);
+        IERC20(t).transfer(stranger, 1);
+        assertEq(handler.eligibleShare(t, m0), 0);
+        assertTrue(handler.isOut(t, m0));
+    }
+
+    /// @notice A 1-share minter at the 60% line holds 30,000 tokens: still above the vault floor, so it earns.
+    function test_launchParams_oneShareAtSixtyPercentStillEarns() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.holdBps = 6_000;
+        vm.prank(dev);
+        address t = pad.create("S", "S", "", "", address(0), address(0), c, 1);
+        _fill(t);
+        _sell(t, dev, (TPS * 40) / 100);
+        assertEq(IERC20(t).balanceOf(dev), 30_000 ether);
+        assertFalse(handler.isOut(t, dev));
+        assertEq(vault.shares(t, dev), 30_000 ether, "30,000 > 10,000 floor");
+        vm.prank(dev);
+        IERC20(t).transfer(stranger, 1); // one wei under the line
+        assertTrue(handler.isOut(t, dev));
+        assertEq(vault.shares(t, dev), 0);
+    }
+
+    function _expectBadConfig(IGangLaunchpad.MintConfig memory c, uint256 devShares, string memory reason) internal {
+        vm.prank(dev);
+        vm.expectRevert(abi.encodeWithSelector(IGangLaunchpad.BadConfig.selector, reason));
+        pad.create("X", "X", "", "", address(0), address(0), c, devShares);
     }
 
     function test_create_rejectsNonAgent() public {
         vm.prank(stranger);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
-        pad.create("X", "X", "", address(0), address(0), _cfg(), 1);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
+        pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
     function test_create_rejectsHighVaultFloor() public {
         vm.prank(owner);
-        vault.setMinimumShareBalance(1_000_000 ether);
+        vault.setMinimumShareBalance(address(pad), 1_000_000 ether);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.VaultFloorTooHigh.selector);
-        pad.create("X", "X", "", address(0), address(0), _cfg(), 1);
+        vm.expectRevert(IGangLaunchpad.VaultFloorTooHigh.selector);
+        pad.create("X", "X", "", "", address(0), address(0), _cfg(), 1);
     }
 
     function test_create_registryQuoteScalesWithRaise() public {
@@ -245,9 +410,13 @@ contract FairMintTest is Test {
         assertEq(price, 1.8 ether);
     }
 
-    /// @dev Non-registry quote priced by a V2 pair against WBNB: 300 Q : 150 WBNB → 1 BNB = 2 Q.
+    /// @dev A listed quote without a fixed rate would be priced by its creator-picked reference pool at spot — one flash
+    ///      swap in the create tx moves that by orders of magnitude (internal audit round 2) — so create refuses it.
+    ///      previewCreate still shows what the pool says (300 Q : 150 WBNB → 1 BNB = 2 Q) for ops picking a rate.
+    /// @dev Any 18-decimal quote, priced like LaunchpadV2: the creator's reference pool (300 Q : 150 WBNB → 15 BNB =
+    ///      30 Q), unless QuoteRegistry holds a fixed rate, which wins over the pool.
     function test_create_refPoolAgainstWbnb() public {
-        MockSPCXB q = new MockSPCXB();
+        MockSPCXB q = new MockSPCXB(); // not in QuoteRegistry
         address ref = _seedPair(address(q), address(wbnb), 300 ether, 150 ether);
         (uint256 raiseQuote, uint256 price) = pad.previewCreate(address(q), ref, 15 ether);
         assertEq(raiseQuote, 30 ether);
@@ -256,10 +425,20 @@ contract FairMintTest is Test {
         q.mintUnlimited(dev, 1 ether);
         vm.startPrank(dev);
         q.approve(address(pad), type(uint256).max);
-        address t = pad.create("Q", "Q", "", address(q), ref, _cfg(), 1);
+        address t = pad.create("Q", "Q", "", "", address(q), ref, _cfg(), 1);
         vm.stopPrank();
         (,,, uint256 sharePrice,,) = _sale(t);
-        assertEq(sharePrice, price);
+        assertEq(sharePrice, price, "unlisted quote priced from its pool");
+
+        // a fixed rate (60 Q per 15 BNB) wins, whatever the pool says, and needs no pool
+        vm.prank(owner);
+        registry.setQuote(address(q), true, 60 ether);
+        (raiseQuote,) = pad.previewCreate(address(q), ref, 15 ether);
+        assertEq(raiseQuote, 60 ether);
+        vm.prank(dev);
+        t = pad.create("Q2", "Q2", "", "", address(q), address(0), _cfg(), 1);
+        (,,, sharePrice,,) = _sale(t);
+        assertEq(sharePrice, 60 ether / 10_000);
     }
 
     /// @dev Quote priced against USDT, bridged to BNB: 20,000 Q : 10,000 USDT, 600 USDT : 1 WBNB → 1 BNB = 1,200 Q.
@@ -269,7 +448,7 @@ contract FairMintTest is Test {
         address ref = _seedPair(address(q), address(usdt), 20_000 ether, 10_000 ether);
         address bridge = _seedPair(address(usdt), address(wbnb), 6_000 ether, 10 ether);
 
-        vm.expectRevert(FairMintPad.NoBridgePool.selector);
+        vm.expectRevert(IGangLaunchpad.NoBridgePool.selector);
         pad.previewCreate(address(q), ref, 15 ether);
 
         vm.prank(owner);
@@ -280,7 +459,7 @@ contract FairMintTest is Test {
 
     function test_create_refPoolRequiredAndDepthFloor() public {
         MockSPCXB q = new MockSPCXB();
-        vm.expectRevert(FairMintPad.RefPoolRequired.selector);
+        vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         pad.previewCreate(address(q), address(0), 15 ether);
 
         address thin = _seedPair(address(q), address(wbnb), 2 ether, 0.5 ether); // < 1 BNB of WBNB
@@ -302,7 +481,7 @@ contract FairMintTest is Test {
         vm.prank(m);
         assertEq(pad.mint(t, 500, 1), 100, "truncated to cap");
         vm.prank(m);
-        vm.expectRevert(FairMintPad.WalletCapReached.selector);
+        vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
         pad.mint(t, 1, 1);
     }
 
@@ -314,7 +493,7 @@ contract FairMintTest is Test {
         }
         address last = _minter(99);
         vm.prank(last);
-        vm.expectRevert(FairMintPad.Slippage.selector);
+        vm.expectRevert(IGangLaunchpad.Slippage.selector);
         pad.mint(t, 100, 100); // only 99 left
 
         uint256 before = wbnb.balanceOf(last);
@@ -325,19 +504,20 @@ contract FairMintTest is Test {
         assertEq(accepted, 99);
         uint256 cost = 99 * SHARE_PRICE;
         assertEq(before - wbnb.balanceOf(last), cost + cost / 100);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Launched));
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Launched));
     }
 
-    function test_mint_rejectsNonAgentAndAfterDeadline() public {
+    /// @dev No deadline: a sale a year old still takes mints.
+    function test_mint_rejectsNonAgent_noDeadline() public {
         address t = _create();
         vm.prank(stranger);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.mint(t, 1, 1);
 
-        vm.warp(block.timestamp + 24 hours + 1);
+        vm.warp(block.timestamp + 365 days);
         vm.prank(_minter(0));
-        vm.expectRevert(FairMintPad.NotMinting.selector);
-        pad.mint(t, 1, 1);
+        assertEq(pad.mint(t, 1, 1), 1);
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Minting));
     }
 
     function test_mint_rejectsFeeOnTransferQuote() public {
@@ -347,8 +527,8 @@ contract FairMintTest is Test {
         fot.mint(dev, 10 ether);
         vm.startPrank(dev);
         fot.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.FeeOnTransferQuote.selector);
-        pad.create("X", "X", "", address(fot), address(0), _cfg(), 1);
+        vm.expectRevert(IGangLaunchpad.FeeOnTransferQuote.selector);
+        pad.create("X", "X", "", "", address(fot), address(0), _cfg(), 1);
         vm.stopPrank();
     }
 
@@ -368,14 +548,17 @@ contract FairMintTest is Test {
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
 
         uint256 before = wbnb.balanceOf(m);
+        (uint256 previewOut, uint256 previewFee) = pad.previewWithdraw(t, m, 40);
         vm.prank(m);
-        uint256 out = pad.withdraw(t, 40);
+        uint256 out = pad.withdraw(t, 40, 0);
         uint256 principal = 40 * SHARE_PRICE;
         assertEq(out, principal - principal / 100);
+        assertEq(previewOut, out);
+        assertEq(previewFee, principal / 100);
         assertEq(wbnb.balanceOf(m) - before, out);
 
-        uint256 mintFee = (100 * SHARE_PRICE / 100) * 40 / 100;
-        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, mintFee + principal / 100, "both 1% legs");
+        // the mint fee went to the platform at mint; the withdraw adds only the exit fee
+        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, principal / 100, "exit fee only");
         assertEq(IERC20(t).balanceOf(m), 60 * TPS, "tokens reclaimed");
         assertEq(vault.shares(t, m), 60 * TPS);
         (, uint256 sold,,,,) = _sale(t);
@@ -387,110 +570,130 @@ contract FairMintTest is Test {
 
     /// @dev mint 1% / withdraw 2%: each leg uses its own rate; both go to the platform.
     function test_fees_separateMintAndExitRates() public {
-        FairMintPad.MintConfig memory c = _cfg();
+        IGangLaunchpad.MintConfig memory c = _cfg();
         c.exitFeeBps = 200;
         vm.prank(dev);
-        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
         address m = _minter(0);
         uint256 start = wbnb.balanceOf(m);
         vm.prank(m);
         pad.mint(t, 50, 1);
         uint256 cost = 50 * SHARE_PRICE;
         assertEq(start - wbnb.balanceOf(m), cost + cost / 100, "mint: +1%");
-        (,,,,,,,, uint16 mintFee, uint16 exitFee,,,,,) = pad.sales(t);
+        (,,,,,,, uint16 mintFee, uint16 exitFee,,,,,) = pad.sales(t);
         assertEq(mintFee, 100);
         assertEq(exitFee, 200);
 
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         uint256 before = wbnb.balanceOf(m);
         vm.prank(m);
-        uint256 out = pad.withdraw(t, 20);
+        uint256 out = pad.withdraw(t, 20, 0);
         uint256 principal = 20 * SHARE_PRICE;
         assertEq(out, principal - (principal * 200) / 10_000, "withdraw: -2%");
         assertEq(wbnb.balanceOf(m) - before, out);
-        uint256 mintFeePart = (cost / 100) * 20 / 50;
-        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, mintFeePart + (principal * 200) / 10_000);
+        assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, (principal * 200) / 10_000, "exit fee only");
     }
 
-    /// @dev A 5% mint fee is escrowed like 1%: the full amount comes back when the sale fails.
-    function test_fees_highMintFeeRefundedOnFailure() public {
-        FairMintPad.MintConfig memory c = _cfg();
-        c.mintFeeBps = 500;
+    /// @dev The mint fee (up to 3%) goes to the platform at mint; there is no refund to escrow it for.
+    function test_fees_mintFeeToPlatformAtOnce() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.mintFeeBps = 300;
         vm.prank(dev);
-        address t = pad.create("Fees", "FEE", "", address(0), address(0), c, 1);
+        address t = pad.create("Fees", "FEE", "", "", address(0), address(0), c, 1);
         address m = _minter(0);
         uint256 start = wbnb.balanceOf(m);
+        uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(m);
         pad.mint(t, 40, 1);
-        assertEq(start - wbnb.balanceOf(m), 40 * SHARE_PRICE * 105 / 100);
+        assertEq(start - wbnb.balanceOf(m), 40 * SHARE_PRICE * 103 / 100);
+        assertEq(
+            bucket.accruedQuote(address(wbnb)) - bucketBefore, 40 * SHARE_PRICE * 3 / 100, "3% to the platform now"
+        );
         (uint256 accepted,, uint256 fee) = pad.previewMint(t, _minter(1), 10);
         assertEq(accepted, 10);
-        assertEq(fee, 10 * SHARE_PRICE * 5 / 100, "preview uses the sale's rate");
-
-        vm.warp(block.timestamp + 24 hours + 1);
-        vm.prank(m);
-        pad.refund(t);
-        assertEq(wbnb.balanceOf(m), start, "principal + 5% back");
+        assertEq(fee, 10 * SHARE_PRICE * 3 / 100, "preview uses the sale's rate");
     }
 
-    function test_withdraw_blockedAfterDeadline() public {
-        address t = _create();
-        vm.warp(block.timestamp + 24 hours + 1);
+    /// @dev No mint for 7 days: withdraw pays the full principal (only the mint fee is lost); a new mint ends that.
+    function test_withdraw_exitFeeWaivedWhenStale() public {
+        IGangLaunchpad.MintConfig memory c = _cfg();
+        c.exitFeeBps = 200;
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.NotMinting.selector);
-        pad.withdraw(t, 1);
+        address t = pad.create("Stale", "STL", "", "", address(0), address(0), c, 1);
+        address m = _minter(0);
+        vm.prank(m);
+        pad.mint(t, 50, 1);
+        assertEq(pad.exitFeeBpsOf(t), 200);
+
+        vm.warp(block.timestamp + 7 days - 1);
+        assertEq(pad.exitFeeBpsOf(t), 200, "not yet stale");
+        vm.warp(block.timestamp + 1);
+        assertEq(pad.exitFeeBpsOf(t), 0, "stale after 7 days without a mint");
+        (uint256 previewOut, uint256 previewFee) = pad.previewWithdraw(t, m, 20);
+        assertEq(previewFee, 0);
+        uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
+        vm.prank(m);
+        uint256 out = pad.withdraw(t, 20, 0);
+        assertEq(out, 20 * SHARE_PRICE, "full principal back");
+        assertEq(previewOut, out);
+        assertEq(bucket.accruedQuote(address(wbnb)), bucketBefore, "no exit fee");
+
+        // a withdraw is not progress, nor is a re-mint that only wins back withdrawn shares; reaching 10 above the
+        // last restart (51 sold) is, and the exit fee is back
+        vm.prank(_minter(1));
+        pad.mint(t, 29, 1); // sold 31 → 60
+        assertEq(pad.exitFeeBpsOf(t), 0, "below markSold + STALE_STEP: still stale");
+        vm.prank(_minter(2));
+        pad.mint(t, 1, 1); // 61
+        assertEq(pad.exitFeeBpsOf(t), 200);
+        vm.prank(m);
+        assertEq(pad.withdraw(t, 10, 0), 10 * SHARE_PRICE * 98 / 100);
     }
 
-    function test_accounting_padHoldsPrincipalPlusEscrow() public {
+    function test_withdraw_previewZeroWhenItWouldRevert() public {
+        address t = _create();
+        (uint256 out, uint256 fee) = pad.previewWithdraw(t, _minter(0), 1);
+        assertEq(out + fee, 0, "holds nothing");
+        (out, fee) = pad.previewWithdraw(t, dev, 2);
+        assertEq(out + fee, 0, "more than held");
+    }
+
+    function test_accounting_padHoldsPrincipal() public {
         address t = _create();
         for (uint256 i = 0; i < 5; i++) {
             vm.prank(_minter(i));
             pad.mint(t, 37 + i, 1);
         }
         vm.prank(_minter(2));
-        pad.withdraw(t, 13);
+        pad.withdraw(t, 13, 0);
         vm.prank(_minter(4));
-        pad.withdraw(t, 41);
-        (, uint256 sold,, uint256 price, uint256 escrow,) = _sale(t);
-        assertEq(wbnb.balanceOf(address(pad)), sold * price + escrow);
+        pad.withdraw(t, 41, 0);
+        (, uint256 sold,, uint256 price,,) = _sale(t);
+        assertEq(wbnb.balanceOf(address(pad)), sold * price, "pad holds exactly the principal of the shares out");
     }
 
-    // ---------------------------------------------------------------- failure
-    function test_refund_fullAfterDeadline() public {
+    // ---------------------------------------------------------------- no deadline
+    /// @dev A sale that sits for a year with sell-backs along the way still fills and launches.
+    function test_noDeadline_saleFillsWhenever() public {
         address t = _create();
-        address m = _minter(0);
-        uint256 start = wbnb.balanceOf(m);
-        vm.prank(m);
-        pad.mint(t, 70, 1);
-
-        vm.prank(m);
-        vm.expectRevert(FairMintPad.NotFailed.selector);
-        pad.refund(t);
-
-        vm.warp(block.timestamp + 24 hours + 1);
-        assertEq(uint8(pad.status(t)), uint8(FairMintPad.Status.Failed));
-        vm.prank(m);
-        pad.refund(t);
-        assertEq(wbnb.balanceOf(m), start, "principal + mint fee back");
-        assertEq(IERC20(t).balanceOf(m), 0);
-        assertEq(vault.shares(t, m), 0);
-
-        vm.prank(m);
-        vm.expectRevert(FairMintPad.NothingToRefund.selector);
-        pad.refund(t);
-
-        vm.prank(dev);
-        pad.refund(t);
-        assertEq(wbnb.balanceOf(address(pad)), 0, "pad empty after all refunds");
+        vm.prank(_minter(0));
+        pad.mint(t, 100, 1);
+        vm.warp(block.timestamp + 200 days);
+        vm.prank(_minter(0));
+        pad.withdraw(t, 100, 0); // stale: full principal back
+        vm.warp(block.timestamp + 165 days);
+        _fill(t);
+        (,, bool launched,,,) = _sale(t);
+        assertTrue(launched);
+        assertEq(uint8(pad.status(t)), uint8(IGangLaunchpad.Status.Launched));
     }
 
     // ---------------------------------------------------------------- launch
     function test_launch_openingPriceEqualsMintPrice() public {
         address t = _create();
         _fill(t);
-        (,, bool launched,, uint256 escrow, address pair) = _sale(t);
+        (,, bool launched,,, address pair) = _sale(t);
         assertTrue(launched);
-        assertEq(escrow, 0);
         assertFalse(FairToken(t).locked());
         assertEq(FairToken(t).pair(), pair);
         assertEq(FairToken(t).taxHandler(), address(handler));
@@ -530,11 +733,8 @@ contract FairMintTest is Test {
         vm.expectRevert(FairToken.NotLocked.selector);
         FairToken(t).reclaim(dev, 1);
         vm.prank(dev);
-        vm.expectRevert(FairMintPad.NotMinting.selector);
-        pad.withdraw(t, 1);
-        vm.prank(dev);
-        vm.expectRevert(FairMintPad.NotFailed.selector);
-        pad.refund(t);
+        vm.expectRevert(IGangLaunchpad.NotMinting.selector);
+        pad.withdraw(t, 1, 0);
     }
 
     // ---------------------------------------------------------------- rewards
@@ -575,21 +775,30 @@ contract FairMintTest is Test {
     function test_rewards_processSplitsHalfToEligibleHolders() public {
         address t = _create();
         _fill(t);
+        uint256 sharesAtTax = vault.totalShares(t); // every baseline share is held at both taxes below
         _buy(t, buyer, 3 ether);
+        // minter 0's sell first sells the buy tax (swap-back); audit 5 C-F7: its share is synced down before its own
+        // sell's tax is credited, so that tax goes over sharesAtTax - 20 shares
         _sell(t, _minter(0), 20 * TPS);
         uint256 taxTokens = handler.accruedTax(t);
         assertGt(taxTokens, 0);
+        assertGt(wbnb.balanceOf(address(vault)), 0, "the buy tax's holder half is already in quote");
 
+        uint256 vaultBefore = wbnb.balanceOf(address(vault));
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
+        vm.roll(vm.getBlockNumber() + 1); // the sell moved the price below this block's reference
         vm.prank(owner);
-        uint256 quoteOut = handler.process(t, 1);
-        uint256 toHolders = quoteOut / 2;
-        assertEq(wbnb.balanceOf(address(vault)), toHolders);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
+        uint256 toHolders = wbnb.balanceOf(address(vault)) - vaultBefore;
+        assertApproxEqAbs(toHolders, quoteOut / 2, 1, "half the chunk to holders");
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, quoteOut - toHolders);
+        assertEq(vault.unsoldUnits(t), 0);
 
-        // minter 5 still holds its full baseline: 100 of the 10,000 baseline shares minus minter 0's 20.
-        uint256 expected = toHolders * (100 * TPS) / vault.totalShares(t);
-        assertApproxEqAbs(vault.pending(t, _minter(5)), expected, vault.totalShares(t) / 1e18 + 1);
+        // minter 5 held 100 shares when both taxes were paid: over 10,000 shares for the buy tax, 9,980 for the sell's
+        uint256 inVault = wbnb.balanceOf(address(vault));
+        uint256 p5 = vault.pending(t, _minter(5));
+        assertGe(p5 + 1e6, (inVault * (100 * TPS)) / sharesAtTax);
+        assertLe(p5, (inVault * (100 * TPS)) / (sharesAtTax - 20 * TPS));
         vm.prank(_minter(5));
         vault.claim(t);
     }
@@ -611,7 +820,7 @@ contract FairMintTest is Test {
         _sell(t, buyer, 1_000_000 ether);
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(owner);
-        uint256 quoteOut = handler.process(t, 1);
+        uint256 quoteOut = handler.process(t, type(uint256).max, 1);
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, quoteOut);
         assertEq(wbnb.balanceOf(address(vault)), 0);
     }
@@ -636,9 +845,9 @@ contract FairMintTest is Test {
         wbnb.mintUnlimited(stranger, 1 ether);
         vm.startPrank(stranger);
         wbnb.approve(address(pad), type(uint256).max);
-        vm.expectRevert(FairMintPad.NotAgent.selector);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pad.mint(t, 1, 1);
-        address t2 = pad.create("Open", "OPEN", "", address(0), address(0), _cfg(), 1);
+        address t2 = pad.create("Open", "OPEN", "", "", address(0), address(0), _cfg(), 1);
         vm.stopPrank();
         assertEq(IERC20(t2).balanceOf(stranger), TPS);
     }
@@ -646,16 +855,21 @@ contract FairMintTest is Test {
     function test_vaultFailureDoesNotFreezeTrading() public {
         address t = _create();
         _fill(t);
-        vm.prank(owner);
-        vault.setOperator(address(handler), false);
+        // the vault refusing every operator write (an operator can no longer be unbound: flow review F4a)
+        vm.mockCallRevert(address(vault), abi.encodeWithSelector(SharedDividendVault.setShare.selector), "refused");
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.accrueDividendUnits.selector), "refused"
+        );
+        vm.mockCallRevert(
+            address(vault), abi.encodeWithSelector(SharedDividendVault.convertDividend.selector), "refused"
+        );
         address m = _minter(0);
         _sell(t, m, 60 * TPS);
         assertEq(IERC20(t).balanceOf(m), 40 * TPS);
         assertTrue(handler.isOut(t, m));
         assertEq(vault.shares(t, m), 100 * TPS, "zeroing failed while the vault refused");
 
-        vm.prank(owner);
-        vault.setOperator(address(handler), true);
+        vm.clearMockedCalls();
         handler.syncShares(t, m, address(0));
         assertEq(vault.shares(t, m), 0, "retried once the vault accepts again");
     }
@@ -669,10 +883,11 @@ contract FairMintTest is Test {
         address m = _minter(3);
         _buy(t, buyer, 2 ether);
         vm.prank(owner);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
         uint256 earned = vault.pending(t, m);
         assertGt(earned, 0);
 
+        vm.etch(m, hex"00"); // audit 5 C-F5: only a contract can be excluded (say m is a locker)
         vm.prank(owner);
         vault.setExcluded(m, true);
         handler.syncShares(t, m, address(0));
@@ -680,7 +895,7 @@ contract FairMintTest is Test {
 
         _buy(t, buyer, 2 ether);
         vm.prank(owner);
-        handler.process(t, 1);
+        handler.process(t, type(uint256).max, 1);
         assertEq(vault.pending(t, m), earned, "no accrual after exclusion");
 
         _sell(t, m, 1 * TPS); // ordinary transfers keep it at 0
@@ -695,10 +910,12 @@ contract FairMintTest is Test {
         _fill(t);
         for (uint256 i = 0; i < 100; i++) {
             address m = _minter(i);
+            vm.etch(m, hex"00"); // only contracts can be excluded (audit 5 C-F5)
             vm.prank(owner);
             vault.setExcluded(m, true);
             handler.syncShares(t, m, address(0));
         }
+        vm.etch(dev, hex"00");
         vm.prank(owner);
         vault.setExcluded(dev, true);
         handler.syncShares(t, dev, address(0));
@@ -707,14 +924,14 @@ contract FairMintTest is Test {
         _buy(t, buyer, 2 ether);
         uint256 bucketBefore = bucket.accruedQuote(address(wbnb));
         vm.prank(owner);
-        uint256 out = handler.process(t, 1);
+        uint256 out = handler.process(t, type(uint256).max, 1);
         assertEq(bucket.accruedQuote(address(wbnb)) - bucketBefore, out, "100% to platform");
         assertEq(wbnb.balanceOf(address(vault)), 0, "nothing stranded in the vault");
     }
 
     function test_handlerPadIsOneShot() public {
         vm.prank(owner);
-        vm.expectRevert(HolderRewardHandler.PadAlreadySet.selector);
-        handler.setPad(stranger);
+        vm.expectRevert(HolderRewardHandler.LaunchpadAlreadySet.selector);
+        handler.setLaunchpad(stranger);
     }
 }
