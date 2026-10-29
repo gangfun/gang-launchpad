@@ -33,7 +33,16 @@ Curve tokens at or above `--min-pct`, sorted by highest progress first. An empty
 
 ## `gang watch [<addr>] …`: event stream
 
-Polls every `--interval` seconds (default 10; minimum 3 in token mode and 10 in market mode, because market mode re-reads the full token list each time) and prints **one JSON object per line** (NDJSON).
+Prints **one JSON object per line** (NDJSON).
+
+- **Market mode** (CLI 0.17.0+) is pushed by gang.fun over one connection (Server-Sent Events, `GET /api/stream`): the
+  `watching` line says `transport: "stream"`. A dropped connection reconnects by itself (an `error` meta line says when)
+  and gets what it missed; if it was down too long for that, an `error` line says changes were missed. When the server
+  has no stream, or with `--poll` (`GANG_STREAM=0`), it polls every `--interval` seconds instead (`transport: "poll"`;
+  default 10, minimum 10, because it re-reads the full token list each time).
+- **Token mode** polls every `--interval` seconds (default 10, minimum 3).
+
+Events per mode:
 
 - **Token mode** (`gang watch 0x…`): emits `trade`, `progress` (crosses 25/50/75/90%) and `graduated`. Graduation always ends the stream.
   If `--events` leaves out `graduated`, the stream ends with a meta line `{"event":"ended","reason":"graduated"}` instead.
@@ -49,6 +58,7 @@ The first poll only takes a snapshot, so tokens that already match are not repla
 | `--timeout 30m` | Exit with `{"event":"timeout"}` |
 | `--webhook https://…` | Also POST each event (JSON) to this URL |
 | `--track`, `--min-pct` | Same as above (market mode) |
+| `--poll` | Market mode: poll instead of the server's stream |
 
 Meta lines (`watching`, `error`, `ended`, `timeout`) are printed but do not count as events and are not sent to the webhook.
 Errors during polling do not stop the stream, and a failed poll never loses an event: the next successful poll compares against the last good state.

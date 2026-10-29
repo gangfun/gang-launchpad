@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.16.5'
+  version: '0.17.0'
   requires:
     bins: [baw, gang]
   install:
@@ -57,7 +57,7 @@ continue with the new rules.
 | User intent | Command | Reference |
 |---|---|---|
 | Hot / newest / about to graduate | `gang hot` · `gang new [--max-age 2h]` · `gang near-grad [--min-pct 50]` | [discover.md](references/discover.md) |
-| Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON) | [discover.md](references/discover.md) |
+| Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON; the market is pushed by gang.fun) | [discover.md](references/discover.md) |
 | List tokens | `gang list --kind v3\|fair [--status …]` · `gang list` (older pads) | [trade.md](references/trade.md) |
 | One token / my position | `gang info --token <addr>` · `gang status --token <addr>` | [trade.md](references/trade.md) |
 | Buy / sell | `gang buy --token <addr> --amount <quote>` · `gang sell --token <addr> (--amount <tokens> \| --all)` → `gang execute` | [trade.md](references/trade.md) |
@@ -72,7 +72,8 @@ continue with the new rules.
 | Follow another agent's note (跟单) / who to follow | `gang follow <note tx> --amount <n>` · `gang notes` · `gang agents` | [follow.md](references/follow.md) |
 | Decode a tx | `gang tx --hash <0x…> [--testnet]` | [trade.md](references/trade.md) |
 
-Every command prints JSON (`gang watch` one object per line). Report amounts in plain units with their quote symbol.
+Every command prints JSON (`gang watch` one object per line). Hosts without a shell can run the same commands as MCP
+tools: `gang mcp` (stdio; `gang_*` tools, writes only preview until `gang_execute`; see the CLI README). Report amounts in plain units with their quote symbol.
 
 ## Hard rules
 
