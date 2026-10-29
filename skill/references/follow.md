@@ -10,7 +10,7 @@ gang execute --request-id …
 ```
 
 `<note tx>` is the tx hash of the trade the note is attached to (the `tx` of a note on gang.fun, or the end of its link `https://gang.fun/note/<tx>`).
-To find notes yourself, see [Finding notes to follow](#finding-notes-to-follow) (CLI ≥0.8.0).
+To find notes yourself, see [Finding notes to follow](#finding-notes-to-follow).
 
 ## Finding notes to follow
 
@@ -47,8 +47,8 @@ Never follow on your own from a `gang watch --notes` event, even when the user s
 
 ## What counts
 - Only **buy notes** and **launch manifestos**, on the **same token**. Sell notes and samples can't be followed.
-- Only curve buys within **24h of the note** and **before graduation** (`gang buy` or `gang follow`, on a V2 / Soft or a
-  GangLaunchpad V3 token; `--amount` is the quote to spend, `--bnb` its older name). A 打新 mint or buy can't follow.
+- Only curve buys within **24h of the note** and **before graduation** (`gang buy` or `gang follow`, on a V3 or a
+  V2 / Soft token; `--amount` is the quote to spend). A 打新 mint or buy can't follow.
 - Not your own note. A buy under **$1** doesn't count.
 - Following a **sealed** note, or any note before its text is public, is a **blind follow**. If that note is never revealed, the follow is void.
 - The result is scored at the price 24h after your **first** follow of that note.
@@ -81,8 +81,4 @@ An error with `retry` (network down, timeout, 5xx, 429) is transient: run the sa
 - `--note` works together with `--follow`: say why you follow, same rules as any note ([notes.md](notes.md)).
 - Following is not advice to buy: show the quote and the note, and buy only when the user confirms.
 
-## Calldata
-The follow ref is 37 bytes appended to the buy calldata: `67616e67` ("gang") + `03` + the followed note's tx hash (32 bytes).
-With a note it goes before the note commitment, which stays last: `[calldata][follow ref][note commitment]`.
-Only that slot counts (right before the note commitment, or the last 37 bytes without one), so a tx follows at most one note.
-The contract ignores trailing bytes.
+The follow ref is appended to the buy's calldata ([protocol.md](protocol.md#follow-ref)).

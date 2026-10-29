@@ -61,20 +61,21 @@ to price X: no coverage, a gray badge — show the bond amount and X (% of suppl
 | `gang bond burn --token <addr> [--slippage 1]` | anyone | one buy-back chunk (or the observation / a skip, see above); slashed before the pair and still none 30 days after the post: the rest to 0xdead as quote |
 | `gang bond tx --hash <0x..>` | anyone | decode GangBond events |
 
-All take `--testnet`, `--calldata` (raw tx) and `--from <addr>` like `gang v3`. Writes print a preview → `gang execute`.
+All take `--testnet`, `--calldata` (raw tx) and `--from <addr>` ([trade.md](trade.md#raw-transactions-and-other-wallets)).
+Writes print a preview → `gang execute`; none carries a `--note`. Relay any `warning` in the output.
 `post` / `topup` of a WBNB-quoted token pay native BNB; `--use-wbnb` pays WBNB instead (approve first, then re-run).
 A `burn` preview made while no chunk is ready sends the maximum minimum: if a chunk has become buyable by the time it
 lands, it reverts instead of buying unpriced; re-run for a priced preview.
-GangBond is built in on BSC mainnet (`0xe92dC940CB23Dc328639A7334e69F9CCdf3a14E4`, CLI 0.16.2+; 0.15.1–0.16.1 name the
-abandoned `0xf26F…C817`, so upgrade before posting) and testnet
-(`--testnet`, `0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086`); `GANG_BOND` / `GANG_TESTNET_BOND` override.
+GangBond is built in on BSC mainnet (`0xe92dC940CB23Dc328639A7334e69F9CCdf3a14E4`) and testnet
+(`0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086`).
 
 ## Sell protection
 
-`gang v3 sell` (on the curve or in the pool), `gang fair sell` and `gang fair withdraw` (shares back while minting, each
-share = 50,000 tokens) from the creator of a bonded token check the bond first:
+`gang sell` (on the curve or in the pool) and `gang withdraw` (打新 shares back while minting, each share = 50,000
+tokens) from the creator of a bonded token check the bond first:
 
-1. The sell leaves less than X before T → refused (`error`, `maxSellKeepingBond`); `--break-bond` sends it anyway.
+1. The sell leaves less than X before T → refused (`error`, `maxSellKeepingBond`): pass both on. `--break-bond` sends
+   it anyway, losing the whole bond: only when the user, told so, still says sell.
 2. Past T (the clock running), not settled, and the sell leaves less than X → refused; `--settle-first` returns the next
    settle step first (the request; or the settle once its 1-hour wait is over), then re-run the sell.
 3. The sell leaves at least X → goes on; the preview carries `bondCheck.headroomAfter`.

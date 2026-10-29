@@ -1,22 +1,25 @@
-# Discovering tokens (CLI 0.3.0+)
+# Discovering tokens
 
-Read-only, no wallet needed. Data comes from the gang.fun indexer (`GANG_API`, default `https://gang.fun/api`), which
-covers both tracks: **v2** (quote-ERC20 curves, LaunchpadV2 family) and **soft** (legacy BNB curve, 20 BNB graduation).
-If the API is down the command fails. `gang list` still reads the chain, but it has no volume data.
+Read-only, no wallet needed. Data comes from the gang.fun indexer (`GANG_API`, default `https://gang.fun/api`) and covers
+every track: **v3** (GangLaunchpad curves), **fair** (打新 sales; "graduated" = launched, progress = shares sold),
+**v2** (LaunchpadV2 family) and **soft** (legacy BNB curve, 20 BNB graduation). `--track all|v3|fair|v2|soft` narrows
+it (default all). If the API is down the command fails; `gang list` still reads the chain, without volume data.
 
 Every token row has the same fields. If the list reached the page cap (2000 tokens per track), the output includes `truncated: true`. The fields to use:
 
 | Field | Meaning |
 |---|---|
-| `track` / `quote` | `v2` or `soft`. `quote` is the unit for `raised`, `remaining` and the `--amount` flag of `gang quote/buy` (GANG, BNCB, BNB…) |
+| `track` / `quote` | `v3`, `fair`, `v2` or `soft`. `quote` is the unit of `raised`, `remaining` and `next`'s `--amount` (WBNB, GANG, BNCB, BNB…) |
 | `progressPct`, `remaining`, `remainingUsd` | Graduation progress and how much quote is still needed |
-| `volume24hUsd`, `trades24h`, `holders` | Activity. USD makes tokens with different quotes comparable |
+| `volume24hUsd`, `trades24h`, `holders` | Activity. USD makes tokens with different quotes comparable; null when the quote has no USD price (`holders`: null on V3 list rows) |
 | `ageMin`, `createdAt`, `lastTradeAt` | Freshness (unix seconds) |
-| `next` | The follow-up command (`gang quote …`), or the PancakeSwap pair once graduated |
+| `sharePrice`, `sharesLeft`, `minWalletsLeft` | 打新 only |
+| `website`, `twitter` | The creator's own links, unchecked: say so when you pass them on |
+| `next` | The follow-up preview: `gang buy` (V3, and any graduated token in its pool), `gang mint` (打新), `gang quote` (V2 / Soft curve) |
 
 Graduated tokens are left out by default, because they trade on PancakeSwap and not on the curve.
 
-## `gang hot [--limit 10] [--track all|v2|soft] [--include-graduated]`
+## `gang hot [--limit 10] [--track …] [--include-graduated]`
 
 Tokens with 24h activity, ranked by `volume24hUsd` and then `trades24h`.
 

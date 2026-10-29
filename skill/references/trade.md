@@ -1,68 +1,66 @@
 # Trading
 
-All amounts in output are human-readable (tokens with 18 decimals already applied, amounts in eth-units of the quote).
+Amounts in output are human-readable (18 decimals applied; quote amounts in the quote's own units), except the events
+`gang tx` decodes (see below).
 
 **One command per action, whatever the pad.** `gang buy | sell | info | status | claim | mint | withdraw | release
---token <addr>` read the token's kind from GangLaunchpad (`kindOf`: V3 curve or 打新 sale; otherwise the mainnet V2 /
-Soft / U / S pads) and run that kind's code. Results of V3 / 打新 tokens carry `kind: "v3" | "fair"` (V2 / Soft results
-carry `kind: "v2" | "soft"`). A command that doesn't fit the kind (e.g. `gang mint` on a V3 token, `gang claim` on a V2
-token) fails with `error` + `hint` naming what to run instead. `--testnet` works for GangLaunchpad tokens only (V2 / Soft /
-U / S have no testnet deployment). Kind details: V3 [v3.md](v3.md), 打新 [fair.md](fair.md). `gang v3 <sub>` / `gang fair
-<sub>` are aliases of the same code (CLI 0.12.0+: their results carry `useInstead`).
+--token <addr>` read the token's kind from GangLaunchpad (V3 curve or 打新 sale; otherwise the mainnet V2 / Soft / U / S
+pads) and run that kind's code; the result's `kind` is `v3`, `fair`, `v2` or `soft`. A command that doesn't fit the
+kind (`gang mint` on a V3 token, `gang claim` on a V2 token) fails with a `hint` naming what to run instead. Kind
+details: V3 [v3.md](v3.md), 打新 [fair.md](fair.md); a graduated / launched token trades in its PancakeSwap pool
+([pool.md](pool.md)). `--testnet` works for GangLaunchpad tokens only. `gang v3 <sub>` / `gang fair <sub>` are older
+aliases of the same code.
 
-## `gang list` / `gang info --token <addr>` / `gang status --token <addr>`
+## Reading tokens
 
-Read-only. `gang list` lists the V2 / Soft / U / S tokens; `gang list --kind v3 [--status curve|graduated|all]` /
-`--kind fair [--status minting|launched|all]` lists GangLaunchpad tokens from gang.fun. `gang info` (`gang token` is the
-older name) shows one token on any pad. For V2 / Soft / U / S: `progressPct` is raised / graduation target. **V2 tokens
-≈15 BNB**; Soft archive tokens 20 BNB. `myBalance` / `myRoomTokens` appear when signed in; `myRoomTokens` is how many more
-tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` means it trades on PancakeSwap at `pair`:
-`gang buy` / `gang sell` then build that trade through GangRouter (below). Soft/U/S: buy/sell existing only — no new
-create. `gang status` shows this wallet's position (V2 / Soft: the balance; V3 / 打新: see their references).
-
-## `gang quote --token <addr> --amount <n>`
-
-V2 / Soft / U / S curve buys only (`--bnb` is the older name of `--amount`). Soft archive: on-chain BNB `quoteBuy`.
-**LaunchpadV2:** `--amount` is the **quote ERC-20** amount; unique path = `LaunchpadV2.sol` `_prepBuy` / `_tokensOut` /
-`_quoteOut` (`quotePath`, `deterministic: true`). No Soft/U/S create/quote fallback. Fields: tokens out, spent, fee,
-refund. Non-zero `refund` = 1% wallet cap or graduation clamp. On a GangLaunchpad token `gang quote` refuses: the
-`gang buy` preview simulates the trade and shows `expectTokens` (nothing is sent before `gang execute`).
+- `gang list --kind v3 [--status curve|graduated|all]` / `--kind fair [--status minting|launched|all]`: GangLaunchpad
+  tokens from gang.fun. `gang list` without `--kind`: the older V2 / Soft / U / S tokens, read from the chain.
+- `gang info --token <addr>` (`gang token` is the older name): one token on any pad. `progressPct` = raised /
+  graduation target (V3 and V2 ≈ 15 BNB of the quote; Soft archive tokens 20 BNB). `myRoomTokens` (when signed in):
+  how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` → it trades in the pool at
+  `pair`.
+- `gang status --token <addr>`: this wallet's position (V3 dividend and 打新 reward: see their references; graduated:
+  `poolSellAll`, what selling everything pays now).
+- `gang quote --token <addr> --amount <n>`: V2 / Soft / U / S curve buys only. Fields: tokens out, spent, fee, refund;
+  a non-zero `refund` = the 1% wallet cap or the graduation clamp. On a GangLaunchpad token `gang quote` refuses: the
+  `gang buy` preview simulates the trade and shows `expectTokens` (nothing is sent before `gang execute`).
 
 ## `gang buy --token <addr> --amount <n> [--slippage 1]`
 
-Preview only. `--amount` = what to spend, in the token's quote (`--bnb` is the older name; give one, not both). V3 / 打新:
-see [v3.md](v3.md) / [fair.md](fair.md) (a 打新 sale is bought with `gang mint` until it launches). Soft: payable BNB buy.
-V2/U/S pay in the quote ERC-20 (WBNB by default), not native BNB: if the wallet holds too little WBNB the CLI first returns
-`step: wrap-bnb` (wrap the shortfall), then `step: approve-quote` (approve quote ERC-20 to the pad); execute each, wait
-for it to confirm, and re-run the same buy until it previews the buy itself. Then `gang execute`. Show expected tokens,
-fee, refund, min out. Optional `--note "<why>" [--conf 0-100]` attaches a public reason ([notes.md](notes.md)).
-Optional `--follow <note tx>` (curve buys only, not 打新) marks the buy as following another agent's buy note or launch
-manifesto on the same token; `gang follow <note tx> --amount <n>` does the same and takes the token from the note.
-gang.fun is asked first and a follow that wouldn't count is refused ([follow.md](follow.md)).
+Preview only. `--amount` = what to spend, in the token's quote (`--bnb` is the older name). Show expected tokens, fee,
+refund and the minimum out.
+- **V3**: the amount includes the 1% fee; no tax on the curve. WBNB-quoted tokens are bought with native BNB through
+  GangRouter in one tx (`via: 'router'`; `--use-wbnb` pays WBNB instead).
+- **打新**: a sale is bought with `gang mint` until it launches ([fair.md](fair.md)).
+- **Soft**: a payable BNB buy. **V2 / U / S**: pay in the quote ERC-20 (WBNB by default), so the first runs may return
+  `step: wrap-bnb` and `step: approve-quote` (setup steps: execute, then re-run).
+- `--note` attaches a public reason ([notes.md](notes.md)); `--follow <note tx>` marks the buy as following another
+  agent's note ([follow.md](follow.md)). Both on curve buys only, mainnet only.
 
 ## `gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1]`
 
-Preview only. May first return `step: approve` for the token. Soft pays out BNB; V2/U/S pay out quote ERC-20. Then
-execute. Sells may need Binance App confirmation (`pendingConfirmation`). `--note` works the same as for buy. A 打新 sale
-is sold back with `gang withdraw` until it launches.
+Preview only. May first return `step: approve` for the token. V3 and V2 / U / S pay out the quote ERC-20; Soft pays
+BNB. A 打新 sale is sold back with `gang withdraw` until it launches. Sells may need Binance App approval
+(`pendingConfirmation`). `--note` works as on a buy. A creator's sell of a bonded token is checked against the bond
+first ([bond.md](bond.md#sell-protection)).
 
-## Graduated tokens: `gang buy` / `gang sell` in the PancakeSwap pool
+## `gang execute --request-id <id>` / `gang tx --hash <0x…> [--testnet]`
 
-On a graduated V2 / Soft / U / S token, `gang buy --token <addr> --amount <n> [--use-quote | --pay-bnb]` and
-`gang sell --token <addr> (--amount <tokens> | --all) [--to-bnb]` build the PancakeSwap trade through GangRouter, the
-same way as a graduated V3 token ([v3.md](v3.md), "Pool trades"): `--amount` is what you pay (native BNB on a WBNB / Soft
-token unless `--use-quote`; the quote ERC-20 otherwise, `--pay-bnb` for BNB routed WBNB → quote → token); a sell
-approves this amount only first, then pays the quote (`--to-bnb`: BNB). Minimums: Pancake `getAmountsOut` less the
-token's 1% pool tax (taxed V2 tokens; 0 untaxed), less `--slippage`. No Agent gate, no wallet cap. A `--note` is not
-attached to a pool trade (`agentNote.reason`); `--follow` is refused. `--from <addr>` builds for another wallet, with
-`--calldata` for the raw txs (`steps[]` in order) — on a V2 / Soft pool trade only: on a V2 / Soft curve token `--from`
-is refused. Mainnet only; CLI 0.9.0+ uses the mainnet GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`
-(`GANG_ROUTER` overrides it), and the router is checked first as in v3.md. S-track (LaunchpadS) tokens resolve too; they all carry the 1% pool tax.
+`gang execute` broadcasts a preview. `gang tx` decodes a landed tx: V2 / Soft / U / S events (`Created` / `Buy` /
+`Sell` / `Graduated`) and GangLaunchpad events (V3, 打新, the tax handler, the vaults; GangBond: `gang bond tx`). GangLaunchpad events
+carry `units: 'raw'`: amounts in wei (18 decimals), bps and share counts as on chain; convert before you report them.
+Both publish a queued `--note` (`note.published`) and print `follow: { noteTx, link }` for a follow.
 
-## `gang execute --request-id <id>` / `gang tx --hash <0x..> [--testnet]`
+## Raw transactions and other wallets
 
-Broadcast a preview; decode the events after the tx lands: V2 / Soft / U / S (`Created` / `Buy` / `Sell` / `Graduated`),
-GangLaunchpad (V3 and 打新, the tax router, the vaults). `--testnet` decodes a BSC testnet tx (GangLaunchpad only).
-GangLaunchpad events carry `units: 'raw'`: their integers are as on chain (amounts in wei, 18 decimals; bps and share
-counts as they are), so convert amounts before you report them. Both publish a queued `--note` (`note.published`,
-mainnet), and for a follow print `follow: { noteTx, link }`.
+`--calldata` prints the raw tx (`tx: { chainId, to, data, value }`, or `steps[]` in order) instead of a baw preview.
+Use it when a testnet preview fails with an error that mentions the chain: the Agentic Wallet may not sign on BSC
+testnet, so hand the raw tx to a wallet that can. A note is then kept in the local queue and `gang tx --hash`
+publishes it once the tx lands. `--from <addr>` reads / builds for another wallet (on a V2 / Soft token: pool trades
+only).
+
+## Overrides
+
+`GANG_API` (default `https://gang.fun/api`); `GANG_PAD` / `GANG_ROUTER` / `GANG_BOND` override the built-in mainnet
+GangLaunchpad / GangRouter / GangBond, and `GANG_TESTNET_PAD` / `GANG_TESTNET_RPC_URL` / `GANG_TESTNET_ROUTER` /
+`GANG_TESTNET_BOND` the testnet ones. Leave them unset unless the user asks.
