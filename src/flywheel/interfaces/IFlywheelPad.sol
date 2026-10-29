@@ -12,7 +12,7 @@ interface IFlywheelPad {
         uint16 holdBps; // 6,000–9,000: holder reward hold line
         uint16 mintFeeBps; // 100–300: on top of every mint, to the platform
         uint16 exitFeeBps; // 100–200: pre-launch sell-back fee
-        uint16 devCutBps; // 0–1,500: of every mint, to the creator (pre-launch: held until launch)
+        uint16 devCutBps; // 0–1,500: of every other wallet's mint, to the creator (pre-launch: held until launch)
         uint16 buyBps; // 0–5,000: of each post-launch mint's pool money, bought from the pool
         uint16 sellTaxBps; // 100–200 (buy tax is 1%)
         uint32 launchDelay; // 0–300 s between filling (or opening early) and launch
@@ -37,6 +37,7 @@ interface IFlywheelPad {
         uint64 filledAt; // 0 until filled or opened early
         uint64 progressAt; // stale clock (sell-back fee waiver)
         uint16 sold; // pre-launch shares held by minters
+        uint16 creatorShares; // of which the creator's own (no dev cut on them)
         uint16 markSold;
         uint16 baseQuota;
         uint16 holdBps;

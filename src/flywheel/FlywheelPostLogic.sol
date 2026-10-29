@@ -76,7 +76,8 @@ library FlywheelPostLogic {
         if (q.accepted == 0) revert IFlywheelPad.ZeroAmount();
         q.paid = (q.accepted * s.basePrice * tierX100(s, uint256(s.totalShares) + q.accepted)) / 100;
         q.fee = (q.paid * s.mintFeeBps) / BPS;
-        q.devCut = (q.paid * s.devCutBps) / BPS;
+        // no cut on the creator's own mints: it would come straight back to it (internal audit B-M1)
+        q.devCut = trader == s.creator ? 0 : (q.paid * s.devCutBps) / BPS;
 
         IFlyHandler(d.taxHandler).observe(token);
         (uint256 spot, uint256 blockStart, uint256 average) = IFlyHandler(d.taxHandler).prices(token);

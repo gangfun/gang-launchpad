@@ -145,10 +145,11 @@ contract GangFlywheelPadTest is FlywheelFixture {
         IFlywheelPad.Sale memory s = _sale(t);
         assertTrue(s.launched);
         (uint256 rT, uint256 rQ) = _res(t);
-        assertEq(rQ, 20 ether - 2 ether); // raise less the 10% dev cut
-        assertEq(rT, SHARES * TPS - (SHARES * TPS) / 10);
+        uint256 cut = ((SHARES - 1) * PRICE) / 10; // 10% of everyone's shares but the creator's own one
+        assertEq(rQ, 20 ether - cut);
+        assertEq(rT, SHARES * TPS - ((SHARES - 1) * TPS) / 10);
         assertEq((rQ * 1e18) / rT, (PRICE * 1e18) / TPS); // open price = mint price
-        assertEq(wbnb.balanceOf(dev) - devBefore, 2 ether);
+        assertEq(wbnb.balanceOf(dev) - devBefore, cut);
         assertEq(wbnb.balanceOf(address(pad)), 0); // no escrow left behind
         (uint64 until,,) = handler.protectionOf(t);
         assertEq(until, vm.getBlockTimestamp() + 600);
@@ -190,7 +191,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         assertTrue(s.launched);
         (uint256 rT, uint256 rQ) = _res(t);
         assertEq((rQ * 1e18) / rT, (PRICE * 1e18) / TPS);
-        assertEq(rQ, (uint256(s.sold) * PRICE * 9) / 10);
+        assertEq(rQ, uint256(s.sold) * PRICE - ((uint256(s.sold) - 1) * PRICE) / 10);
     }
 
     // ------------------------------------------------------------ post-launch mint
@@ -367,5 +368,51 @@ contract GangFlywheelPadTest is FlywheelFixture {
         _fillAndLaunch(t);
         assertTrue(_sale(t).launched);
         assertEq(_sale(t).sold, SHARES);
+    }
+
+    // ------------------------------------------------------------ the creator's own mints (internal audit B-M1)
+    function test_creatorMintThenSellRightAwayLoses() public {
+        address t = _launched();
+        uint256 q0 = wbnb.balanceOf(dev);
+        uint256 got;
+        vm.startPrank(dev);
+        for (uint256 i; i < 9; i++) {
+            (uint256 out,) = pad.mintPost(t, 10, 0, address(0));
+            got += out;
+            vm.roll(vm.getBlockNumber() + 1);
+        }
+        vm.stopPrank();
+        _poolSell(t, dev, got);
+        assertLt(wbnb.balanceOf(dev), q0, "creator mint-then-sell paid");
+    }
+
+    function test_creatorMintCarriesNoCutOthersDo() public {
+        address t = _launched();
+        (uint256 rT0, uint256 rQ0) = _res(t);
+        rT0;
+        vm.prank(dev);
+        (, uint256 spent) = pad.mintPost(t, 10, 0, address(0));
+        (, uint256 rQ1) = _res(t);
+        uint256 paid = spent - spent / 101; // spent = paid × 1.01
+        assertApproxEqAbs(rQ1 - rQ0, paid, 2); // all of it into the pool
+        address a = _newAgent();
+        uint256 devBefore = wbnb.balanceOf(dev);
+        vm.prank(a);
+        (, uint256 spentA) = pad.mintPost(t, 10, 0, address(0));
+        uint256 paidA = spentA - spentA / 101;
+        assertApproxEqAbs(wbnb.balanceOf(dev) - devBefore, paidA / 10, 2);
+    }
+
+    function test_creatorPreLaunchSharesCarryNoCut() public {
+        IFlywheelPad.FlyConfig memory c = _wide();
+        address t = _create(c, 10);
+        vm.startPrank(dev);
+        for (uint256 i; i < 9; i++) pad.mint(t, 10, 1, address(0)); // the creator holds 100 shares
+        pad.withdraw(t, 20, 0); // sells 20 back: 80 left
+        vm.stopPrank();
+        assertEq(_sale(t).creatorShares, 80);
+        uint256 devBefore = wbnb.balanceOf(dev);
+        _fillAndLaunch(t);
+        assertEq(wbnb.balanceOf(dev) - devBefore, ((SHARES - 80) * PRICE) / 10);
     }
 }

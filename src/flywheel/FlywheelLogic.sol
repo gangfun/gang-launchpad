@@ -217,6 +217,7 @@ library FlywheelLogic {
         a.preShares -= n;
         a.used -= n;
         s.sold -= uint16(n);
+        if (trader == s.creator) s.creatorShares -= uint16(n);
         s.totalShares -= n;
         uint256 tokens = shares * TOKENS_PER_SHARE;
         a.baseline -= tokens;
@@ -311,6 +312,7 @@ library FlywheelLogic {
 
         uint32 n = accepted.toUint32();
         s.sold += uint16(n);
+        if (trader == s.creator) s.creatorShares += uint16(n);
         s.totalShares += n;
         a.preShares += n;
         a.used += n;
@@ -395,7 +397,9 @@ library FlywheelLogic {
     }
 
     /// @dev Pool at the mint price: the raise and the sold tokens, both less the dev's cut (which goes to the creator).
-    ///      Tokens held from sell-backs go in first; anything beyond the pool's share goes to 0xdead.
+    ///      The creator's own shares carry no cut (internal audit B-M1: a cut on its own payments came back to it, so
+    ///      minting and selling at once paid). Tokens held from sell-backs go in first; anything beyond the pool's share
+    ///      goes to 0xdead.
     function _launch(
         IGangLaunchpad.Config storage c,
         IFlywheelPad.Sale storage s,
@@ -406,9 +410,9 @@ library FlywheelLogic {
         s.launched = true;
         address quote = s.quote;
         uint256 principal = uint256(s.sold) * s.basePrice;
-        uint256 devCut = (principal * s.devCutBps) / BPS;
-        uint256 soldTokens = uint256(s.sold) * TOKENS_PER_SHARE;
-        uint256 poolTokens = soldTokens - (soldTokens * s.devCutBps) / BPS;
+        uint256 cutShares = uint256(s.sold) - s.creatorShares;
+        uint256 devCut = (cutShares * s.basePrice * s.devCutBps) / BPS;
+        uint256 poolTokens = uint256(s.sold) * TOKENS_PER_SHARE - (cutShares * TOKENS_PER_SHARE * s.devCutBps) / BPS;
         uint256 poolQuote = principal - devCut;
 
         address migrator = c.migrator;
