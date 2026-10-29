@@ -394,7 +394,7 @@ contract FlywheelTaxHandlerTest is Test {
         handler.notifyTax(address(0xBEEF), alice, bob, 1, 100);
     }
 
-    function test_recentHighKeepsTheLastMinutesBlockStartPrices() public {
+    function test_recentHighDecaysSlowly() public {
         _create(100);
         _launch(0);
         vm.warp(vm.getBlockTimestamp() + 120);
@@ -406,10 +406,12 @@ contract FlywheelTaxHandlerTest is Test {
         handler.observe(address(token));
         assertLt(oracle.blockStartPrice(address(token)), before);
         assertEq(oracle.recentHigh(address(token)), before); // the pre-dump block start is still the recent high
-        vm.warp(vm.getBlockTimestamp() + 121);
+        vm.warp(vm.getBlockTimestamp() + 120);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(address(token));
-        assertEq(oracle.recentHigh(address(token)), oracle.spotPrice(address(token))); // two minutes on: gone
+        // two minutes on it has only decayed by 1% (0.5% a minute): a held dump does not shake it off quickly
+        assertEq(oracle.recentHigh(address(token)), handler.decayedHigh(before, 120));
+        assertApproxEqRel(oracle.recentHigh(address(token)), (before * 99) / 100, 1e12);
     }
 
     function test_aPumpInsideOneBlockDoesNotRaiseTheRecentHigh() public {

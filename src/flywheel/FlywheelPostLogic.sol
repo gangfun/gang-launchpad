@@ -37,9 +37,12 @@ library FlywheelPostLogic {
     uint256 internal constant PUSH_BPS = 80;
     /// @notice Minting is refused while the pair's price is more than this below its TWAP.
     uint256 internal constant MAX_DROP_BPS = 1_000;
-    /// @notice A mint never prices the buyer below its TWAP by more than this (a dump held past the recent high's
-    ///         minute or two wins at most this, which the mint fee, ≥ 1%, takes back; review R2-2 M-1).
+    /// @notice A mint never prices the buyer more than this under the recent high or the TWAP: a dump wins at most
+    ///         this, which the mint fee (≥ 1%) takes back, plus 0.5% per minute it is held (review R2-2 M-1, re-reviews).
     uint256 internal constant TWAP_FLOOR_BPS = 100;
+    /// @notice Minting is refused while the pair's price is more than this below the recent high (a real drop pauses
+    ///         minting for a few minutes instead of pricing buyers far above the pool; re-review R3 L-1 / L-2).
+    uint256 internal constant HIGH_GAP_BPS = 500;
     /// @notice One wallet's mints per PACE_WINDOW stay within this share of the pool's quote reserve.
     uint256 internal constant PACE_POOL_BPS = 200;
     uint256 internal constant PACE_WINDOW = 30 minutes;
@@ -86,6 +89,7 @@ library FlywheelPostLogic {
         IFlyHandler(d.taxHandler).observe(token);
         (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelOracle.prices(d.taxHandler, token);
         if (spot * BPS < average * (BPS - MAX_DROP_BPS)) revert IFlywheelPad.PriceBelowAverage();
+        if (spot * BPS < high * (BPS - HIGH_GAP_BPS)) revert IFlywheelPad.PriceBelowRecentHigh();
         address pair = s.pair;
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         _pace(a, q.paid, rQ);
@@ -122,17 +126,15 @@ library FlywheelPostLogic {
     }
 
     /// @notice The price a mint gives tokens at: the highest of the pair's price now, at the block's start (no
-    ///         same-block dump-then-mint), the recent high — the highest block-start price of the last one to two
-    ///         minutes (no dump in one block, mint in the next, also while the price runs above its TWAP; re-review of
-    ///         R2-2 M-1) — and 1% under the 30-minute TWAP (a longer hold).
+    ///         same-block dump-then-mint), 1% under the decaying recent high of block-start prices (no dump-then-mint
+    ///         a block or a few minutes later, also while the price runs above its TWAP) and 1% under the 30-minute TWAP.
     function buyerPrice(uint256 spot, uint256 blockStart, uint256 high, uint256 average)
         internal
         pure
         returns (uint256 p)
     {
         p = spot > blockStart ? spot : blockStart;
-        if (high > p) p = high;
-        uint256 floor = (average * (BPS - TWAP_FLOOR_BPS)) / BPS;
+        uint256 floor = ((high > average ? high : average) * (BPS - TWAP_FLOOR_BPS)) / BPS;
         if (floor > p) p = floor;
     }
 
@@ -261,11 +263,15 @@ library FlywheelPostLogicView {
         IFlywheelPad.Account storage a,
         uint256 paid,
         uint256 spot,
+        uint256 high,
         uint256 average,
         address pair,
         address token
     ) internal view returns (bool) {
         if (spot * FlywheelPostLogic.BPS < average * (FlywheelPostLogic.BPS - FlywheelPostLogic.MAX_DROP_BPS)) {
+            return false;
+        }
+        if (spot * FlywheelPostLogic.BPS < high * (FlywheelPostLogic.BPS - FlywheelPostLogic.HIGH_GAP_BPS)) {
             return false;
         }
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();

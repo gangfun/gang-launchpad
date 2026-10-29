@@ -367,7 +367,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
 
     /// @notice What `mintPost(token, shares, 0, …)` by `user` would accept, cost (price and fee) and deliver if sent
     ///         now; `ok` false when it would be refused (not launched / minting off / no Agent ID / no quota / price
-    ///         more than 10% below its average / the wallet's pace / the supply cap).
+    ///         more than 10% below its average or 5% below its recent high / the wallet's pace / the supply cap).
     function previewMintPost(address token, address user, uint256 shares)
         external
         view
@@ -383,7 +383,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
         tokensOut = Math.mulDiv(paid, 1 << 112, FlywheelPostLogic.buyerPrice(spot, blockStart, high, average));
         // minted: at most the buyer's tokens plus the liquidity's (at most `paid` of quote at spot)
-        ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token)
+        ok = FlywheelPostLogicView.allowed(a, paid, spot, high, average, s.pair, token)
             && tokensOut + Math.mulDiv(paid, 1 << 112, spot) <= IMintRoom(token).mintRoom();
     }
 
@@ -402,7 +402,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     }
 
     /// @notice The prices mints are checked and priced with (UQ112x112, quote per token): spot, this block's start, the
-    ///         recent high (highest block-start price of the last one to two minutes) and the 30-minute TWAP.
+    ///         recent high of block-start prices (decaying 0.5% a minute) and the 30-minute TWAP.
     function prices(address token)
         external
         view

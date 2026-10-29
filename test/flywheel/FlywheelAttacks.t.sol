@@ -117,7 +117,9 @@ contract FlywheelAttacksTest is FlywheelFixture {
         vm.warp(vm.getBlockTimestamp() + 1 minutes);
         vm.roll(vm.getBlockNumber() + 1);
         vm.startPrank(w);
-        for (uint256 i; i < 10; i++) pad.mintPost(t, 10, 0, address(0)); // the whole quota, 10 per mint
+        for (uint256 i; i < 10; i++) {
+            try pad.mintPost(t, 10, 0, address(0)) {} catch {} // the whole quota, 10 per mint (refused: fine)
+        }
         vm.stopPrank();
         // buy back to the starting bag
         uint256 have = IERC20(t).balanceOf(w);
@@ -294,5 +296,41 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.warp(vm.getBlockTimestamp() + 600);
         (,,,, bool ok) = pad.previewMintPost(t, plain, 10);
         assertFalse(ok);
+    }
+
+    /// @dev Re-review R3 L-2: after a real drop, mints are refused (not silently priced at the old high) until the
+    ///      recent high has decayed to within 5% of the price; the preview says so.
+    function test_aRealDropPausesMintingForAFewMinutes() public {
+        address t = _create(_wide(), 1);
+        _fillAndLaunch(t);
+        vm.warp(vm.getBlockTimestamp() + 600);
+        address seller = _newAgent();
+        _poolBuy(t, seller, 3 ether);
+        vm.warp(vm.getBlockTimestamp() + 1 hours); // the buy is old news: the TWAP has it
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
+        // sell enough for an ~8% drop (within the 10% TWAP gate, beyond the 5% high gap)
+        (uint256 p0,,,) = pad.prices(t);
+        for (uint256 i; i < 200; i++) {
+            (uint256 sp,,,) = pad.prices(t);
+            if (sp * 100 <= p0 * 92) break;
+            (uint256 rT,) = _res(t);
+            _poolSell(t, seller, rT / 500);
+        }
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 3);
+        address a = _newAgent();
+        (,,,, bool ok) = pad.previewMintPost(t, a, 10);
+        assertFalse(ok);
+        vm.prank(a);
+        vm.expectRevert(IFlywheelPad.PriceBelowRecentHigh.selector);
+        pad.mintPost(t, 10, 0, address(0));
+        // the high decays 0.5% a minute: about 6 minutes later it is within 5% of the price again
+        vm.warp(vm.getBlockTimestamp() + 7 minutes);
+        vm.roll(vm.getBlockNumber() + 1);
+        (,,,, ok) = pad.previewMintPost(t, a, 10);
+        assertTrue(ok);
+        vm.prank(a);
+        pad.mintPost(t, 10, 0, address(0));
     }
 }

@@ -35,9 +35,10 @@ interface IPairCumulative {
 ///           sale's gate) and each wallet's total buys in the window stay within the cap (counted per wallet, not by
 ///           balance, so moving tokens out does not reopen it).
 ///         - **Price oracle (raw data).** Every pool trade (and every pad call to `observe`) records the price at the
-///           block's first touch (`blockRefOf`), the highest such price over the current and the previous PEAK_EPOCH
-///           (`peakOf`), and, at most every OBS_GRANULARITY, an observation of the pair's cumulative price. The pad's
-///           FlywheelOracle library turns them into the block-start price, the recent high and the 30-minute TWAP.
+///           block's first touch (`blockRefOf`), a recent high of those block-start prices that decays by
+///           PEAK_DECAY_BPS_PER_MIN (`peakOf`), and, at most every OBS_GRANULARITY, an observation of the pair's
+///           cumulative price. The pad's FlywheelOracle library turns them into the block-start price, the recent high
+///           (decayed to now) and the 30-minute TWAP.
 /// @dev Must be the shared dividend vault's operator for its pad and a SharedPlatformFeeBucket operator. Runs inside token
 ///      transfers: never reverts because of a recipient or the vault; the protection checks are the only reverts a
 ///      trade can get from here (besides the base's flash-swap refusal).
@@ -52,8 +53,9 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
     uint256 public constant PLATFORM_BPS = 2_500;
     uint32 public constant TWAP_WINDOW = 30 minutes;
     uint32 public constant OBS_GRANULARITY = 5 minutes;
-    /// @notice The recent high covers the current and the previous epoch of this length (60–120 s back).
-    uint32 public constant PEAK_EPOCH = 60;
+    /// @notice The recent high of block-start prices loses this much per minute (bps): a dump has to be held for
+    ///         minutes before mints price anywhere near it.
+    uint256 public constant PEAK_DECAY_BPS_PER_MIN = 50;
     uint256 internal constant OBS_SLOTS = 8;
 
     struct Route {
@@ -86,9 +88,9 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         uint224 price;
     }
 
-    /// @dev The highest block-start price of `epoch` (block.timestamp / PEAK_EPOCH); `prev` = of the epoch before it.
+    /// @dev The recent high of block-start prices as of `time` (it decays from there).
     struct Peak {
-        uint32 epoch;
+        uint32 time;
         uint224 high;
     }
 
@@ -111,7 +113,6 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
     mapping(address token => Oracle) public oracleOf;
     mapping(address token => BlockRef) public blockRefOf;
     mapping(address token => Peak) public peakOf;
-    mapping(address token => uint256) public peakPrevOf;
     mapping(address token => Observation[OBS_SLOTS]) internal _obs;
 
     event LaunchpadSet(address indexed launchpad);
@@ -179,7 +180,7 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
             Oracle({launchedAt: uint32(block.timestamp), last: 0, launchPrice: price, launchCumulative: cum});
         _obs[token][0] = Observation({timestamp: uint32(block.timestamp), cumulative: cum});
         blockRefOf[token] = BlockRef({blockNumber: uint32(block.number), price: price});
-        peakOf[token] = Peak({epoch: uint32(block.timestamp / PEAK_EPOCH), high: price});
+        peakOf[token] = Peak({time: uint32(block.timestamp), high: price});
         emit Launched(token, protectedUntil, gate, cap, price);
     }
 
@@ -280,6 +281,13 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         return bal < base ? bal : base;
     }
 
+    /// @notice `high` decayed by PEAK_DECAY_BPS_PER_MIN over `elapsed` seconds (to 0 after 200 minutes).
+    function decayedHigh(uint256 high, uint256 elapsed) public pure returns (uint256) {
+        uint256 cut = elapsed * PEAK_DECAY_BPS_PER_MIN;
+        uint256 full = 60 * BPS;
+        return cut >= full ? 0 : (high * (full - cut)) / full;
+    }
+
     // ---------------------------------------------------------------- internal: protection / oracle
     /// @dev A buy during the launch protection: Agent ID receiver, within its cap (gross tokens taken from the pair).
     function _protect(address token, address to, uint256 taxAmount, uint256 rateBps) internal {
@@ -301,16 +309,12 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         if (b.blockNumber != uint32(block.number)) {
             b.blockNumber = uint32(block.number);
             b.price = price;
-            // the recent high, from block-start prices only (a pump inside one block does not raise it)
+            // the recent high, from block-start prices only (a pump inside one block does not raise it): decayed to now,
+            // then raised to this block's start
             Peak storage k = peakOf[token];
-            uint32 epoch = uint32(block.timestamp / PEAK_EPOCH);
-            if (k.epoch != epoch) {
-                peakPrevOf[token] = k.epoch + 1 == epoch ? k.high : 0;
-                k.epoch = epoch;
-                k.high = price;
-            } else if (price > k.high) {
-                k.high = price;
-            }
+            uint256 high = decayedHigh(k.high, block.timestamp - k.time);
+            k.time = uint32(block.timestamp);
+            k.high = uint224(price > high ? price : high);
         }
         uint8 last = o.last;
         if (block.timestamp >= uint256(_obs[token][last].timestamp) + OBS_GRANULARITY) {

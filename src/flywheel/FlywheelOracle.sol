@@ -11,8 +11,8 @@ interface IFlywheelOracleData {
         returns (uint32 launchedAt, uint8 last, uint224 launchPrice, uint256 launchCumulative);
     function observation(address token, uint256 i) external view returns (uint32 timestamp, uint256 cumulative);
     function blockRefOf(address token) external view returns (uint32 blockNumber, uint224 price);
-    function peakOf(address token) external view returns (uint32 epoch, uint224 high);
-    function peakPrevOf(address token) external view returns (uint256);
+    function peakOf(address token) external view returns (uint32 time, uint224 high);
+    function decayedHigh(uint256 high, uint256 elapsed) external pure returns (uint256);
 }
 
 interface IPairCumulativeView {
@@ -28,13 +28,12 @@ interface IHasPairView {
 /// @notice Internal library over the raw data FlywheelTaxHandler records on every pool trade:
 ///         - spot: the pair's reserves now;
 ///         - blockStart: the price at this block's first touch (spot if nothing touched the pair yet this block);
-///         - high: the highest block-start price over the current and the previous minute (60–120 s back), so a dump
-///           in one block followed by mints in the next finds the pre-dump price here;
+///         - high: the recent high of block-start prices, decaying 0.5% a minute: a dump followed by mints finds the
+///           pre-dump price here, less only 0.5% for every minute the dump was held;
 ///         - average: the TWAP over at least the last 30 minutes (the newest observation at least that old, to now);
 ///           within the first 30 minutes after launch the time before launch counts at the launch price.
 library FlywheelOracle {
     uint32 internal constant TWAP_WINDOW = 30 minutes;
-    uint32 internal constant PEAK_EPOCH = 60;
     uint256 internal constant OBS_SLOTS = 8;
 
     error NotLaunched();
@@ -60,17 +59,10 @@ library FlywheelOracle {
         return (rQ << 112) / rT;
     }
 
-    /// @dev Highest block-start price of this minute and the one before (0 when neither has a record).
-    function recentHigh(address handler, address token) internal view returns (uint256 high) {
-        (uint32 epoch, uint224 h) = IFlywheelOracleData(handler).peakOf(token);
-        uint32 nowEpoch = uint32(block.timestamp / PEAK_EPOCH);
-        if (epoch == nowEpoch) {
-            high = h;
-            uint256 prev = IFlywheelOracleData(handler).peakPrevOf(token);
-            if (prev > high) high = prev;
-        } else if (epoch + 1 == nowEpoch) {
-            high = h;
-        }
+    /// @dev The recent high of block-start prices, decayed to now.
+    function recentHigh(address handler, address token) internal view returns (uint256) {
+        (uint32 t, uint224 h) = IFlywheelOracleData(handler).peakOf(token);
+        return IFlywheelOracleData(handler).decayedHigh(h, block.timestamp - t);
     }
 
     /// @dev The pair's cumulative quote-per-token price now (stored value plus the current price since its update).

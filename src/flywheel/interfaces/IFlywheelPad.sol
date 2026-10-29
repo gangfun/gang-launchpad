@@ -120,6 +120,7 @@ interface IFlywheelPad {
     error OnlyCreator();
     error Slippage();
     error PriceBelowAverage();
+    error PriceBelowRecentHigh();
     error PaceExceeded();
     error PostMintOff();
     error MigratorNotSet();

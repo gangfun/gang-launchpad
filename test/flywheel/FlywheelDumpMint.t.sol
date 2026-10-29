@@ -68,7 +68,9 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         vm.roll(vm.getBlockNumber() + 1);
         for (uint256 i = 1; i <= nWallets; i++) {
             vm.startPrank(ws[i]);
-            for (uint256 k; k < mintsEach; k++) pad.mintPost(t, 10, 0, address(0));
+            for (uint256 k; k < mintsEach; k++) {
+                try pad.mintPost(t, 10, 0, address(0)) {} catch {} // refused below the recent high: fine
+            }
             vm.stopPrank();
         }
         // buy the dump back, same block
