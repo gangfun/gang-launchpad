@@ -12,6 +12,7 @@ import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
 import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
 import {GangFlywheelPad} from "../src/flywheel/GangFlywheelPad.sol";
+import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
 
 /// @dev The live GangLaunchpad's getters for the shared contracts this pad joins.
 interface IGangPadShared {
@@ -28,8 +29,8 @@ interface IGangPadShared {
 ///         Two phases, because on mainnet only the Safe can list the new pad on the shared contracts:
 ///         1. deploy (no FLYWHEEL_PAD): deploy, wire what the deployer owns (deployer list, handler pad / keeper, the
 ///            pad's Agent ID gate). Shared wiring: done here when the deployer owns those contracts (testnet), else
-///            printed as a Safe Transaction Builder batch (vault launchpad + floor + operator + exclusions, migrator,
-///            bucket operators).
+///            printed as a Safe Transaction Builder batch (vault launchpad + floor + operator, migrator, bucket
+///            operators, and GangPadRegistry.addPad so aggregators find the pad's tokens).
 ///         2. finish (FLYWHEEL_PAD, FLYWHEEL_HANDLER, FLYWHEEL_DEPLOYER set; after the Safe batch ran): check every
 ///            shared listing, call `setMigrator` LAST (A-1: create needs it, so the pad opens only once everything
 ///            accepts it), start the ownership handover to OWNER and print the acceptOwnership batch.
@@ -37,12 +38,16 @@ interface IGangPadShared {
 ///      (mainnet default the platform Safe); KEEPER (mainnet default the platform keeper, testnet the deployer).
 contract DeployFlywheel is Script {
     uint256 internal constant MIN_SHARE = 1_000 ether;
+    /// @dev The GangPadRegistry proxies aggregators read (docs/MAINNET-PAD-REGISTRY / TESTNET-PAD-REGISTRY).
+    address internal constant MAINNET_PAD_REGISTRY = 0x4fF77D4d9ac080939a24E1B805206bA094C44e5C;
+    address internal constant TESTNET_PAD_REGISTRY = 0xB11B83C83DEd269B040faecC1D61B4885BA8e56e;
 
     struct Shared {
         address quoteRegistry;
         address vault;
         address bucket;
         address migrator;
+        address padRegistry;
     }
 
     struct Own {
@@ -64,6 +69,7 @@ contract DeployFlywheel is Script {
         address owner = vm.envOr("OWNER", mainnet ? M.OWNER_SAFE : me);
         address keeper = vm.envOr("KEEPER", mainnet ? M.KEEPER : me);
         Shared memory sh = _shared(vm.envAddress("GANG_PAD"));
+        sh.padRegistry = vm.envOr("GANG_PAD_REGISTRY", mainnet ? MAINNET_PAD_REGISTRY : TESTNET_PAD_REGISTRY);
         console.log("=== DeployFlywheel chain", block.chainid, "===");
         console.log("deployer", me);
         console.log("owner", owner);
@@ -73,7 +79,7 @@ contract DeployFlywheel is Script {
         if (existing == address(0)) {
             Own memory o = _deploy(sh, mainnet, me, keeper);
             bool canWire = Ownable(sh.vault).owner() == me && Ownable(sh.migrator).owner() == me
-                && Ownable(sh.bucket).owner() == me;
+                && Ownable(sh.bucket).owner() == me && GangPadRegistry(sh.padRegistry).owner() == me;
             if (canWire) {
                 _wireShared(sh, o);
                 GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
@@ -114,7 +120,8 @@ contract DeployFlywheel is Script {
             quoteRegistry: p.quoteRegistry(),
             vault: p.dividendVault(),
             bucket: p.platformBucket(),
-            migrator: p.migrator()
+            migrator: p.migrator(),
+            padRegistry: address(0)
         });
     }
 
@@ -145,6 +152,7 @@ contract DeployFlywheel is Script {
         SharedMigrator(sh.migrator).addLaunchpad(o.pad);
         SharedPlatformFeeBucket(sh.bucket).setOperator(o.pad, true);
         SharedPlatformFeeBucket(sh.bucket).setOperator(o.handler, true);
+        GangPadRegistry(sh.padRegistry).addPad(o.pad);
     }
 
     function _requireShared(Shared memory sh, Own memory o) internal view {
@@ -155,6 +163,7 @@ contract DeployFlywheel is Script {
         if (!SharedMigrator(sh.migrator).launchpads(o.pad)) revert NotWired("migrator.addLaunchpad(pad)");
         if (!SharedPlatformFeeBucket(sh.bucket).operators(o.pad)) revert NotWired("bucket.setOperator(pad)");
         if (!SharedPlatformFeeBucket(sh.bucket).operators(o.handler)) revert NotWired("bucket.setOperator(handler)");
+        if (!GangPadRegistry(sh.padRegistry).isPad(o.pad)) revert NotWired("padRegistry.addPad(pad)");
     }
 
     function _handOver(Own memory o, address owner, address me) internal {
@@ -195,6 +204,7 @@ contract DeployFlywheel is Script {
             _tx(sh.migrator, abi.encodeCall(SharedMigrator.addLaunchpad, (o.pad)), true),
             _tx(sh.bucket, abi.encodeCall(SharedPlatformFeeBucket.setOperator, (o.pad, true)), true),
             _tx(sh.bucket, abi.encodeCall(SharedPlatformFeeBucket.setOperator, (o.handler, true)), true),
+            _tx(sh.padRegistry, abi.encodeCall(GangPadRegistry.addPad, (o.pad)), true),
             "]}"
         );
     }
