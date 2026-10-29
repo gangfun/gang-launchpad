@@ -107,6 +107,30 @@ assert.deepEqual(unions, [])
   assert.deepEqual(args('gang_watch', { interval: '20s', poll: true, webhook: 'https://x.test/h' }),
     ['watch', '--interval', '20s', '--poll', '--webhook', 'https://x.test/h', '--max-events', '1', '--timeout', '50s'])
   assert.deepEqual(args('gang_help', {}), [])
+
+  // the CLI children's PATH: the host's first, then node's dir, the package's global bin and the usual install dirs
+  const { childEnv } = await import('../src/mcp.js')
+  const { delimiter, dirname, join } = await import('node:path')
+  const cliAt = join('/opt', 'npm', 'lib', 'node_modules', '@gangfun', 'cli', 'src', 'index.js')
+  const env = childEnv({ PATH: ['/usr/bin', '/bin'].join(delimiter), HOME: '/h' }, cliAt)
+  const dirs = env.PATH.split(delimiter)
+  assert.deepEqual(dirs.slice(0, 2), ['/usr/bin', '/bin'])
+  assert.ok(dirs.includes(dirname(process.execPath)))
+  assert.ok(dirs.includes(join('/opt', 'npm', 'bin')))
+  if (process.platform !== 'win32') assert.ok(dirs.includes('/opt/homebrew/bin') && dirs.includes('/usr/local/bin'))
+  assert.equal(new Set(dirs).size, dirs.length)
+  assert.equal(env.HOME, '/h')
+  // Windows spells it Path: that key is extended, no second one added
+  const win = childEnv({ Path: 'C:\\Windows' }, cliAt)
+  assert.ok(win.Path.startsWith('C:\\Windows') && !('PATH' in win))
+}
+
+// no baw on PATH (the CLI run directly, without gang mcp's PATH): one plain sentence on what to do, not spawnSync ENOENT
+{
+  const { execFileSync } = await import('node:child_process')
+  let outText = ''
+  try { execFileSync(process.execPath, [cli, 'preflight'], { env: { PATH: '/nonexistent', HOME: process.env.HOME }, encoding: 'utf8' }) } catch (e) { outText = e.stdout }
+  assert.match(JSON.parse(outText).error, /^baw \(the Binance Agentic Wallet CLI\) is not installed or not on PATH: npm i -g @binance\/agentic-wallet/)
 }
 
 // a read tool runs the CLI and returns its JSON
