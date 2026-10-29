@@ -96,6 +96,9 @@ library FlywheelLogic {
         _requireAgent(gate, msg.sender);
         string memory reason = checkConfig(cfg, devShares);
         if (bytes(reason).length != 0) revert IFlywheelPad.BadConfig(reason);
+        // without the one-wallet-per-person gate, quotas don't bound a creator minting through fresh wallets to collect
+        // its own cut (review R2-1 L-2): an ungated sale takes none
+        if (gate == address(0) && cfg.devCutBps != 0) revert IFlywheelPad.BadConfig("devCutBps must be 0 when ungated");
         SharedDividendVault vault = SharedDividendVault(d.dividendVault);
         if (vault.minimumShareBalanceOf(address(this)) > MIN_SHARE) revert IFlywheelPad.VaultFloorTooHigh();
 
@@ -257,6 +260,9 @@ library FlywheelLogic {
         if (s.launched) revert IFlywheelPad.NotMinting();
         if (s.filledAt == 0) revert IFlywheelPad.NotFilled();
         if (block.timestamp < uint256(s.filledAt) + s.launchDelay) revert IFlywheelPad.TooEarly();
+        // after the grace period sell-backs can shrink a filled sale: below the early-open floor it only refunds (a
+        // tiny pool would leave every post-launch mint above the pace cap; review R2-1 L-1)
+        if (s.sold < EARLY_OPEN_SHARES) revert IFlywheelPad.TooFewShares();
         _launch(c, s, owedDev, d, token);
     }
 

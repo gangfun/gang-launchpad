@@ -19,6 +19,10 @@ import {FlywheelLogic} from "./FlywheelLogic.sol";
 import {FlywheelPostLogic, FlywheelPostLogicView} from "./FlywheelPostLogic.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
+interface IMintRoom {
+    function mintRoom() external view returns (uint256);
+}
+
 interface IWBNBLike {
     function deposit() external payable;
     function withdraw(uint256 amount) external;
@@ -340,6 +344,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     {
         Sale storage s = _sales[token];
         if (s.creator == address(0) || s.launched || s.filledAt != 0) return (0, 0, 0);
+        if (!_gatePasses(s.gate, user)) return (0, 0, 0);
         accepted = FlywheelLogic._acceptable(s, accounts[token][user], shares, TOTAL_SHARES - s.sold);
         cost = accepted * s.basePrice;
         fee = (cost * s.mintFeeBps) / 10_000;
@@ -360,15 +365,15 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     }
 
     /// @notice What `mintPost(token, shares, 0, …)` by `user` would accept, cost (price and fee) and deliver if sent
-    ///         now; `ok` false when it would be refused (not launched / minting off / no quota / price more than 10%
-    ///         below its average / the wallet's pace).
+    ///         now; `ok` false when it would be refused (not launched / minting off / no Agent ID / no quota / price
+    ///         more than 10% below its average / the wallet's pace / the supply cap).
     function previewMintPost(address token, address user, uint256 shares)
         external
         view
         returns (uint256 accepted, uint256 paid, uint256 fee, uint256 tokensOut, bool ok)
     {
         Sale storage s = _sales[token];
-        if (!s.launched || !s.postMint) return (0, 0, 0, 0, false);
+        if (!s.launched || !s.postMint || !_gatePasses(s.gate, user)) return (0, 0, 0, 0, false);
         Account storage a = accounts[token][user];
         accepted = FlywheelLogic._acceptable(s, a, shares, type(uint256).max);
         if (accepted == 0) return (0, 0, 0, 0, false);
@@ -376,7 +381,9 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         fee = (paid * s.mintFeeBps) / 10_000;
         (uint256 spot, uint256 blockStart, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
         tokensOut = Math.mulDiv(paid, 1 << 112, spot > blockStart ? spot : blockStart);
-        ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token);
+        // the buyer's tokens and the liquidity's are minted: at most twice tokensOut must fit under the cap
+        ok = FlywheelPostLogicView.allowed(a, paid, spot, average, s.pair, token)
+            && 2 * tokensOut <= IMintRoom(token).mintRoom();
     }
 
     /// @notice The exit fee a sell-back pays now (0 once the sale has been stale for 7 days).
@@ -410,6 +417,10 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     }
 
     // ---------------------------------------------------------------- internal
+    function _gatePasses(address gate, address user) internal view returns (bool) {
+        return gate == address(0) || IERC721(gate).balanceOf(user) > 0;
+    }
+
     /// @dev Who may act for `trader` (§23): a listed router, for the wallet that sent the transaction, on a gated sale
     ///      (ungated, a router could still only name tx.origin, but the gate check mirrors GangLaunchpad's A-2).
     function _forTrader(address trader, address token) internal view {

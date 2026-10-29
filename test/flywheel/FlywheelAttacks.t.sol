@@ -227,4 +227,71 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertLt(handler.spotPrice(t), before);
         assertEq(handler.blockStartPrice(t), before);
     }
+
+    /// @dev R2-1 L-2: an ungated sale takes no dev cut (quotas can't bound a creator using fresh wallets).
+    function test_ungatedSaleTakesNoDevCut() public {
+        vm.prank(owner);
+        pad.setAgentGate(false, address(0));
+        IFlywheelPad.FlyConfig memory c = _wide();
+        vm.prank(dev);
+        vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "devCutBps must be 0 when ungated"));
+        pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
+        c.devCutBps = 0;
+        vm.prank(dev);
+        pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
+    }
+
+    /// @dev R2-1 L-1: after the grace period, a filled sale sold back below the early-open floor only refunds.
+    function test_afterGraceASaleBelowTheFloorCannotLaunch() public {
+        address t = _create(_wide(), 1);
+        _fill(t);
+        vm.mockCallRevert(address(migrator), abi.encodeWithSelector(SharedMigrator.migrate.selector), "stuck");
+        vm.warp(vm.getBlockTimestamp() + 60 + 7 days);
+        // minters leave until 2,999 shares remain
+        uint256 n = _sale(t).sold - 2_999;
+        for (uint256 i; n > 0 && i < 200; i++) {
+            address w = address(uint160(uint256(keccak256(abi.encode("fly-agent", i + 1))))); // fixture's agents
+            (uint32 held,,,,,,) = pad.accounts(t, w);
+            if (held == 0) continue;
+            uint256 k = held < n ? held : n;
+            vm.prank(w);
+            pad.withdraw(t, k, 0);
+            n -= k;
+        }
+        assertEq(_sale(t).sold, 2_999);
+        vm.clearMockedCalls();
+        vm.expectRevert(IFlywheelPad.TooFewShares.selector);
+        pad.launch(t);
+        // back above the floor (a sell-back can't be undone, but nothing stops refunds either way)
+        assertEq(_sale(t).launched, false);
+    }
+
+    function test_afterGraceASaleAboveTheFloorStillLaunches() public {
+        address t = _create(_wide(), 1);
+        _fill(t);
+        vm.mockCallRevert(address(migrator), abi.encodeWithSelector(SharedMigrator.migrate.selector), "stuck");
+        vm.warp(vm.getBlockTimestamp() + 60 + 7 days);
+        vm.prank(dev);
+        pad.withdraw(t, 1, 0);
+        vm.clearMockedCalls();
+        pad.launch(t);
+        assertTrue(_sale(t).launched);
+        _assertPadEmpty(t);
+    }
+
+    function _assertPadEmpty(address) internal view {
+        assertEq(wbnb.balanceOf(address(pad)), pad.owedFee(address(wbnb)));
+    }
+
+    /// @dev R2-1 Info: previews say no for a wallet without an Agent ID.
+    function test_previewsRespectTheGate() public {
+        address t = _create(_wide(), 1);
+        address plain = _plain();
+        (uint256 acc,,) = pad.previewMint(t, plain, 10);
+        assertEq(acc, 0);
+        _fillAndLaunch(t);
+        vm.warp(vm.getBlockTimestamp() + 600);
+        (,,,, bool ok) = pad.previewMintPost(t, plain, 10);
+        assertFalse(ok);
+    }
 }

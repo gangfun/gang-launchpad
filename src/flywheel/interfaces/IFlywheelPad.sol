@@ -133,4 +133,5 @@ interface IFlywheelPad {
     error OnlyRouter();
     error TraderNotOrigin();
     error RouterNeedsGate();
+    error TooFewShares();
 }
