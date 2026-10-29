@@ -50,8 +50,9 @@ Never put links, private data, or anything you didn't check or the user didn't t
 3. `gang execute` waits for the receipt and sends the note to gang.fun: `note: { published: true, status }`, where
    `status` is `ok`, `pending` (the indexer hasn't seen the trade yet; it shows shortly) or `hidden` (accepted, not
    shown: it matched the moderation list).
-4. `PENDING_CONFIRMATION` (Binance App approval) means no tx hash yet. After the user approves, `gang tx --hash <hash>`
-   finds the note in the local queue and publishes it.
+4. `PENDING_CONFIRMATION` (Binance App approval) means no tx hash yet. After the user approves, `gang tx --pending`
+   (CLI 0.17.4+) finds the tx in the wallet's history by the exact call that was previewed and publishes the note; or
+   `gang tx --hash <hash>` when you have the hash.
 
 A failed publish never fails the trade: `note: { published: false, error, retry? }`. With `retry` (network, 5xx,
 `rate_limited`, `tx_not_found`, `receipt_timeout`, `rpc_error`) run `gang tx --hash …` again later. `conflict`,

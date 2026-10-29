@@ -107,6 +107,8 @@ assert.deepEqual(unions, [])
   assert.deepEqual(args('gang_watch', { interval: '20s', poll: true, webhook: 'https://x.test/h' }),
     ['watch', '--interval', '20s', '--poll', '--webhook', 'https://x.test/h', '--max-events', '1', '--timeout', '50s'])
   assert.deepEqual(args('gang_help', {}), [])
+  assert.deepEqual(args('gang_tx', { pending: true }), ['tx', '--pending'])
+  assert.deepEqual(args('gang_tx', { hash: `0x${'1'.repeat(64)}`, testnet: true }), ['tx', '--hash', `0x${'1'.repeat(64)}`, '--testnet'])
 
   // the CLI children's PATH: the host's first, then node's dir, the package's global bin and the usual install dirs
   const { childEnv } = await import('../src/mcp.js')
@@ -175,6 +177,8 @@ for (const [name, args, re] of [
   ['gang_watch', { mode: 'token', token: addr(1), poll: true }, /poll only applies to mode market/],
   ['gang_status', { token: addr(1), from: '0x12' }, /from is not a valid address \(0x \+ 40 hex\)/],
   ['gang_tx', { hash: '0x12' }, /hash is not a valid tx hash/],
+  ['gang_tx', {}, /hash or pending: true is required/],
+  ['gang_tx', { pending: true, hash: `0x${'1'.repeat(64)}` }, /pending finds the tx itself/],
 ]) {
   const r = await call(name, args)
   assert.equal(r.isError, true, `${name} ${JSON.stringify(args)}`)
