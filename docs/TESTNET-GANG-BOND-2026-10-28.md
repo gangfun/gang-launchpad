@@ -187,9 +187,9 @@ V3 币 `0x4527…389F`（已毕业，报价币 MockSPCXB，创建者持有 4,433
 | `post`：押 0.1，X = 2,000,000，7 天 | 成功，覆盖率 64.96%（「押金」档），期限 **2026-11-04 20:01:57 UTC**，gas 216,036 | [`0xe56e419c…6706`](https://testnet.bscscan.com/tx/0xe56e419c8fe1319e83fb4317512570a7bcee3703136020c011768b1899b46706) |
 | 到期前 `settle` | CLI 拒绝（`NotDue`，剩 604,797 秒） | 只预览 |
 
-到期后由测站 239 上的押金 keeper 自动完成两步：每 5 分钟一次的 cron（`keeper-bond.sh --broadcast`，只配了 `BONDS=bondt4:0xd6a8…1086@139463214`，没有别的 keeper 任务）。它会先发 `requestSettle`，1 小时后再发 `settle`。keeper 钱包 `0x3Ef9CDAC70f13c04eD24d88534a8039B87fbF3c3` 由创建者钱包转入 0.02 tBNB（[`0x0302198b…6be1`](https://testnet.bscscan.com/tx/0x0302198bfffeeb92a89cb0f8e36e3908e425df3073e00d7fc283bd8ee9b76be1)），私钥只存在 239 的 `/opt/gang/keeper/.env` 里。到期后查看：
+到期后由测站的押金 keeper 自动完成两步：先发 `requestSettle`，1 小时后再发 `settle`。keeper 钱包 `0x3Ef9CDAC70f13c04eD24d88534a8039B87fbF3c3` 由创建者钱包转入 0.02 tBNB（[`0x0302198b…6be1`](https://testnet.bscscan.com/tx/0x0302198bfffeeb92a89cb0f8e36e3908e425df3073e00d7fc283bd8ee9b76be1)）。到期后查看：
 
-- 239 上的 `/opt/gang/keeper/logs/keeper-bond.log`；
+- 测站 keeper 的日志；
 - `gang bond status --token 0x45271F59f5726c9Fdf537b813bCa732Da215389F --testnet`（`settleRequested` → `settled`）；
 - 测站 `/api/bonds/0x4527…`，phase 依次是 `due` → `settle-requested` → `settled`。
 

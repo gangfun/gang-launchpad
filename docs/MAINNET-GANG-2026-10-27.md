@@ -24,5 +24,5 @@ BSC 主网（chainId 56），代码 main `eb0e027`（合约与审查通过的 `5
 - **2026-10-28 起 GangTaxHandler 的 owner 是 GangHandlerAdmin**（多签批量 [`0x3a976681…a41b`](https://bscscan.com/tx/0x3a97668130d5bc0fee3fe1367923eee6e94fac80363dae4c146a45982b0aa41b)），Safe 是 GangHandlerAdmin 的 owner。多签对 handler 的操作改成调 `GangHandlerAdmin.exec(<原来的 calldata>)`：加白合作方 `exec(list(addr, label))`、`exec(delist(addr))`、换 keeper `exec(proposeKeeper(k))` → 48 小时 → `exec(acceptKeeper())`、换 DEX router 同理。允许的工厂克隆的回购合约由 GangHandlerAdmin 自动加白。交回：`exec(transferOwnership(Safe))`，再由 Safe 调 `handler.acceptOwnership()`。见 `docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md`。
 - 白名单路由只有 GangRouter。钱包聚合器的路由按审计说明 §23.9 的清单核对后，由多签 `setRouter` 添加。
 - 索引和 keeper 的起始区块用 130104251（模拟时的区块，不晚于实际部署区块）。
-- 服务端 v1.2.26 / v1.2.27、网站 v1.2.34 已发布，正式站 201 已切换（备份在 `/opt/gang/backups/cutover-20261027222542`）。
+- 服务端 v1.2.26 / v1.2.27、网站 v1.2.34 已发布，正式站已切换（切换前做了备份）。
 - 测试网第 10 套：内盘 `0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1`（区块 139236749），路由 `0x6bB660f310a9644Dc173E7Cf2F73498716D9C9F6`；完整流程 904 笔交易全部成功，含聚合器 `buyFor` / `sellFor`。
