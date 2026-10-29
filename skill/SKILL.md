@@ -73,7 +73,8 @@ continue with the new rules.
 | Decode a tx | `gang tx --hash <0x…> [--testnet]` | [trade.md](references/trade.md) |
 
 Every command prints JSON (`gang watch` one object per line). Hosts without a shell can run the same commands as MCP
-tools: `gang mcp` (stdio; `gang_*` tools, writes only preview until `gang_execute`; see the CLI README). Report amounts in plain units with their quote symbol.
+tools: `gang mcp` (stdio; `gang_*` tools, writes only preview until `gang_execute`, `gang_help` has every command and these
+rules; see the CLI README). Report amounts in plain units with their quote symbol.
 
 ## Hard rules
 

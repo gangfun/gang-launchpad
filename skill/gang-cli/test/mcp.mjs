@@ -71,7 +71,8 @@ assert.equal((await rpc('nope')).error.code, -32601)
 
 const { tools } = (await rpc('tools/list')).result
 const names = tools.map((t) => t.name)
-for (const n of ['gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_notes', 'gang_agents',
+assert.equal(tools.length, 16)
+for (const n of ['gang_help', 'gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_notes', 'gang_agents',
   'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)
@@ -93,6 +94,19 @@ assert.deepEqual(unions, [])
   assert.match(check('abc'), /plain decimal/)
   const sell = TOOLS.find((t) => t.name === 'gang_sell')
   assert.equal(invalid(sell, coerce(sell, { token: addr(1), amount: 1000000 })), null)
+  // every flag a specialized tool takes lands on the CLI as its own flag
+  const args = (name, a) => TOOLS.find((t) => t.name === name).args(a)
+  assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', useWbnb: true, useQuote: true, payBnb: true }).slice(5),
+    ['--use-wbnb', '--use-quote', '--pay-bnb'])
+  assert.deepEqual(args('gang_sell', { token: addr(1), all: true, settleFirst: true, breakBond: true, confirmOut: true, toBnb: true }),
+    ['sell', '--token', addr(1), '--all', '--to-bnb', '--break-bond', '--confirm-out', '--settle-first'])
+  assert.deepEqual(args('gang_status', { token: addr(1), from: addr(2), slippage: 2, testnet: true }),
+    ['status', '--token', addr(1), '--from', addr(2), '--slippage', '2', '--testnet'])
+  assert.deepEqual(args('gang_follow', { noteTx: `0x${'a'.repeat(64)}`, amount: '0.1', useWbnb: true }),
+    ['follow', `0x${'a'.repeat(64)}`, '--amount', '0.1', '--use-wbnb'])
+  assert.deepEqual(args('gang_watch', { interval: '20s', poll: true, webhook: 'https://x.test/h' }),
+    ['watch', '--interval', '20s', '--poll', '--webhook', 'https://x.test/h', '--max-events', '1', '--timeout', '50s'])
+  assert.deepEqual(args('gang_help', {}), [])
 }
 
 // a read tool runs the CLI and returns its JSON
@@ -127,6 +141,16 @@ for (const [name, args, re] of [
   ['gang_watch', { mode: 'notes', minPct: 50 }, /do not apply to mode notes/],
   ['gang_cli', { args: ['execute', '--request-id', 'x'] }, /use the gang_execute tool/],
   ['gang_cli', { args: ['watch'] }, /use the gang_watch tool/],
+  ['gang_cli', { args: ['help'] }, /use the gang_help tool/],
+  ['gang_cli', { args: ['--help'] }, /use the gang_help tool/],
+  ['gang_cli', { args: ['-h'] }, /use the gang_help tool/],
+  ['gang_cli', { args: ['mcp'] }, /gang mcp is this server/],
+  ['gang_watch', { timeout: 'soon' }, /timeout must look like 90, 50s, 5m or 1h \(got soon\)/],
+  ['gang_watch', { interval: '10x' }, /interval must look like/],
+  ['gang_watch', { webhook: 'ftp://x' }, /webhook must be an http\(s\) URL/],
+  ['gang_watch', { mode: 'token', token: addr(1), poll: true }, /poll only applies to mode market/],
+  ['gang_status', { token: addr(1), from: '0x12' }, /from is not a valid address \(0x \+ 40 hex\)/],
+  ['gang_tx', { hash: '0x12' }, /hash is not a valid tx hash/],
 ]) {
   const r = await call(name, args)
   assert.equal(r.isError, true, `${name} ${JSON.stringify(args)}`)
@@ -144,7 +168,22 @@ assert.match(bad.structuredContent.error, /--track must be/)
 // an unknown command: a short error, not the whole help text
 const unknown = await call('gang_cli', { args: ['nonsense'] })
 assert.equal(unknown.isError, true)
-assert.equal(unknown.structuredContent.error, 'not a gang command: nonsense')
+assert.equal(unknown.structuredContent.error, 'not a gang command: nonsense (gang_help lists them)')
+
+// gang_help: the CLI's whole help text (every command, every flag) and the rules
+const help = await call('gang_help', {})
+assert.equal(help.isError, false)
+for (const c of ['gang create', 'gang mint', 'gang withdraw', 'gang claim', 'gang release', 'gang quote', 'gang list', 'gang upload-logo',
+  'gang bond post', 'gang bond burn', 'gang buyback set-payee', 'gang v3 income', 'gang tx', '--dev-buy', '--keep-logo-uri']) {
+  assert.ok(help.structuredContent.help.includes(c), `help mentions ${c}`)
+}
+assert.ok(help.structuredContent.rules.some((r) => /no early withdrawal/.test(r)))
+assert.ok(help.structuredContent.rules.some((r) => /sellableBeforeOut/.test(r)))
+
+// a relative logo path says what it was relative to and what to pass instead (no upload: the file is not there)
+const missing = await call('gang_cli', { args: ['upload-logo', '--file', './no-such-logo.png'] })
+assert.equal(missing.isError, true)
+assert.match(missing.structuredContent.error, /file not found: .*no-such-logo\.png \(\.\/no-such-logo\.png is relative to .*\); give the image's absolute path, or its URL instead/)
 
 // a cancelled call: its CLI child is killed (the stream it held closes) and the request gets no answer
 quietStream = true
