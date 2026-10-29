@@ -91,7 +91,9 @@ gang fair create --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bo
   (`launch.stage: buyback-splitter`; listed as a tax recipient in the same tx), creates with it as the recipient, then
   binds it (`bind`); the splitter's address is printed before the clone. A launch keeps the mode and ratio it began
   with: adding `--buyback` after the create, dropping it after the clone, or another ratio or payee is refused (run it as it
-  began, or `--restart`). Later: `gang buyback status|set|apply --token …` ([v3.md](v3.md#buy-back-splitter---buyback)). Only
+  began, or `--restart`). The quote must be WBNB (the default), GANG or one listed in the pad's QuoteRegistry: the
+  splitter cannot buy back with a quote that taxes transfers into the pair, so any other `--quote` is refused before the
+  clone. Later: `gang buyback status|set|apply --token …` ([v3.md](v3.md#buy-back-splitter---buyback)). Only
   when the user asks for a buy-back; without it the tax goes to the dev's own address. Tell the user: a raise applies at
   once, a cut only 3 days after it is asked for.
 - `--note` goes on the create only (its launch manifesto); the buy and the bond carry none.
