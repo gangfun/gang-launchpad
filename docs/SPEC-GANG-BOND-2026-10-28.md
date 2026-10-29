@@ -2,7 +2,7 @@
 
 - 日期：2026-10-28 Asia/Shanghai
 - 作者：Claude（按 claude.ai 文档「Agent 押金承诺规格草案」2026-10-27 版实现；待定问题全部按草案「建议」一栏）
-- 性质：**测试网已部署（当前版本 `0xd6a8…1086`，含 2026-10-29 审计修复；更早的 `0x587f…5d7E`、`0x5a99…d716`、`0xB034…EBE3` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`）；主网 2026-10-29 已部署 `0xf26F…C817`（同一份代码，见 `docs/MAINNET-GANG-BOND-2026-10-29.md`）**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
+- 性质：**测试网已部署（当前版本 `0xd6a8…1086`，含 2026-10-29 审计修复；更早的 `0x587f…5d7E`、`0x5a99…d716`、`0xB034…EBE3` 见 `docs/TESTNET-GANG-BOND-2026-10-28.md`）；主网 2026-10-29 已部署 `0xe92d…14E4`（另含复审 L-1 的修复；第一版 `0xf26F…C817` 没人用过，已弃用，见 `docs/MAINNET-GANG-BOND-2026-10-29.md`）**。合约 `src/gang/GangBond.sol`，测试 `test/gang/GangBond.t.sol`，部署脚本 `script/DeployGangBond.s.sol`，CLI `skill/gang-cli/src/bond.js`。
 
 ## 一句话
 
@@ -100,7 +100,7 @@ GangBond 不可升级、没有 owner，构造时写死 `pad`（GangLaunchpad）�
 
 ## 还没做
 
-- 源码验证：主网 `0xf26F…C817` 和测试网第四版 `0xd6a8…1086` 已在 BscScan 验证（2026-10-29）；更早的三版测试网合约没做。
+- 源码验证：主网 `0xe92d…14E4`、弃用的 `0xf26F…C817` 和测试网第四版 `0xd6a8…1086` 已在 BscScan 验证（2026-10-29）；更早的三版测试网合约没做。
 - 测试网 B 币的取回（2026-11-05 之后）。
 - 网站、服务端、keeper 已做（gang-web-legacy #10 / #11，gangfun-server #14 / #15）；正式站上线见 `docs/MAINNET-GANG-BOND-2026-10-29.md`。
 
