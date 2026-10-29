@@ -76,6 +76,24 @@ for (const n of ['gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'ga
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)
 assert.equal(tools.find((t) => t.name === 'gang_hot').annotations.readOnlyHint, true)
+// one plain type per argument: Gemini function calling and OpenAI strict mode reject a union ("type": [...])
+const unions = tools.flatMap((t) => Object.entries(t.inputSchema.properties).filter(([, v]) => Array.isArray(v.type)).map(([k]) => `${t.name}.${k}`))
+assert.deepEqual(unions, [])
+
+// amount: a number from the model is taken as its decimal string; anything but a plain decimal is refused
+{
+  const { TOOLS, coerce, invalid } = await import('../src/mcp.js')
+  const buy = TOOLS.find((t) => t.name === 'gang_buy')
+  const check = (amount) => invalid(buy, coerce(buy, { token: addr(1), amount }))
+  assert.equal(check(0.05), null)
+  assert.equal(check('0.05'), null)
+  assert.deepEqual(buy.args(coerce(buy, { token: addr(1), amount: 0.05 })).slice(0, 5), ['buy', '--token', addr(1), '--amount', '0.05'])
+  assert.match(check(1e-7), /plain decimal like 0\.05 \(got 1e-7\)/)
+  assert.match(check('-1'), /plain decimal/)
+  assert.match(check('abc'), /plain decimal/)
+  const sell = TOOLS.find((t) => t.name === 'gang_sell')
+  assert.equal(invalid(sell, coerce(sell, { token: addr(1), amount: 1000000 })), null)
+}
 
 // a read tool runs the CLI and returns its JSON
 const hot = await call('gang_hot', { limit: 5, track: 'v3' })
