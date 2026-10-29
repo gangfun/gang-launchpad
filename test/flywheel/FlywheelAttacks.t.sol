@@ -4,6 +4,8 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 import {FlywheelFixture} from "./FlywheelFixture.sol";
+import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
+import {MockSPCXB} from "../../src/launchpad-v2/mocks/MockSPCXB.sol";
 
 /// @notice The economic attacks of the spec (§9) on the real contracts: mint-then-sell (A), dump-then-mint (B) and
 ///         sandwiching an honest mint (E), plus the pad's quote never drifting from what it owes.
@@ -167,5 +169,62 @@ contract FlywheelAttacksTest is FlywheelFixture {
         vm.prank(a);
         pad.mintPost(t, 10, 0, address(0));
         _assertSolvent(t);
+    }
+}
+
+/// @notice Fixes from the internal audit (A-L1, C-L1).
+contract FlywheelAuditFixesTest is FlywheelFixture {
+    function setUp() public {
+        _deploy();
+    }
+
+    /// @dev A-L1: a quote so cheap that the raise could overflow the pair's uint112 reserves is refused at create.
+    function test_raiseTooLargeInTheQuoteIsRefused() public {
+        MockSPCXB cheap = new MockSPCXB();
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(cheap), true, 1e40); // "15 BNB" = 1e40 units
+        cheap.mintUnlimited(dev, 1e50);
+        vm.prank(dev);
+        cheap.approve(address(pad), type(uint256).max);
+        vm.prank(dev);
+        vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "raise too large in this quote"));
+        pad.create(["a", "b", "c", "d"], address(cheap), address(0), _wide(), 1);
+    }
+
+    /// @dev A-L1: a filled sale that can't launch does not trap the escrow: after the grace period minters sell back
+    ///      (at the full price: the sale is stale by then).
+    function test_filledSaleThatCannotLaunchReopensSellBacks() public {
+        address t = _create(_wide(), 1);
+        _fill(t);
+        vm.mockCallRevert(address(migrator), abi.encodeWithSelector(SharedMigrator.migrate.selector), "stuck");
+        vm.warp(vm.getBlockTimestamp() + 60);
+        vm.expectRevert();
+        pad.launch(t);
+        vm.prank(dev);
+        vm.expectRevert(IFlywheelPad.NotMinting.selector);
+        pad.withdraw(t, 1, 0);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        (uint256 quoted,) = pad.previewWithdraw(t, dev, 1);
+        vm.prank(dev);
+        uint256 payout = pad.withdraw(t, 1, 0);
+        assertEq(payout, quoted);
+        assertEq(payout, _sale(t).basePrice); // no exit fee
+    }
+
+    /// @dev C-L1: the keeper's chunk, first in a block, does not move the block-start price the mints use.
+    function test_keeperChunkFirstInBlockKeepsTheBlockStartPrice() public {
+        address t = _create(_wide(), 1);
+        _fillAndLaunch(t);
+        vm.warp(vm.getBlockTimestamp() + 600);
+        address b = _newAgent();
+        _poolBuy(t, b, 2 ether);
+        vm.roll(vm.getBlockNumber() + 1);
+        uint256 before = handler.spotPrice(t);
+        uint256 chunk = handler.maxChunk(t);
+        assertGt(chunk, 0);
+        vm.prank(keeper);
+        handler.process(t, chunk, 1);
+        assertLt(handler.spotPrice(t), before);
+        assertEq(handler.blockStartPrice(t), before);
     }
 }

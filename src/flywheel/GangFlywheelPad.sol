@@ -352,7 +352,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         returns (uint256 payout, uint256 fee)
     {
         Sale storage s = _sales[token];
-        if (s.creator == address(0) || s.launched || s.filledAt != 0) return (0, 0);
+        if (!FlywheelLogic.withdrawable(s)) return (0, 0);
         if (shares == 0 || shares > accounts[token][user].preShares) return (0, 0);
         uint256 principal = shares * s.basePrice;
         fee = (principal * FlywheelLogic.exitFeeBps(s)) / 10_000;

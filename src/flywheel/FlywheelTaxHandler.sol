@@ -298,6 +298,8 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
         nonReentrant
         returns (uint256 quoteOut)
     {
+        // the block's first-touch price before the chunk moves it (internal audit C-L1)
+        if (routeOf[token].quote != address(0)) _touch(token, IFlywheelToken(token).pair());
         return _process(token, amount, minQuoteOut);
     }
 

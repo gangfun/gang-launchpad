@@ -66,6 +66,11 @@ library FlywheelLogic {
     uint256 internal constant STALE_AFTER = 7 days;
     uint256 internal constant STALE_STEP = 10;
     uint256 internal constant EARLY_OPEN_SHARES = 3_000; // 30%
+    /// @notice A filled sale not launched this long after it could be lets minters sell back again (escrow never
+    ///         stuck behind a launch that can't happen; internal audit A-L1).
+    uint256 internal constant LAUNCH_GRACE = 7 days;
+    /// @dev The raise must leave the pair's uint112 reserves room for post-launch mints (internal audit A-L1).
+    uint256 internal constant MAX_RAISE_QUOTE = type(uint112).max / 1e6;
     uint16 internal constant BUY_TAX_BPS = 100;
     /// @dev Holders need a balance strictly above this for vault shares (the pad's floor in the shared vault).
     uint256 internal constant MIN_SHARE = 1_000 ether;
@@ -99,6 +104,7 @@ library FlywheelLogic {
         (uint256 raiseQuote,) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, cfg.raiseBnb);
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert IFlywheelPad.PriceTooSmall();
+        if (raiseQuote > MAX_RAISE_QUOTE) revert IFlywheelPad.BadConfig("raise too large in this quote");
 
         uint256 cap = cfg.postMint ? PRE_SUPPLY * cfg.supplyCapMul : PRE_SUPPLY;
         token = IMintTokenDeployer(d.tokenDeployer).deploy(
@@ -198,7 +204,8 @@ library FlywheelLogic {
         uint256 shares,
         uint256 minPayout
     ) external returns (uint256 payout) {
-        IFlywheelPad.Sale storage s = minting(sales, token);
+        IFlywheelPad.Sale storage s = sales[token];
+        if (!withdrawable(s)) revert IFlywheelPad.NotMinting();
         IFlywheelPad.Account storage a = accounts[token][trader];
         if (shares == 0 || shares > a.preShares) revert IFlywheelPad.BadAmount();
         uint256 principal = shares * s.basePrice;
@@ -262,6 +269,14 @@ library FlywheelLogic {
         s = sales[token];
         if (s.creator == address(0)) revert IFlywheelPad.UnknownToken();
         if (s.launched || s.filledAt != 0) revert IFlywheelPad.NotMinting();
+    }
+
+    /// @dev Sell-backs: before the sale fills (or opens early), or once a filled sale has gone LAUNCH_GRACE past its
+    ///      launch time without launching.
+    function withdrawable(IFlywheelPad.Sale storage s) internal view returns (bool) {
+        if (s.creator == address(0) || s.launched) return false;
+        if (s.filledAt == 0) return true;
+        return block.timestamp >= uint256(s.filledAt) + s.launchDelay + LAUNCH_GRACE;
     }
 
     function exitFeeBps(IFlywheelPad.Sale storage s) internal view returns (uint256) {
