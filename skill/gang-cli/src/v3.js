@@ -3,7 +3,8 @@ import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund,
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
-import { MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets, rpcTransport } from './gangpad.js'
+import { atTokenPad, CREATOR_FEE_ABI, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets, rpcTransport } from './gangpad.js'
+import { createNote, curveCreatorFee } from './creatorfee.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
 import { splitterOf } from './buyback.js'
@@ -94,8 +95,8 @@ const HINTS = {
   VaultFloorTooHigh: 'the platform\'s dividend vault requires a larger holding than V3 dividends allow (10,000 tokens), so a dividend token can\'t be created right now; --dividend 0 still works, or ask gang to fix the vault setting',
 }
 
-/** What `gang tx` decodes a V3 trade's logs with (the pad, the tax router, the dividend vault). */
-export const V3_EVENT_ABIS = [PAD_ABI, TAX_ROUTER_ABI, VAULT_ABI]
+/** What `gang tx` decodes a V3 trade's logs with (the pad and its 2.0 creator fee, the tax router, the dividend vault). */
+export const V3_EVENT_ABIS = [PAD_ABI, CREATOR_FEE_ABI, TAX_ROUTER_ABI, VAULT_ABI]
 
 export function v3Ctx(testnet) {
   const net = V3_NETS[testnet ? 'testnet' : 'mainnet']
@@ -110,7 +111,7 @@ const VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667n
 const ceilDiv = (a, b) => (a + b - 1n) / b
 
 /** Revert name (+ BadTaxConfig reason) of a failed call, or null when it was the RPC. */
-const revertOf = (e) => revertIn(e, [PAD_ABI, TAX_ROUTER_ABI, GANG_ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...ROUTER_HINTS, ...HINTS })
+const revertOf = (e) => revertIn(e, [PAD_ABI, CREATOR_FEE_ABI, TAX_ROUTER_ABI, GANG_ROUTER_ABI, MERGED_ERRORS_ABI], { ...MERGED_HINTS, ...ROUTER_HINTS, ...HINTS })
 
 /** eth_call `data` from `from`: { result } when it passes, { failed } with the revert (or RPC error) otherwise. */
 async function simulate(ctx, from, to, abi, functionName, args, value = 0n) {
@@ -261,6 +262,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
 
   let ctx
   try { ctx = v3Ctx(testnet) } catch (e) { return fail(e.message) }
+  // a token is served by the GangLaunchpad generation that has it (its pad, router, GangBond); a create goes to the newest
+  if (sub !== 'create' && sub !== 'tx' && (await atTokenPad(ctx, opt('token'))) === null) return fail(KIND_UNREAD.error, { token: opt('token'), retry: KIND_UNREAD.retry })
   // not a curve on this pad: on the merged pad it may be a 打新 token (kindOf), so point at `gang fair`
   const notV3 = async (token) => {
     const { error, kind } = await notThisKind(ctx, token, 'v3', net)
@@ -289,8 +292,10 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ? { warning: `this token pays its tax to the LP splitter, but it is bound to another token (${lp.token}): the liquidity goes to that token's pair` } : null
     const splitWarn = split && split.token && split.token.toLowerCase() !== token.toLowerCase()
       ? { warning: `this token pays its tax to the split module, but the module is bound to another token (${split.token}): the keeper never splits this token's tax (${c.quote}); it is split only by hand (gang split distribute --token ${token}${net} --asset ${c.quote})` } : null
+    // 2.0: the creator's part of the curve fee, waiting on the pad
+    const gen = await curveCreatorFee(ctx, token, c, net)
     return out({
-      success: true, chainId: Number(ctx.chainId), ...fees, ...pub, taxNote, ...(swapBack && { swapBack }), ...(buyback && { buyback }),
+      success: true, chainId: Number(ctx.chainId), ...fees, ...pub, ...gen, taxNote, ...(swapBack && { swapBack }), ...(buyback && { buyback }),
       ...(split && { split: { ...split, ...splitWarn } }), ...(lp && { lp: { ...lp, ...lpWarn } }),
     })
   }
@@ -305,9 +310,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const { claimableRaw: _r, ...dividend } = c.dividendPct > 0 ? await dividendOf(ctx, vault, token, me, c.quote, c.priceRaw) : {}
     // graduated: what selling the whole balance into the pool pays now (sell tax and the chunk sold first included)
     const q = c.graduated && c.pair && bal > 0n ? await poolSellQuote(ctx, c.taxHandler, token, bal) : null
+    // the creator's own view also shows its creator fee (2.0)
+    const { creatorFee } = me.toLowerCase() === c.creator.toLowerCase() ? await curveCreatorFee(ctx, token, c, net) : {}
     return out({
       success: true, chainId: Number(ctx.chainId), wallet: me, token, quote: c.quoteSymbol, graduated: c.graduated,
-      balance: formatUnits(bal, 18), dividendPct: c.dividendPct,
+      balance: formatUnits(bal, 18), dividendPct: c.dividendPct, ...(creatorFee && { creatorFee }),
       ...(q && {
         poolSellAll: {
           expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)), slippagePct: slippage,
@@ -398,6 +405,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     }
     const rest = 100 - dividend
     const fees = await feesOf(ctx)
+    const creatorFee = await createNote(ctx, net)
     return out(notes.step(ctx, { from: me, to: ctx.pad, data: createData(logo.logoURI, meta.metaURI) }, {
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata,
@@ -409,6 +417,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
         ? `of each ${buyTax}% buy / ${sellTax}% sell tax in the PancakeSwap pool (after graduation; the curve charges no tax): ${fees.platformTaxPct}% of volume to the platform, then ${dividend}% of the rest to holders, ${rest}% to the recipient in the quote`
           + (dividend > 0 ? '; if no holder has 10,000+ tokens when a tax is paid, the holders\' part goes to the recipient too' : '')
         : 'untaxed: no tax in the PancakeSwap pool after graduation, no dividend, no recipient',
+      ...(creatorFee && { creatorFee }),
       note: `${taxed ? 'tax rates and recipient are' : 'untaxed is'} fixed at create. Curve trades pay only the ${fees.curveFeePct}% fee, no tax${taxed ? ': the tax starts in the pool after graduation' : ''}. tokenIfNext changes if another create lands first: the real address is the Created event from \`gang tx --hash …\`.`,
     }, 'create'))
   }
@@ -549,7 +558,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
     const events = []
     for (const log of r.logs) {
-      for (const abi of [PAD_ABI, TAX_ROUTER_ABI, VAULT_ABI]) {
+      for (const abi of V3_EVENT_ABIS) {
         try {
           const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
           events.push({ event: ev.eventName, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })

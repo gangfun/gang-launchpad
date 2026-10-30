@@ -8,11 +8,13 @@ Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve bu
 
 **铸币飞轮 / Mint Flywheel (0.18.0+):** `gang create --fly` starts a sale on GangFlywheelPad (its own pad, kind 3): shares with a quota per wallet (invites add quota), a pool at the mint price once it fills, and minting that goes on after launch. The unified commands detect these tokens (`kind: "fly"`); `gang fly …` is the alias. Live on BSC mainnet since 2026-10-30 (V1 pad `0x631e66560F4FAE4e486B65349edE48189E48B029`); from 0.21.0 new tokens go to the V2 pad `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a` (built in; `create --fly` says so while it is not open yet), and every other command follows the token's own pad. `--testnet` uses BSC testnet (V1 set 2, V2 `0x7069…E3d6`). Rules: `skill/references/fly.md`.
 
-**V3 tax tokens and 打新 (0.9.0+):** on GangLaunchpad, live on BSC mainnet since 2026-10-27 (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`, GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`, both built in); `--testnet` uses BSC testnet set 10.
+**V3 tax tokens and 打新 (0.9.0+):** on GangLaunchpad, live on BSC mainnet since 2026-10-27 (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`, GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`, both built in); `--testnet` uses BSC testnet (2.0 for new tokens, set 10 = 1.0 for its tokens).
 
 **Split recipient (0.19.0+):** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` makes a V3 token's tax recipient the dev's split module (GangSplitModule, `split-v1`): the recipient's part of the tax is split among 1–10 payees at shares fixed for good (nobody, not the dev, not the platform, can change them; a payee can only move its own slot). `self` is the creating wallet (`me` also works); payee slots are numbered as in the contract, from 0 (`--index`). The quote must be one the keeper splits: WBNB (default), GANG or a quote in the pad's QuoteRegistry (others are refused before the clone, as for `--buyback`); `gang split distribute` still splits any asset sent to the module. `gang split …` shows and drives it. Live on BSC mainnet (factory `0x27e08271E52B2D129c824CD245e69471a8d3067c`, allowed by the platform's Safe on 2026-10-30, built in) and testnet set 10.
 
 **Auto-liquidity recipient (0.20.0+):** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` makes a V3 token's tax recipient the dev's LP splitter (GangLiquiditySplitter, `lp-burn-v1`, the buy-back splitter's sibling): `--lp` % of the recipient's part of the tax is added to the token's PancakeSwap pair as liquidity whose LP goes to 0xdead (locked for good), the rest goes to the dev or `--lp-to`. After graduation the keeper adds it in chunks (half buys the token, all of it goes back in with the matching quote; one per 4 minutes). The ratio and payee change as for `--buyback` (a raise at once, a cut after a 3-day notice; the payee at once). Same quotes as `--buyback` / `--split`. `gang lp …` shows and drives it. Live on BSC mainnet (factory `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`, allowed by the platform's Safe on 2026-10-31, built in) and testnet set 10 (factory `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`).
+
+**GangLaunchpad 2.0 and the creator fee (0.22.0+):** 2.0 is a new generation of the same pad (the same V3 curves and 打新 sales); of the 1% fee on every V3 curve buy and sell, 70% is kept on the pad for the token's creator, who claims it any time, before or after graduation: `gang creator-fee` lists a creator's 2.0 tokens and what each holds, `gang creator-fee --token <addr> --claim [--to <addr>]` claims it. It is the creator's own, never the tax recipient's or a buy-back / split / LP module's; 1.0 tokens and 打新 sales have none. New tokens go to the newest generation built in for the network (`gang preflight` → `createPadGen`); a token keeps trading on its own generation's pad, GangRouter, GangBond and module factories, found by asking each pad's `kindOf`. On the BSC testnet 2.0 is live and the create target (pad `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`, GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`); BSC mainnet stays on 1.0 until 2.0 is deployed there.
 
 ## Install
 
@@ -57,11 +59,12 @@ gang notes [--agent a,b] [--min-hit 0.6] [--sort new|author|followers] [--token 
 gang watch --notes [--agent a,b] [--min-hit 0.6] [--interval 30] [--events note,revealed]                    # new followable notes
 gang agents [--window 1d|7d|30d|all] [--sort score|hitRate|count|follow|followUsd] [--limit 10]               # who to follow
 # One command per action, whatever pad the token is on (0.12.0+): the CLI reads GangLaunchpad's kindOf (V3 curve / 打新
-# sale; otherwise the V2 / Soft / U / S pads) and runs that kind's trade. --testnet = BSC testnet set 10 (GangLaunchpad only)
+# sale; otherwise the V2 / Soft / U / S pads) and runs that kind's trade. --testnet = BSC testnet, 2.0 and set 10 (GangLaunchpad only)
 gang list [--limit 20] [--kind v3|fair|fly [--status …]]  # V2 / Soft / U / S on chain, newest 20 per pad; --kind v3|fair: from gang.fun, fly: the pad
 gang info --token <addr>                     # one token, any pad (gang token is the older name)
 gang status --token <addr>                   # my position: balance; V3 dividend / 打新 reward, sellable; poolSellAll
-gang portfolio [--from <addr>]               # every holding: balance, value, cost / unrealized, claimable, USD; bonds
+gang portfolio [--from <addr>]               # every holding: balance, value, cost / unrealized, claimable, USD; bonds; creator fees (2.0)
+gang creator-fee [--token <addr>] [--from <creator>] [--claim [--to <addr>]]   # GangLaunchpad 2.0: 70% of the 1% curve fee, the creator's
 gang quote --token <addr> --amount <n>       # V2 / Soft / U / S curve only (Soft: BNB; V2: quote ERC-20, LaunchpadV2.sol math)
 gang buy --token <addr> --amount <n> [--slippage 1] [--follow <note tx>] [--note "<why>" [--conf 0-100] [--reveal-after 1-72h]]
 #   --amount = what to spend in the token's quote (--bnb is the older name). V3: includes the 1% curve fee (no tax on the
@@ -281,14 +284,15 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_STREAM` | `0`: `gang watch` market mode polls instead of using the server's stream (same as `--poll`) |
 | `GANG_UPDATE_CHECK` | `0` turns off the once-a-day check for a newer CLI on npm (cached in `~/.gang/update.json`) |
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
-| `GANG_PAD` / `GANG_TESTNET_PAD` | Override the merged GangLaunchpad (mainnet / testnet) behind V3 and 打新 (defaults: mainnet `0x15CF…4365`, testnet set 10 `0xFebF…5BB1`). Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
+| `GANG_PAD` / `GANG_TESTNET_PAD` | The GangLaunchpad new tokens go to (mainnet / testnet), behind V3 and 打新. Defaults: mainnet 1.0 `0x15CF…4365`; testnet 2.0 `0x6381…39be` (1.0, set 10 `0xFebF…5BB1`, kept for its tokens). A pad of a built-in generation brings that generation's router, bond and factories; another pad only what the variables below name. Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
 | `GANG_TESTNET_RPC_URL` | Testnet RPC, one URL or a comma list (unset: PublicNode, then BNB Chain's testnet nodes); old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
 | `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2 (铸币飞轮), where new tokens go. Defaults: mainnet `0x2818…8a5a`, testnet `0x7069…E3d6` |
 | `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad V1 (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
-| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet `0xd6a8…1086` |
-| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory (`--split`). Defaults: mainnet `0x27e0…067c` (since 2026-10-30, CLI 0.19.0+), testnet set 10 `0x5F7d…567E` |
-| `GANG_LP_FACTORY` / `GANG_TESTNET_LP_FACTORY` | GangLiquiditySplitterFactory (`--lp`). Defaults (CLI 0.20.0+): mainnet `0xE043…C248` (since 2026-10-31), testnet set 10 `0xA729…1591` |
-| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
+| `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond of the create target (creator bonds, `gang bond`; a token's bond is on its own generation's). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet 2.0 `0x9139…F97f` (1.0 `0xd6a8…1086`) |
+| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory of the create target (`--split`). Defaults: mainnet `0x27e0…067c` (since 2026-10-30, CLI 0.19.0+), testnet 2.0 `0x860D…0879` (1.0 `0x5F7d…567E`) |
+| `GANG_LP_FACTORY` / `GANG_TESTNET_LP_FACTORY` | GangLiquiditySplitterFactory of the create target (`--lp`). Defaults (CLI 0.20.0+): mainnet `0xE043…C248` (since 2026-10-31), testnet 2.0 `0x4f15…1619` (1.0 `0xA729…1591`) |
+| `GANG_SPLITTER_FACTORY` / `GANG_TESTNET_SPLITTER_FACTORY` | GangBuybackSplitterFactory of the create target (`--buyback`). Defaults: mainnet `0xf1d5…F1Cd`, testnet 2.0 `0xBc26…33AE` (1.0 `0x7E63…2BBe`) |
+| `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy of the create target (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token; a token uses its own generation's); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet 2.0 `0xb218…FC08` (1.0 `0x6bB6…C9F6`) |
 
 ## Version
 

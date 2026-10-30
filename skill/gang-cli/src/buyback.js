@@ -1,5 +1,5 @@
 import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, hexToString, isAddress, zeroAddress } from 'viem'
-import { padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { walletFor } from './fair.js'
 import { parseNum, revertOf as revertIn, step } from './steps.js'
 
@@ -13,17 +13,16 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  * want it leaves --buyback out: the tax goes to their own address as before.
  * The ratio: a raise applies at once, a cut 3 days after it is asked for (then anyone applies it within 7 days, or it
  * lapses). The keeper buys back in chunks (≤ 0.5% of the pool's quote side, never > 2% above the 10-minute average).
- * Env: GANG_SPLITTER_FACTORY / GANG_TESTNET_SPLITTER_FACTORY override the built-in factory addresses.
+ * Env: GANG_SPLITTER_FACTORY / GANG_TESTNET_SPLITTER_FACTORY override the create target's factory (gangpad.js).
  */
 
-// BSC 56, factory v3 (one chunk per 4 minutes; docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md). v2 0x9346…8F2f and v1
-// 0x6bcd…8546 (2-argument create) are stopped: their clones keep working, new ones can't be made
-export const MAINNET_SPLITTER_FACTORY = '0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd'
-export const TESTNET_SPLITTER_FACTORY = '0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe'
-/** The factory's clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 and v3 their payee; v3 buys at
- *  most one chunk per 4 minutes (GangBond audit H-1). */
-export const BUYBACK_TYPE = 'buyback-burn-v3'
-const BUYBACK_TYPES = ['buyback-burn-v1', 'buyback-burn-v2', BUYBACK_TYPE]
+// one factory per GangLaunchpad generation (it is bound to one pad): the create target's (GANG_GENS in gangpad.js)
+export const MAINNET_SPLITTER_FACTORY = GANG_GENS.mainnet[0].splitterFactory
+export const TESTNET_SPLITTER_FACTORY = GANG_GENS.testnet[0].splitterFactory
+/** The factories' clones; v1 (mainnet's first factory, 0x6bcd…8546) pays the dev, v2 and later their payee; v3 buys at
+ *  most one chunk per 4 minutes (GangBond audit H-1); v4 (GangLaunchpad 2.0's factory) prices a chunk on what the pair
+ *  received (re-review L-1). Same calls from v2 on. */
+const BUYBACK_TYPES = ['buyback-burn-v1', 'buyback-burn-v2', 'buyback-burn-v3', 'buyback-burn-v4']
 
 export const FACTORY_ABI = parseAbi([
   'function create(uint16 buybackBps, bytes32 salt, address payee) returns (address splitter)',
@@ -82,8 +81,7 @@ const HINTS = {
 const revertOf = (e) => revertIn(e, [SPLITTER_ABI, FACTORY_ABI], HINTS)
 
 export function splitterFactoryAddress(testnet) {
-  return (testnet ? process.env.GANG_TESTNET_SPLITTER_FACTORY || TESTNET_SPLITTER_FACTORY
-    : process.env.GANG_SPLITTER_FACTORY || MAINNET_SPLITTER_FACTORY) || null
+  return gangGens(testnet)[0].splitterFactory || null
 }
 
 export const notDeployed = (testnet) =>
@@ -149,6 +147,7 @@ export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
   try { ctx = buybackCtx(testnet) } catch (e) { return fail(e.message) }
   const token = opt('token')
   if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
+  if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
   let recipient
   try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {
     return fail('not a V3 token on this pad', { token, chainId: Number(ctx.chainId) })

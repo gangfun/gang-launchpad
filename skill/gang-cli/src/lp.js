@@ -1,5 +1,5 @@
 import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, hexToString, isAddress, maxUint128, zeroAddress } from 'viem'
-import { padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { walletFor } from './fair.js'
 import { parseNum, revertOf as revertIn, step } from './steps.js'
 
@@ -18,13 +18,12 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  * for the next chunk.
  * Gas: a chunk takes ~0.53–0.75M (the deposit lets the tax handler sell a chunk of its tax first). The CLI never sets a
  * gas limit: the wallet / node estimates it; a fixed or trimmed limit can revert.
- * Env: GANG_LP_FACTORY / GANG_TESTNET_LP_FACTORY override the built-in factory addresses.
+ * Env: GANG_LP_FACTORY / GANG_TESTNET_LP_FACTORY override the create target's factory (gangpad.js).
  */
 
-// BSC 56: deployed 2026-10-31, allowed on GangHandlerAdmin by the platform's Safe the same day
-export const MAINNET_LP_FACTORY = '0xE0436867dAFcf42Ee1418083251a9B8B61F0C248'
-// BSC 97, set 10 (docs/TESTNET-LP-MODULE-2026-10-30.md)
-export const TESTNET_LP_FACTORY = '0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591'
+// one factory per GangLaunchpad generation (it is bound to one pad): the create target's (GANG_GENS in gangpad.js)
+export const MAINNET_LP_FACTORY = GANG_GENS.mainnet[0].lpFactory
+export const TESTNET_LP_FACTORY = GANG_GENS.testnet[0].lpFactory
 export const LP_TYPE = 'lp-burn-v1'
 const BPS = 10_000n
 const CHUNK_GAP_S = 4 * 60
@@ -128,8 +127,7 @@ export async function simulateLp(client, from, address, abi, functionName, args 
 }
 
 export function lpFactoryAddress(testnet) {
-  return (testnet ? process.env.GANG_TESTNET_LP_FACTORY || TESTNET_LP_FACTORY
-    : process.env.GANG_LP_FACTORY || MAINNET_LP_FACTORY) || null
+  return gangGens(testnet)[0].lpFactory || null
 }
 
 export const lpNotDeployed = (testnet) =>
@@ -219,6 +217,7 @@ export async function runLp(sub, { opt, flag, out, fail, summarize }) {
   try { ctx = lpCtx(testnet) } catch (e) { return fail(e.message) }
   const token = opt('token')
   if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
+  if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
   const chainId = Number(ctx.chainId)
   let recipient
   try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {

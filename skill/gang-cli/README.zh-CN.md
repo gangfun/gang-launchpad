@@ -8,11 +8,13 @@
 
 **铸币飞轮（0.18.0+）：** `gang create --fly` 在 GangFlywheelPad（单独的发射台，kind 3）上开一场铸币飞轮：按份 mint，每个钱包有额度，邀请可以加额度；打满后按 mint 价开池，开池后还能继续 mint。统一命令会自动识别这类币（`kind: "fly"`），`gang fly …` 是别名。2026-10-30 起在 BSC 主网运行（V1 发射台 `0x631e66560F4FAE4e486B65349edE48189E48B029`）；0.21.0 起新币发在 V2 发射台 `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a`（已内置；V2 开放前 `create --fly` 会直接说明），其他命令按代币自己的发射台走。`--testnet` 走 BSC 测试网（V1 第 2 套，V2 `0x7069…E3d6`）。规则见 `skill/references/fly.md`。
 
-**V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`，都已内置）；`--testnet` 走 BSC 测试网第 10 套。
+**V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`，都已内置）；`--testnet` 走 BSC 测试网（新币发到 2.0，第 10 套即 1.0 上的币照常用）。
 
 **多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。报价币只能是 keeper 会分账的：WBNB（默认）、GANG 或发射台 QuoteRegistry 里的报价币（其他的在克隆前就拒绝，和 `--buyback` 一样）；转进模块的其他资产仍可用 `gang split distribute` 手动分。`gang split …` 查看和操作。已在 BSC 主网（工厂 `0x27e08271E52B2D129c824CD245e69471a8d3067c`，2026-10-30 平台多签已放行，已内置）和测试网第 10 套可用。
 
 **自动加池子收款（0.20.0+）：** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` 把 V3 币的税收接收地址设成 dev 自己的加池合约（GangLiquiditySplitter，`lp-burn-v1`，和回购合约同一套规则）：接收地址那份税的 `--lp`% 加进这个币的 PancakeSwap 池子做流动性，LP 打进 0xdead 永久锁定，其余给 dev（或 `--lp-to` 指定的地址）。毕业后由 keeper 分块加池（一半买币，买到的币全部连同对应的报价币放回池子；每 4 分钟最多一块）。比例和收款地址的改法同 `--buyback`（提高立即生效，下调 3 天公告后生效；收款地址立即生效）。报价币要求同 `--buyback` / `--split`。`gang lp …` 查看和操作。已在 BSC 主网（工厂 `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`，2026-10-31 平台多签已放行，已内置）和测试网第 10 套（工厂 `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`）可用。
+
+**GangLaunchpad 2.0 和 creator 分成（0.22.0+）：** 2.0 是同一个内盘的新一代（V3 曲线和打新都一样）。V3 内盘每笔买卖收的 1% 手续费里，70% 留在内盘上归这个币的 creator，creator 毕业前后随时可以领：`gang creator-fee` 列出这个 creator 所有 2.0 币各自可领多少，`gang creator-fee --token <addr> --claim [--to <addr>]` 领取。这笔钱只归 creator 本人，不给税收接收地址，也不经过回购 / 分账 / 加池模块；1.0 的币和打新没有这项。新币发到这条链上内置的最新一代（`gang preflight` 的 `createPadGen`）；已有的币始终用它自己那一代的内盘、GangRouter、GangBond 和模块工厂（CLI 逐个问各代内盘的 `kindOf` 找到它）。BSC 测试网上 2.0 已上线并且是发币目标（内盘 `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`，GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`）；BSC 主网在 2.0 部署前仍是 1.0。
 
 ## 安装
 
@@ -47,11 +49,12 @@ gang notes [--agent a,b] [--min-hit 0.6] [--sort new|author|followers] [--token 
 gang watch --notes [--agent a,b] [--min-hit 0.6] [--interval 30] [--events note,revealed]                    # 新出现的可跟想法
 gang agents [--window 1d|7d|30d|all] [--sort score|hitRate|count|follow|followUsd] [--limit 10]               # 跟谁
 # 一个动作一条命令，不管币在哪个内盘（0.12.0+）：CLI 读 GangLaunchpad 的 kindOf（V3 内盘 / 打新；都不是就走
-# V2 / Soft / U / S），再执行对应的交易。--testnet 走 BSC 测试网第 10 套（只有 GangLaunchpad）
+# V2 / Soft / U / S），再执行对应的交易。--testnet 走 BSC 测试网 2.0 和第 10 套（只有 GangLaunchpad）
 gang list [--limit 20] [--kind v3|fair|fly [--status …]]  # 链上读 V2 / Soft / U / S，每个盘最新 20 个；--kind v3|fair：从 gang.fun 列，fly：从发射台读
 gang info --token <addr>                     # 任意内盘的一个币（gang token 是旧名）
 gang status --token <addr>                   # 我的持仓：余额；V3 分红 / 打新奖励、还能卖多少；poolSellAll
-gang portfolio [--from <addr>]               # 全部持仓：余额、价值、成本 / 浮盈、可领、美元；押金
+gang portfolio [--from <addr>]               # 全部持仓：余额、价值、成本 / 浮盈、可领、美元；押金；creator 分成（2.0）
+gang creator-fee [--token <addr>] [--from <creator>] [--claim [--to <addr>]]   # GangLaunchpad 2.0：内盘 1% 手续费的 70% 归 creator
 gang quote --token <addr> --amount <n>       # 只算 V2 / Soft / U / S 内盘（Soft：BNB；V2：报价币 ERC-20）
 gang buy --token <addr> --amount <n> [--slippage 1] [--follow <附言 tx>] [--note "<理由>" [--conf 0-100] [--reveal-after 1-72h]]
 #   --amount 是要花的报价币数量（--bnb 是旧名）。V3：含内盘 1% 手续费（内盘不收税；WBNB 报价经 GangRouter 直接付 BNB）。
