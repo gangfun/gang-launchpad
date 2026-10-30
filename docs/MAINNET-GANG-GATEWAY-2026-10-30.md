@@ -19,7 +19,7 @@ GangGateway 已在 2026-10-30 部署到 BSC 主网。owner 和时间锁都归平
 | 读取的 registry | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C`（主网 GangPadRegistry） |
 | 部署钱包 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`（部署后对网关和时间锁没有任何权限） |
 | 广播记录 | `broadcast/DeployGangGateway.s.sol/56/` |
-| 源码验证 | 还没有在 BscScan 验证（需要 API key） |
+| 源码验证 | 已在 BscScan 验证（2026-10-30）：实现合约 GangGateway、TimelockController 用 `forge verify-contract` 提交；代理 TransparentUpgradeableProxy 和 ProxyAdmin 与 registry 的字节码相同，BscScan 已自动匹配；代理已标记为指向实现合约。源码取自 `19f4fc0`，编译设置为 solc 0.8.28、via-ir、优化 200 次、cancun。提交前确认过四个合约本地编译的字节码与链上一致，包括 metadata（immutable 位置除外） |
 
 部署交易，都在区块 130610192，gas 价格 0.05 gwei（legacy）：
 
