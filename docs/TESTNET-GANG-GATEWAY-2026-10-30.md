@@ -28,7 +28,7 @@
 | 代理（构造时初始化，owner = 部署钱包） [`0x89194352…6e33`](https://testnet.bscscan.com/tx/0x8919435237c9e4d00c7401f9d1ec40b51ef80e7d2f5f45de5352ba41adc66e33) | 632,267 |
 | 第 10 套 `setRouter(网关, true)` [`0x7b0c77cc…f527`](https://testnet.bscscan.com/tx/0x7b0c77cca846ae65bd394865f2ed5a7f47601a8f1efb97b27756834b78d4f527) | 49,225 |
 
-源码还没有在 BscScan 验证，验证需要 API key。
+源码已在 BscScan 测试网验证（2026-10-30）：实现合约、时间锁、代理（已标记为指向实现合约）、ProxyAdmin 四个都已验证。源码取自 `19f4fc0`，编译设置为 solc 0.8.28、via-ir、优化 200 次、cancun；提交前确认过本地编译的字节码与链上一致。
 
 ## 部署命令
 
