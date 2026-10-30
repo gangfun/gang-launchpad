@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @notice Types, events and errors of GangFlywheelPad (持续打新 / continuous mint).
+/// @notice Types, events and errors of GangFlywheelPad (持续打新 / continuous mint), V2.
 interface IFlywheelPad {
-    /// @notice What a dev chooses at create (platform limits in `FlywheelLogic.checkConfig`).
+    /// @notice What a dev chooses at create (platform limits in `FlywheelLogic.checkConfig`). `guardBps` and
+    ///         `twapWindow` must be valid even when `postMint` is off (e.g. 0 and 1,800): create checks them regardless.
     struct FlyConfig {
         uint256 raiseBnb; // 3–50 BNB worth: the 10,000 pre-launch shares' price in all
-        uint16 baseQuota; // 5–100 shares per wallet, before and after launch together
-        uint8 inviteBonus; // 0–3 shares of quota per invited wallet's first mint
+        uint16 baseQuota; // 5–100 shares per wallet (5–10 with postMint), before and after launch together
+        uint8 inviteBonus; // 0–3 shares of quota per invited wallet's first mint (0–1 with postMint)
         uint8 maxPerTx; // 1–10 shares per mint
         uint16 holdBps; // 6,000–9,000: holder reward hold line
         uint16 mintFeeBps; // 100–300: on top of every mint, to the platform
@@ -18,12 +19,20 @@ interface IFlywheelPad {
         uint32 launchDelay; // 0–300 s between filling (or opening early) and launch
         uint32 window; // 300–1,800 s of launch protection
         uint8 windowCapMul; // 1–2: protection cap = baseQuota × this, in pre-launch share tokens
-        bool postMint; // minting continues after launch
+        bool postMint; // minting continues after launch (only on a sale created with the Agent ID gate on)
         uint8 tierMode; // 0 flat, 1 standard 353-step table, 2 linear
         uint16 stepBps; // linear: 0–1,000 per step
-        uint32 stepShares; // linear: 100–100,000 shares per step
+        uint32 stepShares; // linear: 100–100,000 shares per step, counted from share 10,001 (the first post-launch)
         uint16 maxMulX100; // linear: 100–1,000 (×1–×10)
         uint16 supplyCapMul; // postMint: 10–500 × the full pre-launch supply (both sides)
+        uint16 guardBps; // post-launch TWAP guard: 0 (off), 1,500, 2,000 or 3,000 (refused this far below the TWAP); must be valid even with postMint off
+        uint32 twapWindow; // post-launch TWAP window: 900 or 1,800 s; must be valid even with postMint off
+    }
+
+    /// @notice A sale's post-launch rules (V2), kept beside `Sale` so its getter's ABI stays as it was: `postRulesOf`.
+    struct PostRules {
+        uint16 guardBps;
+        uint32 twapWindow;
     }
 
     /// @notice One sale. Rules are fixed at create; the rest is state.
@@ -105,6 +114,7 @@ interface IFlywheelPad {
     event AgentGateUpdated(bool enabled, address registry);
     event PairFactorySet(address factory);
     event V3FactorySet(address factory);
+    /// @notice The reference-pool pricing window changed (non-BNB quotes at create); not a sale's TWAP window.
     event TwapWindowUpdated(uint32 window);
     event BridgePoolSet(address indexed asset, address pool);
     event RouterSet(address indexed router, bool enabled);
@@ -122,7 +132,6 @@ interface IFlywheelPad {
     error OnlyCreator();
     error Slippage();
     error PriceBelowAverage();
-    error PriceBelowRecentHigh();
     error PriceAbovePool();
     error PaceExceeded();
     error PostMintOff();

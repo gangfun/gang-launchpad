@@ -109,6 +109,8 @@ contract FlywheelAuditBFixesTest is FlywheelFixture {
         assertApproxEqRel(launchPrice, mintPriceX112, 0.001e18, "the oracle starts at the mint price");
     }
 
+    /// @dev A filled sale on a steep linear tier, 90 post-launch shares in: the next 10 still cost ×1, but 10 more
+    ///      landing first cross the step at share 10,101 (×1.1).
     function _launchedTiers() internal returns (address t) {
         IFlywheelPad.FlyConfig memory c = _wide();
         c.tierMode = 2;
@@ -116,24 +118,18 @@ contract FlywheelAuditBFixesTest is FlywheelFixture {
         c.stepShares = 100;
         c.maxMulX100 = 1_000;
         t = _create(c, 1);
-        while (pad.sales(t).sold < 3000) {
-            address w = _newAgent();
-            vm.startPrank(w);
-            while (pad.quotaLeft(t, w) > 0 && pad.sales(t).sold < 3000) pad.mint(t, 10, 1, address(0));
-            vm.stopPrank();
-        }
-        vm.prank(dev);
-        pad.openEarly(t);
-        vm.warp(vm.getBlockTimestamp() + 60);
-        pad.launch(t);
+        _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + 700);
-        while (pad.sales(t).totalShares < 3080) {
+        while (pad.sales(t).totalShares < 10_090) {
             vm.roll(vm.getBlockNumber() + 1);
             vm.warp(vm.getBlockTimestamp() + 3);
             address w = _newAgent();
             vm.prank(w);
             pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         }
+        assertEq(pad.sales(t).totalShares, 10_090);
+        assertEq(pad.sharePrice(t, 10), pad.sales(t).basePrice, "shares 10,091..10,100: x1");
+        assertEq(pad.sharePrice(t, 20), (uint256(pad.sales(t).basePrice) * 110) / 100, "past 10,100: x1.1");
         vm.roll(vm.getBlockNumber() + 1);
         vm.warp(vm.getBlockTimestamp() + 3);
     }
