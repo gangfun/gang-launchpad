@@ -50,6 +50,12 @@ anything is sent and its reason is printed.
 | `--tier flat\|standard\|linear` (post-launch share price) | | standard | flat |
 | `--step-pct` / `--step-shares` / `--max-mul` (linear only) | 0–10 / 100–100,000 / 1–10 | | |
 | `--supply-cap` (× the full pre-launch supply) | 10–500 | 100 | 100 |
+| `--guard off\|15\|20\|30` (V2: post-launch mints pause this % below the average) | | 20 | off |
+| `--twap-window 15\|30` (V2: the average's window, minutes) | | 30 | 30 |
+
+**Pad versions.** New tokens go to the V2 pad once it is live (the CLI knows its address); V1 tokens keep working and
+every other command uses the token's own pad (`padVersion` in `gang info`). Only V2 takes `--guard` / `--twap-window`,
+and on V2 `--quota` is at most 20 while post-launch minting is on.
 
 `--dev-shares` (default 1, at most quota and max-per-tx) are minted in the create; the creator's own mints carry no dev
 cut. `--quote` / `--ref-pool` / logo / links work as in [create.md](create.md). While the pad's Agent ID gate is off, a
@@ -78,12 +84,15 @@ these tokens.
   most the cap (gross tokens from the pool). `gang buy` checks both first. Post-launch mints are not limited by it.
 - **Post-launch mint**: the share price follows the tier table (`info.postMint.sharePriceNow`). The tokens come at no
   less than the pool price, and the result shows `mintPricePerToken` against `poolPrice`. `minTokensOut` is the preview
-  less `--slippage` (default 2%); `maxSpent` is the previewed paid + fee. A mint is refused while the pool is more than
-  10% below its 30-minute average or its recent high, while the mint price is more than 10% above the pool, past the
-  wallet's 30-minute pace (2% of the pool's quote side), or at the supply cap. The CLI names the rule that applies.
-  `gang info` shows it before any mint: `postMint.pausedNow` with `reason` (`below_average`, `below_recent_high`,
-  `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows `position.mintPaused` for the wallet (also
-  `pace`). While paused, `next` is a pool buy.
+  less `--slippage` (default 2%); `maxSpent` is the previewed paid + fee. A mint is refused past the wallet's 30-minute
+  pace (2% of the pool's quote side), at the supply cap, or by the pad's price rules:
+  - V1: while the pool is more than 10% below its 30-minute average or its recent high, or the mint price is more than
+    10% above the pool (it dropped in the last blocks);
+  - V2: only with the guard on, while the pool is more than the guard below its average over the TWAP window; and while
+    the price is more than 10% above the pool in the block of a dump (`info.postMint.rules`).
+  The CLI names the rule that applies. `gang info` shows it before any mint: `postMint.pausedNow` with `reason`
+  (`below_average`, `below_recent_high` (V1), `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows
+  `position.mintPaused` for the wallet (also `pace`). While paused, `next` is a pool buy.
 - **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
   25%. Sell tax above 1% goes to holders. Only **minted** tokens earn: a wallet's weight is its balance, capped at what it
   minted. Below the hold line it is **out until its next mint**. Before a sell, check `sellableBeforeOut`. A sell past it

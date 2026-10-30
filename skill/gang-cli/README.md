@@ -81,6 +81,7 @@ gang create --fair --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] 
 # steady; every setting can be overridden: --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90
 # --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10 --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800
 # --cap-mul 1-2 --post-mint|--no-post-mint --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
+# V2 pad only: --guard off|15|20|30 (default 20) --twap-window 15|30 (default 30); --quota ≤ 20 with post-launch minting
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [settings…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <inviter>] [--slippage 2]   # before launch: the sale price; after: mintPost (pool price or above)
 gang fly open-early --token <addr>           # creator, ≥ 30% sold
@@ -278,7 +279,8 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | Override the merged GangLaunchpad (mainnet / testnet) behind V3 and 打新 (defaults: mainnet `0x15CF…4365`, testnet set 10 `0xFebF…5BB1`). Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
 | `GANG_TESTNET_RPC_URL` | Testnet RPC, one URL or a comma list (unset: PublicNode, then BNB Chain's testnet nodes); old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
-| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
+| `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2 (铸币飞轮), where new tokens go once it is live (built in then) |
+| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad V1 (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet `0xd6a8…1086` |
 | `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory (`--split`). Defaults: mainnet `0x27e0…067c` (since 2026-10-30, CLI 0.19.0+), testnet set 10 `0x5F7d…567E` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
