@@ -18,7 +18,7 @@ import { parseAmount, revertOf as revertIn, step } from './steps.js'
  * Env: GANG_SPLIT_FACTORY / GANG_TESTNET_SPLIT_FACTORY override the built-in factory addresses.
  */
 
-// BSC 56: deployed 2026-10-30; until the platform's Safe allows it on GangHandlerAdmin (setFactory), create reverts NotFactory
+// BSC 56: deployed 2026-10-30, allowed on GangHandlerAdmin by the platform's Safe the same day (docs/MAINNET-SPLIT-MODULE-2026-10-30.md)
 export const MAINNET_SPLIT_FACTORY = '0x27e08271E52B2D129c824CD245e69471a8d3067c'
 // BSC 97, set 10 (docs/TESTNET-SPLIT-MODULE-2026-10-30.md)
 export const TESTNET_SPLIT_FACTORY = '0x5F7dC7502E945A860Cf49cca72dA8bD60Fb1567E'
@@ -81,7 +81,7 @@ export const GAS_NOTE = 'let the wallet estimate the gas limit (eth_estimateGas)
 
 export const HINTS = {
   NotAgent: 'only an Agent can create a V3 token, so only an Agent gets a split module',
-  NotFactory: 'this split factory is not allowed on the platform\'s GangHandlerAdmin (yet): it cannot list a split module as a tax recipient, so --split does not work on this network until the platform\'s Safe allows it (setFactory). Launch without --split, or try again later',
+  NotFactory: 'this split factory is not allowed on the platform\'s GangHandlerAdmin: it cannot list a split module as a tax recipient. If GANG_SPLIT_FACTORY / GANG_TESTNET_SPLIT_FACTORY is set, unset it to use the built-in factory; otherwise launch without --split',
   BadPayees: '1–10 payees, one share each',
   BadShares: 'each share at least 0.01% (1 bps), all adding up to 100%',
   BadPayee: 'a payee cannot be the split module itself',

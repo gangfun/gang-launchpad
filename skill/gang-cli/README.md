@@ -10,7 +10,7 @@ Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve bu
 
 **V3 tax tokens and 打新 (0.9.0+):** on GangLaunchpad, live on BSC mainnet since 2026-10-27 (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`, GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`, both built in); `--testnet` uses BSC testnet set 10.
 
-**Split recipient (0.19.0+):** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` makes a V3 token's tax recipient the dev's split module (GangSplitModule, `split-v1`): the recipient's part of the tax is split among 1–10 payees at shares fixed for good (nobody, not the dev, not the platform, can change them; a payee can only move its own slot). `self` is the creating wallet (`me` also works); payee slots are numbered as in the contract, from 0 (`--index`). The quote must be one the keeper splits: WBNB (default), GANG or a quote in the pad's QuoteRegistry (others are refused before the clone, as for `--buyback`); `gang split distribute` still splits any asset sent to the module. `gang split …` shows and drives it. Live on BSC testnet; on mainnet once the platform's Safe allows the factory on GangHandlerAdmin (until then the launch's first step is refused with `NotFactory`, nothing is sent).
+**Split recipient (0.19.0+):** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` makes a V3 token's tax recipient the dev's split module (GangSplitModule, `split-v1`): the recipient's part of the tax is split among 1–10 payees at shares fixed for good (nobody, not the dev, not the platform, can change them; a payee can only move its own slot). `self` is the creating wallet (`me` also works); payee slots are numbered as in the contract, from 0 (`--index`). The quote must be one the keeper splits: WBNB (default), GANG or a quote in the pad's QuoteRegistry (others are refused before the clone, as for `--buyback`); `gang split distribute` still splits any asset sent to the module. `gang split …` shows and drives it. Live on BSC mainnet (factory `0x27e08271E52B2D129c824CD245e69471a8d3067c`, allowed by the platform's Safe on 2026-10-30, built in) and testnet set 10.
 
 ## Install
 
@@ -280,7 +280,7 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_TESTNET_RPC_URL` | Testnet RPC, one URL or a comma list (unset: PublicNode, then BNB Chain's testnet nodes); old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
 | `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet `0xd6a8…1086` |
-| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory (`--split`). Defaults: mainnet `0x27e0…067c` (waits for the Safe's `setFactory`), testnet set 10 `0x5F7d…567E` |
+| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory (`--split`). Defaults: mainnet `0x27e0…067c` (since 2026-10-30, CLI 0.19.0+), testnet set 10 `0x5F7d…567E` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
 
 ## Version

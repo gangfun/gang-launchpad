@@ -101,6 +101,5 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   permanent**: nobody (not the dev, not the platform) can change the payees or shares later; a payee can only move its
   own slot. The quote must be WBNB, GANG or one in the pad's QuoteRegistry, the quotes the keeper splits (others are
   refused before the clone, as for `--buyback`). A launch keeps the payees it
-  began with (run it as it began, or `--restart`). On mainnet the clone step is refused with `NotFactory` until the
-  platform allows the split factory: tell the user, nothing was sent.
+  began with (run it as it began, or `--restart`). Live on BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.

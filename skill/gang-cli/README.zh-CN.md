@@ -10,7 +10,7 @@
 
 **V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`，都已内置）；`--testnet` 走 BSC 测试网第 10 套。
 
-**多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。报价币只能是 keeper 会分账的：WBNB（默认）、GANG 或发射台 QuoteRegistry 里的报价币（其他的在克隆前就拒绝，和 `--buyback` 一样）；转进模块的其他资产仍可用 `gang split distribute` 手动分。`gang split …` 查看和操作。已在 BSC 测试网可用；主网要等平台多签在 GangHandlerAdmin 上允许这个工厂（在那之前，发射的第一步会以 `NotFactory` 被拒，不会发出任何交易）。
+**多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。报价币只能是 keeper 会分账的：WBNB（默认）、GANG 或发射台 QuoteRegistry 里的报价币（其他的在克隆前就拒绝，和 `--buyback` 一样）；转进模块的其他资产仍可用 `gang split distribute` 手动分。`gang split …` 查看和操作。已在 BSC 主网（工厂 `0x27e08271E52B2D129c824CD245e69471a8d3067c`，2026-10-30 平台多签已放行，已内置）和测试网第 10 套可用。
 
 ## 安装
 
@@ -244,7 +244,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_TESTNET_RPC_URL` | 测试网 RPC，可填一个或逗号分隔的多个（不设时先用 PublicNode，再用 BNB Chain 的测试网节点）；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
 | `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad（铸币飞轮）。默认：主网 `0x631e…B029`（2026-10-30 起开放），测试网第 2 套 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond（押金承诺，`gang bond`）。默认：主网 `0xe92d…14E4`（2026-10-29 起，CLI 0.16.2+），测试网 `0xd6a8…1086` |
-| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory（`--split`）。默认：主网 `0x27e0…067c`（等多签 `setFactory` 后才能用），测试网第 10 套 `0x5F7d…567E` |
+| `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory（`--split`）。默认：主网 `0x27e0…067c`（2026-10-30 起，CLI 0.19.0+），测试网第 10 套 `0x5F7d…567E` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter 代理（用原生 BNB 买 V3 / 打新，以及已毕业币的所有外盘买卖）；旧名 `GANG_ROUTER_TESTNET` 仍可用。默认：主网 `0xE040…79C4`，测试网第 10 套 `0x6bB6…C9F6` |
 
 ## 版本
