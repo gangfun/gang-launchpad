@@ -81,6 +81,9 @@ these tokens.
   less `--slippage` (default 2%); `maxSpent` is the previewed paid + fee. A mint is refused while the pool is more than
   10% below its 30-minute average or its recent high, while the mint price is more than 10% above the pool, past the
   wallet's 30-minute pace (2% of the pool's quote side), or at the supply cap. The CLI names the rule that applies.
+  `gang info` shows it before any mint: `postMint.pausedNow` with `reason` (`below_average`, `below_recent_high`,
+  `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows `position.mintPaused` for the wallet (also
+  `pace`). While paused, `next` is a pool buy.
 - **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
   25%. Sell tax above 1% goes to holders. Only **minted** tokens earn: a wallet's weight is its balance, capped at what it
   minted. Below the hold line it is **out until its next mint**. Before a sell, check `sellableBeforeOut`. A sell past it
