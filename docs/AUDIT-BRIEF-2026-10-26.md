@@ -1204,3 +1204,134 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 - 新函数：`padOf(address)` `0xba0cb939`、`lookup(address)` `0xd4b6b5da`、`isPad(address)` `0x05e23609`、`padCount()` `0x6a5e9d24`、`padAt(uint256)` `0x5ff80b76`、`pads()` `0x580c3777`、`previewBuy(address,address,uint256)` `0x370ed8c6`、`previewSell(address,address,uint256)` `0x0d687d9f`；管理：`addPad(address)` `0x01fd75a3`、`transferOwnership(address)` `0xf2fde38b`、`acceptOwnership()` `0x79ba5097`。
 - 新错误：`OnlyOwner()` `0x5fc483c5`、`NotPendingOwner()` `0x1853971c`、`ZeroAddress()` `0xd92e233d`、`NotAContract()` `0x09ee12d5`、`AlreadyPad()` `0x789c0e85`、`CurveMathMismatch()` `0x278b7648`。事件：`PadAdded(pad, index)`、`OwnershipTransferStarted`、`OwnershipTransferred`。
 - 规格：`docs/SPEC-PAD-REGISTRY-2026-10-28.md`。部署：`script/DeployGangPadRegistry.s.sol`（主网 owner 固定为 Safe `M.OWNER_SAFE`，传别的 `OWNER` 回滚 `OwnerNotSafe`）。测试网已部署：`0xB11B83C83DEd269B040faecC1D61B4885BA8e56e`（登记第 10 套 pad，部署后重跑自检通过，见 `docs/TESTNET-PAD-REGISTRY-2026-10-28.md`）；主网已部署：`0x4fF77D4d9ac080939a24E1B805206bA094C44e5C`（owner = Safe，登记主网 pad，部署后重跑自检通过，见 `docs/MAINNET-PAD-REGISTRY-2026-10-28.md`）。
+
+## 25. 聚合器用的内盘网关 GangGateway（2026-10-30）
+
+> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。**尚未部署**；主网上线要 Safe `setRouter(网关代理, true)`。
+
+### 25.1 需求
+
+一个流量很大的聚合器要接 Gang 内盘，按 §23 的方式接不了：
+
+- 它们的路由合约任何人都能调，不愿意让用户把代币授权给它们；
+- 它们没法给调用者加白名单，也不接受每笔卖出都要用户签名。
+
+它们要求参照 four.meme 内盘（TokenManager2 + Helper3）：用户把代币授权给平台自己的合约，聚合器直接调这个合约。主网核对过 four.meme 的做法：开放路径 `sellToken(origin, token, from, amount, minFunds, feeRate, feeRecipient)` 谁都能调，唯一的检查是 `tx.origin == from`，所得付给 `from`，最多 5% 给 `feeRecipient`。V3 pad 不可升级，所以加一个由 pad 列入的网关是唯一不动 pad 的做法。
+
+### 25.2 合约
+
+- **部署形态**：和 GangRouter 一样（§21）。`TransparentUpgradeableProxy`；ProxyAdmin 的 owner 是新部署的 48 小时 TimelockController，提案、执行、取消都只有 Safe，没有 admin。网关自己没有 owner。用户授权给代理，代理地址永久不变。
+- **找 pad**：通过 GangPadRegistry 的 `lookup`：pad 必须已登记，并且这个 pad 的 `kindOf(token) == 1`。仿冒币、打新币、已毕业的币一律 `NotCurveToken`。以后的 pad 在 registry 登记、并且列入网关后自动支持。
+- **买 `buyTokenAMAP(token, to, funds, minAmount)`**：
+  - BNB 计价：`msg.value == funds`，在网关里包成 WBNB。ERC-20 计价：从 `msg.sender` 拉 `funds`。
+  - 然后对 pad 精确 `forceApprove`，调 `pad.buyFor(to, …)`。pad 检查 `to == tx.origin`、准入和上限，截断退款直接退给 `to`（§23.5）。
+  - `amountOut` 取 `to` 的代币余额变化，不用 pad 的返回值，并检查不小于 `minAmount`（audit L-2）。
+  - `fundsUsed = funds − to 的计价币余额变化`。
+- **卖 `sellToken(…, from, amount, minFunds, feeRate, feeRecipient)`**：
+  - `feeRate ≤ 500`。调 `pad.sellFor(from, token, amount, 0)`：代币用 `from` 给网关的授权从 `from` 直接进 pad（`pullFor`），所得按网关余额变化计。
+  - 手续费 `funds × feeRate / 10000`（向下取整）给 `feeRecipient`，其余给 `from`。BNB 计价时解包，手续费和所得都付原生 BNB。
+  - `minFunds` 比较的是 `from` 最终到手的金额。有手续费而 `feeRecipient == 0` 时回滚 `ZeroFeeRecipient`。
+- **报价**：
+  - `tryBuy` / `trySell` 复用 registry 的 `previewBuy` / `previewSell`，和成交逐 wei 一致。
+  - pad 没列入网关时两者都返回 0；准入关闭时 `tryBuy` 也返回 0，因为 `buyFor` 会回滚 `RouterNeedsGate`（audit L-1）。
+  - `getTokenInfo` 的 status：0 不是 Gang 币，1 内盘，2 已毕业 / 已发射（附 pair），3 打新进行中。
+- **其他**：`nonReentrant`；`receive` 只收 WBNB。网关不经手代币，也不留余额：每笔都按本次调用的余额变化结算。存储布局：slot 0 `_status`、1 `registry`、2 `wbnb`、3–49 `__gap`。
+- **大小**：runtime 5,896 B，initcode 6,107 B。
+
+### 25.3 与 §23.9 清单的关系（有意的例外）
+
+网关违反清单第 2、3 条：卖家 `from` 是调用者传入的参数，不是 `msg.sender`；`minFunds` 也由调用者填。第 1 条（不列入有任意调用能力的合约）、第 4 条（源码验证、升级权）、第 5 条（买入只花调用者本次的钱）都满足。第 3 条的要求部分满足：所得只付给 `from` 本人。这个例外是产品决定，目的是对齐 four.meme，聚合器明确表示钓鱼不在它们的考虑范围内。
+
+### 25.4 威胁模型
+
+| 威胁 | 处理 / 结论 |
+|---|---|
+| 攻击者在自己的 tx 里用别人对网关的授权卖币 | pad `TraderNotOrigin`（`test_sell_fromMustBeOrigin`、fork `test_fork_padRulesStillApply`） |
+| 只授权给 pad 的用户被经网关卖出 | `pullFor` 只花对网关的授权，`ERC20InsufficientAllowance` |
+| **用户被骗调用的合约，在用户自己的 tx 里强卖他已授权给网关的内盘代币** | **接受的剩余风险**。所得付给用户，攻击者拿最多 5% 手续费。**而且损失不止 5%**（audit M-1）：攻击者可以在同一 tx 里，或用 bundle 包住这笔 tx，先卖掉自己在同一条曲线上的库存压价，强卖之后再买回。用户的损失上限取决于攻击者的库存：每个 Agent 地址最多 1%，库存地址可以是 7702 委托的 Agent EOA、持 Agent ID 的合约，或 bundle 里的普通 EOA。审计 PoC 测得损失 9.35%（1 个库存地址）、30.8%（5 个）、53.8%（20 个）。`test/router/GangGatewayPhishing.t.sol` 固定了这一点（损失 > 5%、> 25%）。缓解：接入说明要求按每笔精确授权，卖完授权归 0，钓鱼合约就没有可卖的（`test_exactApproval_leavesNothingToForceSell`）；用户撤销授权或 Safe 下架网关可以立即止损 |
+| 毕业后残留的授权 | 毕业后 `pullFor` 永远 `NotLocked`，网关代码里也没有对代币的 `transferFrom`，残留授权在 v1 用不上。但升级可以改变这一点，所以升级要经 48 小时时间锁 |
+| registry 被盗（Safe 直接控制、没有时间锁），返回假 pad | 网关只从 `msg.sender` 拉资金，从不 `transferFrom` 用户的代币，所以假 pad 碰不到用户对网关的授权，最多拿走调用者那一笔自己付的 `funds`。买入的 `amountOut` 按 `to` 的余额变化计算：**registry 被升级成把真 Gang 币（锁定期）指向假 pad 时**，假 pad 转不动这个币，伪造不了成交，`minAmount > 0` 时回滚 `Slippage`（复审 PoC 证实，买卖都会回滚）。**误登记的 pad（`addPad`）为它自己发的币伪造成交，余额检查防不住**：那些币它想 mint 多少就能 mint 多少。这只能靠 Safe 审核 `addPad`。`test_buy_lyingPadCannotFakeAFill` 只覆盖「不转币的 pad」这一较弱的情形 |
+| BNB 退款 / 手续费接收方重入 | `nonReentrant`，重入失败后整笔回滚 `BnbTransferFailed`（`test_sell_reentrantFeeRecipientReverts`） |
+| fee-on-transfer 计价币 | pad 的 `pullExact` 拒绝，网关不另外处理 |
+| 部署填错 registry | 主网必须是 `M.PAD_REGISTRY`，owner 必须是 Safe，并对 registry 跑 `GangPadRegistryDeployLib.check`（audit L-3） |
+| 经 relayer / bundler / AA 发起的交易 | `tx.origin` 不是用户，`TraderNotOrigin`；不支持 |
+| EIP-7702 委托的 EOA 卖 BNB 计价币，委托代码不收 BNB | `BnbTransferFailed`，这笔回滚，用户可以直接在 pad 上卖 |
+
+### 25.5 审计
+
+- **第一轮**（独立 subagent，2026-10-30）：没有 Critical / High。
+  - M-1：同 tx 压价，结论见 25.4，不改模型，改注释和文档，并加了测试。
+  - L-1：pad 没列入网关、或准入关闭时，报价仍显示可交易。已修。
+  - L-2：买入的 `amountOut` 信任 pad 的返回值。已修。
+  - L-3：部署脚本没有钉死 registry。已修。
+  - Info：
+    - `protocolFeeBps` 对非内盘币改为 0；
+    - dust 卖出所得为 0（`trySell` 返回 0 时不要卖）；
+    - `graduationLeft` 是扣除 1% 手续费后的净额；
+    - `getTokenInfo` 和 four.meme Helper3 同 selector、返回结构不同，复用 four.meme 解码会回滚。
+- **修复后的独立复审**：见 25.7。
+
+### 25.6 测试
+
+- `test/router/GangGateway.t.sol`（36 个）：
+  - 部署自检；实现锁死；初始化参数为 0 时回滚；升级只能经时间锁、48 小时后才能执行。
+  - `getTokenInfo`：各种币和状态。
+  - 买入：BNB 直接买、经 adapter 买、ERC-20 计价；`to ≠ origin`；`msg.value` 错误；准入、滑点、金额为 0；1% 上限截断（WBNB 退给 trader、`fundsUsed`、上限满后的第二笔）；`amountFunds` 不产生退款；毕业截断加同 tx 毕业；非内盘币；`tryBuy` 按数量买不支持；下架后报价为 0；准入关闭；假 pad 伪造成交。
+  - 卖出：BNB 计价加 1% 手续费拆分；精确授权；ERC-20 计价；`minFunds` 是净额；只授权给 pad 不能卖；`from ≠ origin`；手续费检查；准入；已毕业；钓鱼所得仍归用户；重入；`receive`。
+  - 两个 fuzz（1,000 轮）：`tryBuy` / `trySell` 和成交逐 wei 一致。
+- `test/router/GangGatewayPhishing.t.sol`（3 个）：M-1 的压价强卖（1 个、5 个库存地址），以及精确授权的缓解效果。
+- `test/router/GangGatewayLayout.t.sol`（1 个）：存储布局快照。
+- `test/fork/GatewayMainnetFork.t.sol`（4 个，需要 `BSC_RPC_URL`，用 `--isolate` 跑）：在主网真实的 pad 和 registry 上，按部署脚本部署、Safe 列入，然后：
+  - 经 adapter 在一条真实的 WBNB 内盘曲线上买和卖，和报价逐 wei 一致；真实 WBNB 经代理的 2300 gas `receive` 解包成功。gas：买约 35 万，卖约 30 万。
+  - pad 的规则仍然生效：只授权给 pad、别人发起的交易、非 Agent 都会回滚。
+  - 已毕业币的 `getTokenInfo` 正确。
+- 主网 fork 模拟 `DeployGangGateway`（不广播）：自检（含 registry 的检查）通过，打印出 Safe 要执行的 `setRouter` calldata。
+
+### 25.7 修复后的复审
+
+独立复审（另一个 subagent，2026-10-30）：没有新的 Medium 或更高问题，修复没有引入新的重入或调用顺序问题。
+
+- 对第一轮的结论：
+  - M-1：文档层面已修。
+  - L-1：已修。逐个核对了这些状态：没列入网关、准入关闭、非 Agent、钱包已满、已毕业、打新、非 Gang 币。
+  - L-2：部分修复。说法范围过大，见下面 I-1。
+  - L-3：已修。主网模拟通过；测试网用 Chapel 上真实的 registry 模拟，含 pad owner = 部署钱包时直接 `setRouter`，以及用 `GANG_GATEWAY` 重跑，都通过。
+- 复审新提的 5 条 Info，处理如下：
+  - I-1 L-2 的范围：NatSpec 和 25.4 都改成只对真币有效，误登记 pad 自己的币靠 `addPad` 审核。
+  - I-2 status 1 不代表能交易：NatSpec 和规格写明，以 `tryBuy` / `trySell` 不为 0 为准。
+  - I-3 已毕业的内盘币 `protocolFeeBps` 为 100：改为 0，和已发射的打新币一致，加了断言。
+  - I-4 测试网重跑要给首次部署时的 `OWNER` / `ROUTER_TIMELOCK_DELAY`：写进规格，和 GangRouter 的脚本行为一致。
+  - I-5 `fundsUsed` 依赖 pad 精确拉取：写进注释和规格，作为登记新一代 pad 前要确认的一项。
+- 复审另外核对、没有问题的：
+  - 余额差 `amountOut` 在同一笔买入里毕业、分红币、带税币下都正确；
+  - `amountFunds` 在钱包上限截断和毕业截断下都买到同样数量、退款为 0（额外 fuzz 1,000 轮）；
+  - 合约大小、selector、存储布局；
+  - 余额变化带来的 gas 增量（只有几千）。
+
+这一轮修改只是注释、文档，以及 `getTokenInfo` 已毕业时返回的 `protocolFeeBps`，修改后网关的单元测试 40/40 通过。
+
+### 25.8 对外接口
+
+- 函数：
+  - `getTokenInfo(address)` `0x1f69565f`（和 four.meme Helper3 同 selector，返回结构不同）
+  - `tryBuy(address,address,uint256,uint256)` `0xdec05219`（比 Helper3 多一个 trader 参数）
+  - `trySell(address,uint256)` `0xc6f43e8c`
+  - `buyTokenAMAP(address,address,uint256,uint256)` `0x7f79f6df`
+  - `sellToken(uint256,address,address,uint256,uint256,uint256,address)` `0xe63aaf36`
+
+  后两个和 four.meme TokenManager2 的签名相同。另有 `registry()`、`wbnb()`、`MAX_FEE_RATE()`、`PROTOCOL_FEE_BPS()`。
+- 错误：
+  - `NotCurveToken()` `0xb666a83a`
+  - `FeeRateTooHigh()` `0xe30ce51e`
+  - `ZeroFeeRecipient()` `0xcff9f194`
+  - `Slippage()` `0x7dd37f70`（和 pad 的 `Slippage` 同 selector）
+  - `BadMsgValue()` `0x424b43ce`
+  - `AmountNotSupported()` `0xc995a37d`
+  - `OnlyWbnb()` `0x34a997f9`
+  - `BnbTransferFailed()` `0x5b10c467`
+  - `NotDeployed()` `0x77482513`
+- 事件：`GatewayBuy(token, trader, caller, fundsUsed, amountOut)`、`GatewaySell(token, trader, caller, amount, funds, fundsToSeller, routerFee, feeRecipient)`。
+- 上线步骤：
+  1. 跑 `script/DeployGangGateway.s.sol`；
+  2. Safe 在 pad 上执行 `setRouter(网关代理, true)`；
+  3. 把接口草案（对外版）里的地址补上。
