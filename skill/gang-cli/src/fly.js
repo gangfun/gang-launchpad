@@ -517,6 +517,12 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
       inviteBonusPerInvite: sale.rules.inviteBonus, invited: acct.view.invited, bonusShares: acct.view.inviteBonusShares,
       quota: acct.view.quota, quotaLeft: acct.view.quotaLeft,
       ...(board?.invitees && { invitees: board.invitees }),
+      // gang.fun's board counts an invite only while it holds up (so sell-backs can't farm it); the bonus above is the
+      // pad's and stays either way. Older servers have no such counts: the output is as before
+      ...(Number.isFinite(board?.validInvites) && {
+        validInvites: board.validInvites, totalInvites: board.totalInvites ?? acct.view.invited,
+        validNote: 'gang.fun counts an invite as valid while the invitee still holds pre-launch shares (before the fill), once the sale has filled or launched, or when the invitee first minted after launch; none counts in a refund-only sale. The quota bonus is on chain and stays either way',
+      }),
       ...(!board && { inviteesNote: `the list of invitees comes from ${API} (/fly/tokens/<token>/invites) once it indexes this pad; the count here is read on chain` }),
       note: 'an invite counts on the invitee\'s first mint in this token (before or after launch), when it passes --ref (gang mint --ref <inviter>) or opens the link; the inviter must have minted here and hold an Agent ID',
     })

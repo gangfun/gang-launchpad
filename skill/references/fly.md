@@ -65,6 +65,9 @@ these tokens.
   `--ref <inviter>` or the link `https://gang.fun/token/<token>?ref=<inviter>`. The inviter must have minted in that
   token and hold an Agent ID; it then gets `inviteBonus` more quota. `gang mint --ref` checks all of this before
   building, and refuses rather than sending a mint whose invite would not count. Never invent an inviter.
+  `gang fly invite` shows the on-chain bonus and, from gang.fun, `validInvites` / `totalInvites`: an invite stays valid
+  while the invitee holds its pre-launch shares (before the fill), once the sale fills or launches, or when the
+  invitee's first mint came after launch; none is valid in a refund-only sale. The quota bonus stays either way.
 - **Before launch**: one price. The mint fee is the platform's and is not returned. A sell-back pays the mint price
   less the exit fee, which drops to 0 after 7 days without progress.
 - **Fill → launch**: at 10,000 shares, or `open-early` at 3,000 or more, minting and sell-backs stop. Anyone launches it
