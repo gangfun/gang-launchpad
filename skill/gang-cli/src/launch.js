@@ -54,9 +54,8 @@ const REGISTRY_ABI = parseAbi(['function quoteRegistry() view returns (address)'
  * buy-back chunk on what it sends, so a quote that taxes transfers into pairs fails the pair's K check on every chunk
  * and the buy-back part is stuck for good (GangBond re-review L-1, 2026-10-29; splitter v3 has the same pricing).
  * --split takes the same quotes: a quote that calls the receiver back on transfer would let one payee make every split
- * run out of gas, and the keeper splits only these quotes anyway (split spec §2.4). --split only warns (the module
- * works with any quote): the launch goes on, and the payees split that quote by hand (gang split distribute).
- * null when trusted; otherwise the failure (--buyback) or the warning (--split) to report.
+ * run out of gas, and the keeper splits only these quotes anyway (split spec §2.4).
+ * null when trusted; otherwise the failure to report.
  */
 const UNTRUSTED = {
   buyback: {
@@ -64,11 +63,11 @@ const UNTRUSTED = {
     hint: 'drop --quote (WBNB), use a listed quote, or launch without --buyback',
   },
   split: {
-    why: 'the keeper does not distribute this quote (it serves WBNB, GANG and quotes listed in the pad\'s QuoteRegistry only): the payees (or anyone) must run gang split distribute --token <the token> to be paid. An unlisted quote may also call the receiver back on transfer, letting one payee make a split run out of gas',
-    hint: 'for keeper-paid splits, drop --quote (WBNB) or use a listed quote',
+    why: '--split needs WBNB, GANG or a quote listed in the pad\'s QuoteRegistry: the keeper splits only those quotes, and an unlisted quote may call the receiver back on transfer, letting one payee make every split run out of gas',
+    hint: 'drop --quote (WBNB), use a listed quote, or launch without --split',
   },
 }
-async function untrustedBuybackQuote(read, net, quote, mode = 'buyback') {
+export async function untrustedBuybackQuote(read, net, quote, mode = 'buyback') {
   if (!isAddress(quote ?? '')) return { error: '--quote must be a 0x address', got: quote ?? null }
   const q = quote.toLowerCase()
   if (q === String(net.wbnb).toLowerCase() || (String(net.chainId) === '56' && q === MAINNET_GANG_TOKEN)) return null
@@ -267,10 +266,11 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   // ---- split module: cloned for the dev before the create, at predict(dev, plan.salt)
   if (split && !created) {
     if (!plan?.salt) {
-      // not refused: the module splits any quote, only the keeper does not serve it (coordinator's call, 2026-10-30)
-      const unserved = await untrustedBuybackQuote(read, net, flag('quote') ? opt('quote') : net.wbnb, 'split')
-      if (unserved?.got !== undefined) return fail(unserved.error, { got: unserved.got })
-      const quoteWarning = unserved ? { warning: unserved.error, quote: unserved.quote, hint: unserved.hint } : null
+      const refused = await untrustedBuybackQuote(read, net, flag('quote') ? opt('quote') : net.wbnb, 'split')
+      if (refused) {
+        const { error, ...extra } = refused
+        return fail(error, extra)
+      }
       const salt = `0x${randomBytes(32).toString('hex')}`
       const at = await read(split.factory, SPLIT_FACTORY_ABI, 'predict', [me, salt])
       if (split.payees.some((p) => p.toLowerCase() === at.toLowerCase())) return fail('--split: a payee cannot be the split module itself', { module: at })
@@ -281,7 +281,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       const data = encodeFunctionData({ abi: SPLIT_FACTORY_ABI, functionName: 'create', args })
       return out({
         ...step({ chainId: net.chainId }, { from: me, to: split.factory, data }, {
-          step: 'split-module', chainId: Number(net.chainId), factory: split.factory, module: at, payees: split.list, ...(quoteWarning && { quoteWarning }),
+          step: 'split-module', chainId: Number(net.chainId), factory: split.factory, module: at, payees: split.list,
           note: `clones your split module (listed as a tax recipient in the same tx). The recipient's part of the tax is split ${splitLine(split.payees, split.shares)}. PERMANENT: nobody (not you, not the platform) can change the payees or shares later; each payee can only move its own slot to another address (gang split set-payee). The first payee also takes the rounding dust`,
         }, flag('calldata'), io.summarize),
         ...tag('split-module', { module: at, next: `${rerun}: it then builds the create with the module as the recipient` }),

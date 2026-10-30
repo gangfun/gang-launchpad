@@ -10,7 +10,7 @@
 
 **V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`，都已内置）；`--testnet` 走 BSC 测试网第 10 套。
 
-**多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。任何报价币都能用，但 keeper 只自动分 WBNB、GANG 和 QuoteRegistry 里的报价币：用别的报价币时发射会给出提醒，收款人要自己运行 `gang split distribute`。`gang split …` 查看和操作。已在 BSC 测试网可用；主网要等平台多签在 GangHandlerAdmin 上允许这个工厂（在那之前，发射的第一步会以 `NotFactory` 被拒，不会发出任何交易）。
+**多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。报价币只能是 keeper 会分账的：WBNB（默认）、GANG 或发射台 QuoteRegistry 里的报价币（其他的在克隆前就拒绝，和 `--buyback` 一样）；转进模块的其他资产仍可用 `gang split distribute` 手动分。`gang split …` 查看和操作。已在 BSC 测试网可用；主网要等平台多签在 GangHandlerAdmin 上允许这个工厂（在那之前，发射的第一步会以 `NotFactory` 被拒，不会发出任何交易）。
 
 ## 安装
 

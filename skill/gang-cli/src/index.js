@@ -351,8 +351,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 持续打新 tok
                                          only move its own slot (gang split set-payee). Steps: clone your split module
                                          (GangSplitModuleFactory; listed as a recipient in the same tx) → create with it as the
                                          recipient → bind → the rest of the launch. --split, --buyback and --recipient are
-                                         exclusive. Any quote works; the keeper distributes only WBNB, GANG and QuoteRegistry
-                                         quotes (another quote gets a warning: the payees run gang split distribute)
+                                         exclusive. Quote: WBNB (default), GANG or one listed in the pad's QuoteRegistry only
+                                         (the quotes the keeper splits; others are refused before the clone)
   gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
                                          打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
                                          chain (a token this wallet created with this symbol since the plan); a run that finds

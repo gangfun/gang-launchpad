@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { getAddress } from 'viem'
 import { parseSplitSpec, formatSplit, splitLine, SPLIT_TYPE, HINTS } from '../src/split.js'
+import { untrustedBuybackQuote } from '../src/launch.js'
 
 const ME = '0x00000000000000000000000000000000000000aa'
 const ME_C = getAddress(ME)
@@ -115,6 +116,32 @@ assert.deepEqual(unbound.next, [`gang split distribute --module ${M} --asset ${W
 
 assert.match(HINTS.PushStarved, /gas limit was too low/)
 assert.match(HINTS.NotFactory, /not allowed on the platform's GangHandlerAdmin/)
+
+// ---- --split takes only the quotes the keeper splits (spec §2.4), the same check as --buyback
+const GANG = '0x0c6302401aa5325c2e36f170f52c00b1d220b405'
+const REG = t(0x4e9)
+const LISTED = t(0x1157)
+const fakeRead = ({ registry = REG, fails = false } = {}) => async (address, _abi, fn, args) => {
+  if (fails) throw new Error('rpc down')
+  if (fn === 'quoteRegistry') return registry
+  if (fn === 'isQuoted') return args[0].toLowerCase() === LISTED.toLowerCase()
+  throw new Error(`unexpected ${fn}`)
+}
+const net56 = { chainId: '56', pad: t(0x9ad), wbnb: WBNB }
+const net97 = { chainId: '97', pad: t(0x9ad), wbnb: WBNB }
+assert.equal(await untrustedBuybackQuote(fakeRead(), net56, WBNB, 'split'), null)
+assert.equal(await untrustedBuybackQuote(fakeRead(), net56, GANG, 'split'), null)
+assert.equal(await untrustedBuybackQuote(fakeRead(), net97, LISTED, 'split'), null)
+const unlisted = await untrustedBuybackQuote(fakeRead(), net97, Q, 'split')
+assert.match(unlisted.error, /^--split needs WBNB, GANG or a quote listed in the pad's QuoteRegistry/)
+assert.match(unlisted.hint, /launch without --split/)
+assert.equal(unlisted.quote, Q)
+// GANG counts only on mainnet; no registry: refused; an unreadable registry: refused, try again
+assert.ok(await untrustedBuybackQuote(fakeRead(), net97, GANG, 'split'))
+assert.match((await untrustedBuybackQuote(fakeRead({ registry: t(0) }), net97, LISTED, 'split')).error, /--split needs/)
+assert.match((await untrustedBuybackQuote(fakeRead({ fails: true }), net97, Q, 'split')).error, /could not read the pad's QuoteRegistry to check the --split quote/)
+// --buyback keeps its own message
+assert.match((await untrustedBuybackQuote(fakeRead(), net97, Q)).error, /^--buyback needs/)
 
 // ---- flags refused before any RPC (--from: no Agentic Wallet needed)
 const cli = new URL('../src/index.js', import.meta.url).pathname
