@@ -361,6 +361,33 @@ contract FlywheelTaxHandlerTest is Test {
         assertLt(t, p1);
     }
 
+    /// @dev V2: the pad reads a 15- or 30-minute TWAP from the same observations (the handler is unchanged), and seeds
+    ///      the first window after launch at the launch price over the window chosen.
+    function test_twapOverEitherWindowFromTheSameObservations() public {
+        _create(100);
+        _launch(0);
+        uint256 p0 = oracle.spotPrice(address(token));
+        vm.warp(vm.getBlockTimestamp() + 60);
+        _sell(alice, 30_000 ether);
+        uint256 low = oracle.spotPrice(address(token));
+        vm.warp(vm.getBlockTimestamp() + 60);
+        // 120 s after launch: 60 s at the launch price, 60 s low, the rest of the window at the launch price
+        assertApproxEqRel(oracle.twapOver(address(token), 900), (p0 * 840 + low * 60) / 900, 1e12);
+        assertApproxEqRel(oracle.twapOver(address(token), 1800), (p0 * 1740 + low * 60) / 1800, 1e12);
+        for (uint256 i; i < 12; i++) {
+            vm.warp(vm.getBlockTimestamp() + 5 minutes);
+            vm.roll(vm.getBlockNumber() + 1);
+            handler.observe(address(token));
+        }
+        _buy(carol, 2 ether);
+        uint256 p1 = oracle.spotPrice(address(token));
+        vm.warp(vm.getBlockTimestamp() + 15 minutes);
+        // the newest observation 15 minutes old is the one just before the buy: the 15-minute TWAP is all p1
+        assertApproxEqRel(oracle.twapOver(address(token), 900), p1, 1e12);
+        uint256 t30 = oracle.twapOver(address(token), 1800);
+        assertApproxEqRel(t30, (low * 15 + p1 * 15) / 30, 1e12);
+    }
+
     function test_blockStartPriceIsTheFirstTouchOfTheBlock() public {
         _create(100);
         _launch(0);

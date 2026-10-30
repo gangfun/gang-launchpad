@@ -80,7 +80,7 @@ contract FlywheelAggregatorTest is FlywheelFixture {
         uint256 spent = router.mint(w, t, 10);
         assertEq(r0 - wbnb.balanceOf(address(router)), spent); // the router paid
         assertEq(IERC20(t).balanceOf(w), 10 * TPS); // the trader got the shares
-        assertEq(pad.quotaLeft(t, w), 90);
+        assertEq(pad.quotaLeft(t, w), 0); // quota 10 (V2 ceiling with post-launch minting)
         // sell back through the router: the trader approves the router on the token
         vm.prank(w);
         IERC20(t).approve(address(router), 4 * TPS);
@@ -142,17 +142,23 @@ contract FlywheelAggregatorTest is FlywheelFixture {
         assertEq(spent2, paid + fee2);
     }
 
+    /// @dev V2: only a sale with the guard on refuses after a dump (the fixture's sales have it off).
     function test_previewMintPostSaysNoAfterADump() public {
-        address t = _create(_wide(), 1);
+        IFlywheelPad.FlyConfig memory c = _wide();
+        c.guardBps = 2_000;
+        address t = _create(c, 1);
         _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + 600); // past the launch protection
         address whale = _newAgent();
         _poolBuy(t, whale, 6 ether);
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.roll(vm.getBlockNumber() + 1);
-        _poolSell(t, whale, IERC20(t).balanceOf(whale));
+        _poolSell(t, whale, IERC20(t).balanceOf(whale)); // about −45%: past the 20% guard
         vm.roll(vm.getBlockNumber() + 1);
         (,,,, bool ok) = pad.previewMintPost(t, whale, 10);
         assertFalse(ok);
+        vm.prank(whale);
+        vm.expectRevert(IFlywheelPad.PriceBelowAverage.selector);
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
     }
 }

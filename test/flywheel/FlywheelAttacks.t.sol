@@ -66,8 +66,9 @@ contract FlywheelAttacksTest is FlywheelFixture {
         uint256 q0 = wbnb.balanceOf(a);
         uint256 got;
         vm.startPrank(a);
-        for (uint256 i; i < 9; i++) {
-            (uint256 out,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
+        // the whole quota (10) in 1-share mints over many blocks (V1: 9 mints of 10 of a 100 quota)
+        for (uint256 i; i < 10; i++) {
+            (uint256 out,) = pad.mintPost(t, 1, 0, type(uint256).max, address(0));
             got += out;
             vm.roll(vm.getBlockNumber() + 1);
             vm.warp(vm.getBlockTimestamp() + 1);
@@ -78,8 +79,12 @@ contract FlywheelAttacksTest is FlywheelFixture {
     }
 
     // ------------------------------------------------------------ B: dump, then mint cheap
-    function test_dumpThenMintNextBlockIsRefused() public {
-        address t = _launchedWith(_wide());
+    /// @dev V2 (was test_dumpThenMintNextBlockIsRefused, V1's fixed 10% refusal): refused by a sale's 20% guard. With
+    ///      the guard off the mint is priced at the pool (more dump-then-mint regressions in FlywheelV2.t.sol).
+    function test_dumpThenMintNextBlockIsRefusedByTheGuard() public {
+        IFlywheelPad.FlyConfig memory c = _wide();
+        c.guardBps = 2_000;
+        address t = _launchedWith(c);
         address whale = _newAgent();
         _poolBuy(t, whale, 6 ether);
         vm.warp(vm.getBlockTimestamp() + 1 hours);
@@ -245,8 +250,20 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "devCutBps must be 0 when ungated"));
         pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
         c.devCutBps = 0;
+        // audit V2 A-L1: nor post-launch minting
+        (bool ok, string memory why) = pad.checkConfig(c, 1);
+        assertFalse(ok);
+        assertEq(why, "postMint needs the Agent ID gate");
         vm.prank(dev);
+        vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "postMint needs the Agent ID gate"));
         pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
+        c.postMint = false;
+        (ok,) = pad.checkConfig(c, 1);
+        assertTrue(ok);
+        vm.prank(dev);
+        address t = pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
+        assertEq(pad.sales(t).gate, address(0));
+        assertFalse(pad.sales(t).postMint);
     }
 
     /// @dev R2-1 L-1: after the grace period, a filled sale sold back below the early-open floor only refunds.
@@ -257,7 +274,7 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.warp(vm.getBlockTimestamp() + 60 + 7 days);
         // minters leave until 2,999 shares remain
         uint256 n = _sale(t).sold - 2_999;
-        for (uint256 i; n > 0 && i < 200; i++) {
+        for (uint256 i; n > 0 && i < 1_200; i++) {
             address w = address(uint160(uint256(keccak256(abi.encode("fly-agent", i + 1))))); // fixture's agents
             (uint32 held,,,,,,) = pad.accounts(t, w);
             if (held == 0) continue;
@@ -303,18 +320,18 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertFalse(ok);
     }
 
-    /// @dev After a real drop of ~8%: a mint is priced at the floor (above the pool; never silently far above: more
-    ///      than 10% under the recent high it is refused), and the preview says what it will get.
-    function test_aRealDropPricesMintsAtTheFloor() public {
+    /// @dev V2 (was test_aRealDropPricesMintsAtTheFloor: V1 priced 1% under max(high, TWAP, previous start)): after a
+    ///      real drop of ~8%, from the next block on a mint is priced at the pool, and the preview says what it gets.
+    function test_aRealDropPricesMintsAtThePool() public {
         address t = _dropped(92);
-        (uint256 spot,, uint256 high, uint256 avg) = pad.prices(t);
-        uint256 floor = ((high > avg ? high : avg) * 99) / 100;
-        assertLt(spot, floor);
+        (uint256 spot, uint256 blockStart, uint256 high, uint256 avg) = pad.prices(t);
+        assertEq(blockStart, spot); // nothing touched the pair in this block yet
+        assertLt(spot, (high * 93) / 100); // the recent high (information only) is ~8% up ...
+        assertLt(spot, avg); // ... and so is the TWAP
         address a = _newAgent();
         (, uint256 paid,, uint256 out, bool ok) = pad.previewMintPost(t, a, 10);
         assertTrue(ok);
-        assertLt(out, (paid << 112) / spot); // priced above the pool ...
-        assertLe(out, (paid << 112) / floor); // ... at least at the floor (the previous block's start can lift it)
+        assertEq(out, (paid << 112) / spot); // priced at the pool
         vm.prank(a);
         (uint256 got,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         assertEq(got, out);
@@ -343,9 +360,10 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.warp(vm.getBlockTimestamp() + 3);
     }
 
-    /// @dev Re-review R6 L-1: someone pushes one block's start up (a buy at the end of a block, sold back as the next
-    ///      block's first trade). Mints in the next touched block are refused rather than priced far above the pool,
-    ///      and the preview says so.
+    /// @dev Re-review R6 L-1, V2: someone pushes one block's start up (a buy at the end of a block, sold back as the
+    ///      next block's first trade). Mints in that block are refused rather than priced far above the pool, and the
+    ///      preview says so; from the next block on (V1: 20 more blocks, through the previous block's start) a mint is
+    ///      priced at the pool again.
     function test_aPushedBlockStartRefusesRatherThanOvercharges() public {
         address t = _create(_wide(), 1);
         _fillAndLaunch(t);
@@ -358,24 +376,23 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.roll(vm.getBlockNumber() + 1);
         vm.warp(vm.getBlockTimestamp() + 1);
         _poolSell(t, g, IERC20(t).balanceOf(g)); // block X: first trade sells it back (X's start is the pushed price)
-        vm.roll(vm.getBlockNumber() + 1);
-        vm.warp(vm.getBlockTimestamp() + 1);
         address a = _newAgent();
         (,,,, bool ok) = pad.previewMintPost(t, a, 10);
         assertFalse(ok);
         vm.prank(a);
         vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
         pad.mintPost(t, 10, 0, type(uint256).max, address(0));
-        // nobody touches the pair (the refused mints roll back their own observation): the pushed start still lifts
-        // the floor for a few seconds, then it no longer counts (re-review R7 L-1: the refusal lifts on its own)
-        vm.roll(vm.getBlockNumber() + 10);
-        vm.prank(a);
-        vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
-        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
-        vm.roll(vm.getBlockNumber() + 20);
-        (,,,, ok) = pad.previewMintPost(t, a, 10);
+        // the next block: the pushed start no longer counts, the mint is priced at the pool
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        uint256 paid;
+        uint256 out;
+        (, paid,, out, ok) = pad.previewMintPost(t, a, 10);
         assertTrue(ok);
+        (uint256 spotNow,,,) = pad.prices(t);
+        assertEq(out, (paid << 112) / spotNow);
         vm.prank(a);
-        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
+        (uint256 got,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
+        assertEq(got, out);
     }
 }

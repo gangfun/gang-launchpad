@@ -39,7 +39,8 @@ interface IGangPadShared {
 /// @dev Mainnet broadcast is refused unless FLYWHEEL_MAINNET_OK=true. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD; OWNER
 ///      (mainnet default the platform Safe); KEEPER (mainnet default the platform keeper, testnet the deployer). On
 ///      mainnet GANG_PAD, GANG_PAD_REGISTRY, OWNER and KEEPER must be the known ones (audit C-2) unless
-///      FLYWHEEL_ALLOW_OVERRIDE=true.
+///      FLYWHEEL_ALLOW_OVERRIDE=true. This is the V1 path (all three contracts new, from the current sources);
+///      DeployFlywheelV2 reuses the live MintTokenDeployer through the hooks below.
 contract DeployFlywheel is Script {
     uint256 internal constant MIN_SHARE = 1_000 ether;
     /// @dev The GangPadRegistry proxies aggregators read (docs/MAINNET-PAD-REGISTRY / TESTNET-PAD-REGISTRY).
@@ -47,6 +48,13 @@ contract DeployFlywheel is Script {
     address internal constant TESTNET_PAD_REGISTRY = 0xB11B83C83DEd269B040faecC1D61B4885BA8e56e;
     /// @dev The live GangLaunchpad whose shared contracts the pad joins.
     address internal constant MAINNET_GANG_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
+    /// @dev The entry contracts a pad may list with `setRouter` (docs/MAINNET-GANG-2026-10-27.md: GangRouter proxy;
+    ///      docs/MAINNET-GANG-GATEWAY-2026-10-30.md: GangGateway proxy). A new pad lists neither until the Safe does
+    ///      (audit V2 C-L3). Testnet: GANG_ROUTER / GANG_GATEWAY, if set.
+    address internal constant MAINNET_GANG_ROUTER = 0xE040445690Aa56C8b68B7f7038C7b2562B5079C4;
+    address internal constant MAINNET_GANG_GATEWAY = 0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8;
+    /// @dev The reference-pool pricing window the pad's constructor sets (GangFlywheelPad `_config.twapWindow`).
+    uint32 internal constant REF_TWAP_WINDOW = 1800;
 
     struct Shared {
         address quoteRegistry;
@@ -87,8 +95,7 @@ contract DeployFlywheel is Script {
         vm.startBroadcast(pk);
         if (existing == address(0)) {
             Own memory o = _deploy(sh, mainnet, me, keeper);
-            bool canWire = Ownable(sh.vault).owner() == me && Ownable(sh.migrator).owner() == me
-                && Ownable(sh.bucket).owner() == me && GangPadRegistry(sh.padRegistry).owner() == me;
+            bool canWire = _canWire(sh, o, me);
             if (canWire) {
                 _wireShared(sh, o);
                 if (owner == me) GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
@@ -97,16 +104,20 @@ contract DeployFlywheel is Script {
             vm.stopBroadcast();
             _log(o);
             if (!canWire) {
+                // audit V2 C-L1: everything that does not need the Safe's listings, before signers see the batch
+                _checkOwn(sh, o, keeper, mainnet);
+                console.log("self-check ok (phase 1: the pad and the handler as deployed; listings come in phase 2)");
+                _printFingerprint(o);
                 console.log("\n=== Safe batch: list the pad on the shared contracts, then run phase 2 ===");
-                console.log(_wiringJson(sh, o, mainnet, Ownable(sh.vault).owner()));
+                _printWiring(sh, o, mainnet);
             } else {
                 _check(sh, o, owner, me, keeper, mainnet);
                 if (owner != me) _printAccept(sh, o, mainnet, owner);
             }
+            _afterRun(o, mainnet, owner);
         } else {
-            Own memory o = Own({
-                deployer: vm.envAddress("FLYWHEEL_DEPLOYER"), handler: vm.envAddress("FLYWHEEL_HANDLER"), pad: existing
-            });
+            Own memory o =
+                Own({deployer: _existingDeployer(mainnet), handler: vm.envAddress("FLYWHEEL_HANDLER"), pad: existing});
             _requireShared(sh, o);
             if (owner == me && GangFlywheelPad(payable(o.pad)).migrator() == address(0)) {
                 GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
@@ -116,7 +127,39 @@ contract DeployFlywheel is Script {
             _check(sh, o, owner, me, keeper, mainnet);
             _log(o);
             if (owner != me) _printAccept(sh, o, mainnet, owner);
+            _afterRun(o, mainnet, owner);
         }
+    }
+
+    // ------------------------------------------------------------ hooks (DeployFlywheelV2 overrides them)
+    /// @dev Phase 2: the MintTokenDeployer phase 1 used.
+    function _existingDeployer(bool) internal view virtual returns (address) {
+        return vm.envAddress("FLYWHEEL_DEPLOYER");
+    }
+
+    /// @dev Whether the deploy wallet can list the pad on the shared contracts itself (testnet).
+    function _canWire(Shared memory sh, Own memory, address me) internal view virtual returns (bool) {
+        return Ownable(sh.vault).owner() == me && Ownable(sh.migrator).owner() == me && Ownable(sh.bucket).owner() == me
+            && GangPadRegistry(sh.padRegistry).owner() == me;
+    }
+
+    /// @dev Phase 1 without `_canWire`: the Safe batch that lists the pad.
+    function _printWiring(Shared memory sh, Own memory o, bool mainnet) internal view virtual {
+        console.log(_wiringJson(sh, o, mainnet, Ownable(sh.vault).owner()));
+    }
+
+    /// @dev After either phase (nothing in V1). `owner`: who the contracts are handed to.
+    function _afterRun(Own memory, bool, address) internal view virtual {}
+
+    /// @dev The MintTokenDeployer side of the self-check: V1 deploys and lists its own deployer in phase 1.
+    function _checkDeployer(Own memory o, bool) internal view virtual {
+        if (!MintTokenDeployer(o.deployer).launchpads(o.pad)) revert NotWired("deployer.setLaunchpad");
+    }
+
+    /// @dev The routers the self-check knows: none may be listed on a new pad (the Safe lists them after review).
+    function _knownRouters(bool mainnet) internal view returns (address[2] memory r) {
+        if (mainnet) return [MAINNET_GANG_ROUTER, MAINNET_GANG_GATEWAY];
+        r = [vm.envOr("GANG_ROUTER", address(0)), vm.envOr("GANG_GATEWAY", address(0))];
     }
 
     function _shared(address gangPad) internal view returns (Shared memory sh) {
@@ -130,7 +173,11 @@ contract DeployFlywheel is Script {
         });
     }
 
-    function _deploy(Shared memory sh, bool mainnet, address me, address keeper) internal returns (Own memory o) {
+    function _deploy(Shared memory sh, bool mainnet, address me, address keeper)
+        internal
+        virtual
+        returns (Own memory o)
+    {
         address wbnb = mainnet ? M.WBNB : T.WBNB;
         address factory = mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY;
         address router = mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER;
@@ -149,7 +196,7 @@ contract DeployFlywheel is Script {
     }
 
     /// @dev The shared listings (only when the deployer owns the shared contracts, i.e. testnet).
-    function _wireShared(Shared memory sh, Own memory o) internal {
+    function _wireShared(Shared memory sh, Own memory o) internal virtual {
         SharedDividendVault v = SharedDividendVault(sh.vault);
         v.setLaunchpad(o.pad, true);
         v.setMinimumShareBalance(o.pad, MIN_SHARE);
@@ -160,7 +207,7 @@ contract DeployFlywheel is Script {
         GangPadRegistry(sh.padRegistry).addPad(o.pad);
     }
 
-    function _requireShared(Shared memory sh, Own memory o) internal view {
+    function _requireShared(Shared memory sh, Own memory o) internal view virtual {
         SharedDividendVault v = SharedDividendVault(sh.vault);
         if (!v.launchpads(o.pad)) revert NotWired("vault.setLaunchpad(pad)");
         if (v.operatorOf(o.handler) != o.pad) revert NotWired("vault.setOperator(handler, pad)");
@@ -181,7 +228,11 @@ contract DeployFlywheel is Script {
 
     /// @dev Audit C-2: on mainnet the inputs are pinned (a testnet OWNER / KEEPER left in the env would hand the
     ///      contracts or the keeper role to the wrong wallet), and the Safe must own every shared contract.
-    function _requireMainnetInputs(Shared memory sh, address gangPad, address owner, address keeper) internal view {
+    function _requireMainnetInputs(Shared memory sh, address gangPad, address owner, address keeper)
+        internal
+        view
+        virtual
+    {
         if (gangPad != MAINNET_GANG_PAD) revert NotWired("GANG_PAD is not the live GangLaunchpad");
         if (sh.padRegistry != MAINNET_PAD_REGISTRY) revert NotWired("GANG_PAD_REGISTRY is not the live registry");
         if (owner != M.OWNER_SAFE) revert NotWired("OWNER is not the platform Safe");
@@ -206,16 +257,31 @@ contract DeployFlywheel is Script {
     function _check(Shared memory sh, Own memory o, address owner, address me, address keeper, bool mainnet)
         internal
         view
+        virtual
     {
         _requireShared(sh, o);
         GangFlywheelPad p = GangFlywheelPad(payable(o.pad));
-        FlywheelTaxHandler h = FlywheelTaxHandler(o.handler);
         if (p.migrator() == address(0)) {
             if (owner == me) revert NotWired("pad.setMigrator");
             console.log("pad.setMigrator: in the Safe batch below");
         } else if (p.migrator() != sh.migrator) {
             revert NotWired("pad.setMigrator");
         }
+        _checkOwn(sh, o, keeper, mainnet);
+        address[3] memory cs = [o.deployer, o.handler, o.pad];
+        for (uint256 i; i < 3; i++) {
+            Ownable2Step c = Ownable2Step(cs[i]);
+            if (c.owner() != owner && c.pendingOwner() != owner) revert NotWired("ownership handover");
+        }
+        console.log("self-check ok");
+    }
+
+    /// @dev What phase 1 deployed and set, independent of the Safe's listings (audit V2 C-L1): pad and handler
+    ///      immutables, the handler's pad / keeper / router, the Agent ID gate, the factories, the deployer, and (C-L3)
+    ///      the pad's reference-pool window, no router listed, no bridge pool set.
+    function _checkOwn(Shared memory sh, Own memory o, address keeper, bool mainnet) internal view virtual {
+        GangFlywheelPad p = GangFlywheelPad(payable(o.pad));
+        FlywheelTaxHandler h = FlywheelTaxHandler(o.handler);
         if (h.launchpad() != o.pad) revert NotWired("handler.setLaunchpad");
         if (h.keeper() != keeper) revert NotWired("handler keeper");
         if (address(h.dexRouter()) != (mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER)) {
@@ -224,7 +290,7 @@ contract DeployFlywheel is Script {
         if (address(h.dividendVault()) != sh.vault || address(h.platformBucket()) != sh.bucket) {
             revert NotWired("handler shared contracts");
         }
-        if (!MintTokenDeployer(o.deployer).launchpads(o.pad)) revert NotWired("deployer.setLaunchpad");
+        _checkDeployer(o, mainnet);
         if (address(p.agentIdRegistry()) == address(0) || !p.agentGateEnabled()) revert NotWired("agent gate");
         if (mainnet && address(p.agentIdRegistry()) != M.AGENT_ID_REGISTRY) revert NotWired("agent registry");
         if (p.taxHandler() != o.handler || p.tokenDeployer() != o.deployer) revert NotWired("pad immutables");
@@ -236,12 +302,38 @@ contract DeployFlywheel is Script {
         if (p.v3Factory() != (mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY)) {
             revert NotWired("pad v3 factory");
         }
-        address[3] memory cs = [o.deployer, o.handler, o.pad];
-        for (uint256 i; i < 3; i++) {
-            Ownable2Step c = Ownable2Step(cs[i]);
-            if (c.owner() != owner && c.pendingOwner() != owner) revert NotWired("ownership handover");
+        // `twapWindow()` exists from V2 on (re-review L-1: the live V1 pad has neither it nor `postRulesOf`)
+        if (_isV2(p)) {
+            if (p.twapWindow() != REF_TWAP_WINDOW) revert NotWired("pad reference-pool twapWindow");
+        } else {
+            console.log("V1 pad (no postRulesOf): reference-pool twapWindow not readable, not checked");
         }
-        console.log("self-check ok");
+        address[2] memory rs = _knownRouters(mainnet);
+        for (uint256 i; i < 2; i++) {
+            if (rs[i] != address(0) && p.routers(rs[i])) revert NotWired("a router is listed on the new pad");
+        }
+        if (p.bridgePoolOf(mainnet ? M.USDT : T.TEST_QUOTE) != address(0)) revert NotWired("a bridge pool is set");
+    }
+
+    /// @dev A V2 pad answers `postRulesOf`; a V1 pad reverts on it.
+    function _isV2(GangFlywheelPad p) internal view returns (bool) {
+        try p.postRulesOf(address(0)) returns (uint16, uint32) {
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev For the signers, next to the listing batch: what they are about to list (compare with the broadcast
+    ///      record, broadcast/<script>/<chain>/run-latest.json, which holds the deploy transaction hashes).
+    function _printFingerprint(Own memory o) internal view {
+        console.log("\n=== fingerprint for the signers: the batch below lists exactly these ===");
+        console.log("pad", o.pad);
+        console.log("pad codehash", vm.toString(o.pad.codehash));
+        console.log("handler", o.handler);
+        console.log("handler codehash", vm.toString(o.handler.codehash));
+        console.log("token deployer", o.deployer);
+        console.log("deploy tx hashes: broadcast/<script>/<chain>/run-latest.json of this run");
     }
 
     /// @dev Only what is left for the Safe: the acceptOwnership calls it has not made, then `setMigrator` if the pad is
@@ -261,6 +353,8 @@ contract DeployFlywheel is Script {
         }
         console.log("\n=== Safe batch: accept ownership and / or open the pad (setMigrator) ===");
         console.log(_acceptJson(sh, o, mainnet, owner, accept, !open));
+        // audit V2 C-L3: the batch is checked against the chain as of this run
+        console.log("REMINDER: re-run this phase-2 simulation (no --broadcast) right before signing the accept batch");
     }
 
     function _log(Own memory o) internal pure {
@@ -275,16 +369,19 @@ contract DeployFlywheel is Script {
         returns (string memory j)
     {
         j = _head(mainnet, safe, "gang: list the continuous-mint pad on the shared contracts");
-        j = string.concat(
-            j,
+        j = string.concat(j, _wiringTxs(sh, o), "]}");
+    }
+
+    /// @dev The seven listings (vault ×3, migrator, bucket ×2, registry), comma-separated, no brackets.
+    function _wiringTxs(Shared memory sh, Own memory o) internal pure returns (string memory) {
+        return string.concat(
             _tx(sh.vault, abi.encodeCall(SharedDividendVault.setLaunchpad, (o.pad, true)), false),
             _tx(sh.vault, abi.encodeCall(SharedDividendVault.setMinimumShareBalance, (o.pad, MIN_SHARE)), true),
             _tx(sh.vault, abi.encodeCall(SharedDividendVault.setOperator, (o.handler, o.pad)), true),
             _tx(sh.migrator, abi.encodeCall(SharedMigrator.addLaunchpad, (o.pad)), true),
             _tx(sh.bucket, abi.encodeCall(SharedPlatformFeeBucket.setOperator, (o.pad, true)), true),
             _tx(sh.bucket, abi.encodeCall(SharedPlatformFeeBucket.setOperator, (o.handler, true)), true),
-            _tx(sh.padRegistry, abi.encodeCall(GangPadRegistry.addPad, (o.pad)), true),
-            "]}"
+            _tx(sh.padRegistry, abi.encodeCall(GangPadRegistry.addPad, (o.pad)), true)
         );
     }
 

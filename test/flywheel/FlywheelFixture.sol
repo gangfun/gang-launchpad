@@ -98,7 +98,8 @@ abstract contract FlywheelFixture is Test {
     }
 
     // ------------------------------------------------------------ configs
-    /// @dev The "Agent Mint" preset: 20 BNB raise, quota 10 + 1 per invite, standard tiers, 10% dev, 30% buy, 2% sell.
+    /// @dev The "Agent Mint" (J) preset: 20 BNB raise, quota 10 + 1 per invite, standard tiers, 10% dev, 30% buy, 2%
+    ///      sell; V2 post rules: guard off, 30-minute TWAP window.
     function _agentMint() internal pure returns (IFlywheelPad.FlyConfig memory c) {
         c = IFlywheelPad.FlyConfig({
             raiseBnb: 20 ether,
@@ -119,14 +120,17 @@ abstract contract FlywheelFixture is Test {
             stepBps: 0,
             stepShares: 0,
             maxMulX100: 0,
-            supplyCapMul: 100
+            supplyCapMul: 100,
+            guardBps: 0,
+            twapWindow: 1800
         });
     }
 
-    /// @dev Same with a quota of 100 (100 wallets fill the sale) — most suites use it to keep runs short.
+    /// @dev The widest quota V2 allows with post-launch minting: 10, as the J preset (1,000 wallets fill the sale; V1
+    ///      suites used 100). Guard off and a 30-minute window, as in `_agentMint`: the most permissive post rules.
     function _wide() internal pure returns (IFlywheelPad.FlyConfig memory c) {
         c = _agentMint();
-        c.baseQuota = 100;
+        c.baseQuota = 10;
     }
 
     function _create(IFlywheelPad.FlyConfig memory c, uint256 devShares) internal returns (address t) {

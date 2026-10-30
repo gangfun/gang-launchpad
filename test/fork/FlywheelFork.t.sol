@@ -110,7 +110,7 @@ contract FlywheelForkTest is Test {
     function _cfg() internal pure returns (IFlywheelPad.FlyConfig memory) {
         return IFlywheelPad.FlyConfig({
             raiseBnb: 20 ether,
-            baseQuota: 100,
+            baseQuota: 10, // V2: the ceiling with post-launch minting
             inviteBonus: 1,
             maxPerTx: 10,
             holdBps: 6_000,
@@ -127,7 +127,9 @@ contract FlywheelForkTest is Test {
             stepBps: 0,
             stepShares: 0,
             maxMulX100: 0,
-            supplyCapMul: 100
+            supplyCapMul: 100,
+            guardBps: 2_000,
+            twapWindow: 900
         });
     }
 
@@ -194,7 +196,7 @@ contract FlywheelForkTest is Test {
             0, _path(WBNB, t), plain, block.timestamp
         );
         address buyer = _agent();
-        _routerBuy(t, buyer, 0.05 ether); // an Agent within the cap: fine
+        _routerBuy(t, buyer, 0.015 ether); // an Agent within the cap (quota 10 × 100,000 tokens, ~750,000 bought): fine
 
         // post-launch mints; LP really minted by the pair
         vm.warp(vm.getBlockTimestamp() + 600);
@@ -224,12 +226,34 @@ contract FlywheelForkTest is Test {
         }
         assertGt(vault.pending(t, dev) + vault.pending(t, first), 0); // minters earn the tax
 
-        // the oracle on the real pair's cumulative price
+        // the oracle on the real pair's cumulative price (the sale's 15-minute window)
         vm.warp(vm.getBlockTimestamp() + 40 minutes);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
         (uint256 spot,,, uint256 avg) = pad.prices(t);
         assertGt(avg, 0);
         assertApproxEqRel(avg, spot, 0.2e18);
+        (uint16 g, uint32 w) = pad.postRulesOf(t);
+        assertEq(g, 2_000);
+        assertEq(w, 900);
+
+        // V2 on the real pair: a 30% dump refuses the next block's mint (guard 20%); the preview agrees
+        address seller = _agent();
+        _routerBuy(t, seller, 5 ether);
+        vm.warp(vm.getBlockTimestamp() + 20 minutes);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
+        vm.roll(vm.getBlockNumber() + 1);
+        _routerSell(t, seller, IERC20(t).balanceOf(seller));
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 3);
+        (spot,,, avg) = pad.prices(t);
+        assertLt(spot * 10, avg * 8, "the dump is past the guard");
+        address late = _agent();
+        (,,,, bool okPreview) = pad.previewMintPost(t, late, 10);
+        assertFalse(okPreview);
+        vm.prank(late);
+        vm.expectRevert(IFlywheelPad.PriceBelowAverage.selector);
+        pad.mintPostWithBnb{value: 1 ether}(t, 10, 0, address(0));
     }
 }
