@@ -247,6 +247,8 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice Split `asset` that arrived (the bound quote: as `split`; any other: the buy-back and liquidity share to
     ///         0xdead, the rest among the payees).
     function distribute(address asset) external nonReentrant returns (uint256 incoming) {
+        // before `bind` the quote is unknown: the tax already here must not be split as another asset (re-review)
+        if (quote == address(0)) revert NotBound();
         if (asset == quote) {
             _splitQuote();
             return 0;
@@ -258,6 +260,7 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     ///         slot `index` is owed in it to its payee (type(uint256).max: all of it; reverts while it still can't
     ///         receive).
     function release(address asset, uint256 index, uint256 maxAmount) external nonReentrant returns (uint256 amount) {
+        if (quote == address(0)) revert NotBound();
         if (index >= _payees.length) revert BadIndex();
         if (asset == quote) _splitQuote();
         else _distribute(asset);
@@ -628,8 +631,8 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         (address p, bool tokenIs0) = _pairOf();
         (uint256 rT, uint256 rQ, bool ok) = _rollTwap(p, tokenIs0);
         if (!ok) return (0, 0, 0);
-        uint256 chunk = _chunkOf(left, rQ);
-        uint256 half = chunk / 2;
+        uint256 amount = _chunkOf(left, rQ);
+        uint256 half = amount / 2;
         if (half == 0) return (0, 0, 0);
         lastChunkAt = uint64(block.timestamp);
         left -= half;
@@ -660,7 +663,7 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
 
             // 3. the matching quote at those reserves (rounded up), at most the other half
             uint256 match_ = rT == 0 ? 0 : (tokensIn * rQ + rT - 1) / rT;
-            uint256 room = chunk - half;
+            uint256 room = amount - half;
             if (match_ > room) match_ = room;
             uint256 supply = ILpPair(p).totalSupply();
             // a mint of 0 LP reverts in the pair: then the tokens are left in it unsynced (dust only)
