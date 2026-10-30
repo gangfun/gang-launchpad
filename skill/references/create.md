@@ -110,7 +110,5 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   `--lp-to <addr>`. Only when the user asks for it. The quote must be WBNB, GANG or one in the pad's QuoteRegistry
   (others are refused before the clone, as for `--buyback`). The splitter's address is printed before the clone. A
   launch keeps the ratio and payee it began with (run it as it began, or `--restart`). Tell the user: a raise of the
-  ratio applies at once, a cut only 3 days after it is asked for. Live on BSC testnet; on BSC mainnet the factory
-  waits for the platform's Safe to allow it: until then the clone step stops with `NotFactory` (nothing is sent) —
-  tell the user and launch without `--lp`, or wait.
+  ratio applies at once, a cut only 3 days after it is asked for. Live on BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.

@@ -21,7 +21,7 @@ import { parseNum, revertOf as revertIn, step } from './steps.js'
  * Env: GANG_LP_FACTORY / GANG_TESTNET_LP_FACTORY override the built-in factory addresses.
  */
 
-// BSC 56: deployed 2026-10-31; until the platform's Safe allows it on GangHandlerAdmin, a clone simulates to NotFactory
+// BSC 56: deployed 2026-10-31, allowed on GangHandlerAdmin by the platform's Safe the same day
 export const MAINNET_LP_FACTORY = '0xE0436867dAFcf42Ee1418083251a9B8B61F0C248'
 // BSC 97, set 10 (docs/TESTNET-LP-MODULE-2026-10-30.md)
 export const TESTNET_LP_FACTORY = '0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591'
@@ -95,7 +95,7 @@ export const LP_GAS_NOTE = 'let the wallet estimate the gas limit and do not set
 
 export const HINTS = {
   NotAgent: 'only an Agent can create a V3 token, so only an Agent gets an LP splitter',
-  NotFactory: 'this LP factory is not allowed (or not yet allowed) on the platform\'s GangHandlerAdmin: it cannot list an LP splitter as a tax recipient. The platform\'s Safe allows each new factory; until then launch without --lp. If GANG_LP_FACTORY / GANG_TESTNET_LP_FACTORY is set, unset it to use the built-in factory',
+  NotFactory: 'this LP factory is not allowed on the platform\'s GangHandlerAdmin: it cannot list an LP splitter as a tax recipient. If GANG_LP_FACTORY / GANG_TESTNET_LP_FACTORY is set, unset it to use the built-in factory; otherwise launch without --lp',
   BadBps: 'the LP share is 0–100%',
   BadPayee: 'the payee cannot be the LP splitter itself',
   ZeroAddress: 'the zero address cannot be the payee',

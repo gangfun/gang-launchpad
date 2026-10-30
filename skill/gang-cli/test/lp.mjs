@@ -78,8 +78,8 @@ assert.match(waits({ lastAddAt: 0n }), /the price check: a 10-minute average/)
 assert.match(waits({}), /the price check/)
 assert.equal(formatLp(raw({ lastAddAt: 0n })).lastAddAt, null)
 
-assert.match(HINTS.NotFactory, /not allowed \(or not yet allowed\) on the platform's GangHandlerAdmin/)
-assert.match(HINTS.NotFactory, /launch without --lp/)
+assert.match(HINTS.NotFactory, /not allowed on the platform's GangHandlerAdmin/)
+assert.match(HINTS.NotFactory, /unset it to use the built-in factory/)
 assert.match(HINTS.AddTooSoon, /4 minutes/)
 
 // ---- gang tx: the splitter's LiquidityAdded and Split decode with the CLI's ABIs
