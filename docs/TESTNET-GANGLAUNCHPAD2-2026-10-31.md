@@ -56,8 +56,22 @@ KEEPER 不设（默认部署钱包，等于共享 bucket 的 keeper）；路由 
 - A、B 的 `creatorFeeOf` 为 0，Gateway 币为 27,859,999,999,998；钱包上限已打开；`CREATOR_FEE_SHARE_BPS = 7000`；migrator = 共享 migrator。
 - 2.0 的 WBNB 余额 1,017,664,018,804,275 = A 的 `realQuote` 989,804,018,804,277 + Gateway 币的 creator 分成 27,859,999,999,998，零头 0。
 
+## 模块
+
+现有脚本，`GANG_PAD` 指向 2.0，`HANDLER_ADMIN` 为新 admin；测试网上部署钱包拥有 handler 和 admin，脚本直接执行接线。合约代码和 1.0 上用的完全相同。
+
+| 合约 | 地址 | 交易 |
+|---|---|---|
+| GangHandlerAdmin（2.0 handler 的 owner；admin 的 owner = 部署钱包） | [`0xC4EEca9623726519Ccc9616D88be5a897E584918`](https://testnet.bscscan.com/address/0xC4EEca9623726519Ccc9616D88be5a897E584918) | 部署 [`0xd26b1371…af3b`](https://testnet.bscscan.com/tx/0xd26b137102f0abfdfb1c72e52f1a3dc624113a995b0ca374cc84577701a9af3b)，handler 转交 [`0xfa7ad9ba…6761`](https://testnet.bscscan.com/tx/0xfa7ad9ba75567099e01c38028cb85469f834a9f2ab6207ff8c54ab9bc7bf6761)，接受 [`0x70d3e043…0f72`](https://testnet.bscscan.com/tx/0x70d3e043551138faab6fca2d61f9bb7874129e70e0b94d0496cc3c19872b0f72) |
+| GangBuybackSplitterFactory | [`0xBc26A6585B3Dc2Cbf1522475fB5b18df6C1033AE`](https://testnet.bscscan.com/address/0xBc26A6585B3Dc2Cbf1522475fB5b18df6C1033AE) | 部署 [`0x6d233a72…0878`](https://testnet.bscscan.com/tx/0x6d233a7213edcff9d5c6afb93dfd3529d6c9f2c4a772183b99c39485b58e0878)，`setFactory` [`0x8cbf0118…f1bd`](https://testnet.bscscan.com/tx/0x8cbf0118bed9ea7f70e5fcd4de7e465896ae2ac8e06557f5f7ba0d5c434df1bd) |
+| GangSplitModuleFactory | [`0x860D51808E9FBB4f887FC7d0Aa9e1F8E19E00879`](https://testnet.bscscan.com/address/0x860D51808E9FBB4f887FC7d0Aa9e1F8E19E00879) | 部署 [`0xc1f385b7…f720`](https://testnet.bscscan.com/tx/0xc1f385b7d44168416df8076b31f53ceaef920da05b1a866b39b48d8749ebf720)，`setFactory` [`0xf302ae7b…a573`](https://testnet.bscscan.com/tx/0xf302ae7b1a51ae0f5b9bf4f71e30cad78f129484267c55495b8d8056e507a573) |
+| GangLiquiditySplitterFactory | [`0x4f1544e4e8853fC62088f0A4eCbEF409D2e11619`](https://testnet.bscscan.com/address/0x4f1544e4e8853fC62088f0A4eCbEF409D2e11619) | 部署 [`0x976002fd…c007`](https://testnet.bscscan.com/tx/0x976002fde4292256a0b71face394ffb66b0d9ab83cdce37310c9ab545687c007)，`setFactory` [`0x1d0f0de8…5dbb`](https://testnet.bscscan.com/tx/0x1d0f0de89d4a320dd38d8f384469a7f40472b5c728483fef49067e8c3e245dbb) |
+| GangBond | [`0x913966122b9f8CC00C0d81000988A483c6B7F97f`](https://testnet.bscscan.com/address/0x913966122b9f8CC00C0d81000988A483c6B7F97f) | [`0xbb01b1a4…77b9`](https://testnet.bscscan.com/tx/0xbb01b1a451bb6c989a4c429443bc30803e503267c6350113c7964e8e222577b9) |
+
+链上核对：handler 的 owner = admin，`admin.handler()` = 2.0 handler；三个 factory 的 `pad()` 都是 2.0，`admin.isFactory` 都为真；`GangBond.pad()` = 2.0。模块各自的端到端验收（克隆、收税、分账）留到 CLI 接入 2.0 后在测试网上跑。部署记录：上面四个脚本 `broadcast/<脚本>/97/` 下本次新增的带时间戳文件（这几个目录的 `run-latest.json` 仍是 1.0 那次的，没有改）。
+
 ## 还没做
 
-- 模块：为 2.0 部署 GangHandlerAdmin 和 Buyback / Split / LP 三个 factory、GangBond（现有脚本，`GANG_PAD` 指向 2.0）。
+- 模块的端到端验收（见上）。
 - 后端（indexer / keeper）、网站、CLI 接入 2.0。
 - 切换（1.0 停止创建）：等以上完成后，部署钱包调用 `TokenDeployer.setLaunchpad(1.0, false)`。
