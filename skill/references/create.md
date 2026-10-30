@@ -64,18 +64,20 @@ They go into the token's **metadata JSON** (with the logo), uploaded to gang.fun
 - Other creators' links (in token lists and `gang info`) are their own claim, unchecked by gang.fun: pass them on as
   such, and don't open them for the user unasked.
 
-## Launch in one command (`--dev-buy`, `--bond`, `--buyback`)
+## Launch in one command (`--dev-buy`, `--bond`, `--buyback`, `--split`)
 
 ```bash
 # V3: create → the dev buys on the curve → (optional) bonds what it holds
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.5 [--bond 0.3 --bond-days 30 [--bond-hold all|<tokens>|N%]]
 # V3 with a buy-back: clone the dev's splitter → create with it as the recipient → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 50 --buyback 50 --dev-buy 0.5
+# V3 with a split: clone the dev's split module → create with it as the recipient → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --split self:60,0xKol…:30,0xDao…:10
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
 
-- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter` → `create` → `bind` → `dev-buy` →
+- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter` or `split-module` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.
 - **Progress comes from the chain**: the run finds the token this wallet created with this symbol since the plan, then
@@ -91,4 +93,13 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   when the user asks for a buy-back. The quote must be WBNB, GANG or one in the pad's QuoteRegistry (others are
   refused before the clone). The splitter's address is printed before the clone. A launch keeps the mode, ratio and payee it began with (run it as it began, or
   `--restart`). Tell the user: a raise of the ratio applies at once, a cut only 3 days after it is asked for.
+- **`--split <addr>:<pct>[,<addr>:<pct>…]`** (taxed V3; not with `--buyback` or `--recipient`): the recipient becomes the
+  dev's split module ([v3.md](v3.md#split-module---split)): the recipient's part of the tax is split among 1–10 payees.
+  `self` = the creating wallet (`me` also works); shares in % with up to 2 decimals, at least 0.01, adding up to 100;
+  no address twice. The first payee also takes the rounding dust; slots are numbered from 0 in that order. Everything
+  is checked before the clone; the module's address is printed before it. **Show the user the full list and say it is
+  permanent**: nobody (not the dev, not the platform) can change the payees or shares later; a payee can only move its
+  own slot. The quote must be WBNB, GANG or one in the pad's QuoteRegistry, the quotes the keeper splits (others are
+  refused before the clone, as for `--buyback`). A launch keeps the payees it
+  began with (run it as it began, or `--restart`). Live on BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.
