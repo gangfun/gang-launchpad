@@ -170,22 +170,32 @@ contract FlywheelTestnetAccept is Script {
         if (!probe.refused()) revert Check("protection let a wallet without an Agent ID buy");
         console.log("pair", sale.pair);
         console.log("sold", sale.sold);
-        console.log("protection until", block.timestamp + 300);
+        // simulated time: with --slow the launch lands later; phase 2 reads the real end from the handler
+        console.log("protection until (simulated)", block.timestamp + 300);
     }
 
     function _phase2(address s) internal {
         IFlywheelPad.Sale memory sale = pad.sales(s);
         if (!sale.launched) revert Check("not launched");
-        // post-launch mints by five wallets; the preview must match
-        for (uint256 i; i < 5; i++) {
-            (uint256 key, address who) = _wallet(10 + i);
-            (uint256 acc, uint256 paid, uint256 fee, uint256 out, bool ok) = pad.previewMintPost(s, who, 10);
+        (uint64 until,,) = handler.protectionOf(s);
+        if (block.timestamp < until) revert Check("protection window still open: wait for handler.protectionOf(token)");
+        // post-launch mints by up to five wallets with quota left (a re-run skips the ones that used theirs); the
+        // preview must match
+        uint256 minted;
+        for (uint256 i = 10; i < 30 && minted < 5; i++) {
+            (uint256 key, address who) = _wallet(i);
+            uint256 want = pad.quotaLeft(s, who);
+            if (want == 0) continue;
+            if (want > 10) want = 10;
+            (uint256 acc, uint256 paid, uint256 fee, uint256 out, bool ok) = pad.previewMintPost(s, who, want);
             if (!ok || acc == 0) revert Check("preview says no");
             vm.startBroadcast(key);
-            (uint256 got, uint256 spent) = pad.mintPost(s, 10, (out * 98) / 100, address(0));
+            (uint256 got, uint256 spent) = pad.mintPost(s, want, (out * 98) / 100, address(0));
             vm.stopBroadcast();
             if (got != out || spent != paid + fee) revert Check("preview != mint");
+            minted++;
         }
+        if (minted == 0) revert Check("no wallet with quota left");
         // pool trading through the router, then the keeper sells the tax
         vm.startBroadcast(pk);
         address[] memory path = new address[](2);
@@ -193,17 +203,19 @@ contract FlywheelTestnetAccept is Script {
         path[1] = s;
         IERC20(TEST_QUOTE).approve(T.PANCAKE_V2_ROUTER, type(uint256).max);
         IRouterV2(T.PANCAKE_V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            0.05 ether, 0, path, me, block.timestamp
+            0.05 ether, 0, path, me, block.timestamp + 1 hours
         );
+        // the keeper sells a chunk before the sell: after a sell, in the same block, the price is below the block's
+        // reference and `process` refuses by design (forge re-simulates every tx in one block)
+        uint256 chunk = handler.maxChunk(s);
+        if (chunk > 0) handler.process(s, chunk, 1);
         uint256 bal = IERC20(s).balanceOf(me);
         IERC20(s).approve(T.PANCAKE_V2_ROUTER, type(uint256).max);
         path[0] = s;
         path[1] = TEST_QUOTE;
         IRouterV2(T.PANCAKE_V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            bal / 3, 0, path, me, block.timestamp
+            bal / 3, 0, path, me, block.timestamp + 1 hours
         );
-        uint256 chunk = handler.maxChunk(s);
-        if (chunk > 0) handler.process(s, chunk, 1);
         vm.stopBroadcast();
 
         (, address holder) = _wallet(3);
