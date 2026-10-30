@@ -6,6 +6,7 @@
 
 - 链：BSC 主网（chainId 56），区块 130634782–130634823（2026-10-30 16:40:55–16:41:14 +08:00）
 - 当前状态：**已开放**（2026-10-30 20:09:41 +08:00，Safe 第 3 批 `setMigrator`）。三个合约的 owner 都是 Safe，部署钱包没有任何权限。
+- **2026-10-31 起停止新建**：V2（`docs/MAINNET-FLYWHEEL-V2-2026-10-31.md`）开放后，Safe 执行了 `MintTokenDeployer.setLaunchpad(V1, false)`（[`0x289e8e95…939a`](https://bscscan.com/tx/0x289e8e956714a2303a244c60b3ffd8c76af8866ed1966f5ff391670ee80e939a)）。V1 发射台不能再创建新币；已经创建的币照常铸币、卖回、开盘、交易、处理税和领分红。
 
 ## 地址
 

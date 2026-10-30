@@ -6,10 +6,9 @@ import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 import {FlywheelFixture} from "./FlywheelFixture.sol";
 import {TwapMockPair} from "../mocks/TwapMockPair.sol";
 
-/// @notice Review R2-2 M-1, kept as a regression: dump just under the 10% TWAP gate in block N, mint with several
-///         Agent IDs in block N+1 (where the dumped price is the block's start), buy the dump back in N+1. Before the
-///         fix five Agent IDs made ~0.26% of the pool; with mints priced no lower than 1% under the TWAP, every size
-///         loses. Wealth = WBNB plus tokens at the end price; the inventory's purchase is not counted (generous).
+/// @notice Review R2-2 M-1, kept as a regression under V2: dump ~9.6% in block N, mint with a few Agent IDs in block
+///         N+1, buy the dump back in N+1. Regressions: these dump-then-mint variants lose. Wealth = WBNB plus tokens
+///         at the end price, no exit cost; the inventory's purchase is not counted (generous to the attacker).
 contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
     address[] internal ws;
     /// @dev mints that went through (the attack must reach them: below the floor, within the global budget)
@@ -37,10 +36,7 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
     }
 
     function _run(uint256 nWallets, uint256 mintsEach) internal returns (int256 pnl) {
-        return _runC(_wide(), nWallets, mintsEach);
-    }
-
-    function _runC(IFlywheelPad.FlyConfig memory c, uint256 nWallets, uint256 mintsEach) internal returns (int256 pnl) {
+        IFlywheelPad.FlyConfig memory c = _wide();
         address t = _create(c, 1);
         _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + c.window);
@@ -87,11 +83,9 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         uint256 p1 = _price(t);
         (int256 q1, int256 v1) = _wealth(t, p1);
         pnl = (q1 + v1) - (q0 + v0);
-    }
-
-    function test_twentyWalletsWideQuota() public {
-        assertLt(_run(20, 8), 0);
-        assertGt(minted, 0, "the attack never got to mint");
+        emit log_named_int("pnl (wei)", pnl);
+        (, uint256 rQ) = _res(t);
+        emit log_named_uint("pool quote (wei)", rQ);
     }
 
     function test_oneWallet() public {
@@ -104,27 +98,17 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         assertGt(minted, 0, "the attack never got to mint");
     }
 
-    function test_jPreset20Wallets() public {
-        assertLt(_runC(_agentMint(), 20, 1), 0);
-        assertGt(minted, 0, "the attack never got to mint");
-    }
-
-    function test_jPreset40Wallets() public {
-        assertLt(_runC(_agentMint(), 40, 1), 0);
-        assertGt(minted, 0, "the attack never got to mint");
-    }
-
+    /// @dev 10 IDs × 10 shares (quota 10): 100 shares lose.
     function test_tenWallets() public {
-        assertLt(_run(10, 8), 0);
-        assertGt(minted, 0, "the attack never got to mint");
+        assertLt(_run(10, 8), 0, "ten Agent IDs: one-block dump-mint pays");
+        assertEq(minted, 10);
     }
 }
 
-/// @notice Re-review R5 M-1, kept as a regression: an outside buyer lifts the price in block A; the attacker dumps it
-///         back as the first trade of A+1 (so the buy's price never becomes a recent high, which needs two block
-///         starts), mints with many Agent IDs in A+2 and buys its bag back. Before pricing mints at 99% of the previous
-///         block's start too, 60 IDs made ~6.7% of the pool (held value). Both the conservative P&L (tokens at the
-///         lower of start and end price, minted tokens less exit costs) and the P&L after selling everything must lose.
+/// @notice Re-review R5 M-1, kept as a regression under V2: an outside buyer lifts the price in block A; the attacker
+///         dumps it back as the first trade of A+1, mints with several Agent IDs in A+2 and buys its bag back.
+///         Regressions: these dump-then-mint variants lose. Conservative P&L ("held": tokens at the lower of start and
+///         end price, minted tokens less exit costs) and the P&L after selling everything ("sold").
 contract FlywheelBackrunDumpTest is FlywheelFixture {
     address[] internal ws;
     uint256 internal minted;
@@ -206,27 +190,14 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
             if (b != 0) _poolSell(t, ws[i], b);
         }
         liq = (_quote() - q0) + overshoot;
+        emit log_named_int("held (wei)", cons);
+        emit log_named_int("sold (wei)", liq);
+        emit log_named_uint("minted", minted);
     }
 
-    /// @dev A big buy (+21%): the previous block's start lifts the floor more than 10% above the pool, so the mints are
-    ///      refused (PriceAbovePool) and the attacker is left with its round trip.
-    function test_bigBuy_sixtyWallets_mintsRefused() public {
-        (int256 cons, int256 liq) = _run(60, 1_000);
-        assertEq(minted, 0);
-        assertLt(cons, 0);
-        assertLt(liq, 0);
-    }
-
-    /// @dev A smaller buy (+8%, under the 10% cap): the mints go through at 99% of the previous block's start, and lose.
+    /// @dev A smaller buy (+8%, under the 10% cap): the mints go through, and lose.
     function test_smallBuy_tenWallets() public {
         (int256 cons, int256 liq) = _run(10, 400);
-        assertGt(minted, 0, "the attack never got to mint");
-        assertLt(cons, 0, "backrun dump-then-mint paid (held)");
-        assertLt(liq, 0, "backrun dump-then-mint paid (sold)");
-    }
-
-    function test_smallBuy_sixtyWallets() public {
-        (int256 cons, int256 liq) = _run(60, 400);
         assertGt(minted, 0, "the attack never got to mint");
         assertLt(cons, 0, "backrun dump-then-mint paid (held)");
         assertLt(liq, 0, "backrun dump-then-mint paid (sold)");

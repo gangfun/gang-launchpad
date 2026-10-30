@@ -1,0 +1,26 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 0,
+  "meta": {
+    "name": "gang: accept ownership of the continuous-mint V2 pad and handler",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E"
+  },
+  "transactions": [
+    {
+      "to": "0x95269a407Cfe93e745810114c5BAeCE3606BfFAA",
+      "value": "0",
+      "data": "0x79ba5097",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a",
+      "value": "0",
+      "data": "0x79ba5097",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}

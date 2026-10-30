@@ -20,29 +20,28 @@ interface IFlyPair {
 
 /// @title FlywheelPostLogic — GangFlywheelPad's post-launch mint
 /// @notice External library (delegatecalled by the pad). A wallet mints within its quota (shared with pre-launch) at the
-///         tier price per share; it gets the share's money worth of tokens at the highest of the pair's price now, at
-///         the block's start, the recent high and 1% under the TWAP (a dump can't make a mint cheaper). The mint fee goes to the platform, the
-///         dev's cut to the creator, and everything else into the pool: `buyBps` of it buys from the pair (never
-///         pushing the price more than 0.8% above the lower of the price now and the block's start, so neither one mint
-///         nor several in a block can be sold back at a profit), the rest is added as liquidity with newly minted
-///         tokens (LP to 0xdead). Refused when the pair's price is more than 10% below its 30-minute average (a dump
-///         followed by a cheap mint), and when the wallet's mints in the last 30 minutes would pass 2% of the pool's
+///         tier price per share; it gets the share's money worth of tokens at the higher of the pair's price now and
+///         at the block's start (V2: a dump earlier in the same block can't make a mint cheaper; from the next block on
+///         a mint pays the pool's price). The mint fee goes to the platform, the dev's cut to the creator, and
+///         everything else into the pool: `buyBps` of it buys from the pair (never pushing the price more than 0.8%
+///         above the lower of the price now and the block's start, so neither one mint nor several in a block can be
+///         sold back at a profit), the rest is added as liquidity with newly minted tokens (LP to 0xdead). Refused when
+///         that price is more than 10% above the pool (only in the block of a dump: an honest minter is never charged
+///         far above the pool), when the sale's guard is on and the pair's price is more than `guardBps` below its TWAP
+///         over the sale's `twapWindow`, and when the wallet's mints in the last 30 minutes would pass 2% of the pool's
 ///         quote. A wallet that fell below its hold line qualifies again from this mint's tokens.
 library FlywheelPostLogic {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
 
     uint256 internal constant BPS = 10_000;
+    /// @dev The pre-launch shares (FlywheelLogic.TOTAL_SHARES): the tiers start above them.
+    uint256 internal constant PRE_SHARES = 10_000;
     /// @notice A mint's pool buy never lifts the price above this far over min(price now, block-start price).
     uint256 internal constant PUSH_BPS = 80;
-    /// @notice Minting is refused while the pair's price is more than this below its TWAP.
-    uint256 internal constant MAX_DROP_BPS = 1_000;
-    /// @notice A mint never prices the buyer more than this under the recent high or the TWAP: a dump wins at most
-    ///         this, which the mint fee (≥ 1%) takes back, plus 0.5% per minute it is held (review R2-2 M-1, re-reviews).
-    uint256 internal constant TWAP_FLOOR_BPS = 100;
-    /// @notice Minting is refused while the pair's price is more than this below the recent high (a buyer is never
-    ///         priced far above the pool; re-review R3 L-2, widened from 5% after R4 M-2).
-    uint256 internal constant HIGH_GAP_BPS = 1_000;
+    /// @notice A mint is refused rather than priced more than this above the pool (re-review R6 L-1): with the price
+    ///         max(spot, blockStart) that is only in the block of a dump.
+    uint256 internal constant ABOVE_POOL_BPS = 1_000;
     /// @notice One wallet's mints per PACE_WINDOW stay within this share of the pool's quote reserve.
     uint256 internal constant PACE_POOL_BPS = 200;
     uint256 internal constant PACE_WINDOW = 30 minutes;
@@ -58,10 +57,22 @@ library FlywheelPostLogic {
         uint256 tokensOut;
     }
 
+    /// @notice What a post-launch mint is priced and checked with now (also the pad's `previewMintPost`).
+    struct Pricing {
+        uint256 rT; // pair reserves (token, quote)
+        uint256 rQ;
+        uint256 spot; // UQ112x112 quote per token
+        uint256 blockStart;
+        uint256 price; // max(spot, blockStart): the buyer's price
+        bool belowAverage; // the guard refuses (PriceBelowAverage)
+        bool abovePool; // price more than ABOVE_POOL_BPS above spot (PriceAbovePool)
+    }
+
     function mintPost(
         mapping(address => IFlywheelPad.Sale) storage sales,
         mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
         mapping(address => uint256) storage owedDev,
+        mapping(address => IFlywheelPad.PostRules) storage postRules,
         IGangLaunchpad.Deps memory d,
         address trader,
         address token,
@@ -95,21 +106,16 @@ library FlywheelPostLogic {
         FlywheelLogic.collect(s.quote, spent, bnbIn);
 
         IFlyHandler(d.taxHandler).observe(token);
-        (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelOracle.prices(d.taxHandler, token);
-        if (spot * BPS < average * (BPS - MAX_DROP_BPS)) revert IFlywheelPad.PriceBelowAverage();
-        if (spot * BPS < high * (BPS - HIGH_GAP_BPS)) revert IFlywheelPad.PriceBelowRecentHigh();
         address pair = s.pair;
-        (uint256 rT, uint256 rQ) = _reserves(pair, token);
-        _pace(a, q.paid, rQ);
-
-        uint256 price = buyerPrice(spot, blockStart, FlywheelOracle.prevStart(d.taxHandler, token), high, average);
-        // never priced more than HIGH_GAP_BPS above the pool, whatever lifted the floor (re-review R6 L-1)
-        if (price * BPS > spot * (BPS + HIGH_GAP_BPS)) revert IFlywheelPad.PriceAbovePool();
-        q.tokensOut = Math.mulDiv(q.paid, 1 << 112, price);
+        Pricing memory p = pricing(d.taxHandler, token, pair, postRules[token]);
+        if (p.belowAverage) revert IFlywheelPad.PriceBelowAverage();
+        _pace(a, q.paid, p.rQ);
+        if (p.abovePool) revert IFlywheelPad.PriceAbovePool();
+        q.tokensOut = Math.mulDiv(q.paid, 1 << 112, p.price);
         if (q.tokensOut < minTokensOut) revert IFlywheelPad.Slippage();
         uint256 net = q.paid - q.devCut;
-        uint256 b = _buyPart(s.buyBps, net, spot, blockStart, rQ);
-        uint256 bought = b == 0 ? 0 : _buy(pair, token, s.quote, b, rT, rQ);
+        uint256 b = _buyPart(s.buyBps, net, p.spot, p.blockStart, p.rQ);
+        uint256 bought = b == 0 ? 0 : _buy(pair, token, s.quote, b, p.rT, p.rQ);
         if (bought == 0) b = 0; // a buy too small to get a token (nothing was sent): it joins the liquidity (B-I1)
         _addLiquidity(pair, token, s.quote, net - b);
 
@@ -133,29 +139,37 @@ library FlywheelPostLogic {
         emit IFlywheelPad.PostMinted(token, trader, q.accepted, q.paid, q.fee, q.devCut, q.tokensOut, b);
     }
 
-    /// @notice The price a mint gives tokens at: the highest of the pair's price now, at the block's start (no
-    ///         same-block dump-then-mint) and the floor — 1% under the highest of the previous block's start (no dump
-    ///         right after someone's buy; re-review R5 M-1), the decaying recent high (no dump-then-mint a block or
-    ///         minutes later, also while the price runs above its TWAP) and the 30-minute TWAP.
-    function buyerPrice(uint256 spot, uint256 blockStart, uint256 prevStart, uint256 high, uint256 average)
+    /// @notice The price a mint gives tokens at, and the price refusals. Price: the higher of the pair's price now and
+    ///         at the block's start (no same-block dump-then-mint). Refused when that is more than ABOVE_POOL_BPS above
+    ///         the pool (`abovePool`), and, with the sale's guard on, when the pair's price is more than `guardBps`
+    ///         below its TWAP over the sale's window (`belowAverage`; the TWAP is not read with the guard off).
+    function pricing(address handler, address token, address pair, IFlywheelPad.PostRules memory r)
         internal
-        pure
-        returns (uint256 p)
+        view
+        returns (Pricing memory p)
     {
-        p = spot > blockStart ? spot : blockStart;
-        uint256 ref = high > average ? high : average;
-        if (prevStart > ref) ref = prevStart;
-        uint256 floor = (ref * (BPS - TWAP_FLOOR_BPS)) / BPS;
-        if (floor > p) p = floor;
+        (p.rT, p.rQ) = _reserves(pair, token);
+        p.spot = FlywheelOracle.spotFrom(p.rT, p.rQ);
+        p.blockStart = FlywheelOracle.blockStart(handler, token, p.spot);
+        p.price = p.spot > p.blockStart ? p.spot : p.blockStart;
+        p.abovePool = p.price * BPS > p.spot * (BPS + ABOVE_POOL_BPS);
+        if (r.guardBps != 0) {
+            uint256 average = FlywheelOracle.twap(handler, token, pair, r.twapWindow);
+            p.belowAverage = p.spot * BPS < average * (BPS - r.guardBps);
+        }
     }
 
-    /// @notice Price multiple (×100) of the share numbered `n` (pre-launch shares count): flat, the standard table
-    ///         (as the Agent ID mint projects use: ×1 up to share 10,000, then steps to ×8.07 at 4,440,000) or linear.
+    /// @notice Price multiple (×100) of the share numbered `n` (pre-launch shares count, so share 10,001 is the first
+    ///         post-launch share of a filled sale): flat, the standard table (as the Agent ID mint projects use: ×1 up to
+    ///         share 10,000, then steps to ×8.07 at 4,440,000) or linear: ×1 up to share 10,000, then `stepBps` more
+    ///         every `stepShares` shares counted from share 10,001 (audit V2 A-M1: counting the pre-launch shares put
+    ///         the first post-launch share of a steep sale at the cap already), at most `maxMulX100`.
     function tierX100(IFlywheelPad.Sale storage s, uint256 n) internal view returns (uint256) {
         uint8 mode = s.tierMode;
         if (mode == 0) return 100;
         if (mode == 2) {
-            uint256 m = 100 + (uint256(s.stepBps) * (n / s.stepShares)) / 100;
+            if (n <= PRE_SHARES) return 100;
+            uint256 m = 100 + (uint256(s.stepBps) * ((n - PRE_SHARES - 1) / s.stepShares)) / 100;
             return m > s.maxMulX100 ? s.maxMulX100 : m;
         }
         return standardX100(n);
@@ -215,13 +229,46 @@ library FlywheelPostLogic {
         return Math.mulDiv(y, root - onePlusG, 2 * g);
     }
 
+    /// @notice Tokens a mint priced with `p` newly mints, exactly as `mintPost` does (the pad's `previewMintPost`
+    ///         checks them against the supply cap; audit V2 B-1): the liquidity's tokens at the reserves after the pool
+    ///         buy, plus the buyer's tokens beyond what the buy got.
+    /// @param net the pool money: paid less the dev's cut
+    function newlyMinted(
+        Pricing memory p,
+        address pair,
+        address token,
+        address quote,
+        uint256 buyBps,
+        uint256 net,
+        uint256 tokensOut
+    ) internal view returns (uint256) {
+        uint256 b = _buyPart(buyBps, net, p.spot, p.blockStart, p.rQ);
+        uint256 bought = b == 0 ? 0 : _amountOut(b, p.rT, p.rQ);
+        uint256 rT = p.rT;
+        uint256 rQ = p.rQ;
+        if (bought == 0) {
+            b = 0;
+        } else {
+            // the swap leaves the pair's reserves at its balances
+            rT = IERC20(token).balanceOf(pair) - bought;
+            rQ = IERC20(quote).balanceOf(pair) + b;
+        }
+        uint256 liquidity = ((net - b) * rT) / rQ;
+        return liquidity + (tokensOut > bought ? tokensOut - bought : 0);
+    }
+
+    /// @dev Pancake V2 tokens out for `quoteIn` against reserves `rT` (token) and `rQ` (quote).
+    function _amountOut(uint256 quoteIn, uint256 rT, uint256 rQ) private pure returns (uint256) {
+        uint256 inFee = quoteIn * DEX_FEE_NUM;
+        return (inFee * rT) / (rQ * DEX_FEE_DEN + inFee);
+    }
+
     /// @dev Buy with `quoteIn` straight from the pair (the pad is tax-excluded); the tokens come here.
     function _buy(address pair, address token, address quote, uint256 quoteIn, uint256 rT, uint256 rQ)
         private
         returns (uint256 out)
     {
-        uint256 inFee = quoteIn * DEX_FEE_NUM;
-        out = (inFee * rT) / (rQ * DEX_FEE_DEN + inFee);
+        out = _amountOut(quoteIn, rT, rQ);
         if (out == 0) return 0;
         IERC20(quote).safeTransfer(pair, quoteIn);
         if (IUniswapV2PairLite(pair).token0() == token) IFlyPair(pair).swap(out, 0, address(this), "");
@@ -254,39 +301,8 @@ library FlywheelPostLogic {
         }
     }
 
-    function _reserves(address pair, address token) private view returns (uint256 rT, uint256 rQ) {
+    function _reserves(address pair, address token) internal view returns (uint256 rT, uint256 rQ) {
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
         (rT, rQ) = IUniswapV2PairLite(pair).token0() == token ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
-    }
-}
-
-/// @title FlywheelPostLogicView — the checks `mintPost` makes, for the pad's `previewMintPost` (no state written)
-library FlywheelPostLogicView {
-    function prices(address handler, address token)
-        internal
-        view
-        returns (uint256 spot, uint256 blockStart, uint256 high, uint256 average)
-    {
-        return FlywheelOracle.prices(handler, token);
-    }
-
-    function allowed(
-        IFlywheelPad.Account storage a,
-        uint256 paid,
-        uint256 spot,
-        uint256 high,
-        uint256 average,
-        address pair,
-        address token
-    ) internal view returns (bool) {
-        if (spot * FlywheelPostLogic.BPS < average * (FlywheelPostLogic.BPS - FlywheelPostLogic.MAX_DROP_BPS)) {
-            return false;
-        }
-        if (spot * FlywheelPostLogic.BPS < high * (FlywheelPostLogic.BPS - FlywheelPostLogic.HIGH_GAP_BPS)) {
-            return false;
-        }
-        (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
-        uint256 rQ = IUniswapV2PairLite(pair).token0() == token ? uint256(r1) : uint256(r0);
-        return (FlywheelPostLogic.recentSpent(a) + paid) * FlywheelPostLogic.BPS <= rQ * FlywheelPostLogic.PACE_POOL_BPS;
     }
 }
