@@ -20,6 +20,8 @@ library GangMainnetRefs {
     address internal constant DEPLOYER = 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3;
     /// @notice The keeper wallet on the production server (201).
     address internal constant KEEPER = 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7;
+    /// @notice GangPadRegistry proxy (owner = OWNER_SAFE; docs/MAINNET-PAD-REGISTRY-2026-10-28.md). GangGateway reads it.
+    address internal constant PAD_REGISTRY = 0x4fF77D4d9ac080939a24E1B805206bA094C44e5C;
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address internal constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     /// @dev USDT → WBNB bridge pool (Pancake V3), set on the pad with setBridgePool.
