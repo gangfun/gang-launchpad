@@ -53,7 +53,7 @@ anything is sent and its reason is printed.
 
 `--dev-shares` (default 1, at most quota and max-per-tx) are minted in the create; the creator's own mints carry no dev
 cut. `--quote` / `--ref-pool` / logo / links work as in [create.md](create.md). While the pad's Agent ID gate is off, a
-sale takes no dev cut: the CLI sets the preset's to 0 (an explicit `--dev-cut` above 0 is refused by `checkConfig`). `--bond`, `--buyback` and `--dev-buy` are refused: in phase 1, GangBond and the buy-back splitter do not take
+sale takes no dev cut: the CLI sets the preset's to 0 (an explicit `--dev-cut` above 0 is refused by `checkConfig`). `--bond`, `--buyback`, `--split` and `--dev-buy` are refused: in phase 1, GangBond, the buy-back splitter and the split module do not take
 these tokens.
 
 ## Rules to tell the user
