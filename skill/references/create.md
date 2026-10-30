@@ -79,6 +79,9 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
 
+- **Creator fee (GangLaunchpad 2.0)**: the `create` step's `creatorFee` and the `done` report say that 70% of the 1%
+  curve fee is the creator's and how to claim it (`gang creator-fee`). With `--buyback` / `--split` / `--lp` they also
+  say it does not go through the module: tell the user both ([v3.md](v3.md#creator-fee-ganglaunchpad-20)).
 - **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module` or `lp-splitter` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.

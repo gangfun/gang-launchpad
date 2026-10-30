@@ -192,8 +192,10 @@ export function flyCtx(testnet) {
     { address: env('FLY_PAD') || fly.v1, version: 1 },
   ].filter((p) => p.address)
   const client = createPublicClient({ chain: net.chain, transport: rpcTransport(net.rpcs) })
+  // pool trades go through the GangRouter they were accepted with (1.0's), whatever generation GangLaunchpad creates on
+  const router = (net.gens.find((g) => g.gen === '1.0') ?? net).router
   return {
-    ...net, pads, pad: pads[0].address, version: pads[0].version, startBlock: fly.startBlock, client,
+    ...net, router, pads, pad: pads[0].address, version: pads[0].version, startBlock: fly.startBlock, client,
     read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }),
   }
 }

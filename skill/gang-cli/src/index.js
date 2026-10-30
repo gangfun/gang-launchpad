@@ -26,7 +26,8 @@ import { runFly, flyCtx, isFlyToken, FLY_EVENT_ABIS, FLY_CREATE_FLAGS } from './
 import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, runLaunch } from './launch.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
-import { MERGED_ERRORS_ABI, kindOf, padNets } from './gangpad.js'
+import { MERGED_ERRORS_ABI, genOf, padNets } from './gangpad.js'
+import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
 import { V2_ABI } from './abi.js'
 import { runMcp } from './mcp.js'
 import { portfolio } from './portfolio.js'
@@ -393,6 +394,16 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          past the deadline, --settle-first settles the bond before the sell (asks first;
                                          settles 1 hour later).
 
+CREATOR FEE (GangLaunchpad 2.0: of the 1% fee on every V3 curve buy and sell, 70% is kept on the pad for the token's
+creator, before and after graduation, no deadline; 1.0 tokens and 打新 sales have none):
+  gang creator-fee [--from <creator>]    every 2.0 V3 token this wallet created and what it can claim (read on chain), with
+                                         totals per quote
+  gang creator-fee --token <addr>        one token: padGen, sharePct, claimable
+  gang creator-fee --token <addr> --claim [--to <addr>]
+                                         claim all of it (the creator only), to this wallet or --to (not 0x0 or the pad).
+                                         The fee is the creator's own: never the tax recipient's or a buy-back / split / LP
+                                         module's. gang info / status (the creator's) and gang portfolio show it too
+
 BOND (押金承诺, GangBond; any GangLaunchpad token, from create on; GANG_BOND / GANG_TESTNET_BOND = its address):
   gang bond post --token <addr> --hold <tokens|N%> --days <7-90> (--amount <quote> | --cover <coverage %>) [--use-wbnb]
                                          creator only, any time after create (V3: buy on the curve first): bond in the token's
@@ -503,10 +514,12 @@ off, GANG_UPDATE_URL points it at an npm mirror).
 
 env: GANG_RPC_URL (one URL or a comma list; unset: five public BSC nodes, the next one tried when one fails),
 GANG_LOGO_API, GANG_API (default ${API}), GANG_NOTES_DIR (default ~/.gang/notes), GANG_UPDATE_CHECK, GANG_UPDATE_URL,
-GANG_PAD / GANG_TESTNET_PAD (the one GangLaunchpad behind both gang v3 and gang fair; old names GANG_V3_PAD / GANG_FAIR_PAD
-and GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD still work as aliases), GANG_TESTNET_RPC_URL (aliases
+GANG_PAD / GANG_TESTNET_PAD (the GangLaunchpad new tokens go to, behind both gang v3 and gang fair; old names GANG_V3_PAD /
+GANG_FAIR_PAD and GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD still work as aliases), GANG_TESTNET_RPC_URL (aliases
 GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET_ROUTER (alias GANG_ROUTER_TESTNET; GangRouter
-for BNB buys / mints and every pool trade; both default to the built-in mainnet / testnet set 10 addresses),
+for BNB buys / mints and every pool trade). Built in: GangLaunchpad 1.0 on mainnet; 2.0 (where new tokens go) and 1.0
+on the testnet. A token is always served by its own generation's pad, router, GangBond and module factories; these
+variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
 GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2, where new tokens go; default: the built-in mainnet / testnet V2). --guard / --twap-window
 (V2 only): the guard is off by default (post-launch minting does not pause on a price drop; the quota cap of 10 per
@@ -893,7 +906,8 @@ async function padKind(token, verb) {
   const testnet = flag('testnet')
   let ctx
   try { ctx = v3Ctx(testnet) } catch (e) { fail(e.message) }
-  const kind = await kindOf(ctx, token)
+  // every GangLaunchpad generation of this network (1.0, 2.0) is asked
+  const { kind } = await genOf(ctx, token)
   if (kind === 'v3' || kind === 'fair') return kind
   // not GangLaunchpad's: the 铸币飞轮 pad (GangFlywheelPad, kind 3) is asked next
   const fly = await isFlyToken(flyCtx(testnet), token)
@@ -1051,7 +1065,7 @@ function create() {
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['version', '--version', '-v', 'preflight', 'list', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'info', 'status', 'portfolio', 'quote',
   'buy', 'follow', 'sell', 'claim', 'mint', 'withdraw', 'release', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'bond',
-  'buyback', 'split', 'lp', 'fly'])
+  'buyback', 'split', 'lp', 'fly', 'creator-fee'])
 // gang tx decodes these beside the V2 / Soft / U / S pads' events (GangLaunchpad: both kinds; the tax router; the vaults)
 const GANG_EVENT_ABIS = [...V3_EVENT_ABIS, ...FAIR_EVENT_ABIS, ...FLY_EVENT_ABIS, ...SPLIT_EVENT_ABIS, ...LP_EVENT_ABIS]
 
@@ -1160,6 +1174,8 @@ async function main() {
       return runFly(args[1], alias('fly', args[1]))
     case 'mcp':
       return runMcp()
+    case 'creator-fee':
+      return runCreatorFee({ opt, flag, out, fail, summarize: summarizePreview })
     case 'bond':
       await refuseFly('GangBond')
       return runBond(args[1], { opt, flag, out, fail, summarize: summarizePreview })
@@ -1191,7 +1207,7 @@ async function main() {
       return out({
         success: issues.length === 0, cliVersion: VERSION, status, address: me,
         // `launchpad` = createPad: kept for readers of the old field (it used to be the V2 create target)
-        launchpad: padNets('v3').mainnet.pad, createPad: padNets('v3').mainnet.pad, isAgent: agent,
+        launchpad: padNets('v3').mainnet.pad, createPad: padNets('v3').mainnet.pad, createPadGen: padNets('v3').mainnet.gen, isAgent: agent,
         devMode: settings?.devMode?.enabled ?? null, tradeAllTokens: settings?.tradeAllTokens ?? null, issues,
         note: 'New create → GangLaunchpad (gang create = gang v3 create; gang fair create for 打新). LaunchpadV2 / Soft / U / S take no new tokens: existing buy / sell only.',
       })
@@ -1356,7 +1372,10 @@ async function main() {
     case 'portfolio': {
       if (flag('testnet')) fail('gang portfolio is mainnet only: gang.fun indexes no testnet trades (gang status --testnet reads one token)')
       const me = fromArg() || bawAddress()
-      return out(await portfolio({ wallet: me, get: (path) => apiGet(path, undefined, null), statusOf: portfolioStatus, bondOf: portfolioBond })
+      return out(await portfolio({
+        wallet: me, get: (path) => apiGet(path, undefined, null), statusOf: portfolioStatus, bondOf: portfolioBond,
+        creatorFeesOf: (w) => creatorFeeList(creatorFeeCtx(false), w),
+      })
         .catch((e) => fail(e.message, retryHint(e))))
     }
     case 'status':
@@ -1397,7 +1416,7 @@ async function main() {
       const { token, follow } = await confirmFollow(noteTx, fromArg() || bawAddress())
       if (!token) fail('gang.fun did not say which token this note is about', { noteTx })
       // a GangLaunchpad token: the V3 curve buy (--amount / --bnb = the quote to spend)
-      const onPad = await kindOf(v2PoolCtx(), token)
+      const { kind: onPad } = await genOf({ ...v2PoolCtx(), gens: padNets('v3').mainnet.gens }, token)
       if (onPad === 'fair') fail('this note is on a 打新 (fair-mint) token: only curve buys can follow a note', { noteTx, token })
       if (onPad !== 'v3' && (await isFlyToken(flyCtx(false), token))) fail('this note is on a 铸币飞轮 (Mint Flywheel) token: only curve buys can follow a note', { noteTx, token })
       if (onPad === 'v3') {

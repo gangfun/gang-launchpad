@@ -3,13 +3,14 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync,
 import { dirname, join } from 'node:path'
 import { createPublicClient, parseAbi, formatUnits, encodeFunctionData, isAddress, zeroAddress } from 'viem'
 import { DIR } from './notes.js'
-import { padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { creatorFeeShareOf, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { bondAddress, BOND_ABI } from './bond.js'
 import { walletFor } from './fair.js'
 import { parseAmount, parseIntIn, step } from './steps.js'
 import { buybackBpsOf, FACTORY_ABI, notDeployed, simulateCall, SPLITTER_ABI, splitterFactoryAddress, splitterOf } from './buyback.js'
 import { parseSplitSpec, simulateSplit, SPLIT_ABI, SPLIT_FACTORY_ABI, splitFactoryAddress, splitLine, splitNotDeployed, splitOf } from './split.js'
 import { LP_ABI, LP_FACTORY_ABI, lpBpsOf, lpFactoryAddress, lpNotDeployed, lpOf, simulateLp } from './lp.js'
+import { claimCmd, notThroughModule } from './creatorfee.js'
 
 /**
  * One command for a launch: `gang create … [--buyback <pct>] [--dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>]
@@ -39,6 +40,8 @@ import { LP_ABI, LP_FACTORY_ABI, lpBpsOf, lpFactoryAddress, lpNotDeployed, lpOf,
  * it began with. --buyback, --split, --lp and --recipient are exclusive (each sets the recipient).
  */
 
+// the dev's recipient modules by flag, as the creator-fee note names them
+const MODULE_NAMES = { buyback: 'buy-back splitter', split: 'split module', lp: 'LP splitter' }
 const LAUNCH_DIR = process.env.GANG_LAUNCH_DIR || join(dirname(DIR), 'launch')
 const TTL_MS = 7 * 24 * 3600_000
 const PAD_ABI = parseAbi([
@@ -242,6 +245,18 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   const withTag = (stage, extra) => (o) => out({ ...o, ...tag(stage, extra) })
 
   let plan = flag('restart') ? null : readPlan(key)
+  // a launch begun on another generation's pad (an older CLI) and not done: its module and token belong to that pad, so
+  // it is never carried on here, nor started again without --restart
+  if (!plan && !flag('restart')) {
+    const old = net.gens.slice(1).map((g) => ({ g, p: readPlan([net.chainId, g.pad, me.toLowerCase(), kind, name, symbol].join('|')) })).find((x) => x.p && !x.p.done)
+    if (old) {
+      const tn = testnet ? ' --testnet' : ''
+      return fail(`this launch began on GangLaunchpad ${old.g.gen ?? old.g.pad} and is not done; new tokens now go to ${net.gen ?? net.pad}`, {
+        ...(old.p.token ? { token: old.p.token, hint: `the token is out on ${old.g.gen}: finish its steps one by one (gang buy --token ${old.p.token} --amount <quote>${tn}, gang bond post --token ${old.p.token} …${tn}), or add --restart to launch a new token on ${net.gen}` }
+          : { hint: `${old.p.splitter ? `its module ${old.p.splitter} was made for the ${old.g.gen} pad and does not work with ${net.gen}: ` : ''}add --restart to launch on ${net.gen}` }),
+      })
+    }
+  }
   const base = { kind, name, symbol, me, chainId: net.chainId, pad: net.pad }
 
   // ---- a launch keeps the mode it began with (the create, once built, is never redone by a changed flag)
@@ -403,6 +418,8 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
         const after = steps[steps.indexOf(kind === 'v3' ? 'create' : 'create (dev shares included)') + 1]
         return out({
           ...o,
+          // 2.0: the creator fee is the dev's own, not the module's
+          ...(o.creatorFee && mod && { creatorFee: `${o.creatorFee} ${notThroughModule(MODULE_NAMES[mod])}` }),
           ...tag('create', built ? { next: `${rerun}: it finds the new token and continues with ${after ?? 'nothing'}` } : o.success ? { next: `${rerun}: it then builds the create` } : {}),
         })
       },
@@ -455,6 +472,11 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     if (sp) done.split = sp
     const lps = await lpState()
     if (lps) done.lp = lps
+    // 2.0: where the creator fee of a V3 token is claimed (and that a module does not get it)
+    const share = kind === 'v3' ? await creatorFeeShareOf({ chainId: net.chainId, pad: net.pad, read }).catch(() => null) : null
+    if (share != null) {
+      done.creatorFee = `${share / 100}% of the 1% curve fee is kept for you, the creator: ${claimCmd(token, testnet ? ' --testnet' : '')}${plan.splitter ? `. ${notThroughModule(MODULE_NAMES[planMod])}` : ''}`
+    }
     if (!bond) return out({ ...done, note: `launched: gang ${kind} info --token ${token}${testnet ? ' --testnet' : ''}` })
     return runBond('status', { ...stepIo({}), out: (o) => out({ ...done, bondStatus: o, note: `launched and bonded: gang bond status --token ${token}${testnet ? ' --testnet' : ''}` }) })
   }
