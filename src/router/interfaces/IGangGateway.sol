@@ -2,9 +2,10 @@
 pragma solidity 0.8.28;
 
 /// @notice What an aggregator calls to trade a Gang token on its bonding curve, laid out like four.meme's inner pool
-///         (TokenManager2 + Helper3): the user approves this gateway once, any contract calls it with no whitelist
-///         and no signature, and the seller (`from`) must be the wallet that sent the tx. The address never changes
-///         (a proxy); every Gang pad generation the GangPadRegistry knows and that lists this gateway is served.
+///         (TokenManager2 + Helper3): the user approves this gateway once, the aggregator's contract calls it with no
+///         signature, and the seller (`from`) must be the wallet that sent the tx. Sells take a whitelisted caller
+///         (or the seller itself); buys are open. The address never changes (a proxy); every Gang pad generation the
+///         GangPadRegistry knows and that lists this gateway is served.
 interface IGangGateway {
     /// @param caller msg.sender of the gateway call (the aggregator, or the user itself)
     event GatewayBuy(
@@ -22,6 +23,16 @@ interface IGangGateway {
         address feeRecipient
     );
 
+    event CallerSet(address indexed caller, bool allowed);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @notice `sellToken` called by a contract that is neither the seller nor whitelisted (`isCaller`).
+    error NotWhitelisted();
+    /// @notice `setCaller(caller, true)` on an address without code, or an EIP-7702-delegated EOA.
+    error NotAContract();
+    error OnlyOwner();
+    error NotPendingOwner();
     /// @notice `token` is not on a live Gang curve (not a Gang token, a 打新 token, or already graduated).
     error NotCurveToken();
     /// @notice `feeRate` above MAX_FEE_RATE (500 = 5%).
@@ -102,9 +113,8 @@ interface IGangGateway {
         payable
         returns (uint256 amountOut, uint256 fundsUsed);
 
-    /// @notice four.meme's open sell (TokenManager2.sellToken with a router fee): any contract may call it, so any
-    ///         contract the seller calls can sell what the seller approved to this gateway, at a price it may move in
-    ///         the same tx: approve exact amounts (AUDIT-BRIEF §25). Sells
+    /// @notice four.meme's sell with a router fee (TokenManager2.sellToken), for the seller itself (`from ==
+    ///         msg.sender`) or a whitelisted caller (`isCaller`, else NotWhitelisted). Sells
     ///         `amount` of `from`'s tokens, `from` being the wallet that sent the tx (TraderNotOrigin from the pad
     ///         otherwise), with the allowance `from` gave THIS gateway on the token. The tokens go from `from` straight
     ///         into the pad. Of what the pad pays, `feeRate` / 10000 goes to `feeRecipient` and the rest to `from`,
@@ -122,4 +132,14 @@ interface IGangGateway {
         uint256 feeRate,
         address feeRecipient
     ) external returns (uint256 fundsToSeller);
+
+    /// @notice Whitelist (or delist) a contract that may call `sellToken` for a seller other than itself. Owner only;
+    ///         takes effect at once. Contracts only (NotAContract). Listing review (AUDIT-BRIEF §25.10): the entry the
+    ///         user calls sets `from` to its own msg.sender and passes it down unchanged; every listed contract only
+    ///         accepts calls from that trusted entry (or is that entry); neither has arbitrary target / calldata calls,
+    ///         Permit2 / signed-order payers, ERC-2771 senders, tx.origin, or a user read back from storage; upgradeable
+    ///         ones put their admin inside the trust (watch `Upgraded`).
+    function setCaller(address caller, bool allowed) external;
+    function isCaller(address caller) external view returns (bool);
+    function owner() external view returns (address);
 }

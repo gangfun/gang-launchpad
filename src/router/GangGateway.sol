@@ -64,30 +64,34 @@ interface IWBNBGateway {
 
 /// @title GangGateway — four.meme-style curve entry for aggregators (implementation behind a proxy)
 /// @notice A listed router on every Gang pad that lists it (`setRouter`), shaped like four.meme's TokenManager2 /
-///         Helper3 so an aggregator's four.meme adapter carries over: the user approves this gateway once on the token,
-///         any contract calls `sellToken` / `buyTokenAMAP` (no caller whitelist, no signature), and the pad's own
-///         check `trader == tx.origin` (§23) binds every trade to the wallet that sent the tx. A sell's proceeds go to
-///         that wallet; the caller can take at most `feeRate` (≤ 5%) of them as its router fee.
+///         Helper3 so an aggregator's four.meme adapter carries over (once its contract is whitelisted for sells): the
+///         user approves this gateway once on the token, the aggregator's contract calls `sellToken` / `buyTokenAMAP`
+///         (no signature), and the pad's own check `trader == tx.origin` (§23) binds every trade to the wallet that
+///         sent the tx. A sell's proceeds go to that wallet; the caller can take at most `feeRate` (≤ 5%) of them as
+///         its router fee.
+///         Sells: only the seller itself (an EOA calling directly, `from == msg.sender`) or a caller the owner (the
+///         Safe) whitelisted (`isCaller`: an aggregator's contract that calls this gateway). A contract the user is
+///         merely tricked into calling cannot sell for the user (NotWhitelisted) — without this, it could sell the
+///         user's approved curve tokens at a price it moved itself in the same tx (audit M-1, AUDIT-BRIEF §25).
+///         Listing a caller is a security decision like `setRouter` (§23.9): `from` must be the user that called the
+///         aggregator (its router's msg.sender), never tx.origin or a free parameter of an open entry. Buys stay open
+///         to any caller: they spend the caller's own funds and the tokens can only go to tx.origin.
 ///         The pad of a token is the one GangPadRegistry returns (registered AND listing the token), so a look-alike
 ///         token cannot route funds to a fake pad, and a later pad generation is served once it is registered and
 ///         lists this gateway. A buy's `amountOut` is what `to`'s token balance grew by: a real, locked Gang token
 ///         moves only from its own pad, so a registry made to point such a token at another pad cannot fake a fill
-///         (minAmount > 0 reverts). A pad wrongly registered (`addPad`) can still fake fills of its OWN tokens: that
-///         is up to the Safe's review of `addPad`. The pad holds every reserve and enforces every rule (price, 1% fee, Agent gate, 1%
-///         wallet cap, graduation); this contract only moves the caller's own funds in, wraps / unwraps BNB, splits a
-///         sell's proceeds and checks the seller's minimum. Tokens never pass through it: a buy's tokens go from the
-///         pad to `to`, a sell's from `from` into the pad (GangToken.pullFor, with `from`'s allowance to this
-///         gateway, locked tokens only).
-///         Deliberate exception to the §23.9 router checklist (items 2 and 3, AUDIT-BRIEF §25): the seller is a
-///         parameter, not msg.sender, and `minFunds` is the caller's. A contract the user is tricked into calling can
-///         sell the user's approved curve tokens in the user's own tx with no minimum: the proceeds go to the user,
-///         minus up to the 5% router fee, but the attacker can also sell its own inventory on the same curve first and
-///         buy it back after (same tx, or a bundle around it), so the user's loss is bounded by that inventory, not by
-///         5% (audit PoC: 9–54%). Exact approvals (allowance back to 0 after each sell) limit it to an approval not
-///         yet used. four.meme's open sell path has the same model; aggregators asked for it.
+///         (minAmount > 0 reverts). A pad wrongly registered (`addPad`) can still fake fills of its OWN tokens: that is
+///         up to the Safe's review of `addPad`. The pad holds every reserve and enforces every rule (price, 1% fee,
+///         Agent gate, 1% wallet cap, graduation); this contract only moves the caller's own funds in, wraps / unwraps
+///         BNB, splits a sell's proceeds and checks the seller's minimum. Tokens never pass through it: a buy's tokens
+///         go from the pad to `to`, a sell's from `from` into the pad (GangToken.pullFor, with `from`'s allowance to
+///         this gateway, locked tokens only).
 ///         Deployed as the logic of a TransparentUpgradeableProxy whose ProxyAdmin is owned by a 48 h
 ///         TimelockController run by the platform Safe (as GangRouter, §21): users approve the PROXY, and a new
-///         version is public for 48 h before it can run. No owner and no funds here.
+///         version is public for 48 h before it can run. The `owner` (mainnet: the Safe, no timelock) manages the
+///         sell-caller whitelist only, but a listing takes effect at once and lets that caller sell for its users with
+///         their existing approvals to this gateway: as weighty as an upgrade, without the 48 h (accepted to keep it
+///         simple, AUDIT-BRIEF §25.10); a delisting is immediate too. No funds here.
 /// @dev Anything sent here outside a call (tokens, BNB) stays here: every call settles against its own balance delta.
 ///      STORAGE LAYOUT (proxy storage). Upgrade rule: a new variable takes its slot from `__gap` (declared right before
 ///      it) and the gap shrinks by the same number of slots; never reorder, retype or remove a variable, and never
@@ -95,7 +99,10 @@ interface IWBNBGateway {
 ///        slot 0      ReentrancyGuard._status  (0 on a fresh proxy = not entered; 1 / 2 afterwards)
 ///        slot 1      registry
 ///        slot 2      wbnb
-///        slots 3–49  __gap (47 slots)
+///        slot 3      owner
+///        slot 4      pendingOwner
+///        slot 5      isCaller
+///        slots 6–49  __gap (44 slots)
 ///      Initializable keeps its flag in its ERC-7201 slot (not in the sequential layout). A new version that needs
 ///      set-up uses `reinitializer(2)`.
 contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
@@ -118,8 +125,18 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
     IGangPadRegistry public registry;
     /// @notice WBNB. Set once by `initialize`.
     address public wbnb;
+    /// @notice Manages the sell-caller whitelist (mainnet: the platform Safe). Two-step hand-over.
+    address public owner;
+    address public pendingOwner;
+    /// @notice Contracts allowed to call `sellToken` for a seller other than themselves (aggregators' contracts).
+    mapping(address caller => bool) public isCaller;
     /// @dev Reserved for appended state in later versions (see the layout above).
-    uint256[47] private __gap;
+    uint256[44] private __gap;
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
+        _;
+    }
 
     /// @dev The implementation itself can never be initialized: only a proxy's storage holds a registry.
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -129,10 +146,35 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
 
     /// @notice Run once, by the proxy's constructor (TransparentUpgradeableProxy's `_data`), in the deploy transaction.
     /// @param registry_ GangPadRegistry proxy (mainnet 0x4fF7…4e5C)
-    function initialize(address registry_, address wbnb_) external initializer {
-        if (registry_ == address(0) || wbnb_ == address(0)) revert NotDeployed();
+    /// @param owner_ manages the sell-caller whitelist (mainnet: the platform Safe)
+    function initialize(address registry_, address wbnb_, address owner_) external initializer {
+        if (registry_ == address(0) || wbnb_ == address(0) || owner_ == address(0)) revert NotDeployed();
         registry = IGangPadRegistry(registry_);
         wbnb = wbnb_;
+        owner = owner_;
+        emit OwnershipTransferred(address(0), owner_);
+    }
+
+    // ---------------------------------------------------------------- owner
+    /// @inheritdoc IGangGateway
+    function setCaller(address caller, bool allowed) external onlyOwner {
+        // contracts only (audit L-2): a listed EOA could later delegate to any code with EIP-7702 and relay for anyone
+        if (allowed && !_isPlainContract(caller)) revert NotAContract();
+        isCaller[caller] = allowed;
+        emit CallerSet(caller, allowed);
+    }
+
+    /// @notice Step 1 of a hand-over; `newOwner` must call `acceptOwnership`. address(0) cancels a pending one.
+    function transferOwnership(address newOwner) external onlyOwner {
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
+        emit OwnershipTransferred(owner, msg.sender);
+        owner = msg.sender;
+        pendingOwner = address(0);
     }
 
     /// @dev Only WBNB unwrapping sends BNB here. WBNB pays with `transfer` (2300 gas): through the proxy this costs one
@@ -246,6 +288,8 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
         uint256 feeRate,
         address feeRecipient
     ) external nonReentrant returns (uint256 fundsToSeller) {
+        // the seller itself, or a whitelisted aggregator contract (audit M-1); the pad still requires from == tx.origin
+        if (from != msg.sender && !isCaller[msg.sender]) revert NotWhitelisted();
         if (feeRate > MAX_FEE_RATE) revert FeeRateTooHigh();
         (IGangGatewayPad pad, IERC20 quote) = _curve(token);
         uint256 base = quote.balanceOf(address(this));
@@ -292,6 +336,14 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
         (address pad,) = registry.lookup(token);
         IGangGatewayPad p = IGangGatewayPad(pad);
         return p.routers(address(this)) && p.agentGateEnabled();
+    }
+
+    /// @dev Has code, and that code is not an EIP-7702 delegation designator (0xef0100 ‖ address, 23 bytes).
+    function _isPlainContract(address a) internal view returns (bool) {
+        uint256 size = a.code.length;
+        if (size == 0) return false;
+        if (size != 23) return true;
+        return bytes3(a.code) != 0xef0100;
     }
 
     /// @dev The quote as four.meme reports it: address(0) for WBNB (native BNB in and out here).

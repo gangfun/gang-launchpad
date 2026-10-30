@@ -14,8 +14,9 @@ import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangPadRegistryDeployLib as RG} from "../../script/GangPadRegistryDeployLib.sol";
 import {GangGatewayDeployLib as G} from "../../script/GangGatewayDeployLib.sol";
 
-/// @dev Attacker inventory wallet (from the 2026-10-30 independent audit, M-1): an Agent-holding account whose code anyone (the phisher) can drive. On mainnet this
-///      is an Agent-ID EOA delegated with EIP-7702, or a bundle [sell inventory, victim tx, buy back].
+/// @dev Attacker inventory wallet (from the 2026-10-30 independent audit, M-1): an Agent-holding account whose code
+///      anyone (the phisher) can drive. On mainnet this is an Agent-ID EOA delegated with EIP-7702, or a bundle [sell
+///      inventory, victim tx, buy back].
 contract Inventory {
     GangLaunchpad public immutable pad;
     IERC20 public immutable wbnb;
@@ -46,6 +47,19 @@ contract Inventory {
     }
 }
 
+/// @dev An aggregator entry that must never be whitelisted (§23.9): anyone calls it and names the seller.
+contract LooseEntry {
+    IGangGateway immutable gw;
+
+    constructor(IGangGateway gw_) {
+        gw = gw_;
+    }
+
+    function sellFor(address t, address seller, uint256 amount) external {
+        gw.sellToken(0, t, seller, amount, 0, 500, msg.sender);
+    }
+}
+
 contract Phisher {
     IGangGateway immutable gw;
 
@@ -53,11 +67,15 @@ contract Phisher {
         gw = gw_;
     }
 
-    function claim(address t, Inventory[] calldata inv, uint256[] calldata held) external {
+    /// @dev Dump the inventory, sell the victim (tx.origin) with no minimum — straight on the gateway, or through
+    ///      `entry` when given — then buy the inventory back.
+    function claim(address t, Inventory[] calldata inv, uint256[] calldata held, LooseEntry entry) external {
         for (uint256 i; i < inv.length; i++) {
             inv[i].sellAll(t);
         }
-        gw.sellToken(0, t, tx.origin, IERC20(t).balanceOf(tx.origin), 0, 500, address(this));
+        uint256 bal = IERC20(t).balanceOf(tx.origin);
+        if (address(entry) == address(0)) gw.sellToken(0, t, tx.origin, bal, 0, 500, address(this));
+        else entry.sellFor(t, tx.origin, bal);
         for (uint256 i; i < inv.length; i++) {
             inv[i].buyBack(t, held[i]);
         }
@@ -66,12 +84,12 @@ contract Phisher {
     receive() external payable {}
 }
 
-/// @notice The accepted residual risk of the open sell path, measured (AUDIT-BRIEF §25, audit M-1): a contract the
-///         user is tricked into calling dumps the attacker's own inventory on the curve, force-sells the user's
-///         approved tokens with no minimum at the depressed price, and buys the inventory back — all in the user's tx
-///         (an Agent EOA delegated with EIP-7702, an Agent-holding contract, or a bundle around the user's tx). The
-///         proceeds still go to the user, but the loss is bounded by the attacker's inventory, not by the 5% router
-///         fee. Exact approvals (spent to 0 by each sell) leave nothing to force-sell later.
+/// @notice Audit M-1 (AUDIT-BRIEF §25): a contract the user is tricked into calling dumps the attacker's own inventory
+///         on the curve, force-sells the user's approved tokens with no minimum at the depressed price, and buys the
+///         inventory back — all in the user's tx. The sell-caller whitelist stops it (the phisher is not listed). The
+///         same attack through a whitelisted entry that lets anyone name the seller (what the listing review must
+///         refuse) shows why: the loss is bounded by the attacker's inventory, not by the 5% router fee. Exact
+///         approvals (spent to 0 by each sell) leave nothing to force-sell even then.
 contract GangGatewayPhishingTest is GangFixture {
     GangPadRegistry internal reg;
     GangGateway internal gw;
@@ -120,6 +138,9 @@ contract GangGatewayPhishingTest is GangFixture {
     /// @return lossBps the victim's loss against a fair sell with no router fee
     /// @return attackerPnl what the attacker gained (inventory WBNB change + router fee)
     function _sandwich(uint256 progress, uint256 n) internal returns (uint256 lossBps, int256 attackerPnl) {
+        LooseEntry entry = new LooseEntry(IGangGateway(address(gw)));
+        vm.prank(owner);
+        gw.setCaller(address(entry), true);
         address t = _createV3(creator, address(0), _tax(0, 0, 0, address(0)));
         _push(t, progress);
         // victim at the 1% cap, unlimited approval to the gateway
@@ -141,7 +162,10 @@ contract GangGatewayPhishingTest is GangFixture {
         uint256 w0 = _wbnbOf(inv);
         b0 = alice.balance;
         vm.prank(alice, alice);
-        ph.claim(t, inv, held);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
+        ph.claim(t, inv, held, LooseEntry(address(0))); // straight on the gateway: blocked
+        vm.prank(alice, alice);
+        ph.claim(t, inv, held, entry); // through a wrongly whitelisted loose entry
         uint256 got = alice.balance - b0;
         for (uint256 i; i < n; i++) {
             assertGe(IERC20(t).balanceOf(address(inv[i])), held[i], "inventory restored");
@@ -151,6 +175,23 @@ contract GangGatewayPhishingTest is GangFixture {
         attackerPnl = int256(_wbnbOf(inv)) - int256(w0) + int256(address(ph).balance);
     }
 
+    /// @dev The phisher on its own, with inventory on the curve: NotWhitelisted, the victim keeps everything.
+    function test_sandwich_phisherAloneIsBlocked() public {
+        address t = _createV3(creator, address(0), _tax(0, 0, 0, address(0)));
+        vm.prank(alice, alice);
+        gw.buyTokenAMAP{value: 0.05 ether}(t, alice, 0.05 ether, 0);
+        uint256 y = IERC20(t).balanceOf(alice);
+        vm.prank(alice);
+        IERC20(t).approve(address(gw), type(uint256).max);
+        (Inventory[] memory inv, uint256[] memory held) = _inventory(t, 2);
+        Phisher ph = new Phisher(IGangGateway(address(gw)));
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
+        ph.claim(t, inv, held, LooseEntry(address(0)));
+        assertEq(IERC20(t).balanceOf(alice), y);
+    }
+
+    /// @dev Why a loose entry must never be listed.
     function test_sandwich_oneWallet_lossAboveRouterFee() public {
         (uint256 lossBps, int256 pnl) = _sandwich(7 ether, 1);
         assertGt(lossBps, 500, "beyond the 5% router fee");
@@ -177,10 +218,13 @@ contract GangGatewayPhishingTest is GangFixture {
         assertEq(IERC20(t).allowance(alice, address(gw)), 0);
 
         Phisher ph = new Phisher(IGangGateway(address(gw)));
+        LooseEntry entry = new LooseEntry(IGangGateway(address(gw)));
+        vm.prank(owner);
+        gw.setCaller(address(entry), true);
         Inventory[] memory none = new Inventory[](0);
         vm.prank(alice, alice);
         vm.expectRevert();
-        ph.claim(t, none, new uint256[](0));
+        ph.claim(t, none, new uint256[](0), entry);
         assertEq(IERC20(t).balanceOf(alice), y - y / 2, "the rest is untouched");
     }
 }

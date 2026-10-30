@@ -12,7 +12,7 @@ import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 /// @notice The GangRouter shape (GangRouterDeployLib), because users approve this contract too:
 ///           impl      = GangGateway (its constructor locks it: never initializable)
 ///           timelock  = TimelockController(minDelay, proposers = [safe], executors = [safe], admin = address(0))
-///           proxy     = TransparentUpgradeableProxy(impl, timelock, initialize(registry, wbnb)) — initialized in its
+///           proxy     = TransparentUpgradeableProxy(impl, timelock, initialize(registry, wbnb, safe)) — initialized in its
 ///                       own constructor (no front-run window); it deploys its ProxyAdmin (owner = timelock)
 ///         Each pad lists the PROXY (setRouter); an upgrade is timelock.schedule → wait minDelay → timelock.execute of
 ///         ProxyAdmin.upgradeAndCall(proxy, newImpl, data), both from the Safe.
@@ -52,7 +52,7 @@ library GangGatewayDeployLib {
         g.timelock = address(new TimelockController(minDelay, only, only, address(0)));
         g.proxy = address(
             new TransparentUpgradeableProxy(
-                g.impl, g.timelock, abi.encodeCall(GangGateway.initialize, (registry, wbnb))
+                g.impl, g.timelock, abi.encodeCall(GangGateway.initialize, (registry, wbnb, safe))
             )
         );
         g.proxyAdmin = R.adminOf(g.proxy);
@@ -68,8 +68,9 @@ library GangGatewayDeployLib {
     }
 
     /// @notice Proxy code, impl (this build's code, locked), ProxyAdmin (the proxy's own, plain OZ, owned by the
-    ///         timelock), the proxy's registry / WBNB, and the timelock (GangRouterDeployLib.checkTimelock: plain OZ
-    ///         code, delay, the Safe's roles only, no admin but itself). Any mismatch reverts with its name.
+    ///         timelock), the proxy's registry / WBNB / owner (= the Safe, no pending hand-over), and the timelock
+    ///         (GangRouterDeployLib.checkTimelock: plain OZ code, delay, the Safe's roles only, no admin but itself).
+    ///         Any mismatch reverts with its name.
     function check(Gateway memory g, Expect memory e) internal view {
         R.Router memory asRouter =
             R.Router({proxy: g.proxy, impl: g.impl, proxyAdmin: g.proxyAdmin, timelock: g.timelock});
@@ -91,6 +92,8 @@ library GangGatewayDeployLib {
         GangGateway gw = GangGateway(payable(g.proxy));
         if (address(gw.registry()) != e.registry || e.registry == address(0)) revert WiringCheck("gateway registry");
         if (gw.wbnb() != e.wbnb || e.wbnb == address(0)) revert WiringCheck("gateway wbnb");
+        // the sell-caller whitelist belongs to the same Safe that runs the timelock, with no hand-over pending
+        if (gw.owner() != e.safe || gw.pendingOwner() != address(0)) revert WiringCheck("gateway owner");
 
         R.checkTimelock(
             asRouter,

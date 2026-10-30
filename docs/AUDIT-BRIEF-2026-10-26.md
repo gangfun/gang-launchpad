@@ -1207,7 +1207,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 
 ## 25. 聚合器用的内盘网关 GangGateway（2026-10-30）
 
-> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试网验收脚本、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。**测试网已部署并验收**（25.9）；主网未部署，上线要 Safe `setRouter(网关代理, true)`。
+> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试网验收脚本、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。没有白名单的第一版在测试网部署并验收过（25.9）；之后按用户决定加了卖出调用方白名单（25.10），第二版已在测试网部署、验收，第一版已下架（25.11）。主网未部署，上线要 Safe `setRouter(网关代理, true)` 并 `setCaller` 加白聚合器合约。
 
 ### 25.1 需求
 
@@ -1238,7 +1238,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 - **其他**：`nonReentrant`；`receive` 只收 WBNB。网关不经手代币，也不留余额：每笔都按本次调用的余额变化结算。存储布局：slot 0 `_status`、1 `registry`、2 `wbnb`、3–49 `__gap`。
 - **大小**：runtime 5,896 B，initcode 6,107 B。
 
-### 25.3 与 §23.9 清单的关系（有意的例外）
+### 25.3 与 §23.9 清单的关系（有意的例外；25.10 加白名单后已收窄）
 
 网关违反清单第 2、3 条：卖家 `from` 是调用者传入的参数，不是 `msg.sender`；`minFunds` 也由调用者填。第 1 条（不列入有任意调用能力的合约）、第 4 条（源码验证、升级权）、第 5 条（买入只花调用者本次的钱）都满足。第 3 条的要求部分满足：所得只付给 `from` 本人。这个例外是产品决定，目的是对齐 four.meme，聚合器明确表示钓鱼不在它们的考虑范围内。
 
@@ -1356,5 +1356,76 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 - 每一步之后，网关和 adapter 都不留余额。
 - 拒绝路径用 `eth_call` 核对：`TraderNotOrigin`、`NotAgent`、`FeeRateTooHigh`、`BadMsgValue`；pad 没列入网关时 `tryBuy` 返回 0。
 - 第 10 套 19 个币的 `getTokenInfo` 逐个核对正确。
+
+详见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`。
+
+### 25.10 卖出调用方白名单（2026-10-30，用户决定）
+
+M-1 在开放模型里修不掉：任何合约都能调、卖家是参数、最低价由调用方填，三条同时成立。用户决定不再沿用 four.meme 的开放卖出路径，改为**由 Safe 给聚合器合约加白**（聚合器早先自己提过“网关给聚合器的 adapter 直接白名单”）。
+
+- **合约**：
+  - 新增 `owner` / `pendingOwner` / `isCaller`（slot 3–5，`__gap` 从 47 减到 44）。
+  - `initialize(registry, wbnb, owner)`；`setCaller(caller, allowed)`（`onlyOwner`，事件 `CallerSet`）。
+  - 两步转移 owner：`transferOwnership` / `acceptOwnership`。
+  - `sellToken` 第一行检查 `from == msg.sender || isCaller[msg.sender]`，否则 `NotWhitelisted()`。
+  - 买入不变，谁都能调：花的是调用方自己的钱，代币只能发给 `tx.origin`。
+- **owner**：主网是 Safe 本身，不经时间锁，加白 / 移除即时生效。owner 只能改白名单，动不了资金和升级；升级仍经 48 小时时间锁。部署自检要求网关 owner 等于运行时间锁的 Safe，并且没有待接受的转移。
+- **只能加白合约**（白名单审计 L-2）：`setCaller(x, true)` 要求 `x` 有代码，并且不是 EIP-7702 委托（23 字节、以 `0xef0100` 开头），否则回滚 `NotAContract()`。被加白的 EOA 之后可以用 7702 挂上中继代码，替任何人卖。移除不做检查。部署脚本在广播前对 `GATEWAY_CALLERS` 做同样的检查，主网也一样。
+- **接受的风险：加白不经时间锁**（白名单审计 L-1）。加白一个调用方立即生效，这个调用方马上就能用它的用户现存的网关授权卖出。所以加白和升级一样重要，但没有 48 小时的公示期。Safe 被盗或误操作时，加白一个恶意合约就能复现 M-1。用户要求白名单从简，因此没有给加白加时间锁，接受这一点；移除同样即时生效，可以立即止损。
+- **效果**：用户被骗调用的合约不在白名单里，`NotWhitelisted`。经过一个按清单写的已加白 adapter 时，adapter 把它自己的调用者（钓鱼合约）当卖家，pad 回滚 `TraderNotOrigin`。用户自己用 EOA 直接调（`from == msg.sender`）不受白名单影响。
+- **加白审核清单**（等同 §23.9 的 `setRouter`，Safe 执行 `setCaller` 前逐项确认）：
+  1. 用户直接调用的入口（聚合器的 router）在入口处把 `from` 定为它自己的 `msg.sender`，之后原样一路传下去，不能被改写。
+  2. 每个被加白的合约（adapter、executor）只接受这个可信入口的调用，或者它本身就是这个入口。
+  3. 被加白的合约，以及能调用它的合约，都没有任意 target / calldata 的调用（multicall、execute），没有 Permit2 或签名订单的 payer，没有 ERC-2771 `_msgSender`，不用 `tx.origin`，也不从 storage 或 transient storage 读回“当前用户”。审计 PoC 证实：带开放 `execute` 的 router，或者把用户存成上下文、而 adapter 又不限制调用者的设计，字面上符合第 1 条，实际都可以被绕过。
+  4. 不可升级；可升级的，聚合器的升级管理员也在信任范围内，要监控它的 `Upgraded` 事件，有问题立即移除。
+  5. 只加白合约，合约里会检查。
+  
+  误加一个“谁都能填 `from`”的合约，M-1 会经由它复现（`test_sandwich_*` 用一个故意写错的 `LooseEntry` 测了这一点）。注意：多数聚合器的 adapter 是被 router 调用的，adapter 自己的 `msg.sender` 是 router，不是用户，所以集成方容易用 `tx.origin` 或参数传 `from`，这两种都不能加白。
+- **部署脚本**：`GATEWAY_CALLERS`（逗号分隔）在部署钱包是 owner 时直接加白（测试网）；否则打印 Safe 要执行的 `setCaller` calldata。
+- **测试**：
+  - `test_whitelist_sellNeedsListedCallerBuyDoesNot`：未加白不能卖但能买；加白后能卖；移除后又不能卖；用户自己直接调始终可以。
+  - `test_whitelist_onlyOwner_twoStepHandOver`。
+  - `test_phishing_blocked`：直接调 → `NotWhitelisted`；经已加白 adapter → `TraderNotOrigin`。
+  - `test_sell_fromMustBeOrigin`：别人直接调 → `NotWhitelisted`；经已加白但写错的入口 → pad 的 `TraderNotOrigin`。
+  - `GangGatewayPhishing.t.sol`：单独的钓鱼合约即使有库存也被挡下；经误加白的 `LooseEntry` 时，损失 > 5% 和 > 25%，说明审核的必要；精确授权的缓解。
+  - 存储布局快照更新。
+  - 主网 fork：Safe 加白 adapter，别人发起的交易里直接调 → `NotWhitelisted`。
+  - 结果：全量 `forge test` 983 通过 / 0 失败 / 131 跳过；主网 fork 4/4。
+- **白名单审计**（独立 subagent，2026-10-30）：白名单确实挡住了非加白调用方的 M-1，没有 Critical / High / Medium。
+  - L-1：加白不经时间锁。接受，见上。
+  - L-2：可以加白 EOA。已修，只能加白合约。
+  - L-3：加白规则写得不全。清单已补全，NatSpec 已更新。
+  - Info：几处 NatSpec 已改。测试网旧网关的处理见 25.11。审计还确认了：非加白合约走 `from == msg.sender` 时，pad 以 `TraderNotOrigin` 拒绝；加白合约的回调重入被 `nonReentrant` 挡住；存储布局、初始化、自检都没有问题。
+- **修复后的复审**（独立 subagent，2026-10-30）：结论干净，没有 Low 及以上问题。
+  - 复审确认：在 Prague 下用真实的 7702 委托（`signAndAttachDelegation`）验证过，被委托的 EOA 返回 23 字节标记、被拒绝，正常合约可以加白。
+  - 复审确认：EIP-3541 之后不存在以 `0xEF` 开头的合约；BSC 已有 EIP-6780，已加白的合约不能自毁后在同一地址换代码。
+  - 复审确认：部署脚本对 `GATEWAY_CALLERS` 的检查在广播前执行，主网 fork 上实测过 EOA、真实 7702 委托地址、合约三种输入。
+  - Info：两行注释超过 120 列，已改。
+- **修复后的测试**：网关单元测试 44/44，主网 fork 4/4，`forge fmt --check` 通过。
+
+### 25.11 测试网第二版（带白名单）
+
+白名单改动经过审计、修复和复审，之后部署到 BSC 测试网：
+
+- 网关代理：`0xb325dde51129C592E443ecbEE1E219D14C66e091`。
+- 只列入第 10 套 pad；owner 是部署钱包。
+- 部署后重跑自检通过，自检包含网关 owner。
+
+验收在链上跑通：
+
+- 新 adapter 部署后不在白名单里，owner `setCaller` 之后才在。
+- 经 adapter 买入，结果等于 `tryBuy`。
+- 经 adapter 卖出，收 1% 手续费，结果等于 `trySell`。
+- 钱包直接调网关卖出（不需要加白）。
+- 每一步都是精确授权，网关和 adapter 都不留余额。
+
+`eth_call` 核对的拒绝路径：
+
+- `NotWhitelisted`：别的 EOA 或没加白的合约替别人卖；
+- `NotAContract`：加白 EOA；
+- `OnlyOwner`：非 owner 改白名单；
+- `TraderNotOrigin`、`NotAgent`、`FeeRateTooHigh`。
+
+第一版 `0x5020…635c` 不能原地升级（owner 槽是 0，也没有 `reinitializer`），已在第 10 套上 `setRouter(…, false)` 下架，之后它的调用回滚 `OnlyRouter`。
 
 详见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`。

@@ -18,7 +18,8 @@ import {GatewayAdapter} from "../router/GangGateway.t.sol";
 ///         deploy script does (48 h timelock run by the Safe), listed by the Safe, then a BNB buy and a BNB sell (real
 ///         WBNB unwraps through the proxy's 2300-gas `receive`) through an aggregator-style adapter on a live WBNB
 ///         curve, both matching tryBuy / trySell to the wei; getTokenInfo of a graduated token; the pad's own rules
-///         (origin, allowance) still apply. The trader's Agent ID is mocked (balanceOf = 1).
+///         (origin, allowance) still apply, and only whitelisted callers sell for someone else. The trader's Agent ID
+///         is mocked (balanceOf = 1).
 /// @dev Needs BSC_RPC_URL (without it every test is skipped).
 contract GatewayMainnetForkTest is Test {
     address constant PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
@@ -41,6 +42,8 @@ contract GatewayMainnetForkTest is Test {
         vm.prank(M.OWNER_SAFE);
         IGangPad(PAD).setRouter(address(gw), true);
         adapter = new GatewayAdapter(IGangGateway(address(gw)), feeTo);
+        vm.prank(M.OWNER_SAFE);
+        gw.setCaller(address(adapter), true);
         vm.mockCall(
             M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector, user), abi.encode(uint256(1))
         );
@@ -77,6 +80,7 @@ contract GatewayMainnetForkTest is Test {
         );
         assertTrue(IGangPad(PAD).routers(address(gw)));
         assertTrue(IGangPad(PAD).agentGateEnabled());
+        assertEq(gw.owner(), M.OWNER_SAFE);
     }
 
     function test_fork_buyAndSellLiveCurve() public forkOnly {
@@ -134,8 +138,13 @@ contract GatewayMainnetForkTest is Test {
         IERC20(live).approve(address(gw), type(uint256).max);
         address other = makeAddr("fork-other");
         vm.prank(other, other);
-        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
         gw.sellToken(0, live, user, out, 0, 500, other);
+        // through the whitelisted adapter the seller is `other` itself: the user's tokens stay put
+        vm.prank(other, other);
+        vm.expectRevert();
+        adapter.sell(live, out, 0);
+        assertEq(IERC20(live).balanceOf(user), out);
         // a wallet without an Agent ID
         vm.deal(other, 1 ether);
         vm.prank(other, other);

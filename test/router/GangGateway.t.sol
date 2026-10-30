@@ -55,8 +55,8 @@ contract GatewayAdapter {
     }
 }
 
-/// @dev What a phishing contract can do with the open sell path: sell its caller's approved curve tokens and take
-///      the maximum router fee (the accepted four.meme model, AUDIT-BRIEF §25).
+/// @dev A phishing contract after its caller's approved curve tokens (the maximum router fee to itself): without the
+///      sell-caller whitelist this would sell them (audit M-1, AUDIT-BRIEF §25).
 contract GatewayPhisher {
     IGangGateway public immutable gw;
 
@@ -68,7 +68,25 @@ contract GatewayPhisher {
         gw.sellToken(0, token, tx.origin, IERC20(token).balanceOf(tx.origin), 0, 500, address(this));
     }
 
+    /// @dev Goes through a whitelisted, well-written adapter: the adapter names this contract as the seller.
+    function viaAdapter(GatewayAdapter a, address token, uint256 amount) external {
+        a.sell(token, amount, 0);
+    }
+
     receive() external payable {}
+}
+
+/// @dev A badly written aggregator entry (never to be whitelisted): anyone names the seller.
+contract GatewayLooseAdapter {
+    IGangGateway public immutable gw;
+
+    constructor(IGangGateway gw_) {
+        gw = gw_;
+    }
+
+    function sellFor(address token, address seller, uint256 amount) external returns (uint256) {
+        return gw.sellToken(0, token, seller, amount, 0, 0, address(0));
+    }
 }
 
 /// @dev Takes the router fee in BNB and tries to re-enter the gateway with it.
@@ -159,6 +177,8 @@ contract GangGatewayTest is GangFixture {
         vm.prank(owner);
         pad.setRouter(address(gw), true);
         adapter = new GatewayAdapter(IGangGateway(address(gw)), feeTo);
+        vm.prank(owner);
+        gw.setCaller(address(adapter), true);
 
         creator = _newAgent();
         alice = _newAgent();
@@ -216,19 +236,25 @@ contract GangGatewayTest is GangFixture {
 
     function test_deploy_implAndProxyCannotBeInitializedAgain() public {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        GangGateway(payable(stack.impl)).initialize(address(reg), address(wbnb));
+        GangGateway(payable(stack.impl)).initialize(address(reg), address(wbnb), owner);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
-        gw.initialize(address(reg), address(wbnb));
+        gw.initialize(address(reg), address(wbnb), owner);
     }
 
     function test_deploy_zeroAddressesRefused() public {
         address impl = address(new GangGateway());
         vm.expectRevert(IGangGateway.NotDeployed.selector);
         new TransparentUpgradeableProxy(
-            impl, owner, abi.encodeCall(GangGateway.initialize, (address(0), address(wbnb)))
+            impl, owner, abi.encodeCall(GangGateway.initialize, (address(0), address(wbnb), owner))
         );
         vm.expectRevert(IGangGateway.NotDeployed.selector);
-        new TransparentUpgradeableProxy(impl, owner, abi.encodeCall(GangGateway.initialize, (address(reg), address(0))));
+        new TransparentUpgradeableProxy(
+            impl, owner, abi.encodeCall(GangGateway.initialize, (address(reg), address(0), owner))
+        );
+        vm.expectRevert(IGangGateway.NotDeployed.selector);
+        new TransparentUpgradeableProxy(
+            impl, owner, abi.encodeCall(GangGateway.initialize, (address(reg), address(wbnb), address(0)))
+        );
     }
 
     /// @dev Upgrades only through the timelock: the Safe itself cannot call the ProxyAdmin, the timelock waits 48 h.
@@ -692,14 +718,97 @@ contract GangGatewayTest is GangFixture {
         address t = _v3();
         uint256 got = _buy(alice, t, 0.01 ether);
         _approveGw(alice, t);
+        // bob is neither alice nor a whitelisted caller
+        vm.prank(bob, bob);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
+        gw.sellToken(0, t, alice, got, 0, 500, bob);
+        // a whitelisted caller naming alice in bob's tx: the pad's origin rule
+        GatewayLooseAdapter loose = new GatewayLooseAdapter(IGangGateway(address(gw)));
+        vm.prank(owner);
+        gw.setCaller(address(loose), true);
         vm.prank(bob, bob);
         vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
-        gw.sellToken(0, t, alice, got, 0, 500, bob);
-        // through an adapter in bob's tx the adapter names bob, not alice: alice's tokens are out of reach
+        loose.sellFor(t, alice, got);
+        // through the adapter in bob's tx the adapter names bob, not alice: alice's tokens are out of reach
         vm.prank(bob, bob);
         vm.expectRevert();
         adapter.sell(t, got, 0);
         assertEq(IERC20(t).balanceOf(alice), got);
+    }
+
+    // ---------------------------------------------------------------- sell-caller whitelist
+    /// @dev Only the seller itself or a whitelisted caller may sell; buys stay open to any caller.
+    function test_whitelist_sellNeedsListedCallerBuyDoesNot() public {
+        address t = _v3();
+        GatewayAdapter other = new GatewayAdapter(IGangGateway(address(gw)), feeTo);
+        vm.prank(alice, alice);
+        (uint256 got,) = other.buyBnb{value: 0.01 ether}(t, 0); // not listed: buying is fine
+        assertGt(got, 0);
+        _approveGw(alice, t);
+        assertFalse(gw.isCaller(address(other)));
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
+        other.sell(t, got, 0);
+
+        vm.expectEmit(address(gw));
+        emit IGangGateway.CallerSet(address(other), true);
+        vm.prank(owner);
+        gw.setCaller(address(other), true);
+        vm.prank(alice, alice);
+        other.sell(t, got / 2, 0);
+
+        vm.prank(owner);
+        gw.setCaller(address(other), false);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
+        other.sell(t, got / 2, 0);
+        // the seller itself never needs listing
+        vm.prank(alice, alice);
+        gw.sellToken(0, t, alice, got - got / 2, 0, 0, address(0));
+        assertEq(IERC20(t).balanceOf(alice), 0);
+    }
+
+    function test_whitelist_onlyOwner_twoStepHandOver() public {
+        assertEq(gw.owner(), owner);
+        vm.prank(alice);
+        vm.expectRevert(IGangGateway.OnlyOwner.selector);
+        gw.setCaller(alice, true);
+        vm.prank(alice);
+        vm.expectRevert(IGangGateway.OnlyOwner.selector);
+        gw.transferOwnership(alice);
+
+        address next = makeAddr("nextOwner");
+        vm.prank(owner);
+        gw.transferOwnership(next);
+        assertEq(gw.pendingOwner(), next);
+        assertEq(gw.owner(), owner, "not before accept");
+        vm.prank(alice);
+        vm.expectRevert(IGangGateway.NotPendingOwner.selector);
+        gw.acceptOwnership();
+        vm.prank(next);
+        gw.acceptOwnership();
+        assertEq(gw.owner(), next);
+        assertEq(gw.pendingOwner(), address(0));
+        vm.prank(owner);
+        vm.expectRevert(IGangGateway.OnlyOwner.selector);
+        gw.setCaller(alice, true);
+        vm.prank(next);
+        gw.setCaller(address(adapter), false);
+        assertFalse(gw.isCaller(address(adapter)));
+    }
+
+    /// @dev Audit L-2: only contracts can be listed — not an EOA, not an EOA delegated with EIP-7702 (it could relay
+    ///      for anyone later); delisting anything is always possible.
+    function test_whitelist_contractsOnly() public {
+        vm.startPrank(owner);
+        vm.expectRevert(IGangGateway.NotAContract.selector);
+        gw.setCaller(alice, true);
+        address delegated = makeAddr("delegatedEoa");
+        vm.etch(delegated, abi.encodePacked(bytes3(0xef0100), address(adapter)));
+        vm.expectRevert(IGangGateway.NotAContract.selector);
+        gw.setCaller(delegated, true);
+        gw.setCaller(alice, false); // delisting needs no check
+        vm.stopPrank();
     }
 
     function test_sell_feeChecks() public {
@@ -743,22 +852,21 @@ contract GangGatewayTest is GangFixture {
         assertEq(funds, 0);
     }
 
-    /// @dev The accepted residual risk (four.meme's model, AUDIT-BRIEF §25): a contract the user is tricked into
-    ///      calling sells the user's approved curve tokens in the user's own tx. The proceeds still go to the user;
-    ///      the phisher keeps at most the 5% router fee.
-    function test_phishing_openSellKeepsProceedsWithUser() public {
+    /// @dev Audit M-1 closed: a contract the user is tricked into calling is not a whitelisted caller, so it cannot
+    ///      sell the user's approved tokens even in the user's own tx; and through a whitelisted adapter that names its
+    ///      own caller, the phisher is the trader (TraderNotOrigin).
+    function test_phishing_blocked() public {
         address t = _v3();
         uint256 got = _buy(alice, t, 0.01 ether);
         _approveGw(alice, t);
         GatewayPhisher m = new GatewayPhisher(IGangGateway(address(gw)));
-        (,, uint256 funds,) = gw.trySell(t, got);
-        uint256 bnbBefore = alice.balance;
         vm.prank(alice, alice);
+        vm.expectRevert(IGangGateway.NotWhitelisted.selector);
         m.claimAirdrop(t);
-        uint256 fee = (funds * 500) / 10_000;
-        assertEq(address(m).balance, fee, "phisher: 5% at most");
-        assertEq(alice.balance - bnbBefore, funds - fee, "the rest to the user");
-        assertEq(IERC20(t).balanceOf(alice), 0);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad.TraderNotOrigin.selector);
+        m.viaAdapter(adapter, t, got);
+        assertEq(IERC20(t).balanceOf(alice), got);
     }
 
     /// @dev A BNB fee recipient that re-enters the gateway fails the whole sell.

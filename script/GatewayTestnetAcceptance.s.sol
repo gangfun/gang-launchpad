@@ -28,8 +28,9 @@ contract GatewayAcceptanceAdapter {
 }
 
 /// @title GatewayTestnetAcceptance — GangGateway end to end on BSC testnet, as an aggregator would use it
-/// @notice With the deploy wallet (an Agent ID holder): create a WBNB-quoted curve token on GANG_PAD; buy 0.002 BNB of
-///         it through an aggregator-style adapter (quote checked against tryBuy); approve the gateway exactly half and
+/// @notice With the deploy wallet (an Agent ID holder and the gateway owner): create a WBNB-quoted curve token on
+///         GANG_PAD; whitelist an aggregator-style adapter as a sell caller; buy 0.002 BNB of the token through it
+///         (quote checked against tryBuy); approve the gateway exactly half and
 ///         sell that through the adapter with a 1% router fee to the demo treasury (BNB out, checked against
 ///         trySell); approve exactly the rest and sell it straight on the gateway with no fee. After each step: the
 ///         trader holds the tokens / gets the BNB, the allowance is back to 0, the gateway and adapter hold nothing.
@@ -59,6 +60,14 @@ contract GatewayTestnetAcceptance is Script {
         );
         GatewayAcceptanceAdapter adapter = new GatewayAcceptanceAdapter(gw, feeTo);
         vm.stopBroadcast();
+
+        // an unlisted adapter cannot sell for its caller (sell-caller whitelist); the owner lists it
+        if (gw.isCaller(address(adapter))) revert Check("adapter listed before setCaller");
+        if (gw.owner() != me) revert Check("deploy wallet is not the gateway owner");
+        vm.startBroadcast(pk);
+        gw.setCaller(address(adapter), true);
+        vm.stopBroadcast();
+        if (!gw.isCaller(address(adapter))) revert Check("setCaller");
 
         (uint8 status, address quote,, uint256 feeBps, uint256 left) = gw.getTokenInfo(token);
         if (status != 1 || quote != address(0) || feeBps != 100 || left == 0) revert Check("getTokenInfo");
