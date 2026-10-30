@@ -6,6 +6,37 @@
 - 发交易：`forge script … --broadcast --slow --legacy --with-gas-price 100000000`（原因见 `docs/TESTNET-GANG-BOND-2026-10-28.md`「gas」）
 - 共享合约沿用第 10 套内盘（`GANG_PAD = 0xFebF…5BB1`）的 quote registry、分红 vault、平台费 bucket、migrator；测试网上这几个合约和发射台注册表都归部署钱包 `0xCa8e…00b6`，所以同一次运行里接好线（主网走多签批量，见部署脚本）
 
+部署了两套，都登记在测试网发射台注册表里（只能追加）：
+
+| 套 | 代码 | 本文 |
+|---|---|---|
+| 第二套（现行） | 主网前审计修复后：开池先开保护再付 dev 分成、开池后 mint 先收款再读价、`maxSpent`、dev 分成上限 10%、`pairFactory()` / `v3Factory()` | 第一部分 |
+| 第一套 | 修复前 | 第二部分（保留作记录，不再使用） |
+
+# 第一部分 · 第二套（现行）
+
+| 项 | 值 |
+|---|---|
+| GangFlywheelPad | [`0xD6482850aCAC74BA889804931Fc797294777951c`](https://testnet.bscscan.com/address/0xD6482850aCAC74BA889804931Fc797294777951c)，`KIND = 3` |
+| FlywheelTaxHandler | [`0xCE084a4aF0059eB1620769a4daB7A9372A9cd315`](https://testnet.bscscan.com/address/0xCE084a4aF0059eB1620769a4daB7A9372A9cd315) |
+| MintTokenDeployer | [`0x61efEAdD550EaAc2257d5d1A5327df82397C712f`](https://testnet.bscscan.com/address/0x61efEAdD550EaAc2257d5d1A5327df82397C712f) |
+| 外部库 | FlywheelLogic `0xA2538eB3B15CEa212e3bC7226Ae5a3D3eF53501B`、FlywheelPostLogic `0xDc7a3f71014a4AB161007f96B652F8494269F044` |
+| 部署 | 18 笔，0 失败，gas 合计 18,697,497，区块 139,749,672–139,749,747；pad [`0x1c6afa8b…03dd`](https://testnet.bscscan.com/tx/0x1c6afa8ba170acc96908dfa80860896d32f40f71120c98e9256890d0851003dd)、注册表 `addPad` [`0x8972624a…0327`](https://testnet.bscscan.com/tx/0x8972624aef4d8d734f9f5dbcae770df37537a8e0078f66e16a5989f947750327)、`setMigrator`（OWNER 就是部署钱包，当场调用）[`0x027cace6…6b5d`](https://testnet.bscscan.com/tx/0x027cace6ccceda706072347d36212fed53c8fc6845d6a205a14e5d33468b6b5d)；记录 `broadcast/DeployFlywheel.s.sol/97/run-1793338157910.json` |
+
+验收（同一个脚本，阶段 2 的开池后 mint 带 `maxSpent = 预览的 paid + fee`）：
+
+| 项 | 值 |
+|---|---|
+| 测试币发射 | [`0x35F2b5c500516C0F906B9dEeDD863f277C41C7fc`](https://testnet.bscscan.com/address/0x35F2b5c500516C0F906B9dEeDD863f277C41C7fc)，pair `0x980D64BcDF4EC86014D9a5Ca5D4daDe31254F763`；WBNB 发射 `0x36b9400D47f1B3a096DE9E03d0F0377b341F6A2F` |
+| 阶段 1 | 404 笔，0 失败（30 个钱包已有 Agent ID），gas 64,128,663，区块 139,750,113–139,751,895；`openEarly` [`0x71557b4c…81c4`](https://testnet.bscscan.com/tx/0x71557b4ccd5cfdde591e11c88f14e641e30f288c0e6c8791b3c823bc557d81c4)（gas 2,512,688）；`mintWithBnb` [`0xae302c35…908d`](https://testnet.bscscan.com/tx/0xae302c35bd93082c2a8b1c226f36f9e526d48fad60865ffefffd6f0c17c0908d)；卖回 [`0xe5c72595…59d5`](https://testnet.bscscan.com/tx/0xe5c72595252af6a44042ed3e626625c54739901b50a7d4ad09cbd0bc094659d5)、[`0x8d4800c0…fc66`](https://testnet.bscscan.com/tx/0x8d4800c0dad30e968384035f421cbc6bf85beec64b9be73cd24a266b7772fc66) |
+| 保护期探针 | [`0x86765387…3069`](https://testnet.bscscan.com/tx/0x8676538730eef55bd54131e20169317455d4eb37e1b6b5b8140b19ececa43069)：`cast run` 回放的拒绝原因 `ProtectionNotAgent()`；保护期到 `1793339457` |
+| 阶段 2 | 10 笔，0 失败，一次跑通：`mintPost` × 5（[`0xd0fe292e…0daf`](https://testnet.bscscan.com/tx/0xd0fe292ea5c24b137d6a8510717feab9324cf675cf58913573e23d951a550daf) 等，gas 约 468,600，首笔 570,238）、router 买入 [`0xd28838b4…16a8`](https://testnet.bscscan.com/tx/0xd28838b4dbe7fdbe55e18d40237d67eac45ea93c90d60843018e7c1a6d8616a8)、keeper `process` [`0xcdc4fa1d…90a5`](https://testnet.bscscan.com/tx/0xcdc4fa1d4cd65c958a0263cc76daaac4f715bf6bd8bb3e920d907ee9917090a5)、router 卖出 [`0xc4e798fe…998d`](https://testnet.bscscan.com/tx/0xc4e798fecee0f6271f0651fb6e44dfffc7aa17d5d393b2cc61f0322425d8998d) |
+| 链上核对 | `registry.lookup(token) = (0xD648…951c, 3)`；验收钱包有待领取的持有人奖励 |
+
+部署钱包剩 0.212 tBNB。
+
+# 第二部分 · 第一套（修复前，已被第二套取代）
+
 ## 部署
 
 | 项 | 值 |
@@ -13,10 +44,10 @@
 | GangFlywheelPad | [`0x7E3000c87950Ac3C9e05622d3A58E001F96D937e`](https://testnet.bscscan.com/address/0x7E3000c87950Ac3C9e05622d3A58E001F96D937e)（17,973 字节），`KIND = 3` |
 | FlywheelTaxHandler | [`0xF7d7566305f33561151d9354dD9F6926bAD8E7A5`](https://testnet.bscscan.com/address/0xF7d7566305f33561151d9354dD9F6926bAD8E7A5)（23,910 字节），keeper = 部署钱包 |
 | MintTokenDeployer | [`0xD4f0fB929d34a77D9FA982Ff05f531c73b8C1F82`](https://testnet.bscscan.com/address/0xD4f0fB929d34a77D9FA982Ff05f531c73b8C1F82) |
-| 外部库 | FlywheelLogic `0x2afF9b8548b1DBbd5F581989c29442A665634824`、FlywheelPostLogic `0x1F166aE8754E89865902c34a93dCa301A1053E81` |
+| 外部库 | FlywheelLogic `0x2aff9B8548B1dbbD5F581989C29442A665634824`、FlywheelPostLogic `0x1F166aE8754E89865902C34A93dcA301A1053E81` |
 | owner | 三个合约都是 `0xCa8e…00b6` |
 | Agent ID 门控 | 开，测试网 TestnetAgentId `0x24D0…5B2a`（任何人可自行 `register()`） |
-| 交易 | 18 笔，0 失败，gas 合计 18,686,565，区块 139,732,623–139,732,704；记录 `broadcast/DeployFlywheel.s.sol/97/run-latest.json` |
+| 交易 | 18 笔，0 失败，gas 合计 18,686,565，区块 139,732,623–139,732,704；记录 `broadcast/DeployFlywheel.s.sol/97/run-1793330485867.json` |
 
 接线（同一次运行）：
 
@@ -69,4 +100,4 @@
 
 ## 余额
 
-部署钱包从 0.348 tBNB 剩 0.225 tBNB（含给 30 个验收钱包的 gas）。
+第一套跑完后部署钱包从 0.348 tBNB 剩 0.225 tBNB（含给 30 个验收钱包的 gas）。
