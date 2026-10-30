@@ -81,7 +81,7 @@ gang create --fair --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] 
 # steady; every setting can be overridden: --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90
 # --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10 --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800
 # --cap-mul 1-2 --post-mint|--no-post-mint --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
-# V2 pad only: --guard off|15|20|30 (default off: no pause on price drops) --twap-window 15|30 (default 30); --quota ≤ 20 with post-launch minting
+# V2 pad only: --guard off|15|20|30 (default off: no pause on price drops) --twap-window 15|30 (default 30); --quota ≤ 10 with post-launch minting
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [settings…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <inviter>] [--slippage 2]   # before launch: the sale price; after: mintPost (pool price or above)
 gang fly open-early --token <addr>           # creator, ≥ 30% sold

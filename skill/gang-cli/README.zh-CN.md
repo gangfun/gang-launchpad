@@ -93,7 +93,7 @@ gang tx --pending                            # 在 Binance App 里批准过的�
 # 铸币飞轮（GangFlywheelPad；主网，--testnet 走测试网第 2 套）。--preset j（默认，J 模板）或 steady，每一项都能单独改：
 # --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90 --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10
 # --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800 --cap-mul 1-2 --post-mint|--no-post-mint
-# 只限 V2 发射台：--guard off|15|20|30（默认 off：价格下跌时不暂停 mint）--twap-window 15|30（默认 30）；开池后 mint 打开时 --quota ≤ 20
+# 只限 V2 发射台：--guard off|15|20|30（默认 off：价格下跌时不暂停 mint）--twap-window 15|30（默认 30）；开池后 mint 打开时 --quota ≤ 10
 # --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [设置…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <邀请人>] [--slippage 2]   # 开池前按发售价；开池后 mintPost（不低于池子价格）
