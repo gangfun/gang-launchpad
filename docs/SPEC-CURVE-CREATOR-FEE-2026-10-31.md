@@ -81,7 +81,8 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 - 已有断言改成新规则：`LaunchpadV3.t.sol`（bucket 收 30%、creator 70%）、`LaunchpadV3Fuzz.t.sol`、`OriginTrader.t.sol`、`MergeGuards.t.sol`（pad 事件清单加两个新事件，托管对账加 creator 分成）、`PadMergeGuards.t.sol`、`FairMixedIsolation.t.sol`。
 - 不变量 `CoreInvariants.t.sol`：handler 新增 `v3ClaimCreatorFee` 动作；每笔内盘交易检查 bucket + creator = 1%、creator = 其中 70%；领取必须正好付出记账的数；pad 余额恒等式（§4）把 creator 分成算进去。
 - 审计后补充（§9）：同一个 WBNB 下两条曲线 + 一个打新 sale 依次经过 bucket 拒收（曲线交易整笔回滚、不记分成；打新撤出费转为 owed）、`flushFees`、发射、毕业、两个 creator 领取的确定性用例；不变量里领取失败计为错误，不再被忽略。
-- 本地结果：非 fork 测试 1151 通过 / 0 失败 / 103 跳过（改动前 1140 / 0 / 103）。fork 测试 36 通过 / 3 失败，和改动前的 `origin/main` 一样：`RouterPoolFork` 的两个 `test_fork_pool_fair*` 在 `origin/main` 上同样失败，另一个是 RPC 缺历史状态（missing trie node）。
+- 部署脚本 `script/DeployGangLaunchpad2.s.sol` 的主网 fork 测试 `test/fork/GangLaunchpad2DeployFork.t.sol`：用一次性私钥在 BSC 主网 fork 上跑脚本两个阶段，按脚本打印的 JSON 逐条以 Safe 身份执行三个批次，然后在 2.0 上发币、经新 Router 买入（creator 70%、线上 bucket 30%）、经线上 migrator 毕业、毕业后领取；切换批次执行后 1.0 无法再发币、2.0 照常发币；另外确认自检会拒绝 1.0（没有 creator 分成）。这个测试要单独跑（`--match-path`）：它和 `FlywheelDeployScriptFork` 都会改 `OWNER` / `KEEPER` / `GANG_PAD` 这些进程级环境变量，并行时互相干扰。
+- 本地结果（`forge test --no-match-path "test/fork/**"`）：1151 通过 / 0 失败 / 103 跳过（改动前 1140 / 0 / 103）。fork 测试 36 通过 / 3 失败，和改动前的 `origin/main` 一样：`RouterPoolFork` 的两个 `test_fork_pool_fair*` 在 `origin/main` 上同样失败，另一个是 RPC 缺历史状态（missing trie node）。
 
 ## 7. 上线方式
 
@@ -90,14 +91,19 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 
 - 1.0 上的币不变：内盘 1% 仍全部进 bucket，creator 拿不到分成。1.0 停止创建新币（`TokenDeployer.setLaunchpad(1.0, false)`），已有的币照常交易、毕业。
 - 2.0 需要新的 `GangTaxHandler`（handler 的 `launchpad` 只能设一次），共用现有的 vault、bucket、migrator、QuoteRegistry、TokenDeployer，由 Safe 把 2.0 / 新 handler 接上。
-- 构造或初始化时绑死 pad 地址的合约要为 2.0 重新部署：`GangRouter`（`pad` 在初始化时设定）、`GangBond`、`GangBuybackSplitterFactory`、`GangLiquiditySplitterFactory`（后两者还绑定 handler）。`GangGateway` 经 registry 找 pad，不用重部署，只要 registry `addPad(2.0)`、2.0 `setRouter(gateway)`。
-- `CurveLogic` 的 `buy` / `sell` 多了一个参数，selector 变了：2.0 必须链接新部署的 `CurveLogic`（和 `FairLogic`），不能复用旧库地址，否则 pad 能创建币却无法交易，而且无法补救。部署自检要检查 `CREATOR_FEE_SHARE_BPS() == 7000`，并实际跑一笔买入、卖出和领取。
+- 构造或初始化时绑死 pad 或 handler 地址的合约要为 2.0 重新部署：`GangRouter`（`pad` 在初始化时设定）、`GangBond`、`GangHandlerAdmin`（`handler` 不可变；2.0 handler 的 owner 交给它，模块 factory 才能列出自己的模块）、`GangBuybackSplitterFactory`、`GangSplitModuleFactory`、`GangLiquiditySplitterFactory`（三个 factory 都绑定 pad，并检查 `admin.handler() == pad.taxHandler()`）。`GangGateway` 经 registry 找 pad，不用重部署，只要 registry `addPad(2.0)`、2.0 `setRouter(gateway)`，并且 2.0 打开 Agent gate（`buyFor` 在 gate 关闭时回滚 `RouterNeedsGate`）。
+- `CurveLogic` 的 `buy` / `sell` 多了一个参数，selector 变了：2.0 必须链接新部署的 `CurveLogic`，不能复用旧库地址（`FairLogic` 没改，forge 部署时也会一起新部署），否则 pad 能创建币却无法交易，而且无法补救。部署自检要检查 `CREATOR_FEE_SHARE_BPS() == 7000`，并实际跑一笔买入、卖出和领取。
 - 下游：
   - indexer 要索引 2.0 和两个新事件。`Buy` / `Sell` 的 `protocolFee` 是整笔 1%，平台收入要减去同一笔交易的 `CreatorFeeAccrued`。同一笔交易里 `CreatorFeeAccrued` 先于 `Buy` / `Sell` 发出，按交易聚合，不要按相邻日志配对。
   - 网站展示 creator 可领的分成。
   - CLI 增加领取命令，并把创建默认指到 2.0。1.0 没有 `creatorFeeOf` / `claimCreatorFee`，按 pad 代际分开处理。
   - `to` 是 pad 自己时回滚的是 `ZeroAddress`，提示文案要单独写。
-- 部署脚本、Safe 批次和测试网验收另写记录文档，按「审计 → 修复 → 独立复审 → 测试网 → 用户确认后主网」的流程走。
+- 部署脚本 `script/DeployGangLaunchpad2.s.sol`（继承 `DeployGang` 的自检），两个阶段：
+  1. 部署 handler、pad（连同新的 `CurveLogic` / `FairLogic`）、可升级 Router，接好部署钱包自己能接的（handler 的 pad / keeper、pad 的 Router 和 Gateway、Agent gate、V3 factory、沿用 1.0 的 TWAP 窗口、USDT 桥接池）。共享合约的登记在测试网直接做，主网打印 **Safe 批次 1**（9 笔：vault 登记 pad、阈值、operator、排除新 Router，migrator、TokenDeployer、bucket 两个 operator、registry `addPad`）。
+  2. 批次 1 执行后重跑：完整自检（pad 尚未开放也可以），外加 2.0 专属检查：`CREATOR_FEE_SHARE_BPS() == 7000`，并且对未知币调用 `buy` / `sell` / `claimCreatorFee` 必须由新库回滚 `UnknownToken`（链接了旧 `CurveLogic` 就过不了）。然后把 handler 和 pad 转给 Safe，打印 **Safe 批次 2**（接受两份所有权，最后 `setMigrator` 开放 2.0）和 **Safe 批次 3**（切换：`TokenDeployer.setLaunchpad(1.0, false)`，等后端、网站、CLI 都切到 2.0 后再执行）。
+- 主网输入写死（1.0 地址、registry、Gateway、Safe、keeper），共享合约必须都归 Safe；2.0 的 bucket 检查以线上 bucket 当前的 feeVault / burner 为准。
+- 模块（handler admin、三个 factory、Bond）用现有脚本对 2.0 再部署一次；这几个脚本在主网只认 1.0 的地址，2.0 主网地址确定后再加进去。1.0 handler 上人工列入的合作方接收地址不会自动带过来，需要 Safe 在 2.0 上重新列入。
+- 按「审计 → 修复 → 独立复审 → 测试网 → 用户确认后主网」的流程走，测试网和主网的部署记录另写文档。
 
 ## 8. 审计重点
 

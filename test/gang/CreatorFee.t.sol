@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
+import {SharedPlatformFeeBucket} from "../../src/common/SharedPlatformFeeBucket.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 
 /// @notice The creator's 70% of the curve's 1% fee (pons model, docs/SPEC-CURVE-CREATOR-FEE-2026-10-31.md): kept on the
@@ -219,7 +220,7 @@ contract CreatorFeeTest is GangFixture {
         bucket.setOperator(address(pad), false);
         uint256 cfBefore = pad.creatorFeeOf(c1);
         vm.prank(m);
-        vm.expectRevert();
+        vm.expectRevert(SharedPlatformFeeBucket.OnlyLaunchpad.selector);
         pad.buy(c1, 0.1 ether, 0);
         assertEq(pad.creatorFeeOf(c1), cfBefore, "no accrual on a refused trade");
         vm.prank(m);

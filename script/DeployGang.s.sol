@@ -110,7 +110,11 @@ contract DeployGang is Script {
     error WiringCheck(string what);
     error PendingOwnerMismatch(address target);
 
-    function run() external returns (Stack memory s) {
+    /// @dev Set by a script that checks a pad the Safe opens later (DeployGangLaunchpad2 phase 2): `pad.migrator() == 0`
+    ///      then passes `_checkPad`. Off here: this script always opens the pad before checking it.
+    bool internal allowClosedPad;
+
+    function run() external virtual returns (Stack memory s) {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         Cfg memory c = _cfg(vm.addr(pk));
 
@@ -365,7 +369,10 @@ contract DeployGang is Script {
         if (pad.tokenDeployer() != s.tokenDeployer) revert WiringCheck("pad.tokenDeployer");
         if (pad.wbnb() != c.wbnb) revert WiringCheck("pad.wbnb");
         if (pad.pairFactory() != c.factory) revert WiringCheck("pad.pairFactory");
-        if (pad.migrator() != s.migrator || s.migrator == address(0)) revert WiringCheck("pad.migrator");
+        if (s.migrator == address(0)) revert WiringCheck("pad.migrator");
+        if (pad.migrator() != s.migrator && !(allowClosedPad && pad.migrator() == address(0))) {
+            revert WiringCheck("pad.migrator");
+        }
         if (pad.agentIdRegistry() != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
         if (c.mainnet && s.agentId != M.AGENT_ID_REGISTRY) revert WiringCheck("mainnet Agent ID registry");
         if (!pad.walletCapEnabled()) revert WiringCheck("wallet cap");
