@@ -288,7 +288,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         bytes[3] memory calls = [
             abi.encodeCall(IGangPad.buy, (probe, 1, 0)),
             abi.encodeCall(IGangPad.sell, (probe, 1, 0)),
-            abi.encodeCall(IGangPad.claimCreatorFee, (probe, address(this)))
+            abi.encodeCall(IGangPad.claimCreatorFee, (probe, probe))
         ];
         for (uint256 i; i < 3; i++) {
             (bool ok, bytes memory ret) = pad.call(calls[i]);
