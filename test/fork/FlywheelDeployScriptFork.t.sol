@@ -31,7 +31,9 @@ contract DeployFlywheelHarness is DeployFlywheel {
     }
 
     function acceptJson(address[5] memory sh, address[3] memory o, address safe) external pure returns (string memory) {
-        return _acceptJson(Shared(sh[0], sh[1], sh[2], sh[3], sh[4]), Own(o[0], o[1], o[2]), true, safe, [true, true, true], true);
+        return _acceptJson(
+            Shared(sh[0], sh[1], sh[2], sh[3], sh[4]), Own(o[0], o[1], o[2]), true, safe, [true, true, true], true
+        );
     }
 }
 
@@ -196,9 +198,8 @@ contract FlywheelDeployScriptForkTest is Test {
         uint256 bal = IERC20(t).balanceOf(trader);
         vm.startPrank(trader);
         IERC20(t).approve(M.PANCAKE_V2_ROUTER, bal);
-        IPancakeRouterA(M.PANCAKE_V2_ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(
-            bal / 2, 0, _path(t, M.WBNB), trader, block.timestamp
-        );
+        IPancakeRouterA(M.PANCAKE_V2_ROUTER)
+            .swapExactTokensForETHSupportingFeeOnTransferTokens(bal / 2, 0, _path(t, M.WBNB), trader, block.timestamp);
         vm.stopPrank();
         vm.roll(block.number + 1);
         uint256 chunk = h.maxChunk(t);

@@ -97,7 +97,9 @@ library FlywheelLogic {
         if (bytes(reason).length != 0) revert IFlywheelPad.BadConfig(reason);
         // without the one-wallet-per-person gate, quotas don't bound a creator minting through fresh wallets to collect
         // its own cut (review R2-1 L-2): an ungated sale takes none
-        if (gate == address(0) && cfg.devCutBps != 0) revert IFlywheelPad.BadConfig("devCutBps must be 0 when ungated");
+        if (gate == address(0) && cfg.devCutBps != 0) {
+            revert IFlywheelPad.BadConfig("devCutBps must be 0 when ungated");
+        }
         SharedDividendVault vault = SharedDividendVault(d.dividendVault);
         if (vault.minimumShareBalanceOf(address(this)) > MIN_SHARE) revert IFlywheelPad.VaultFloorTooHigh();
 
@@ -109,9 +111,8 @@ library FlywheelLogic {
         if (raiseQuote > MAX_RAISE_QUOTE) revert IFlywheelPad.BadConfig("raise too large in this quote");
 
         uint256 cap = cfg.postMint ? PRE_SUPPLY * cfg.supplyCapMul : PRE_SUPPLY;
-        token = IMintTokenDeployer(d.tokenDeployer).deploy(
-            text[0], text[1], text[3], d.taxHandler, BUY_TAX_BPS, cfg.sellTaxBps, 0, cap
-        );
+        token = IMintTokenDeployer(d.tokenDeployer)
+            .deploy(text[0], text[1], text[3], d.taxHandler, BUY_TAX_BPS, cfg.sellTaxBps, 0, cap);
         vault.ensureMinimumShareBalance(MIN_SHARE);
         vault.registerToken(token, quote);
         IFlyHandler(d.taxHandler).register(token, quote, msg.sender);
@@ -143,11 +144,7 @@ library FlywheelLogic {
     }
 
     /// @notice Every reason `create` would refuse `cfg` (empty = fine).
-    function checkConfig(IFlywheelPad.FlyConfig calldata cfg, uint256 devShares)
-        public
-        pure
-        returns (string memory)
-    {
+    function checkConfig(IFlywheelPad.FlyConfig calldata cfg, uint256 devShares) public pure returns (string memory) {
         if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) return "raiseBnb must be 3-50 BNB";
         if (cfg.baseQuota < 5 || cfg.baseQuota > 100) return "baseQuota must be 5-100";
         if (cfg.inviteBonus > 3) return "inviteBonus must be 0-3";
@@ -439,9 +436,12 @@ library FlywheelLogic {
     }
 
     /// @dev The creator's cut, pushed now; a failed push is owed (`claimDev`, anyone).
-    function payDev(mapping(address => uint256) storage owedDev, IFlywheelPad.Sale storage s, address token, uint256 amount)
-        internal
-    {
+    function payDev(
+        mapping(address => uint256) storage owedDev,
+        IFlywheelPad.Sale storage s,
+        address token,
+        uint256 amount
+    ) internal {
         if (amount == 0) return;
         address quote = s.quote;
         (bool ok, bytes memory ret) = quote.call(abi.encodeCall(IERC20.transfer, (s.creator, amount)));

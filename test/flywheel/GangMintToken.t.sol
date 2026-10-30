@@ -65,8 +65,7 @@ contract GangMintTokenTest is Test {
 
     function test_zeroStartSupplyMintsAsMintersMintWhileLocked() public {
         vm.prank(pad);
-        GangMintToken t =
-            GangMintToken(deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, 0, CAP));
+        GangMintToken t = GangMintToken(deployer.deploy("Mint", "MINT", "u", address(hooks), 100, 100, 0, CAP));
         assertEq(t.totalSupply(), 0);
         vm.prank(pad);
         t.padMint(alice, 3 ether); // a pre-launch mint: allowed although transfers are locked
@@ -153,14 +152,16 @@ contract GangMintTokenTest is Test {
         a = bound(a, 0, CAP);
         b = bound(b, 0, CAP);
         vm.startPrank(pad);
-        if (a <= CAP - START) t.padMint(alice, a);
-        else {
+        if (a <= CAP - START) {
+            t.padMint(alice, a);
+        } else {
             vm.expectRevert(GangMintToken.CapExceeded.selector);
             t.padMint(alice, a);
             a = 0;
         }
-        if (START + a + b <= CAP) t.padMint(alice, b);
-        else {
+        if (START + a + b <= CAP) {
+            t.padMint(alice, b);
+        } else {
             vm.expectRevert(GangMintToken.CapExceeded.selector);
             t.padMint(alice, b);
         }

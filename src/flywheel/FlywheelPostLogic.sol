@@ -287,7 +287,6 @@ library FlywheelPostLogicView {
         }
         (uint112 r0, uint112 r1,) = IUniswapV2PairLite(pair).getReserves();
         uint256 rQ = IUniswapV2PairLite(pair).token0() == token ? uint256(r1) : uint256(r0);
-        return (FlywheelPostLogic.recentSpent(a) + paid) * FlywheelPostLogic.BPS
-            <= rQ * FlywheelPostLogic.PACE_POOL_BPS;
+        return (FlywheelPostLogic.recentSpent(a) + paid) * FlywheelPostLogic.BPS <= rQ * FlywheelPostLogic.PACE_POOL_BPS;
     }
 }

@@ -79,7 +79,9 @@ interface IFlywheelPad {
         uint256 basePrice,
         FlyConfig cfg
     );
-    event Minted(address indexed token, address indexed trader, uint256 shares, uint256 cost, uint256 fee, uint256 sold);
+    event Minted(
+        address indexed token, address indexed trader, uint256 shares, uint256 cost, uint256 fee, uint256 sold
+    );
     event Withdrawn(address indexed token, address indexed trader, uint256 shares, uint256 payout, uint256 fee);
     event Referred(address indexed token, address indexed referrer, address indexed invitee, uint256 bonus);
     event Filled(address indexed token, uint256 sold, bool early);

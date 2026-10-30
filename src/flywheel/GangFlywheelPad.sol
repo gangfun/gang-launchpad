@@ -166,13 +166,11 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     /// @param quote    WBNB (address(0)) or any 18-decimal ERC-20
     /// @param refPool  pool pricing a non-BNB quote (ignored for WBNB or a QuoteRegistry rate)
     /// @param devShares shares the creator mints in the same call (1..min(baseQuota, maxPerTx)); approve the quote first
-    function create(
-        string[4] calldata text,
-        address quote,
-        address refPool,
-        FlyConfig calldata cfg,
-        uint256 devShares
-    ) external nonReentrant returns (address token) {
+    function create(string[4] calldata text, address quote, address refPool, FlyConfig calldata cfg, uint256 devShares)
+        external
+        nonReentrant
+        returns (address token)
+    {
         token = FlywheelLogic.create(
             _config, _sales, accounts, owedDev, bridgePoolOf, _deps(), text, quote, refPool, cfg, devShares
         );
@@ -285,7 +283,17 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         _wrap(token);
         // msg.value bounds the spend (BnbShort)
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, type(uint256).max, referrer, msg.value
+            _sales,
+            accounts,
+            owedDev,
+            _deps(),
+            msg.sender,
+            token,
+            shares,
+            minTokensOut,
+            type(uint256).max,
+            referrer,
+            msg.value
         );
         _refund(spent);
     }
@@ -385,11 +393,14 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         if (accepted == 0) return (0, 0, 0, 0, false);
         paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
         fee = (paid * s.mintFeeBps) / 10_000;
-        (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
+        (uint256 spot, uint256 blockStart, uint256 high, uint256 average) =
+            FlywheelPostLogicView.prices(taxHandler, token);
         uint256 price =
             FlywheelPostLogic.buyerPrice(spot, blockStart, FlywheelOracle.prevStart(taxHandler, token), high, average);
         tokensOut = Math.mulDiv(paid, 1 << 112, price);
-        if (price * 10_000 > spot * (10_000 + FlywheelPostLogic.HIGH_GAP_BPS)) return (accepted, paid, fee, tokensOut, false);
+        if (price * 10_000 > spot * (10_000 + FlywheelPostLogic.HIGH_GAP_BPS)) {
+            return (accepted, paid, fee, tokensOut, false);
+        }
         // minted: at most the buyer's tokens plus the liquidity's (at most `paid` of quote at spot)
         ok = FlywheelPostLogicView.allowed(a, paid, spot, high, average, s.pair, token)
             && tokensOut + Math.mulDiv(paid, 1 << 112, spot) <= IMintRoom(token).mintRoom();

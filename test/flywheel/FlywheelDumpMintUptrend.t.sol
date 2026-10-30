@@ -36,10 +36,13 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
     }
 
     /// @param rampSteps 3-minute steps, each a third-party buy of `stepBps` of the quote reserve (0 = flat market)
-    function _run(IFlywheelPad.FlyConfig memory c, uint256 rampSteps, uint256 stepBps, uint256 nWallets, uint256 mintsEach)
-        internal
-        returns (int256 pnl, int256 pnlConservative)
-    {
+    function _run(
+        IFlywheelPad.FlyConfig memory c,
+        uint256 rampSteps,
+        uint256 stepBps,
+        uint256 nWallets,
+        uint256 mintsEach
+    ) internal returns (int256 pnl, int256 pnlConservative) {
         address t = _create(c, 1);
         _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + c.window);
@@ -48,7 +51,9 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
         address whale = _newAgent();
         ws.push(whale);
         _poolBuy(t, whale, 2 ether); // inventory (not counted, as in FlywheelDumpMint)
-        for (uint256 i; i < nWallets; i++) ws.push(_newAgent());
+        for (uint256 i; i < nWallets; i++) {
+            ws.push(_newAgent());
+        }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
@@ -104,7 +109,9 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
             vm.stopPrank();
         }
         mq0;
-        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.02 ether);
+        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) {
+            _buyPaid(t, whale, 0.02 ether);
+        }
 
         uint256 p1 = _price(t);
         (int256 q1, int256 v1) = _wealth(t, p1);
@@ -112,19 +119,22 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
         // conservative: tokens valued at the lower of the two prices, minted tokens' exit costs (sell tax + DEX fee)
         uint256 pl = p1 < p0 ? p1 : p0;
         int256 mintedValue = 0;
-        for (uint256 i = 1; i < ws.length; i++) mintedValue += int256((IERC20(t).balanceOf(ws[i]) * pl) / 1e18);
+        for (uint256 i = 1; i < ws.length; i++) {
+            mintedValue += int256((IERC20(t).balanceOf(ws[i]) * pl) / 1e18);
+        }
         int256 dTok = int256((_tokens(t) * pl) / 1e18) - int256((tok0 * pl) / 1e18);
         pnlConservative = (q1 - q0) + dTok - (mintedValue * int256(uint256(c.sellTaxBps) + 25)) / 10_000;
     }
 
     function _tokens(address t) internal view returns (uint256 n) {
-        for (uint256 i; i < ws.length; i++) n += IERC20(t).balanceOf(ws[i]);
+        for (uint256 i; i < ws.length; i++) {
+            n += IERC20(t).balanceOf(ws[i]);
+        }
     }
 
     function _rq(address t) internal view returns (uint256 rQ) {
         (, rQ) = _res(t);
     }
-
 
     function test_flat_fiveWallets() public {
         (, int256 b) = _run(_wide(), 0, 0, 5, 8);

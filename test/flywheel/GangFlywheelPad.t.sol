@@ -181,7 +181,9 @@ contract GangFlywheelPadTest is FlywheelFixture {
         for (uint256 i; i < 30; i++) {
             address w = _newAgent();
             vm.startPrank(w);
-            for (uint256 k; k < 10; k++) pad.mint(t, 10, 1, address(0));
+            for (uint256 k; k < 10; k++) {
+                pad.mint(t, 10, 1, address(0));
+            }
             vm.stopPrank();
         }
         address other = _newAgent();
@@ -410,7 +412,9 @@ contract GangFlywheelPadTest is FlywheelFixture {
         IFlywheelPad.FlyConfig memory c = _wide();
         address t = _create(c, 10);
         vm.startPrank(dev);
-        for (uint256 i; i < 9; i++) pad.mint(t, 10, 1, address(0)); // the creator holds 100 shares
+        for (uint256 i; i < 9; i++) {
+            pad.mint(t, 10, 1, address(0)); // the creator holds 100 shares
+        }
         pad.withdraw(t, 20, 0); // sells 20 back: 80 left
         vm.stopPrank();
         assertEq(_sale(t).creatorShares, 80);

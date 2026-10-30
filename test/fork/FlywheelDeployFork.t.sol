@@ -53,7 +53,8 @@ contract FlywheelDeployForkTest is Test {
         vm.startPrank(me);
         MintTokenDeployer d = new MintTokenDeployer(me);
         FlywheelTaxHandler h = new FlywheelTaxHandler(me, vault, bucket, V2_ROUTER);
-        GangFlywheelPad p = new GangFlywheelPad(me, live.quoteRegistry(), vault, bucket, address(h), address(d), WBNB, V2_FACTORY);
+        GangFlywheelPad p =
+            new GangFlywheelPad(me, live.quoteRegistry(), vault, bucket, address(h), address(d), WBNB, V2_FACTORY);
         d.setLaunchpad(address(p), true);
         h.setLaunchpad(address(p));
         h.setKeeper(me);

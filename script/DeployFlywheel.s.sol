@@ -105,9 +105,7 @@ contract DeployFlywheel is Script {
             }
         } else {
             Own memory o = Own({
-                deployer: vm.envAddress("FLYWHEEL_DEPLOYER"),
-                handler: vm.envAddress("FLYWHEEL_HANDLER"),
-                pad: existing
+                deployer: vm.envAddress("FLYWHEEL_DEPLOYER"), handler: vm.envAddress("FLYWHEEL_HANDLER"), pad: existing
             });
             _requireShared(sh, o);
             if (owner == me && GangFlywheelPad(payable(o.pad)).migrator() == address(0)) {
@@ -176,7 +174,9 @@ contract DeployFlywheel is Script {
     /// @dev The pad buys from the pairs the migrator seeds with Pancake V2's 0.25% fee hard-coded (review R2-2 I-3):
     ///      the migrator must use the same factory as the pad (the official Pancake V2 one of the chain).
     function _requireFactory(Shared memory sh, address factory) internal view {
-        if (address(SharedMigrator(sh.migrator).factory()) != factory) revert NotWired("migrator factory != Pancake V2");
+        if (address(SharedMigrator(sh.migrator).factory()) != factory) {
+            revert NotWired("migrator factory != Pancake V2");
+        }
     }
 
     /// @dev Audit C-2: on mainnet the inputs are pinned (a testnet OWNER / KEEPER left in the env would hand the
@@ -218,7 +218,9 @@ contract DeployFlywheel is Script {
         }
         if (h.launchpad() != o.pad) revert NotWired("handler.setLaunchpad");
         if (h.keeper() != keeper) revert NotWired("handler keeper");
-        if (address(h.dexRouter()) != (mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER)) revert NotWired("handler router");
+        if (address(h.dexRouter()) != (mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER)) {
+            revert NotWired("handler router");
+        }
         if (address(h.dividendVault()) != sh.vault || address(h.platformBucket()) != sh.bucket) {
             revert NotWired("handler shared contracts");
         }
@@ -231,7 +233,9 @@ contract DeployFlywheel is Script {
                 || address(p.platformBucket()) != sh.bucket || p.wbnb() != (mainnet ? M.WBNB : T.WBNB)
         ) revert NotWired("pad shared contracts");
         if (p.pairFactory() != (mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY)) revert NotWired("pad factory");
-        if (p.v3Factory() != (mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY)) revert NotWired("pad v3 factory");
+        if (p.v3Factory() != (mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY)) {
+            revert NotWired("pad v3 factory");
+        }
         address[3] memory cs = [o.deployer, o.handler, o.pad];
         for (uint256 i; i < 3; i++) {
             Ownable2Step c = Ownable2Step(cs[i]);
@@ -302,7 +306,9 @@ contract DeployFlywheel is Script {
             j = string.concat(j, _tx(cs[i], abi.encodeWithSignature("acceptOwnership()"), comma));
             comma = true;
         }
-        if (openPad) j = string.concat(j, _tx(o.pad, abi.encodeCall(GangFlywheelPad.setMigrator, (sh.migrator)), comma));
+        if (openPad) {
+            j = string.concat(j, _tx(o.pad, abi.encodeCall(GangFlywheelPad.setMigrator, (sh.migrator)), comma));
+        }
         j = string.concat(j, "]}");
     }
 

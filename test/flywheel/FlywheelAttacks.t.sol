@@ -135,7 +135,8 @@ contract FlywheelAttacksTest is FlywheelFixture {
         }
         assertGe(have, bag, "bag not restored");
         // quote won, plus the overshoot of the last buy-back step at the end price
-        int256 pnl = int256(wbnb.balanceOf(w)) - int256(q0) - int256(spentBack) + int256(((have - bag) * _price(t)) / 1e18);
+        int256 pnl =
+            int256(wbnb.balanceOf(w)) - int256(q0) - int256(spentBack) + int256(((have - bag) * _price(t)) / 1e18);
         assertLt(pnl, 0, "dump-wait-mint paid");
         _assertSolvent(t);
     }

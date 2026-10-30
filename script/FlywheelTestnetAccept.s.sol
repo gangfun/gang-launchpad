@@ -39,9 +39,8 @@ contract ProtectionProbe {
         address[] memory path = new address[](2);
         path[0] = quote;
         path[1] = token;
-        try IRouterV2(router).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            amountIn, 0, path, address(this), block.timestamp
-        ) {
+        try IRouterV2(router)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, 0, path, address(this), block.timestamp) {
             refused = false;
         } catch {
             refused = true;
@@ -121,7 +120,8 @@ contract FlywheelTestnetAccept is Script {
         (bool ok,) = T.WBNB.call{value: 0.001 ether}(abi.encodeWithSignature("deposit()"));
         require(ok);
         IERC20(T.WBNB).approve(address(pad), type(uint256).max);
-        address s = pad.create(["Flywheel Accept", "FWA", "ipfs://logo", "ipfs://meta"], TEST_QUOTE, address(0), _cfg(), 10);
+        address s =
+            pad.create(["Flywheel Accept", "FWA", "ipfs://logo", "ipfs://meta"], TEST_QUOTE, address(0), _cfg(), 10);
         address w = pad.create(["Flywheel BNB", "FWB", "ipfs://logo", "ipfs://meta"], address(0), address(0), _cfg(), 1);
         for (uint256 i; i < WALLETS; i++) {
             (, address who) = _wallet(i);
@@ -136,10 +136,14 @@ contract FlywheelTestnetAccept is Script {
             (uint256 key, address who) = _wallet(i);
             (, address prev) = i == 0 ? (0, me) : _wallet(i - 1);
             vm.startBroadcast(key);
-            if (IAgentRegister(T.AGENT_ID_REGISTRY).balanceOf(who) == 0) IAgentRegister(T.AGENT_ID_REGISTRY).register();
+            if (IAgentRegister(T.AGENT_ID_REGISTRY).balanceOf(who) == 0) {
+                IAgentRegister(T.AGENT_ID_REGISTRY).register();
+            }
             ITestQuote(TEST_QUOTE).mintUnlimited(who, 10 ether);
             IERC20(TEST_QUOTE).approve(address(pad), type(uint256).max);
-            for (uint256 k; k < 10; k++) pad.mint(s, 10, 1, prev);
+            for (uint256 k; k < 10; k++) {
+                pad.mint(s, 10, 1, prev);
+            }
             if (i == 0) {
                 // a sell-back, then the shares minted again
                 uint256 payout = pad.withdraw(s, 5, 0);
@@ -178,7 +182,9 @@ contract FlywheelTestnetAccept is Script {
         IFlywheelPad.Sale memory sale = pad.sales(s);
         if (!sale.launched) revert Check("not launched");
         (uint64 until,,) = handler.protectionOf(s);
-        if (block.timestamp < until) revert Check("protection window still open: wait for handler.protectionOf(token)");
+        if (block.timestamp < until) {
+            revert Check("protection window still open: wait for handler.protectionOf(token)");
+        }
         // post-launch mints by up to five wallets with quota left (a re-run skips the ones that used theirs); the
         // preview must match
         uint256 minted;
@@ -202,9 +208,8 @@ contract FlywheelTestnetAccept is Script {
         path[0] = TEST_QUOTE;
         path[1] = s;
         IERC20(TEST_QUOTE).approve(T.PANCAKE_V2_ROUTER, type(uint256).max);
-        IRouterV2(T.PANCAKE_V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            0.05 ether, 0, path, me, block.timestamp + 1 hours
-        );
+        IRouterV2(T.PANCAKE_V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(0.05 ether, 0, path, me, block.timestamp + 1 hours);
         // the keeper sells a chunk before the sell: after a sell, in the same block, the price is below the block's
         // reference and `process` refuses by design (forge re-simulates every tx in one block)
         uint256 chunk = handler.maxChunk(s);
@@ -213,9 +218,8 @@ contract FlywheelTestnetAccept is Script {
         IERC20(s).approve(T.PANCAKE_V2_ROUTER, type(uint256).max);
         path[0] = s;
         path[1] = TEST_QUOTE;
-        IRouterV2(T.PANCAKE_V2_ROUTER).swapExactTokensForTokensSupportingFeeOnTransferTokens(
-            bal / 3, 0, path, me, block.timestamp + 1 hours
-        );
+        IRouterV2(T.PANCAKE_V2_ROUTER)
+            .swapExactTokensForTokensSupportingFeeOnTransferTokens(bal / 3, 0, path, me, block.timestamp + 1 hours);
         vm.stopBroadcast();
 
         (, address holder) = _wallet(3);

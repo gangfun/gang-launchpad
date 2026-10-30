@@ -44,7 +44,9 @@ contract FlywheelAggregatorTest is FlywheelFixture {
         address impl = address(new GangPadRegistry());
         address[] memory none = new address[](0);
         registry = GangPadRegistry(
-            address(new TransparentUpgradeableProxy(impl, owner, abi.encodeCall(GangPadRegistry.initialize, (owner, none))))
+            address(
+                new TransparentUpgradeableProxy(impl, owner, abi.encodeCall(GangPadRegistry.initialize, (owner, none)))
+            )
         );
         router = new RouterStub(pad, wbnb);
         wbnb.mintUnlimited(address(router), 1_000 ether);

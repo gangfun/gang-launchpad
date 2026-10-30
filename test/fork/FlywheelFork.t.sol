@@ -75,7 +75,14 @@ contract FlywheelForkTest is Test {
         deployer = new MintTokenDeployer(owner);
         handler = new FlywheelTaxHandler(owner, address(vault), address(bucket), V2_ROUTER);
         pad = new GangFlywheelPad(
-            owner, address(registry), address(vault), address(bucket), address(handler), address(deployer), WBNB, V2_FACTORY
+            owner,
+            address(registry),
+            address(vault),
+            address(bucket),
+            address(handler),
+            address(deployer),
+            WBNB,
+            V2_FACTORY
         );
         vm.startPrank(owner);
         bucket.setOperator(address(pad), true);
@@ -140,9 +147,8 @@ contract FlywheelForkTest is Test {
     function _routerSell(address token, address who, uint256 amount) internal {
         vm.startPrank(who);
         IERC20(token).approve(V2_ROUTER, amount);
-        IPancakeRouterFork(V2_ROUTER).swapExactTokensForETHSupportingFeeOnTransferTokens(
-            amount, 0, _path(token, WBNB), who, block.timestamp
-        );
+        IPancakeRouterFork(V2_ROUTER)
+            .swapExactTokensForETHSupportingFeeOnTransferTokens(amount, 0, _path(token, WBNB), who, block.timestamp);
         vm.stopPrank();
     }
 

@@ -49,7 +49,9 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         address whale = _newAgent();
         ws.push(whale);
         _poolBuy(t, whale, 1 ether); // inventory (paid by the fixture, not counted)
-        for (uint256 i; i < nWallets; i++) ws.push(_newAgent());
+        for (uint256 i; i < nWallets; i++) {
+            ws.push(_newAgent());
+        }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
@@ -78,7 +80,9 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
             vm.stopPrank();
         }
         // buy the dump back, same block
-        for (uint256 i; i < 2_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.005 ether);
+        for (uint256 i; i < 2_000 && IERC20(t).balanceOf(whale) < bag; i++) {
+            _buyPaid(t, whale, 0.005 ether);
+        }
 
         uint256 p1 = _price(t);
         (int256 q1, int256 v1) = _wealth(t, p1);
@@ -140,7 +144,9 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
     }
 
     function _quote() internal view returns (int256 q) {
-        for (uint256 i; i < ws.length; i++) q += int256(wbnb.balanceOf(ws[i]));
+        for (uint256 i; i < ws.length; i++) {
+            q += int256(wbnb.balanceOf(ws[i]));
+        }
     }
 
     function _run(uint256 nWallets, uint256 buyBpsOfPool) internal returns (int256 cons, int256 liq) {
@@ -151,7 +157,9 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
         address whale = _newAgent();
         ws.push(whale);
         _poolBuy(t, whale, 2 ether); // inventory (paid by the fixture, not counted)
-        for (uint256 i; i < nWallets; i++) ws.push(_newAgent());
+        for (uint256 i; i < nWallets; i++) {
+            ws.push(_newAgent());
+        }
         vm.warp(vm.getBlockTimestamp() + 1 hours);
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
@@ -182,11 +190,15 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
                 minted++;
             } catch {}
         }
-        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.02 ether);
+        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) {
+            _buyPaid(t, whale, 0.02 ether);
+        }
         uint256 p1 = _price(t);
         uint256 pl = p1 < p0 ? p1 : p0;
         int256 mintedValue;
-        for (uint256 i = 1; i < ws.length; i++) mintedValue += int256((IERC20(t).balanceOf(ws[i]) * pl) / 1e18);
+        for (uint256 i = 1; i < ws.length; i++) {
+            mintedValue += int256((IERC20(t).balanceOf(ws[i]) * pl) / 1e18);
+        }
         int256 overshoot = int256(((IERC20(t).balanceOf(whale) - bag) * pl) / 1e18);
         cons = (_quote() - q0) + overshoot + mintedValue - (mintedValue * 225) / 10_000;
         for (uint256 i = 1; i < ws.length; i++) {
