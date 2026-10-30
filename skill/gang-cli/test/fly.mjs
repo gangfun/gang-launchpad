@@ -28,6 +28,8 @@ const [live] = rank([normalize(row(2, 'launched'))], 'new', { includeGraduated: 
 assert.equal(live.next, `gang mint --token ${t(2)} --shares <n>`)
 const [plain] = rank([normalize(row(3, 'launched', { postMint: false }))], 'new', { includeGraduated: true })
 assert.match(plain.next, /^gang buy --token/)
+// post-launch minting paused (gang.fun's mintPaused): the pool buy instead
+assert.match(rank([normalize(row(11, 'launched', { mintPaused: true }))], 'new', { includeGraduated: true })[0].next, /^gang buy --token/)
 // filled: waits for its launch; refund-only: sell back
 assert.equal(rank([normalize(row(8, 'filled'))], 'new')[0].next, `gang info --token ${t(8)}`)
 assert.equal(rank([normalize(row(9, 'refund'))], 'new')[0].next, `gang withdraw --token ${t(9)} --all`)
