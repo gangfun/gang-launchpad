@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.18.0'
+  version: '0.18.1'
   requires:
     bins: [baw, gang]
   install:
@@ -35,7 +35,6 @@ Before graduation a token **can't be transferred**, only bought and sold on the 
 
 **持续打新 (continuous mint, `fly`)** lives on its own pad, GangFlywheelPad: shares with a quota per wallet (invites
 add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
-BSC testnet only until its mainnet pad opens.
 
 The older pads (LaunchpadV2, Soft, LaunchpadU, LaunchpadS) take no new tokens; their tokens keep trading. **One command
 per action, whatever the pad**: `gang buy|sell|info|status|claim|mint|withdraw|release --token <addr>` reads the token's
