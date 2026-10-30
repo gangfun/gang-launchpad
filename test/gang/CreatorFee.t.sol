@@ -190,6 +190,62 @@ contract CreatorFeeTest is GangFixture {
         assertEq(blq.balanceOf(to), owed);
     }
 
+    /// @notice One WBNB balance backs two curves, a 打新 sale and its owed exit fee: a refused bucket reverts the whole
+    ///         curve trade (no accrual), and owedFee / flushFees / launch / graduation never spend a creator's part;
+    ///         after both claims only the live curve's escrow and dust are left (audit 2026-10-31).
+    function test_sameQuote_allPathsLeaveCreatorFee() public {
+        address q = address(wbnb);
+        address c1 = _createV3(creator, q, _tax(0, 0, 0, address(0)));
+        address c2 = _createV3(trader, q, _tax(200, 200, 5_000, treasury));
+        address s = _createFair(creator, q, 1);
+        for (uint256 i; i < 5; i++) {
+            address w = _newAgent();
+            vm.prank(w);
+            pad.buy(c1, 0.5 ether, 0);
+            vm.prank(w);
+            pad.buy(c2, 0.3 ether, 0);
+            uint256 b = IERC20(c1).balanceOf(w);
+            vm.startPrank(w);
+            IERC20(c1).approve(address(pad), b / 2);
+            pad.sell(c1, b / 2, 0);
+            vm.stopPrank();
+        }
+        address m = _newAgent();
+        vm.prank(m);
+        pad.mint(s, 50, 1);
+
+        // the bucket refuses the pad: a curve trade reverts as a whole, the 打新 exit fee becomes owed
+        vm.prank(owner);
+        bucket.setOperator(address(pad), false);
+        uint256 cfBefore = pad.creatorFeeOf(c1);
+        vm.prank(m);
+        vm.expectRevert();
+        pad.buy(c1, 0.1 ether, 0);
+        assertEq(pad.creatorFeeOf(c1), cfBefore, "no accrual on a refused trade");
+        vm.prank(m);
+        pad.withdraw(s, 20, 0);
+        assertGt(pad.owedFee(q), 0, "exit fee owed");
+        vm.prank(owner);
+        bucket.setOperator(address(pad), true);
+        pad.flushFees(q);
+
+        _fill(s);
+        _graduate(c1);
+        uint256 f1 = pad.creatorFeeOf(c1);
+        uint256 f2 = pad.creatorFeeOf(c2);
+        uint256 bal = wbnb.balanceOf(address(pad));
+        assertGe(bal, f1 + f2 + _curveRealQuote(c2), "backed");
+
+        vm.prank(creator);
+        pad.claimCreatorFee(c1, creator);
+        vm.prank(trader);
+        pad.claimCreatorFee(c2, trader);
+        assertEq(wbnb.balanceOf(address(pad)), bal - f1 - f2);
+        assertLe(wbnb.balanceOf(address(pad)) - _curveRealQuote(c2), 10, "only c2's escrow + dust");
+        _graduate(c2);
+        assertLe(wbnb.balanceOf(address(pad)) - pad.creatorFeeOf(c2), 10);
+    }
+
     /// @notice WBNB curve through GangRouter (BNB in): same split, in WBNB.
     function test_wbnbCurve_viaRouter() public {
         address t = _createV3(creator, address(wbnb), _tax(0, 0, 0, address(0)));

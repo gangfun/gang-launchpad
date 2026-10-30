@@ -354,21 +354,23 @@ contract CoreHandler is GangFixture {
         if (blocked) blockedSet++;
     }
 
-    /// @dev The creator takes what was kept for it (live or graduated); a blocked creator's claim on blq reverts.
+    /// @dev The creator takes what was kept for it (live or graduated), to an address no quote blocks. The suite runs
+    ///      with fail-on-revert off, so a reverting claim is counted in `creatorFeeOff` instead.
     function v3ClaimCreatorFee(uint256 seed) external action {
         if (v3Tokens.length == 0) return;
         address t = _v3(seed);
         uint256 owed = pad.creatorFeeOf(t);
         if (owed == 0) return;
         (address creator, address q,,,,,,,,,,) = pad.curves(t);
-        uint256 before = IERC20(q).balanceOf(creator);
+        address to = address(uint160(0xC1A1));
+        uint256 before = IERC20(q).balanceOf(to);
         vm.prank(creator);
-        try pad.claimCreatorFee(t, creator) returns (uint256 paid) {
+        try pad.claimCreatorFee(t, to) returns (uint256 paid) {
             creatorClaims++;
-            if (paid != owed || IERC20(q).balanceOf(creator) - before != owed || pad.creatorFeeOf(t) != 0) {
-                creatorFeeOff++;
-            }
-        } catch {}
+            if (paid != owed || IERC20(q).balanceOf(to) - before != owed || pad.creatorFeeOf(t) != 0) creatorFeeOff++;
+        } catch {
+            creatorFeeOff++;
+        }
     }
 
     function v3Release(uint256 seed) external action {
