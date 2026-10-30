@@ -96,7 +96,8 @@ these tokens.
     the price is more than 10% above the pool in the block of a dump (`info.postMint.rules`).
   The CLI names the rule that applies. `gang info` shows it before any mint: `postMint.pausedNow` with `reason`
   (`below_average`, `below_recent_high` (V1), `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows
-  `position.mintPaused` for the wallet (also `pace`). While paused, `next` is a pool buy.
+  `position.mintPaused` for the wallet (also `pace`). While paused, `next` is a pool buy. `info` checks the supply cap
+  with a conservative bound, so it may flag `supply_cap` slightly early near the cap; a mint's own preview is exact.
 - **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
   25%. Sell tax above 1% goes to holders. Only **minted** tokens earn: a wallet's weight is its balance, capped at what it
   minted. Below the hold line it is **out until its next mint**. Before a sell, check `sellableBeforeOut`. A sell past it
