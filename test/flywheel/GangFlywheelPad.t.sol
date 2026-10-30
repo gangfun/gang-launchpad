@@ -38,9 +38,12 @@ contract GangFlywheelPadTest is FlywheelFixture {
 
     function test_createRefusesBadConfigs() public {
         IFlywheelPad.FlyConfig memory c = _agentMint();
-        c.devCutBps = 1_501;
+        c.devCutBps = 1_000;
+        (bool okCut,) = pad.checkConfig(c, 1);
+        assertTrue(okCut);
+        c.devCutBps = 1_001; // audit A-F2: the ceiling is 10%
         vm.prank(dev);
-        vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "devCutBps must be 0-1500"));
+        vm.expectRevert(abi.encodeWithSelector(IFlywheelPad.BadConfig.selector, "devCutBps must be 0-1000"));
         pad.create(["a", "b", "c", "d"], address(0), address(0), c, 1);
         c = _agentMint();
         c.baseQuota = 101;
@@ -210,7 +213,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         uint256 devBefore = wbnb.balanceOf(dev);
         uint256 balBefore = wbnb.balanceOf(a);
         vm.prank(a);
-        (uint256 out, uint256 spent) = pad.mintPost(t, 10, 0, address(0));
+        (uint256 out, uint256 spent) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         // shares 10,001..10,010: tier ×1.10
         uint256 paid = (10 * PRICE * 110) / 100;
         assertEq(spent, paid + paid / 100);
@@ -234,13 +237,13 @@ contract GangFlywheelPadTest is FlywheelFixture {
         for (uint256 i; i < 15; i++) {
             address w = _newAgent();
             vm.prank(w);
-            pad.mintPost(t, 10, 0, address(0));
+            pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         }
         assertLe(_price(t), (start * 10_081) / 10_000);
         vm.roll(vm.getBlockNumber() + 1);
         address w2 = _newAgent();
         vm.prank(w2);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         assertGt(_price(t), (start * 10_081) / 10_000); // a new block, a new budget
     }
 
@@ -258,7 +261,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         address a = _newAgent();
         vm.prank(a);
         vm.expectRevert(IFlywheelPad.PriceBelowAverage.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
     }
 
     function test_sameBlockDumpDoesNotMakeAMintCheaper() public {
@@ -268,7 +271,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         assertLt(_price(t), blockStart);
         address a = _newAgent();
         vm.prank(a);
-        (uint256 out,) = pad.mintPost(t, 10, 0, address(0));
+        (uint256 out,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         uint256 paid = (10 * PRICE * 110) / 100;
         assertApproxEqRel(out, (paid * 1e18) / blockStart, 1e12); // priced at the block's start
     }
@@ -285,16 +288,16 @@ contract GangFlywheelPadTest is FlywheelFixture {
         // 2% of an 18 BNB pool = 0.36 BNB; at ×10 a share costs 0.02 BNB: 18 shares
         address a = _newAgent();
         vm.startPrank(a);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         vm.roll(vm.getBlockNumber() + 1);
         vm.expectRevert(IFlywheelPad.PaceExceeded.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         // sliding, not fixed: a moment later the allowance has hardly come back (no burst at a window's edge)
         vm.warp(vm.getBlockTimestamp() + 2);
         vm.expectRevert(IFlywheelPad.PaceExceeded.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         vm.warp(vm.getBlockTimestamp() + 30 minutes);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         vm.stopPrank();
     }
 
@@ -306,7 +309,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         assertEq(GangMintToken(t).maxSupply(), 2 * SHARES * TPS);
         vm.prank(dev);
         vm.expectRevert(IFlywheelPad.PostMintOff.selector);
-        pad.mintPost(t, 1, 0, address(0));
+        pad.mintPost(t, 1, 0, type(uint256).max, address(0));
     }
 
     function test_mintingAgainRequalifiesAWalletThatWasOut() public {
@@ -316,7 +319,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         assertTrue(handler.isOut(t, dev));
         vm.roll(vm.getBlockNumber() + 1);
         vm.prank(dev);
-        (uint256 out,) = pad.mintPost(t, 5, 0, address(0));
+        (uint256 out,) = pad.mintPost(t, 5, 0, type(uint256).max, address(0));
         assertFalse(handler.isOut(t, dev));
         assertEq(pad.baselineOf(t, dev), out);
         assertEq(vault.shares(t, dev), out);
@@ -342,7 +345,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         address t = _launched();
         address a = _newAgent();
         vm.prank(a);
-        (uint256 out, uint256 spent) = pad.mintPost(t, 10, 0, address(0));
+        (uint256 out, uint256 spent) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         uint256 got = _poolSell(t, a, out);
         assertLt(got, spent);
     }
@@ -360,7 +363,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         p.swap(t0 ? out : 0, t0 ? 0 : out, plain, "");
         address a = _newAgent();
         vm.prank(a);
-        pad.mintPost(t, 10, 0, address(0)); // an Agent minting during protection: fine
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0)); // an Agent minting during protection: fine
     }
 
     function test_agentMintPresetFillsWithAThousandWallets() public {
@@ -377,7 +380,7 @@ contract GangFlywheelPadTest is FlywheelFixture {
         uint256 got;
         vm.startPrank(dev);
         for (uint256 i; i < 9; i++) {
-            (uint256 out,) = pad.mintPost(t, 10, 0, address(0));
+            (uint256 out,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
             got += out;
             vm.roll(vm.getBlockNumber() + 1);
         }
@@ -391,14 +394,14 @@ contract GangFlywheelPadTest is FlywheelFixture {
         (uint256 rT0, uint256 rQ0) = _res(t);
         rT0;
         vm.prank(dev);
-        (, uint256 spent) = pad.mintPost(t, 10, 0, address(0));
+        (, uint256 spent) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         (, uint256 rQ1) = _res(t);
         uint256 paid = spent - spent / 101; // spent = paid × 1.01
         assertApproxEqAbs(rQ1 - rQ0, paid, 2); // all of it into the pool
         address a = _newAgent();
         uint256 devBefore = wbnb.balanceOf(dev);
         vm.prank(a);
-        (, uint256 spentA) = pad.mintPost(t, 10, 0, address(0));
+        (, uint256 spentA) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         uint256 paidA = spentA - spentA / 101;
         assertApproxEqAbs(wbnb.balanceOf(dev) - devBefore, paidA / 10, 2);
     }

@@ -37,19 +37,19 @@ contract FlywheelAttacksTest is FlywheelFixture {
         IFlywheelPad.FlyConfig memory c = _wide();
         c.buyBps = uint16(bound(buyBps, 0, 5_000));
         c.sellTaxBps = uint16(bound(sellTax, 100, 200));
-        c.devCutBps = uint16(bound(devCut, 0, 1_500));
+        c.devCutBps = uint16(bound(devCut, 0, 1_000));
         address t = _launchedWith(c);
         // some earlier minting in the same block (the push budget partly used)
         for (uint256 i; i < bound(pre, 0, 5); i++) {
             address w = _newAgent();
             vm.prank(w);
-            pad.mintPost(t, 10, 0, address(0));
+            pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         }
         address a = _newAgent();
         uint256 n = bound(shares, 1, 10);
         uint256 q0 = wbnb.balanceOf(a);
         vm.prank(a);
-        (uint256 out,) = pad.mintPost(t, n, 0, address(0));
+        (uint256 out,) = pad.mintPost(t, n, 0, type(uint256).max, address(0));
         _poolSell(t, a, out);
         assertLt(wbnb.balanceOf(a), q0, "mint-then-sell paid");
         _assertSolvent(t);
@@ -67,7 +67,7 @@ contract FlywheelAttacksTest is FlywheelFixture {
         uint256 got;
         vm.startPrank(a);
         for (uint256 i; i < 9; i++) {
-            (uint256 out,) = pad.mintPost(t, 10, 0, address(0));
+            (uint256 out,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
             got += out;
             vm.roll(vm.getBlockNumber() + 1);
             vm.warp(vm.getBlockTimestamp() + 1);
@@ -89,7 +89,7 @@ contract FlywheelAttacksTest is FlywheelFixture {
         vm.warp(vm.getBlockTimestamp() + 3);
         vm.prank(whale);
         vm.expectRevert(IFlywheelPad.PriceBelowAverage.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
     }
 
     /// @dev The patient version: dump, wait until the TWAP has caught up (no dip buyer at all for half an hour),
@@ -119,7 +119,7 @@ contract FlywheelAttacksTest is FlywheelFixture {
         uint256 minted;
         vm.startPrank(w);
         for (uint256 i; i < 10; i++) {
-            try pad.mintPost(t, 10, 0, address(0)) {
+            try pad.mintPost(t, 10, 0, type(uint256).max, address(0)) {
                 minted++;
             } catch {} // the whole quota, 10 per mint, as far as pace and budget allow
         }
@@ -153,7 +153,7 @@ contract FlywheelAttacksTest is FlywheelFixture {
         uint256 spent = 0.3 ether; // the fixture's pool buy is paid into the pair directly
         _poolBuy(t, mev, spent); // front-run: ~+3%
         vm.prank(victim);
-        try pad.mintPost(t, 10, minOut, address(0)) {} catch {}
+        try pad.mintPost(t, 10, minOut, type(uint256).max, address(0)) {} catch {}
         uint256 got = _poolSell(t, mev, IERC20(t).balanceOf(mev));
         assertLt(got, spent, "sandwich paid");
     }
@@ -173,7 +173,7 @@ contract FlywheelAttacksTest is FlywheelFixture {
         _assertSolvent(t);
         vm.warp(vm.getBlockTimestamp() + 600);
         vm.prank(a);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         _assertSolvent(t);
     }
 }
@@ -315,7 +315,7 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertLt(out, (paid << 112) / spot); // priced above the pool ...
         assertLe(out, (paid << 112) / floor); // ... at least at the floor (the previous block's start can lift it)
         vm.prank(a);
-        (uint256 got,) = pad.mintPost(t, 10, 0, address(0));
+        (uint256 got,) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         assertEq(got, out);
     }
 
@@ -364,17 +364,17 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertFalse(ok);
         vm.prank(a);
         vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         // nobody touches the pair (the refused mints roll back their own observation): the pushed start still lifts
         // the floor for a few seconds, then it no longer counts (re-review R7 L-1: the refusal lifts on its own)
         vm.roll(vm.getBlockNumber() + 10);
         vm.prank(a);
         vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         vm.roll(vm.getBlockNumber() + 20);
         (,,,, ok) = pad.previewMintPost(t, a, 10);
         assertTrue(ok);
         vm.prank(a);
-        pad.mintPost(t, 10, 0, address(0));
+        pad.mintPost(t, 10, 0, type(uint256).max, address(0));
     }
 }

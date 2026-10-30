@@ -155,7 +155,7 @@ library FlywheelLogic {
         if (cfg.holdBps < 6_000 || cfg.holdBps > 9_000) return "holdBps must be 6000-9000";
         if (cfg.mintFeeBps < 100 || cfg.mintFeeBps > 300) return "mintFeeBps must be 100-300";
         if (cfg.exitFeeBps < 100 || cfg.exitFeeBps > 200) return "exitFeeBps must be 100-200";
-        if (cfg.devCutBps > 1_500) return "devCutBps must be 0-1500";
+        if (cfg.devCutBps > 1_000) return "devCutBps must be 0-1000";
         if (cfg.buyBps > 5_000) return "buyBps must be 0-5000";
         if (cfg.sellTaxBps < 100 || cfg.sellTaxBps > 200) return "sellTaxBps must be 100-200";
         if (cfg.launchDelay > 300) return "launchDelay must be 0-300";
@@ -430,10 +430,11 @@ library FlywheelLogic {
         address pair = IMigratorV2(migrator).migrate(token, quote, poolTokens, poolQuote);
         IFlyToken(token).setPair(pair);
         s.pair = pair;
-        payDev(owedDev, s, token, devCut);
-
+        // protection and oracle on before the cut goes out: a quote calling the creator back (ERC777-style) must
+        // not let it trade the new pool unprotected and seed the oracle (audit B-L1)
         uint256 cap = uint256(s.baseQuota) * s.windowCapMul * TOKENS_PER_SHARE;
         IFlyHandler(d.taxHandler).onLaunch(token, uint64(block.timestamp + s.window), s.gate, cap);
+        payDev(owedDev, s, token, devCut);
         emit IFlywheelPad.Launched(token, pair, poolTokens, poolQuote, devCut);
     }
 

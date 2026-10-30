@@ -97,7 +97,7 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
         for (uint256 i = 1; i <= nWallets; i++) {
             vm.startPrank(ws[i]);
             for (uint256 k; k < mintsEach; k++) {
-                try pad.mintPost(t, 10, 0, address(0)) {
+                try pad.mintPost(t, 10, 0, type(uint256).max, address(0)) {
                     minted++;
                     mintedCount++;
                 } catch {

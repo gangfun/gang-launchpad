@@ -32,15 +32,21 @@ interface IGangPadShared {
 ///            printed as a Safe Transaction Builder batch (vault launchpad + floor + operator, migrator, bucket
 ///            operators, and GangPadRegistry.addPad so aggregators find the pad's tokens).
 ///         2. finish (FLYWHEEL_PAD, FLYWHEEL_HANDLER, FLYWHEEL_DEPLOYER set; after the Safe batch ran): check every
-///            shared listing, call `setMigrator` LAST (A-1: create needs it, so the pad opens only once everything
-///            accepts it), start the ownership handover to OWNER and print the acceptOwnership batch.
+///            shared listing, start the ownership handover to OWNER and print the accept batch, which ends with
+///            `setMigrator` (A-1: create needs it, so the pad opens only once everything accepts it; audit C-1: and
+///            only once OWNER owns it, never while the deploy wallet still could change its settings). When OWNER is
+///            the deployer (testnet), `setMigrator` is called right away.
 /// @dev Mainnet broadcast is refused unless FLYWHEEL_MAINNET_OK=true. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD; OWNER
-///      (mainnet default the platform Safe); KEEPER (mainnet default the platform keeper, testnet the deployer).
+///      (mainnet default the platform Safe); KEEPER (mainnet default the platform keeper, testnet the deployer). On
+///      mainnet GANG_PAD, GANG_PAD_REGISTRY, OWNER and KEEPER must be the known ones (audit C-2) unless
+///      FLYWHEEL_ALLOW_OVERRIDE=true.
 contract DeployFlywheel is Script {
     uint256 internal constant MIN_SHARE = 1_000 ether;
     /// @dev The GangPadRegistry proxies aggregators read (docs/MAINNET-PAD-REGISTRY / TESTNET-PAD-REGISTRY).
     address internal constant MAINNET_PAD_REGISTRY = 0x4fF77D4d9ac080939a24E1B805206bA094C44e5C;
     address internal constant TESTNET_PAD_REGISTRY = 0xB11B83C83DEd269B040faecC1D61B4885BA8e56e;
+    /// @dev The live GangLaunchpad whose shared contracts the pad joins.
+    address internal constant MAINNET_GANG_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
 
     struct Shared {
         address quoteRegistry;
@@ -68,8 +74,10 @@ contract DeployFlywheel is Script {
         if (mainnet && _broadcasting() && !vm.envOr("FLYWHEEL_MAINNET_OK", false)) revert MainnetNotAllowed();
         address owner = vm.envOr("OWNER", mainnet ? M.OWNER_SAFE : me);
         address keeper = vm.envOr("KEEPER", mainnet ? M.KEEPER : me);
-        Shared memory sh = _shared(vm.envAddress("GANG_PAD"));
+        address gangPad = vm.envAddress("GANG_PAD");
+        Shared memory sh = _shared(gangPad);
         sh.padRegistry = vm.envOr("GANG_PAD_REGISTRY", mainnet ? MAINNET_PAD_REGISTRY : TESTNET_PAD_REGISTRY);
+        if (mainnet && !vm.envOr("FLYWHEEL_ALLOW_OVERRIDE", false)) _requireMainnetInputs(sh, gangPad, owner, keeper);
         _requireFactory(sh, mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY);
         console.log("=== DeployFlywheel chain", block.chainid, "===");
         console.log("deployer", me);
@@ -83,7 +91,7 @@ contract DeployFlywheel is Script {
                 && Ownable(sh.bucket).owner() == me && GangPadRegistry(sh.padRegistry).owner() == me;
             if (canWire) {
                 _wireShared(sh, o);
-                GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
+                if (owner == me) GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
                 _handOver(o, owner, me);
             }
             vm.stopBroadcast();
@@ -92,7 +100,8 @@ contract DeployFlywheel is Script {
                 console.log("\n=== Safe batch: list the pad on the shared contracts, then run phase 2 ===");
                 console.log(_wiringJson(sh, o, mainnet, Ownable(sh.vault).owner()));
             } else {
-                _check(sh, o);
+                _check(sh, o, owner, keeper, mainnet);
+                if (owner != me) _printAccept(sh, o, mainnet, owner);
             }
         } else {
             Own memory o = Own({
@@ -101,17 +110,14 @@ contract DeployFlywheel is Script {
                 pad: existing
             });
             _requireShared(sh, o);
-            if (GangFlywheelPad(payable(o.pad)).migrator() == address(0)) {
+            if (owner == me && GangFlywheelPad(payable(o.pad)).migrator() == address(0)) {
                 GangFlywheelPad(payable(o.pad)).setMigrator(sh.migrator);
             }
             _handOver(o, owner, me);
             vm.stopBroadcast();
-            _check(sh, o);
+            _check(sh, o, owner, keeper, mainnet);
             _log(o);
-            if (owner != me) {
-                console.log("\n=== Safe batch: accept ownership of the 3 flywheel contracts ===");
-                console.log(_acceptJson(o, mainnet, owner));
-            }
+            if (owner != me) _printAccept(sh, o, mainnet, owner);
         }
     }
 
@@ -173,22 +179,68 @@ contract DeployFlywheel is Script {
         if (address(SharedMigrator(sh.migrator).factory()) != factory) revert NotWired("migrator factory != Pancake V2");
     }
 
-    function _handOver(Own memory o, address owner, address me) internal {
-        if (owner == me) return;
-        if (Ownable2Step(o.deployer).pendingOwner() != owner) Ownable2Step(o.deployer).transferOwnership(owner);
-        if (Ownable2Step(o.handler).pendingOwner() != owner) Ownable2Step(o.handler).transferOwnership(owner);
-        if (Ownable2Step(o.pad).pendingOwner() != owner) Ownable2Step(o.pad).transferOwnership(owner);
+    /// @dev Audit C-2: on mainnet the inputs are pinned (a testnet OWNER / KEEPER left in the env would hand the
+    ///      contracts or the keeper role to the wrong wallet), and the Safe must own every shared contract.
+    function _requireMainnetInputs(Shared memory sh, address gangPad, address owner, address keeper) internal view {
+        if (gangPad != MAINNET_GANG_PAD) revert NotWired("GANG_PAD is not the live GangLaunchpad");
+        if (sh.padRegistry != MAINNET_PAD_REGISTRY) revert NotWired("GANG_PAD_REGISTRY is not the live registry");
+        if (owner != M.OWNER_SAFE) revert NotWired("OWNER is not the platform Safe");
+        if (keeper != M.KEEPER) revert NotWired("KEEPER is not the platform keeper");
+        if (Ownable(sh.vault).owner() != M.OWNER_SAFE) revert NotWired("vault owner is not the Safe");
+        if (Ownable(sh.bucket).owner() != M.OWNER_SAFE) revert NotWired("bucket owner is not the Safe");
+        if (Ownable(sh.migrator).owner() != M.OWNER_SAFE) revert NotWired("migrator owner is not the Safe");
+        if (Ownable(sh.padRegistry).owner() != M.OWNER_SAFE) revert NotWired("pad registry owner is not the Safe");
     }
 
-    function _check(Shared memory sh, Own memory o) internal view {
+    /// @dev Started once; skipped for a contract OWNER already owns (a re-run after the Safe accepted; audit C-4).
+    function _handOver(Own memory o, address owner, address me) internal {
+        if (owner == me) return;
+        address[3] memory cs = [o.deployer, o.handler, o.pad];
+        for (uint256 i; i < 3; i++) {
+            Ownable2Step c = Ownable2Step(cs[i]);
+            if (c.owner() != owner && c.pendingOwner() != owner) c.transferOwnership(owner);
+        }
+    }
+
+    /// @dev Audit C-3: every setting phase 1 made, so a dropped phase 1 transaction is caught.
+    function _check(Shared memory sh, Own memory o, address owner, address keeper, bool mainnet) internal view {
         _requireShared(sh, o);
         GangFlywheelPad p = GangFlywheelPad(payable(o.pad));
-        if (p.migrator() != sh.migrator) revert NotWired("pad.setMigrator");
-        if (FlywheelTaxHandler(o.handler).launchpad() != o.pad) revert NotWired("handler.setLaunchpad");
+        FlywheelTaxHandler h = FlywheelTaxHandler(o.handler);
+        if (p.migrator() == address(0)) {
+            if (Ownable(o.pad).owner() == owner) revert NotWired("pad.setMigrator");
+            console.log("pad.setMigrator: last tx of the Safe accept batch");
+        } else if (p.migrator() != sh.migrator) {
+            revert NotWired("pad.setMigrator");
+        }
+        if (h.launchpad() != o.pad) revert NotWired("handler.setLaunchpad");
+        if (h.keeper() != keeper) revert NotWired("handler keeper");
+        if (address(h.dexRouter()) != (mainnet ? M.PANCAKE_V2_ROUTER : T.PANCAKE_V2_ROUTER)) revert NotWired("handler router");
+        if (address(h.dividendVault()) != sh.vault || address(h.platformBucket()) != sh.bucket) {
+            revert NotWired("handler shared contracts");
+        }
         if (!MintTokenDeployer(o.deployer).launchpads(o.pad)) revert NotWired("deployer.setLaunchpad");
         if (address(p.agentIdRegistry()) == address(0) || !p.agentGateEnabled()) revert NotWired("agent gate");
+        if (mainnet && address(p.agentIdRegistry()) != M.AGENT_ID_REGISTRY) revert NotWired("agent registry");
         if (p.taxHandler() != o.handler || p.tokenDeployer() != o.deployer) revert NotWired("pad immutables");
+        if (
+            address(p.quoteRegistry()) != sh.quoteRegistry || address(p.dividendVault()) != sh.vault
+                || address(p.platformBucket()) != sh.bucket || p.wbnb() != (mainnet ? M.WBNB : T.WBNB)
+        ) revert NotWired("pad shared contracts");
+        if (p.pairFactory() != (mainnet ? M.PANCAKE_V2_FACTORY : T.PANCAKE_V2_FACTORY)) revert NotWired("pad factory");
+        if (p.v3Factory() != (mainnet ? M.PANCAKE_V3_FACTORY : T.PANCAKE_V3_FACTORY)) revert NotWired("pad v3 factory");
+        address[3] memory cs = [o.deployer, o.handler, o.pad];
+        for (uint256 i; i < 3; i++) {
+            Ownable2Step c = Ownable2Step(cs[i]);
+            if (c.owner() != owner && c.pendingOwner() != owner) revert NotWired("ownership handover");
+        }
         console.log("self-check ok");
+    }
+
+    function _printAccept(Shared memory sh, Own memory o, bool mainnet, address owner) internal view {
+        bool open = GangFlywheelPad(payable(o.pad)).migrator() != address(0);
+        console.log("\n=== Safe batch: accept ownership of the 3 flywheel contracts", open ? "===" : "and open the pad ===");
+        console.log(_acceptJson(sh, o, mainnet, owner, !open));
     }
 
     function _log(Own memory o) internal pure {
@@ -216,10 +268,17 @@ contract DeployFlywheel is Script {
         );
     }
 
-    function _acceptJson(Own memory o, bool mainnet, address safe) internal pure returns (string memory j) {
+    /// @dev The three acceptOwnership calls, then (audit C-1) `setMigrator` — the pad opens as the Safe takes it.
+    function _acceptJson(Shared memory sh, Own memory o, bool mainnet, address safe, bool openPad)
+        internal
+        pure
+        returns (string memory j)
+    {
         j = _head(mainnet, safe, "gang: accept ownership of the 3 continuous-mint contracts");
         bytes memory accept = abi.encodeWithSignature("acceptOwnership()");
-        j = string.concat(j, _tx(o.deployer, accept, false), _tx(o.handler, accept, true), _tx(o.pad, accept, true), "]}");
+        j = string.concat(j, _tx(o.deployer, accept, false), _tx(o.handler, accept, true), _tx(o.pad, accept, true));
+        if (openPad) j = string.concat(j, _tx(o.pad, abi.encodeCall(GangFlywheelPad.setMigrator, (sh.migrator)), true));
+        j = string.concat(j, "]}");
     }
 
     function _head(bool mainnet, address safe, string memory name) internal pure returns (string memory) {

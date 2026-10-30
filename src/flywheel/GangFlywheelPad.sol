@@ -249,26 +249,29 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     // ---------------------------------------------------------------- post-launch
     /// @notice Post-launch mint, paid in the sale's quote (approved to the pad).
     /// @param minTokensOut revert below this (the price can move before the transaction lands)
-    function mintPost(address token, uint256 shares, uint256 minTokensOut, address referrer)
+    function mintPost(address token, uint256 shares, uint256 minTokensOut, uint256 maxSpent, address referrer)
         external
         nonReentrant
         returns (uint256 tokensOut, uint256 spent)
     {
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, referrer, 0
+            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, maxSpent, referrer, 0
         );
     }
 
     /// @notice A listed router mints after launch for `trader`, the wallet that sent the transaction; the router pays,
     ///         the tokens are the trader's.
-    function mintPostFor(address trader, address token, uint256 shares, uint256 minTokensOut, address referrer)
-        external
-        nonReentrant
-        returns (uint256 tokensOut, uint256 spent)
-    {
+    function mintPostFor(
+        address trader,
+        address token,
+        uint256 shares,
+        uint256 minTokensOut,
+        uint256 maxSpent,
+        address referrer
+    ) external nonReentrant returns (uint256 tokensOut, uint256 spent) {
         _forTrader(trader, token);
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), trader, token, shares, minTokensOut, referrer, 0
+            _sales, accounts, owedDev, _deps(), trader, token, shares, minTokensOut, maxSpent, referrer, 0
         );
     }
 
@@ -280,8 +283,9 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         returns (uint256 tokensOut, uint256 spent)
     {
         _wrap(token);
+        // msg.value bounds the spend (BnbShort)
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, referrer, msg.value
+            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, type(uint256).max, referrer, msg.value
         );
         _refund(spent);
     }
@@ -425,6 +429,14 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
 
     function migrator() external view returns (address) {
         return _config.migrator;
+    }
+
+    function pairFactory() external view returns (address) {
+        return _config.pairFactory;
+    }
+
+    function v3Factory() external view returns (address) {
+        return _config.v3Factory;
     }
 
     function agentIdRegistry() external view returns (IERC721) {

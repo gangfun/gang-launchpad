@@ -67,6 +67,7 @@ library FlywheelPostLogic {
         address token,
         uint256 shares,
         uint256 minTokensOut,
+        uint256 maxSpent,
         address referrer,
         uint256 bnbIn
     ) external returns (uint256 tokensOut, uint256 spent) {
@@ -85,6 +86,13 @@ library FlywheelPostLogic {
         q.fee = (q.paid * s.mintFeeBps) / BPS;
         // no cut on the creator's own mints: it would come straight back to it (internal audit B-M1)
         q.devCut = trader == s.creator ? 0 : (q.paid * s.devCutBps) / BPS;
+        // a tier step crossed by an earlier mint raises both the price and the tokens, so minTokensOut alone does not
+        // bound the spend (audit B-I1)
+        spent = q.paid + q.fee;
+        if (spent > maxSpent) revert IFlywheelPad.Slippage();
+        // paid in before any price is read: a quote calling the payer back (ERC777-style) moves the pool before the
+        // checks, not between them and the buy; the fee and the cut go out last (audit B-L1)
+        FlywheelLogic.collect(s.quote, spent, bnbIn);
 
         IFlyHandler(d.taxHandler).observe(token);
         (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelOracle.prices(d.taxHandler, token);
@@ -93,11 +101,6 @@ library FlywheelPostLogic {
         address pair = s.pair;
         (uint256 rT, uint256 rQ) = _reserves(pair, token);
         _pace(a, q.paid, rQ);
-
-        spent = q.paid + q.fee;
-        FlywheelLogic.collect(s.quote, spent, bnbIn);
-        PadCommon.toPlatform(d, s.quote, q.fee);
-        FlywheelLogic.payDev(owedDev, s, token, q.devCut);
 
         uint256 price = buyerPrice(spot, blockStart, FlywheelOracle.prevStart(d.taxHandler, token), high, average);
         // never priced more than HIGH_GAP_BPS above the pool, whatever lifted the floor (re-review R6 L-1)
@@ -124,6 +127,8 @@ library FlywheelPostLogic {
         }
         a.baseline += q.tokensOut;
         IFlyHandler(d.taxHandler).syncShares(token, trader, trader);
+        PadCommon.toPlatform(d, s.quote, q.fee);
+        FlywheelLogic.payDev(owedDev, s, token, q.devCut);
         tokensOut = q.tokensOut;
         emit IFlywheelPad.PostMinted(token, trader, q.accepted, q.paid, q.fee, q.devCut, q.tokensOut, b);
     }

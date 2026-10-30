@@ -190,7 +190,7 @@ contract FlywheelTestnetAccept is Script {
             (uint256 acc, uint256 paid, uint256 fee, uint256 out, bool ok) = pad.previewMintPost(s, who, want);
             if (!ok || acc == 0) revert Check("preview says no");
             vm.startBroadcast(key);
-            (uint256 got, uint256 spent) = pad.mintPost(s, want, (out * 98) / 100, address(0));
+            (uint256 got, uint256 spent) = pad.mintPost(s, want, (out * 98) / 100, paid + fee, address(0));
             vm.stopBroadcast();
             if (got != out || spent != paid + fee) revert Check("preview != mint");
             minted++;

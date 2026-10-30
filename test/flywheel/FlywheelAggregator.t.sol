@@ -29,7 +29,7 @@ contract RouterStub {
     }
 
     function mintPost(address trader, address token, uint256 shares) external returns (uint256 out, uint256 spent) {
-        return pad.mintPostFor(trader, token, shares, 0, address(0));
+        return pad.mintPostFor(trader, token, shares, 0, type(uint256).max, address(0));
     }
 }
 
@@ -135,7 +135,7 @@ contract FlywheelAggregatorTest is FlywheelFixture {
         assertTrue(ok);
         assertEq(a2, 10);
         vm.prank(m);
-        (uint256 got, uint256 spent2) = pad.mintPost(t, 10, 0, address(0));
+        (uint256 got, uint256 spent2) = pad.mintPost(t, 10, 0, type(uint256).max, address(0));
         assertEq(got, out);
         assertEq(spent2, paid + fee2);
     }
