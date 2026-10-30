@@ -26,13 +26,14 @@ import {FairLogic} from "./FairLogic.sol";
 ///         event and error of the two old cores keeps its name, selector and layout: the two `create`s are overloads,
 ///         `curves` / `sales` / `positions` are the same public mappings.
 ///         - V3 (kindOf 1): V2 curve / Agent gate (current setting) / 1% wallet cap / ≈15 BNB graduation; no tax on the
-///           curve, only the 1% protocol fee; buy / sell tax on the Pancake pool after graduation (GangToken → handler).
+///           curve, only the 1% protocol fee, 70% of it kept for the token's creator (`claimCreatorFee`); buy / sell
+///           tax on the Pancake pool after graduation (GangToken → handler).
 ///         - 打新 (kindOf 2): 10,000 equal shares at one fixed price both ways; the last share launches the pair; each
 ///           sale snapshots its rules (cap, gate, fees, hold line) at create.
 /// @dev Reentrancy guard, router list and the A-2 router checks are here, in the wrappers, kept apart on purpose:
 ///      `buyFor` needs the pad's gate on now, `mintFor` needs the sale's snapshot gate set. Funds of one quote are
 ///      shared by curves and sales on this one address; each path only ever moves its own token's escrow
-///      (curve: `realQuote`; sale: sold × price; exit fees owed: `owedFee`), see MERGE-PLAN §5.4.
+///      (curve: `realQuote` and `creatorFeeOf`; sale: sold × price; exit fees owed: `owedFee`), see MERGE-PLAN §5.4.
 contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, ReentrancyGuard {
     // ---------------------------------------------------------------- shared constants
     uint256 public constant TOTAL_SUPPLY = PadCommon.TOTAL_SUPPLY;
@@ -43,8 +44,10 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     uint256 public constant CURVE_SUPPLY = CurveLogic.CURVE_SUPPLY;
     uint256 public constant VIRTUAL_TOKEN = CurveLogic.VIRTUAL_TOKEN;
     uint256 public constant MAX_PER_WALLET = CurveLogic.MAX_PER_WALLET;
-    /// @dev Bonding fee, all curve tokens: 1% → PlatformFeeBucket. The only charge on the curve (no tax there).
+    /// @dev Bonding fee, all curve tokens: 1%. The only charge on the curve (no tax there).
     uint256 public constant PROTOCOL_FEE_BPS = CurveLogic.PROTOCOL_FEE_BPS;
+    /// @dev The creator's part of PROTOCOL_FEE_BPS (70% → `creatorFeeOf`); the rest (30%) → PlatformFeeBucket.
+    uint256 public constant CREATOR_FEE_SHARE_BPS = CurveLogic.CREATOR_FEE_SHARE_BPS;
     /// @dev Platform's part of every taxed pool trade (after graduation), as a share of the trade's volume; out of the
     ///      tax. Applied by the handler; kept here for readers (CLI / indexer).
     uint256 public constant PLATFORM_TAX_BPS = V3_PLATFORM_TAX_BPS;
@@ -107,6 +110,8 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     mapping(address quote => uint256) public owedFee;
     /// @notice Every token of the pad, both kinds (see `kindOf`).
     address[] public allTokens;
+    /// @notice Curve tokens: the creator's part of the 1% fee, in the token's quote, not claimed yet.
+    mapping(address token => uint256) public creatorFeeOf;
 
     constructor(
         address owner_,
@@ -216,7 +221,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         nonReentrant
         returns (uint256 tokensOut)
     {
-        tokensOut = CurveLogic.buy(_config, curves, _deps(), msg.sender, token, quoteIn, minTokensOut);
+        tokensOut = CurveLogic.buy(_config, curves, creatorFeeOf, _deps(), msg.sender, token, quoteIn, minTokensOut);
     }
 
     /// @notice A listed router (GangRouter, a listed aggregator) buys for `trader`, who must be the wallet that sent
@@ -233,7 +238,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         // A-2 (V3): the pad's gate must be on now — ungated, a router could name any trader (e.g. the future pair,
         // seeding it before graduation). Kept as is; the origin binding (§23) now also rules that case out.
         if (!_config.agentGateEnabled) revert RouterNeedsGate();
-        tokensOut = CurveLogic.buy(_config, curves, _deps(), trader, token, quoteIn, minTokensOut);
+        tokensOut = CurveLogic.buy(_config, curves, creatorFeeOf, _deps(), trader, token, quoteIn, minTokensOut);
     }
 
     function sell(address token, uint256 tokensIn, uint256 minQuoteOut)
@@ -241,7 +246,9 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         nonReentrant
         returns (uint256 quoteToUser)
     {
-        quoteToUser = CurveLogic.sell(_config, curves, _deps(), msg.sender, false, token, tokensIn, minQuoteOut);
+        quoteToUser = CurveLogic.sell(
+            _config, curves, creatorFeeOf, _deps(), msg.sender, false, token, tokensIn, minQuoteOut
+        );
     }
 
     /// @notice A listed router sells `trader`'s tokens, `trader` being the wallet that sent the tx (§23). The tokens
@@ -255,7 +262,14 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         returns (uint256 quoteOut)
     {
         _forTrader(trader);
-        quoteOut = CurveLogic.sell(_config, curves, _deps(), trader, true, token, tokensIn, minQuoteOut);
+        quoteOut = CurveLogic.sell(_config, curves, creatorFeeOf, _deps(), trader, true, token, tokensIn, minQuoteOut);
+    }
+
+    /// @notice The creator of curve token `token` takes its part of the 1% fee (`creatorFeeOf`), in the token's quote,
+    ///         to `to`. Before or after graduation; only the creator, directly (no router). Reverts NotCreator /
+    ///         ZeroAmount (nothing kept) / ZeroAddress (`to` is 0 or the pad).
+    function claimCreatorFee(address token, address to) external nonReentrant returns (uint256 amount) {
+        amount = CurveLogic.claimCreatorFee(curves, creatorFeeOf, token, to);
     }
 
     /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting. The creator is not

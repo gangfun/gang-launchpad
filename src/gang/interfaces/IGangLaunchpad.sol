@@ -110,7 +110,8 @@ interface IGangLaunchpad {
     event TaxConfigured(
         address indexed token, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address indexed recipient
     );
-    /// @dev `tax` is always 0: the curve charges only the 1% protocol fee (spec §19).
+    /// @dev `tax` is always 0: the curve charges only the 1% protocol fee (spec §19). `protocolFee` is the whole 1%;
+    ///      `CreatorFeeAccrued` says how much of it the creator got (the rest went to the bucket).
     event Buy(
         address indexed token,
         address indexed buyer,
@@ -120,7 +121,7 @@ interface IGangLaunchpad {
         uint256 tokensOut,
         uint256 realQuote
     );
-    /// @dev `tax` is always 0 (as `Buy`).
+    /// @dev `tax` is always 0 and `protocolFee` the whole 1% (as `Buy`).
     event Sell(
         address indexed token,
         address indexed seller,
@@ -130,6 +131,10 @@ interface IGangLaunchpad {
         uint256 quoteOut,
         uint256 realQuote
     );
+    /// @notice The creator's part of one curve trade's 1% fee (`CREATOR_FEE_SHARE_BPS` of it), kept for the creator.
+    event CreatorFeeAccrued(address indexed token, address indexed creator, uint256 amount);
+    /// @notice The creator took everything kept for it on `token`, in the token's quote.
+    event CreatorFeeClaimed(address indexed token, address indexed creator, address indexed to, uint256 amount);
     event VirtualQuoteLocked(address indexed token, uint256 virtualQuote);
     event Graduated(
         address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount
@@ -213,6 +218,7 @@ interface IGangLaunchpad {
     error AlreadyGraduated();
     error GradAmtTooSmall();
     error BadTaxConfig(string reason);
+    error NotCreator();
     // 打新
     error BadConfig(string reason);
     error NotMinting();
