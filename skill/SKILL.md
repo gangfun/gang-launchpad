@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.17.5'
+  version: '0.17.6'
   requires:
     bins: [baw, gang]
   install:
@@ -60,6 +60,7 @@ continue with the new rules.
 | Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON; the market is pushed by gang.fun) | [discover.md](references/discover.md) |
 | List tokens | `gang list --kind v3\|fair [--status …]` · `gang list` (older pads) | [trade.md](references/trade.md) |
 | One token / my position | `gang info --token <addr>` · `gang status --token <addr>` | [trade.md](references/trade.md) |
+| Everything I hold, how it's doing | `gang portfolio [--from <addr>]` | [trade.md](references/trade.md) |
 | Buy / sell | `gang buy --token <addr> --amount <quote>` · `gang sell --token <addr> (--amount <tokens> \| --all)` → `gang execute` | [trade.md](references/trade.md) |
 | Trade a graduated / launched token | the same `gang buy` / `gang sell` (PancakeSwap pool) | [pool.md](references/pool.md) |
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |

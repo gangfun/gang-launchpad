@@ -21,6 +21,14 @@ aliases of the same code.
   `pair`.
 - `gang status --token <addr>`: this wallet's position (V3 dividend and 打新 reward: see their references; graduated:
   `poolSellAll`, what selling everything pays now).
+- `gang portfolio [--from <addr>]` (0.17.6+, mainnet): every holding at once. Tokens = the ones gang.fun saw the wallet
+  trade on a curve or sale (one only received by transfer or only bought on PancakeSwap is not listed); each is read on
+  chain like `gang status`. Per holding: `balance` (as read: use it for `--amount`), `value` + `valueBasis` (curve:
+  last price; graduated / launched: `poolSellAll`; 打新 minting: what withdrawing every share pays), `cost` /
+  `unrealized` (null with a `costNote` once the balance moved outside the indexed trades), `claimable` (dividend /
+  reward), USD of each, and `next`. A token the wallet bonded carries `bonded.sellableKeepingBond`: its `next` never sells
+  past it. Also `totals` (USD; `unpriced` = holdings without a USD value, a graduated V2 / Soft one), `record` (buys,
+  sells, realized PnL, launches), `bonds` on its V3 / 打新 launches, and `errors` for tokens that could not be read.
 - `gang quote --token <addr> --amount <n>`: V2 / Soft / U / S curve buys only. Fields: tokens out, spent, fee, refund;
   a non-zero `refund` = the 1% wallet cap or the graduation clamp. On a GangLaunchpad token `gang quote` refuses: the
   `gang buy` preview simulates the trade and shows `expectTokens` (nothing is sent before `gang execute`).

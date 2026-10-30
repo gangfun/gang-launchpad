@@ -71,8 +71,8 @@ assert.equal((await rpc('nope')).error.code, -32601)
 
 const { tools } = (await rpc('tools/list')).result
 const names = tools.map((t) => t.name)
-assert.equal(tools.length, 16)
-for (const n of ['gang_help', 'gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_notes', 'gang_agents',
+assert.equal(tools.length, 17)
+for (const n of ['gang_help', 'gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_portfolio', 'gang_notes', 'gang_agents',
   'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)
@@ -102,6 +102,8 @@ assert.deepEqual(unions, [])
     ['sell', '--token', addr(1), '--all', '--to-bnb', '--break-bond', '--confirm-out', '--settle-first'])
   assert.deepEqual(args('gang_status', { token: addr(1), from: addr(2), slippage: 2, testnet: true }),
     ['status', '--token', addr(1), '--from', addr(2), '--slippage', '2', '--testnet'])
+  assert.deepEqual(args('gang_portfolio', {}), ['portfolio'])
+  assert.deepEqual(args('gang_portfolio', { from: addr(2) }), ['portfolio', '--from', addr(2)])
   assert.deepEqual(args('gang_follow', { noteTx: `0x${'a'.repeat(64)}`, amount: '0.1', useWbnb: true }),
     ['follow', `0x${'a'.repeat(64)}`, '--amount', '0.1', '--use-wbnb'])
   assert.deepEqual(args('gang_watch', { interval: '20s', poll: true, webhook: 'https://x.test/h' }),
