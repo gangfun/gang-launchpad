@@ -13,9 +13,10 @@ import {PadCommon} from "./PadCommon.sol";
 /// @title CurveLogic — GangLaunchpad's bonding-curve (V3, tax recipient) path
 /// @notice External library: GangLaunchpad delegatecalls it, so it runs on the pad's storage, balance and msg.sender,
 ///         and its events come from the pad. LaunchpadV3's create / buy / sell / graduation, as on
-///         feat/v3-no-curve-tax: no tax on the curve, every trade pays only the 1% protocol fee (→ bucket, blocking);
-///         `Buy` / `Sell` keep their `tax` field, always 0 (spec §19). Dividend shares still follow the trader's balance
-///         (blocking write) so the pool tax after graduation finds them.
+///         feat/v3-no-curve-tax: no tax on the curve, every trade pays only the 1% protocol fee; `Buy` / `Sell` keep
+///         their `tax` field, always 0 (spec §19). 70% of that fee is kept on the pad for the token's creator
+///         (`creatorFeeOf`, claimed by the creator), 30% goes to the bucket (blocking). Dividend shares still follow
+///         the trader's balance (blocking write) so the pool tax after graduation finds them.
 /// @dev Reentrancy guard, the caller check of `buyFor` / `sellFor` (listed router, trader == tx.origin, §23) and the
 ///      A-2 gate check of `buyFor` stay in the pad's wrappers. The gate here is the pad's current setting (V3),
 ///      unlike 打新's per-sale snapshot.
@@ -29,6 +30,8 @@ library CurveLogic {
     uint256 internal constant VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667;
     uint256 internal constant MAX_PER_WALLET = 10_000_000 ether; // 1% of TOTAL_SUPPLY
     uint256 internal constant PROTOCOL_FEE_BPS = 100;
+    /// @dev The creator's part of the protocol fee (70%, as pons); the rest (30%) is the platform's.
+    uint256 internal constant CREATOR_FEE_SHARE_BPS = 7_000;
     uint16 internal constant MIN_TAX_BPS = 100;
     uint16 internal constant MAX_TAX_BPS = 500;
     uint256 internal constant MIN_GRAD_AMT = 1e6;
@@ -158,6 +161,7 @@ library CurveLogic {
     function buy(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
+        mapping(address => uint256) storage creatorFeeOf,
         IGangLaunchpad.Deps memory d,
         address trader,
         address token,
@@ -171,7 +175,7 @@ library CurveLogic {
         BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn);
         if (v.tokensOut < minTokensOut) revert IGangLaunchpad.Slippage();
 
-        tokensOut = _execBuy(c, cv, d, token, trader, quoteIn, v);
+        tokensOut = _execBuy(c, cv, creatorFeeOf, d, token, trader, quoteIn, v);
     }
 
     function _prepBuy(
@@ -203,7 +207,7 @@ library CurveLogic {
         }
     }
 
-    /// @dev The curve's only charge: 1% of the gross (no tax on the curve, 2026-10-27).
+    /// @dev The curve's only charge: 1% of the gross (no tax on the curve, 2026-10-27), split by `_syncShareAndFee`.
     function _applyFee(uint256 gross, BuyVars memory v) private pure {
         v.protocolFee = (gross * PROTOCOL_FEE_BPS) / PadCommon.BPS;
         v.net = gross - v.protocolFee;
@@ -219,6 +223,7 @@ library CurveLogic {
     function _execBuy(
         IGangLaunchpad.Config storage c,
         IGangLaunchpad.Curve storage cv,
+        mapping(address => uint256) storage creatorFeeOf,
         IGangLaunchpad.Deps memory d,
         address token,
         address trader,
@@ -232,7 +237,7 @@ library CurveLogic {
         cv.sold += v.tokensOut.toUint128();
 
         IERC20(token).safeTransfer(trader, v.tokensOut);
-        _syncShareAndFee(cv, d, token, trader, quoteAddr, v.protocolFee);
+        _syncShareAndFee(cv, creatorFeeOf, d, token, trader, quoteAddr, v.protocolFee);
 
         // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
         emit IGangLaunchpad.Buy(token, trader, v.net, v.protocolFee, 0, v.tokensOut, cv.realQuote);
@@ -244,11 +249,14 @@ library CurveLogic {
         tokensOut = v.tokensOut;
     }
 
-    /// @dev No tax on the curve: the trade pays only `protocolFee` (→ PlatformFeeBucket, blocking). A dividend token's
-    ///      share still follows the trader's balance (blocking write, as V2's taxed track), so the pool tax after
-    ///      graduation is credited to the right holders; nothing is paid to holders or to the recipient here.
+    /// @dev No tax on the curve: the trade pays only `protocolFee`. The creator's 70% stays on the pad in
+    ///      `creatorFeeOf[token]` (pull: a creator that can't receive never blocks a trade); the platform's 30% goes to
+    ///      the PlatformFeeBucket (blocking). A dividend token's share still follows the trader's balance (blocking
+    ///      write, as V2's taxed track), so the pool tax after graduation is credited to the right holders; nothing is
+    ///      paid to holders or to the tax recipient here.
     function _syncShareAndFee(
         IGangLaunchpad.Curve storage cv,
+        mapping(address => uint256) storage creatorFeeOf,
         IGangLaunchpad.Deps memory d,
         address token,
         address account,
@@ -258,7 +266,30 @@ library CurveLogic {
         if (cv.dividendBps > 0) {
             SharedDividendVault(d.dividendVault).setShare(token, account, IERC20(token).balanceOf(account));
         }
-        PadCommon.toPlatform(d, quoteAddr, protocolFee);
+        uint256 creatorFee = (protocolFee * CREATOR_FEE_SHARE_BPS) / PadCommon.BPS;
+        if (creatorFee > 0) {
+            creatorFeeOf[token] += creatorFee;
+            emit IGangLaunchpad.CreatorFeeAccrued(token, cv.creator, creatorFee);
+        }
+        PadCommon.toPlatform(d, quoteAddr, protocolFee - creatorFee);
+    }
+
+    /// @dev Pays `token`'s creator everything kept for it, in the curve's quote, to `to`. Before or after graduation.
+    function claimCreatorFee(
+        mapping(address => IGangLaunchpad.Curve) storage curves,
+        mapping(address => uint256) storage creatorFeeOf,
+        address token,
+        address to
+    ) external returns (uint256 amount) {
+        IGangLaunchpad.Curve storage cv = curves[token];
+        if (cv.creator == address(0)) revert IGangLaunchpad.UnknownToken();
+        if (msg.sender != cv.creator) revert IGangLaunchpad.NotCreator();
+        if (to == address(0) || to == address(this)) revert IGangLaunchpad.ZeroAddress();
+        amount = creatorFeeOf[token];
+        if (amount == 0) revert IGangLaunchpad.ZeroAmount();
+        creatorFeeOf[token] = 0;
+        IERC20(cv.quote).safeTransfer(to, amount);
+        emit IGangLaunchpad.CreatorFeeClaimed(token, msg.sender, to, amount);
     }
 
     // ---------------------------------------------------------------- sell
@@ -269,6 +300,7 @@ library CurveLogic {
     function sell(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
+        mapping(address => uint256) storage creatorFeeOf,
         IGangLaunchpad.Deps memory d,
         address trader,
         bool viaCaller,
@@ -292,7 +324,7 @@ library CurveLogic {
         else IERC20(token).safeTransferFrom(msg.sender, address(this), tokensIn);
 
         address quoteAddr = cv.quote;
-        _syncShareAndFee(cv, d, token, trader, quoteAddr, protocolFee);
+        _syncShareAndFee(cv, creatorFeeOf, d, token, trader, quoteAddr, protocolFee);
         IERC20(quoteAddr).safeTransfer(msg.sender, quoteToUser);
 
         // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none

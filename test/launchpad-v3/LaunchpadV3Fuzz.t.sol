@@ -19,7 +19,8 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         (,,,,,,,,,, p,) = pad.curves(t);
     }
 
-    /// @dev spent == net + 1% fee (+ ≤ 1 wei pad dust); bucket += exactly 1% of spent; no tax anywhere; out ≤ room.
+    /// @dev spent == net + 1% fee (+ ≤ 1 wei pad dust); bucket + creator part += exactly 1% of spent, the creator 70% of
+    ///      it (kept on the pad); no tax anywhere; out ≤ room.
     function testFuzz_buyAccounting(uint256 quoteIn, uint16 b, uint16 s, uint16 d, uint256 preIn) public {
         b = uint16(bound(b, 100, 500));
         s = uint16(bound(s, 100, 500));
@@ -38,17 +39,20 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         uint256 pq = quoteTok.balanceOf(address(pad));
         uint256 bk = bucket.accruedQuote(address(quoteTok));
         uint256 rq = _realQuote(t);
+        uint256 cf = pad.creatorFeeOf(t);
         uint256 room = pad.walletRoom(t, u);
         vm.prank(u);
         try pad.buy(t, quoteIn, 0) returns (uint256 out) {
             assertLe(out, room, "wallet room");
             uint256 spent = uq - quoteTok.balanceOf(u);
             uint256 net = _realQuote(t) - rq;
-            uint256 padDelta = quoteTok.balanceOf(address(pad)) - pq;
+            uint256 toCreator = pad.creatorFeeOf(t) - cf;
+            uint256 padDelta = quoteTok.balanceOf(address(pad)) - pq - toCreator;
             assertGe(padDelta, net, "pad keeps >= net");
             assertLe(padDelta - net, 1, "pad dust <= 1 wei");
             uint256 fee = (spent * 100) / BPS;
-            assertEq(bucket.accruedQuote(address(quoteTok)) - bk, fee, "bucket = 1% only");
+            assertEq(bucket.accruedQuote(address(quoteTok)) - bk + toCreator, fee, "bucket + creator = 1% only");
+            assertEq(toCreator, (fee * 7_000) / BPS, "creator: 70% of the fee");
             assertEq(spent, padDelta + fee, "conservation: curve + 1% fee, no tax");
             assertEq(quoteTok.balanceOf(treasury), 0, "recipient: nothing on the curve");
             assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders: nothing on the curve");
@@ -77,19 +81,22 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         uint256 pq = quoteTok.balanceOf(address(pad));
         uint256 uq = quoteTok.balanceOf(agent);
         uint256 rq = _realQuote(t);
+        uint256 cf = pad.creatorFeeOf(t);
         vm.startPrank(agent);
         IERC20(t).approve(address(pad), amt);
         pad.sell(t, amt, 0);
         vm.stopPrank();
         uint256 quoteOut = rq - _realQuote(t);
-        assertEq(pq - quoteTok.balanceOf(address(pad)), quoteOut, "pad pays exactly quoteOut");
+        uint256 toCreator = pad.creatorFeeOf(t) - cf;
+        assertEq(toCreator, ((quoteOut * 100) / BPS * 7_000) / BPS, "creator: 70% of the fee, kept on the pad");
+        assertEq(pq + toCreator - quoteTok.balanceOf(address(pad)), quoteOut, "pad pays exactly quoteOut");
         assertEq(quoteTok.balanceOf(agent) - uq, quoteOut - (quoteOut * 100) / BPS, "seller net: only the 1% fee");
         assertEq(quoteTok.balanceOf(treasury), 0, "recipient: nothing on the curve");
         assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders: nothing on the curve");
     }
 
     /// @dev Graduation truncation (cap off): the graduating buy pays the 1% fee only on what it spends; the pair gets
-    ///      the locked graduation amount (+ ≤ 1 wei); the pad keeps ≤ 1 wei.
+    ///      the locked graduation amount (+ ≤ 1 wei); the pad keeps ≤ 1 wei beside the creator's part.
     function testFuzz_gradTruncation(uint256 pre, uint256 quoteIn, uint16 b) public {
         b = uint16(bound(b, 100, 500));
         pre = bound(pre, 1 ether, 15.5 ether);
@@ -112,7 +119,7 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
             uint256 toPair = quoteTok.balanceOf(_pairOf(t));
             assertGe(toPair, 15 ether, "pair got >= gradAmt");
             assertLe(toPair, 15 ether + 1, "pair got <= gradAmt + 1");
-            assertLe(quoteTok.balanceOf(address(pad)), 1, "pad dust");
+            assertLe(quoteTok.balanceOf(address(pad)) - pad.creatorFeeOf(t), 1, "pad dust (beside the creator part)");
         } else {
             assertEq(spent, quoteIn, "no refund unless truncated");
         }

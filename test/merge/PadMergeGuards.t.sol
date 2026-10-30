@@ -291,6 +291,7 @@ contract PadMergeGuardsTest is GangRouterTest {
         for (uint256 i; i < curvesL.length; i++) {
             (,, uint128 realQuote,,,, bool graduated,,,,,) = v3.curves(curvesL[i]);
             if (!graduated) owed += realQuote;
+            owed += v3.creatorFeeOf(curvesL[i]); // kept for the creator, live or graduated
         }
         for (uint256 i; i < salesL.length; i++) {
             (,,,,, uint16 sold, bool launched,,,, uint128 price,,,) = v3.sales(salesL[i]);

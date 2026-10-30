@@ -45,9 +45,13 @@ contract CoreHandler is GangFixture {
     address public lastSelfRecipient;
     uint256 public mixedRounds; // same-WBNB rounds that touched both a live curve and a live sale
     /// @dev Spec §19 (no curve tax): curve trades that moved quote to the recipient / the vault / the tax handler, and
-    ///      curve trades whose bucket accrual was not exactly 1% of the trade. Both must stay 0.
+    ///      curve trades whose bucket accrual + creator part was not exactly 1% of the trade. Both must stay 0.
     uint256 public curveTaxLeaks;
     uint256 public curveFeeOff;
+    /// @dev Creator fee: curve trades whose creator part was not 70% of the fee, and claims that paid the creator
+    ///      anything but exactly what was kept. Must stay 0.
+    uint256 public creatorFeeOff;
+    uint256 public creatorClaims;
     uint256 public curveTrades;
     /// @dev Router buys / mints that went through (they need trader == tx.origin, §23).
     uint256 public routerTrades;
@@ -93,7 +97,9 @@ contract CoreHandler is GangFixture {
         }
         for (uint256 i = 0; i < v3Tokens.length; i++) {
             address t = v3Tokens[i];
-            if (_curveQuote(t) == q && !_graduated(t)) sum += _curveRealQuote(t);
+            if (_curveQuote(t) != q) continue;
+            sum += pad.creatorFeeOf(t); // kept for the creator, live or graduated
+            if (!_graduated(t)) sum += _curveRealQuote(t);
         }
     }
 
@@ -225,6 +231,7 @@ contract CoreHandler is GangFixture {
         bool native = q == address(wbnb) && path % 3 == 1;
         uint256 sinks0 = _sinks(q);
         uint256 fee0 = bucket.accruedQuote(q);
+        uint256 cf0 = pad.creatorFeeOf(t);
         uint256 bal0 = native ? _bnbPaidFrom(who, q) : IERC20(q).balanceOf(who);
         vm.prank(who, who); // the router paths need trader == tx.origin (§23)
         uint256 paid;
@@ -241,7 +248,7 @@ contract CoreHandler is GangFixture {
             } catch {}
         }
         if (!native) paid = bal0 - IERC20(q).balanceOf(who);
-        _checkCurveTrade(q, sinks0, bucket.accruedQuote(q) - fee0, paid);
+        _checkCurveTrade(q, sinks0, bucket.accruedQuote(q) - fee0, pad.creatorFeeOf(t) - cf0, paid);
         _afterV3(t);
     }
 
@@ -258,11 +265,16 @@ contract CoreHandler is GangFixture {
     }
 
     /// @dev `gross` = what the buyer paid, or the curve's payout on a sell (to the seller + fee); 0 = no trade.
-    function _checkCurveTrade(address q, uint256 sinks0, uint256 fee, uint256 gross) internal {
+    ///      `toPlatform` / `toCreator`: the bucket's and the creator's parts of the 1% fee.
+    function _checkCurveTrade(address q, uint256 sinks0, uint256 toPlatform, uint256 toCreator, uint256 gross)
+        internal
+    {
         if (gross == 0) return;
         curveTrades++;
         if (_sinks(q) != sinks0) curveTaxLeaks++;
-        if (fee != (gross * 100) / 10_000) curveFeeOff++;
+        uint256 fee = (gross * 100) / 10_000;
+        if (toPlatform + toCreator != fee) curveFeeOff++;
+        if (toCreator != (fee * 7_000) / 10_000) creatorFeeOff++;
     }
 
     function v3Sell(uint256 seed, uint256 fracBps) external action {
@@ -277,14 +289,16 @@ contract CoreHandler is GangFixture {
         address q = _curveQuote(t);
         uint256 sinks0 = _sinks(q);
         uint256 fee0 = bucket.accruedQuote(q);
+        uint256 cf0 = pad.creatorFeeOf(t);
         uint256 got0 = IERC20(q).balanceOf(who);
         vm.startPrank(who);
         IERC20(t).approve(address(pad), amount);
         try pad.sell(t, amount, 0) {} catch {}
         vm.stopPrank();
-        uint256 fee = bucket.accruedQuote(q) - fee0;
+        uint256 toPlatform = bucket.accruedQuote(q) - fee0;
+        uint256 toCreator = pad.creatorFeeOf(t) - cf0;
         uint256 got = IERC20(q).balanceOf(who) - got0;
-        _checkCurveTrade(q, sinks0, fee, got == 0 ? 0 : got + fee);
+        _checkCurveTrade(q, sinks0, toPlatform, toCreator, got == 0 ? 0 : got + toPlatform + toCreator);
         _afterV3(t);
     }
 
@@ -338,6 +352,23 @@ contract CoreHandler is GangFixture {
         blq.setBlocked(treasury, blocked);
         if (lastSelfRecipient != address(0)) blq.setBlocked(lastSelfRecipient, blocked);
         if (blocked) blockedSet++;
+    }
+
+    /// @dev The creator takes what was kept for it (live or graduated); a blocked creator's claim on blq reverts.
+    function v3ClaimCreatorFee(uint256 seed) external action {
+        if (v3Tokens.length == 0) return;
+        address t = _v3(seed);
+        uint256 owed = pad.creatorFeeOf(t);
+        if (owed == 0) return;
+        (address creator, address q,,,,,,,,,,) = pad.curves(t);
+        uint256 before = IERC20(q).balanceOf(creator);
+        vm.prank(creator);
+        try pad.claimCreatorFee(t, creator) returns (uint256 paid) {
+            creatorClaims++;
+            if (paid != owed || IERC20(q).balanceOf(creator) - before != owed || pad.creatorFeeOf(t) != 0) {
+                creatorFeeOff++;
+            }
+        } catch {}
     }
 
     function v3Release(uint256 seed) external action {
@@ -533,7 +564,7 @@ contract CoreInvariantsTest is Test {
     function setUp() public {
         h = new CoreHandler();
         targetContract(address(h));
-        bytes4[] memory sel = new bytes4[](31);
+        bytes4[] memory sel = new bytes4[](32);
         sel[0] = CoreHandler.v3Create.selector;
         sel[1] = CoreHandler.v3Buy.selector;
         sel[2] = CoreHandler.v3Sell.selector;
@@ -568,12 +599,13 @@ contract CoreInvariantsTest is Test {
         sel[28] = CoreHandler.mixedWbnb.selector;
         sel[29] = CoreHandler.mixedWbnb.selector;
         sel[30] = CoreHandler.fairFlushFees.selector;
+        sel[31] = CoreHandler.v3ClaimCreatorFee.selector;
         targetSelector(FuzzSelector({addr: address(h), selectors: sel}));
     }
 
     // ---------------------------------------------------------------- the pad's money (§5 #1 + #7 → §5.4)
     /// @dev Per quote: balanceOf(pad) == Σ not-launched sales' live principal + owedFee + Σ not-graduated curves'
-    ///      realQuote + dust, with dust ≥ 0 after every call and never shrinking. A sell-back or launch that took
+    ///      realQuote + Σ curves' unclaimed creator fee + dust, with dust ≥ 0 after every call and never shrinking. A sell-back or launch that took
     ///      curve quote, or a graduation that took escrowed principal, makes the dust negative or shrink.
     function invariant_padQuoteIdentity() public view {
         address[3] memory qs = h.quotes();
@@ -709,6 +741,7 @@ contract CoreInvariantsTest is Test {
     function invariant_v3CurveNoTax() public view {
         assertEq(h.curveTaxLeaks(), 0, "curve trade paid a tax");
         assertEq(h.curveFeeOff(), 0, "curve fee != 1%");
+        assertEq(h.creatorFeeOff(), 0, "creator part != 70% of the fee, or a claim paid the wrong amount");
         for (uint256 i = 0; i < h.v3TokenCount(); i++) {
             // holders earn only from the pool tax: before graduation nothing is credited to a V3 token's holders
             address t = h.v3Tokens(i);
@@ -825,5 +858,6 @@ contract CoreInvariantsTest is Test {
         console2.log("  self-recipient V3 tokens", h.selfRecipientTokens());
         console2.log("  curve trades checked for no tax / same-WBNB mixed rounds", h.curveTrades(), h.mixedRounds());
         console2.log("  router buys / mints", h.routerTrades());
+        console2.log("  creator fee claims", h.creatorClaims());
     }
 }

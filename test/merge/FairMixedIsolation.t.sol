@@ -22,6 +22,7 @@ contract FairMixedIsolationTest is PadMergeGuardsTest {
         for (uint256 i; i < cs.length; i++) {
             (, address cq, uint128 realQuote,,,, bool graduated,,,,,) = v3.curves(cs[i]);
             if (cq == q && !graduated) owed += realQuote;
+            if (cq == q) owed += v3.creatorFeeOf(cs[i]); // kept for the creator, live or graduated
         }
         for (uint256 i; i < ss.length; i++) {
             (,,,, address sq, uint16 sold, bool launched,,,, uint128 price,,,) = v3.sales(ss[i]);

@@ -547,7 +547,11 @@ contract OriginTraderTest is GangFixture {
         assertEq(out, pad.MAX_PER_WALLET(), "cut to the cap");
         assertEq(quoteTok.balanceOf(address(agg)), aggBefore - 5 ether, "router delta = -quoteIn");
         assertGt(quoteTok.balanceOf(trader) - traderBefore, 4 ether, "the cut came back to the trader in the quote");
-        assertEq(quoteTok.balanceOf(address(pad)), _curveRealQuote(t), "pad keeps only the curve's escrow");
+        assertEq(
+            quoteTok.balanceOf(address(pad)),
+            _curveRealQuote(t) + pad.creatorFeeOf(t),
+            "pad keeps only the curve's escrow and the creator's part"
+        );
     }
 
     // ================================================================ phishing (why the §23.9 checklist exists)
