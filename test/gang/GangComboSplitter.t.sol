@@ -362,10 +362,44 @@ contract GangComboSplitterTest is GangFixture {
         gb.setBlocked(kol, true);
         uint256 g = gasleft();
         m.distribute(address(gb));
-        assertLt(g - gasleft(), 2 * m.PUSH_GAS() + 200_000, "a refusal costs at most PUSH_GAS");
+        assertLt(g - gasleft(), 2 * m.PUSH_GAS() + 200_000, "the dead push and a refusal, each at most PUSH_GAS");
         assertEq(m.owedOf(address(gb), 1), 0.12 ether);
         assertEq(gb.balanceOf(dev), 0.28 ether);
         assertEq(gb.balanceOf(m.DEAD()), 0.6 ether);
+    }
+
+    /// @dev An asset that refuses 0xdead: the share it can't burn goes to the payees with the rest; nothing is lost
+    ///      or counted twice.
+    function test_otherAsset_deadRefusedGoesToPayees() public {
+        (GangComboSplitter m,, address dev, address kol) = _setup(address(wbnb), false);
+        GasBurnQuote gb = new GasBurnQuote();
+        gb.setBlocked(m.DEAD(), true);
+        gb.mint(address(m), 1 ether);
+        vm.expectEmit(address(m));
+        emit GangComboSplitter.Distributed(address(gb), 1 ether, 0);
+        m.distribute(address(gb));
+        assertEq(gb.balanceOf(kol), 0.3 ether);
+        assertEq(gb.balanceOf(dev), 0.7 ether);
+        assertEq(gb.balanceOf(address(m)), m.owedTotal(address(gb)));
+    }
+
+    /// @dev Combo re-review 2026-10-31: before `bind` the quote is unknown, so nothing can be split as another asset —
+    ///      tax that arrived early waits for the bind and is split as the quote.
+    function test_beforeBind_nothingSplitOrBurned() public {
+        address dev = _newAgent();
+        GangComboSplitter m = _combo(dev, 3_000, 3_000, _list(dev, makeAddr("k")), _shares(5_000, 5_000));
+        address t = _createV3(dev, address(wbnb), _tax(TAX, TAX, 5_000, address(m)));
+        wbnb.mintUnlimited(address(m), 1 ether);
+        vm.expectRevert(GangComboSplitter.NotBound.selector);
+        m.distribute(address(wbnb));
+        vm.expectRevert(GangComboSplitter.NotBound.selector);
+        m.release(address(wbnb), 0, ALL);
+        m.split(); // nothing to do before bind
+        assertEq(_bal(address(wbnb), address(m)), 1 ether);
+        m.bind(t);
+        m.split();
+        assertEq(m.buybackLeft(), 0.3 ether);
+        assertEq(m.lpLeft(), 0.3 ether);
     }
 
     function test_otherAsset_noPayeesAllToDead() public {
