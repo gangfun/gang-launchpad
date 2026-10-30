@@ -49,6 +49,8 @@ contract CoreHandler is GangFixture {
     uint256 public curveTaxLeaks;
     uint256 public curveFeeOff;
     uint256 public curveTrades;
+    /// @dev Router buys / mints that went through (they need trader == tx.origin, §23).
+    uint256 public routerTrades;
 
     constructor() {
         _deployGang(address(this));
@@ -223,23 +225,30 @@ contract CoreHandler is GangFixture {
         bool native = q == address(wbnb) && path % 3 == 1;
         uint256 sinks0 = _sinks(q);
         uint256 fee0 = bucket.accruedQuote(q);
-        // the BNB path: the value may come from this handler or from the pranked `who` (depends on the forge version);
-        // the refund goes to `who`, so count both balances
-        uint256 bal0 = native ? who.balance + address(this).balance : IERC20(q).balanceOf(who);
-        vm.prank(who);
+        uint256 bal0 = native ? _bnbPaidFrom(who, q) : IERC20(q).balanceOf(who);
+        vm.prank(who, who); // the router paths need trader == tx.origin (§23)
         uint256 paid;
         if (path % 3 == 0) {
             try pad.buy(t, amount, 0) {} catch {}
         } else if (native) {
             try router.v3BuyBNB{value: amount}(t, 0, block.timestamp) {
-                paid = bal0 - (who.balance + address(this).balance);
+                paid = bal0 - _bnbPaidFrom(who, q);
+                routerTrades++;
             } catch {}
         } else {
-            try router.v3Buy(t, amount, 0, block.timestamp) {} catch {}
+            try router.v3Buy(t, amount, 0, block.timestamp) {
+                routerTrades++;
+            } catch {}
         }
         if (!native) paid = bal0 - IERC20(q).balanceOf(who);
         _checkCurveTrade(q, sinks0, bucket.accruedQuote(q) - fee0, paid);
         _afterV3(t);
+    }
+
+    /// @dev The BNB path: the value may come from this handler or from the pranked `who` (depends on the forge
+    ///      version), and a cap / graduation cut comes back to `who` as WBNB, not BNB (§23), so count all three.
+    function _bnbPaidFrom(address who, address q) internal view returns (uint256) {
+        return who.balance + address(this).balance + IERC20(q).balanceOf(who);
     }
 
     function _sinks(address q) internal view returns (uint256) {
@@ -372,13 +381,17 @@ contract CoreHandler is GangFixture {
     function _fairMintOne(address t, address who, uint256 shares, bool viaRouter) internal {
         shares = bound(shares, 1, 240);
         address q = _saleQuote(t);
-        vm.prank(who);
+        vm.prank(who, who);
         if (!viaRouter) {
             try pad.mint(t, shares, 1) {} catch {}
         } else if (q == address(wbnb)) {
-            try router.fairMintBNB{value: 5 ether}(t, shares, 1, block.timestamp) {} catch {}
+            try router.fairMintBNB{value: 5 ether}(t, shares, 1, block.timestamp) {
+                routerTrades++;
+            } catch {}
         } else {
-            try router.fairMint(t, shares, 1, block.timestamp) {} catch {}
+            try router.fairMint(t, shares, 1, block.timestamp) {
+                routerTrades++;
+            } catch {}
         }
         _afterSale(t);
     }
@@ -704,6 +717,16 @@ contract CoreInvariantsTest is Test {
         }
     }
 
+    /// @dev The sequence that once failed invariant_v3CurveNoTax: a BNB buy over the 1% cap, whose cut came back as
+    ///      WBNB and was counted as paid.
+    function test_v3CurveNoTax_bnbBuyCutRefund() public {
+        h.fairCreate(17527, 1084181109, 11680, 7510, 7965);
+        h.v3Create(164, 2994, 8738, 42748, false);
+        h.mixedWbnb(1907, 40 ether, 1691192412);
+        assertEq(h.curveTrades(), 2, "buy and sell reached the curve");
+        invariant_v3CurveNoTax();
+    }
+
     // ---------------------------------------------------------------- shared sinks and the router (§5 #11, #12)
     /// @dev The bucket holds what it accounts for; the vault can pay every holder's pending rewards.
     function invariant_sinksSolvent() public view {
@@ -801,5 +824,6 @@ contract CoreInvariantsTest is Test {
         console2.log("  stale exits / blq tokens / blocked set", h.staleExits(), h.blqTokens(), h.blockedSet());
         console2.log("  self-recipient V3 tokens", h.selfRecipientTokens());
         console2.log("  curve trades checked for no tax / same-WBNB mixed rounds", h.curveTrades(), h.mixedRounds());
+        console2.log("  router buys / mints", h.routerTrades());
     }
 }
