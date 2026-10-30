@@ -1,4 +1,4 @@
-# 测试网 · GangFlywheelPad（持续打新，kind 3）
+# 测试网 · GangFlywheelPad（铸币飞轮，原名「持续打新」，kind 3）
 
 - 链：BSC 测试网（chainId 97），2026-10-30
 - 方案：issue #75
