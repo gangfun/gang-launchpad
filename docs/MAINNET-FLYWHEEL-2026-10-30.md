@@ -5,7 +5,7 @@
 部署前完成的流程：内部审计 → 修复 → 多轮复审 → 测试网部署验收 → 主网前三方审计 → 修复 → 独立复审 → 测试网用修复后的代码重新部署验收（见 `docs/TESTNET-FLYWHEEL-2026-10-30.md`）。
 
 - 链：BSC 主网（chainId 56），区块 130634782–130634823（2026-10-30 16:40:55–16:41:14 +08:00）
-- 当前状态：**第一阶段、Safe 第 1 批、第二阶段都已完成，发射台尚未开放**（`migrator` 为 0，任何人都还不能创建代币）。三个合约的 `pendingOwner` 是 Safe，等 Safe 接手（第 2 批）。
+- 当前状态：**已开放**（2026-10-30 20:09:41 +08:00，Safe 第 3 批 `setMigrator`）。三个合约的 owner 都是 Safe，部署钱包没有任何权限。
 
 ## 地址
 
@@ -53,7 +53,7 @@
 
 ## Safe 操作（上线步骤）
 
-1. **把 pad 列入共用合约和注册表**（已执行，2026-10-30）。Transaction Builder 文件：`docs/MAINNET-FLYWHEEL-SAFE-BATCH-1-2026-10-30.json`，7 笔：
+1. **把 pad 列入共用合约和注册表**（已执行：Safe 交易 [`0xd0086a81…d48c`](https://bscscan.com/tx/0xd0086a81d2a300b10cba6ab3fc0f7d88cddeb1bcc6e76c5bdfc29d350da3d48c)，区块 130639494，2026-10-30 17:16:15 +08:00）。Transaction Builder 文件：`docs/MAINNET-FLYWHEEL-SAFE-BATCH-1-2026-10-30.json`，7 笔：
 
    | # | to | 调用 |
    |---|---|---|
@@ -75,5 +75,5 @@
    | `pad.transferOwnership(Safe)` [`0x9395c8a5…73f0`](https://bscscan.com/tx/0x9395c8a577de1e92eefc82b99b3e34e3193146c4eca60ca1ba1721d7810f73f0) | 48,870 |
 
    脚本输出的 Safe 批次是「三笔 `acceptOwnership()` + `pad.setMigrator(迁移器)`」，这里拆成下面两批，接手和开放分开签。两批都在主网 fork 上用 Safe 身份按顺序预演过：执行后三个合约的 owner 是 Safe，`migrator()` 是迁移器。
-3. **第 2 批：Safe 接手 owner**（待执行）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-2-ACCEPT-2026-10-30.json`，3 笔：MintTokenDeployer、handler、pad 各一笔 `acceptOwnership()`。执行后部署钱包对三个合约没有任何权限，发射台仍然关着。
-4. **第 3 批：开放发射台**（待执行）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-3-OPEN-2026-10-30.json`，1 笔：pad `setMigrator(0xfE38fFce7f918cffC26575D125ed6D09864c3604)`，只能设一次。执行后任何人都能创建持续铸币的币，所以要等 keeper、后端、网站和 CLI 都支持 kind 3 并在测试网验收之后再执行。必须在第 2 批之后执行（需要 Safe 是 pad 的 owner）。
+3. **第 2 批：Safe 接手 owner**（已执行：Safe 交易 [`0x0c4b7cb2…e237`](https://bscscan.com/tx/0x0c4b7cb20538ffde5e7abe7574f54353a9152ed9486ef5e913a497369a84e237)，区块 130651873，18:49:08 +08:00；之后三个合约 `owner()` 都是 Safe，`pendingOwner()` 为 0）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-2-ACCEPT-2026-10-30.json`，3 笔：MintTokenDeployer、handler、pad 各一笔 `acceptOwnership()`。执行后部署钱包对三个合约没有任何权限，发射台仍然关着。
+4. **第 3 批：开放发射台**（已执行：Safe 交易 [`0x14a32eba…85ac`](https://bscscan.com/tx/0x14a32eba02d30e8cf61934275ce54e23c699732791fd01bacc5bbc34a6a985ac)，区块 130662610，20:09:41 +08:00；`migrator()` 为 `0xfE38…3604`）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-3-OPEN-2026-10-30.json`，1 笔：pad `setMigrator(0xfE38fFce7f918cffC26575D125ed6D09864c3604)`，只能设一次。执行后任何人都能创建持续铸币的币，所以等 keeper、后端、网站和 CLI 都支持 kind 3 并在测试网验收之后才执行：CLI 0.18.0 已发布，正式环境的索引和 keeper 先上线（对外隐藏），开放后再打开接口和网站。必须在第 2 批之后执行（需要 Safe 是 pad 的 owner）。
