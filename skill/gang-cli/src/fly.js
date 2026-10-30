@@ -22,8 +22,8 @@ import { poolPayBnb, poolTrade } from './pool.js'
  */
 export const FLY_PADS = {
   mainnet: { v1: '0x631e66560F4FAE4e486B65349edE48189E48B029', v2: null, startBlock: 130634782n },
-  // V1: testnet set 2 (2026-10-30, after the pre-mainnet audit fixes)
-  testnet: { v1: '0xD6482850aCAC74BA889804931Fc797294777951c', v2: null, startBlock: 139749672n },
+  // V1: testnet set 2 (2026-10-30, after the pre-mainnet audit fixes); V2 from block 139842621 (2026-10-31)
+  testnet: { v1: '0xD6482850aCAC74BA889804931Fc797294777951c', v2: '0x706973e4F08dBf1604Cf540d0168428521e0E3d6', startBlock: 139749672n },
 }
 
 // V1's FlyConfig; V2 appends guardBps and twapWindow (CFG_V2): a new create / checkConfig selector and Created topic
@@ -878,12 +878,13 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
       // a rule of the pad / handler / token counts: a quote-token revert (no allowance yet) says nothing about the rule
       const dry = await dryRun(ctx, who, ctx.pad, data, bnb ? maxSpent : 0n, bnb)
       const r = dry?.reverted && HINTS[dry.error] ? dry : null
-      const cap = side.raw.room < tokensOut * 2n
+      // no rule from the simulation (e.g. it stopped at the quote transfer): the pad's rules read as gang info does,
+      // and what is left when none applies is this wallet's own pace
+      const pause = r ? null : await mintPause(ctx, token, sale, handler, side)
       return out({
-        success: false, ...extra, error: `a post-launch mint is refused right now${r ? `: ${r.error}` : ''}`,
-        ...(r ? { reason: r.error, hint: r.hint } : {
-          reason: cap ? 'supply cap' : 'price or pace rule',
-          hint: cap ? HINTS.CapExceeded : 'the pool price is more than 10% below its average / recent high, the mint price is more than 10% above the pool, or this wallet hit its 30-minute pace (2% of the pool): wait, or mint fewer shares',
+        success: false, ...extra, error: `a post-launch mint is refused right now${r ? `: ${r.error}` : `: ${pause.pausedNow ? pause.reason : 'pace'}`}`,
+        ...(r ? { reason: r.error, hint: r.hint } : pause.pausedNow ? { reason: pause.reason, hint: pause.why, resumes: pause.resumes } : {
+          reason: 'pace', hint: HINTS.PaceExceeded,
         }),
         prices: side.prices, supply: side.supply,
       })
