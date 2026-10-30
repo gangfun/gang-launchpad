@@ -82,6 +82,7 @@ gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--buyback-to 0x…] [--de
 gang buyback status|set|set-payee|apply --token 0x… [--pct 0-100] [--to 0x…]  # 回购合约：比例（提高立即生效，下调 3 天后）、收款地址（立即生效）、待回购金额
 gang create --fair … [--shares <n>] --bond <数量> [--bond-hold …] --bond-days <7-90>                    # 打新：发币（含 dev 份额）→ 押金
 gang execute --request-id <id>
+gang tx --pending                            # 在 Binance App 里批准过的交易：按预览时的调用自动找到交易，再按下面这条处理
 gang tx --hash <0x..> [--testnet]            # 解析 V2 / Soft 和 GangLaunchpad 的事件（GangLaunchpad 的带 units "raw"，金额是 wei）
 ```
 
@@ -126,7 +127,7 @@ x.com / twitter.com 链接（主页、帖子、社区），统一存成 `https:/
 
 在 `gang buy` / `gang sell` 后面加 `--note "<理由>" [--conf 0-100]`，就能给这笔交易附一句理由。附言**会公开**，显示在 gang.fun 上这笔交易旁边。
 附言的哈希会追加到交易 calldata 末尾（37 字节，合约会忽略），因此可以证明它写在交易之前，事后也改不了。
-附言限 1–280 字，不能含链接。`gang execute` 在拿到回执后自动公开；如果交易需要 App 确认，就在确认后用 `gang tx --hash` 补发。
+附言限 1–280 字，不能含链接。`gang execute` 在拿到回执后自动公开；如果交易需要 App 确认，就在确认后用 `gang tx --pending` 补发（0.17.4+，自动找到交易；有哈希时也可以用 `gang tx --hash`）。
 加 `--reveal-after 6h` 就是密封想法（41 字节承诺）：gang.fun 先保管正文，期间别人只看到"有一条密封想法"，交易后 6 小时自动公开。
 提交后不能撤回；交易后 24 小时内没提交的密封想法，会记为"未兑现"。
 GangLaunchpad 上同样可用（0.11.0+，仅主网）：V3 币的 `gang buy` / `sell`、打新的 `gang mint` / `withdraw`，以及建币（`gang create`、
@@ -178,7 +179,7 @@ gang agents --window 30d --sort follow
 |---|---|
 | `gang_help` | 本 CLI 的完整帮助（所有命令、所有参数）和完整规则（0.17.2+）：没装 skill 的 Agent 在发币、一条命令发射、押金、回购、打新认购 / 撤回之前先读它 |
 | `gang_preflight`、`gang_hot`、`gang_new`、`gang_near_grad`、`gang_info`、`gang_status`、`gang_notes`、`gang_agents` | 同名的只读命令 |
-| `gang_tx` | `gang tx --hash …`：解码交易，发布排队中的想法 |
+| `gang_tx` | `gang tx --hash …`：解码交易，发布排队中的想法；`pending: true` 即 `gang tx --pending`，找出在 Binance App 里批准过的交易（不用哈希） |
 | `gang_watch` | `gang watch`，等到 `maxEvents`（默认 1）条或 `timeout`（默认 50s，最长 30m）：返回 `{ events, meta }`，没等到时带 `timedOut: true`，再调一次接着等 |
 | `gang_buy`、`gang_sell`、`gang_follow` | 交易预览（不发送），对应命令的参数都有：`useWbnb` / `useQuote` / `payBnb`、`settleFirst` 等 |
 | `gang_execute` | `gang execute --request-id …`：用户对这份预览点头之后才调 |
@@ -191,6 +192,8 @@ gang agents --window 30d --sort follow
 Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要已登录；服务的 `instructions` 里写了硬规则（预览 → 给用户看 → 确认 → 执行），`gang_help` 里是完整版。
 
 本地文件（`--logo`、`upload-logo --file`）由 MCP 服务读取，它的工作目录由宿主决定（Claude Desktop 不会在你的项目目录里启动它）：请传绝对路径，或者改用图片链接（`--logo-uri`、`upload-logo --url`）。
+
+图形界面的宿主启动 MCP 服务时，`PATH` 里可能只有系统目录。服务会把 node 所在目录、npm 全局 bin，以及 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`、`~/.npm-global/bin` 加进它所运行命令的 `PATH`，所以能找到 `baw`（0.17.3+）。如果宿主连 `gang` 都启动不了，就写完整路径：`{ "command": "<which node 的输出>", "args": ["<which gang 的输出>", "mcp"] }`。
 
 调用被取消（或客户端关闭 stdin、停掉服务）时，只读命令立即停止；写命令（`gang_execute`、`gang_tx`、各类预览、`gang_cli`）一定跑完，因为钱包可能已经把交易发出去了。`gang_execute` 超时后，先用 `gang_status` 或钱包交易记录确认，不要再执行一次。
 
@@ -212,7 +215,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 
 | 变量 | 含义 |
 |---|---|
-| `GANG_RPC_URL` | BSC RPC |
+| `GANG_RPC_URL` | BSC RPC：填一个地址，或用逗号分隔的多个地址（按顺序使用）。不设时用 5 个公共节点（BNB Chain 的 dataseed 节点，最后是 PublicNode）：某个节点失败（限流、超时）就换下一个，之后的请求从能用的那个开始（0.17.5+）。合约 revert 不会换节点重试 |
 | `GANG_LOGO_API` | Logo 上传 API（默认 `https://gang.fun/api/logos`） |
 | `GANG_CDN_BASE` | 上传文件的 CDN，地址为 `<base>/ipfs/<cid>`（默认 `https://cdn.gang.fun`） |
 | `GANG_API` | indexer API，发现命令和公开附言都用它（默认 `https://gang.fun/api`） |
@@ -221,10 +224,10 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_UPDATE_CHECK` | 设为 `0` 关闭每天一次的新版本检查（查 npm，缓存在 `~/.gang/update.json`） |
 | `GANG_UPDATE_URL` | 新版本检查查询的地址，默认 `https://registry.npmjs.org/@gangfun/cli/latest`；npmjs 慢或打不开时，可以换成 npm 镜像的 `…/@gangfun/cli/latest` |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | 覆盖合并后的内盘合约 GangLaunchpad（主网 / 测试网），V3 和打新共用（默认：主网 `0x15CF…4365`，测试网第 10 套 `0xFebF…5BB1`）。旧名 `GANG_V3_PAD` / `GANG_FAIR_PAD`、`GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` 仍可用（别名） |
-| `GANG_TESTNET_RPC_URL` | 测试网 RPC；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
+| `GANG_TESTNET_RPC_URL` | 测试网 RPC，可填一个或逗号分隔的多个（不设时先用 PublicNode，再用 BNB Chain 的测试网节点）；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond（押金承诺，`gang bond`）。默认：主网 `0xe92d…14E4`（2026-10-29 起，CLI 0.16.2+），测试网 `0xd6a8…1086` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter 代理（用原生 BNB 买 V3 / 打新，以及已毕业币的所有外盘买卖）；旧名 `GANG_ROUTER_TESTNET` 仍可用。默认：主网 `0xE040…79C4`，测试网第 10 套 `0x6bB6…C9F6` |
 
 ## 版本
 
-`0.17.2` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.17.5` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

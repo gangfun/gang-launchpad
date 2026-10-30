@@ -41,7 +41,7 @@ refund and the minimum out.
 
 Preview only. May first return `step: approve` for the token. V3 and V2 / U / S pay out the quote ERC-20; Soft pays
 BNB. A 打新 sale is sold back with `gang withdraw` until it launches. Sells may need Binance App approval
-(`pendingConfirmation`). `--note` works as on a buy. A creator's sell of a bonded token is checked against the bond
+(`pendingConfirmation`): after the user approves, `gang tx --pending` finds the tx. `--note` works as on a buy. A creator's sell of a bonded token is checked against the bond
 first ([bond.md](bond.md#sell-protection)).
 
 ## `gang execute --request-id <id>` / `gang tx --hash <0x…> [--testnet]`

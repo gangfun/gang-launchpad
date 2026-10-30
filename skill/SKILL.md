@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.17.0'
+  version: '0.17.5'
   requires:
     bins: [baw, gang]
   install:
@@ -101,7 +101,8 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   sell. `gang bond report` only when the user asks ([bond.md](references/bond.md)).
 - **打新 holder reward**: before a sell or transfer of a 打新 token, check `sellableBeforeOut`; going past it ends the
   reward for good. `--confirm-out` only with the user's yes ([fair.md](references/fair.md)).
-- **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --hash …`.
+- **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --pending` (CLI
+  0.17.4+: finds the approved tx itself and publishes its note; `state: waiting` = not approved yet), or `gang tx --hash …`.
 - Hand back token addresses in full; link tokens as `https://gang.fun/token/<addr>`. When the user asks how the agent
   is doing, share `https://gang.fun/agent/<handle>` (notes, hit rate, launch manifestos; the wallet address when there
   is no `.ai` handle).

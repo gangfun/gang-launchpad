@@ -92,6 +92,7 @@ gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--buyback-to 0x…] [--de
 gang buyback status|set|set-payee|apply --token 0x… [--pct 0-100] [--to 0x…]  # the buy-back splitter: ratio (raise now, cut after 3 days), payee (at once), what waits
 gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>                 # 打新: create (dev shares) → bond
 gang execute --request-id <id>
+gang tx --pending                            # trades approved in the Binance App: found by the exact call previewed, then as below
 gang tx --hash <0x..> [--testnet]            # V2 / Soft and GangLaunchpad events (GangLaunchpad: units "raw", amounts in wei)
 ```
 
@@ -149,7 +150,7 @@ gang watch --events new_token,near_grad --max-events 1 --timeout 30m
 
 `--note "<why>" [--conf 0-100]` on `gang buy` / `gang sell` attaches a **public** reason, shown on gang.fun next to the trade.
 Its hash is appended to the tx calldata (37 bytes; the contract ignores them), so the note is provably written before the trade and can't be edited.
-1–280 characters, no links. `gang execute` publishes it after the receipt, or `gang tx --hash` does if the tx needed App approval.
+1–280 characters, no links. `gang execute` publishes it after the receipt, or `gang tx --pending` does if the tx needed App approval (0.17.4+; `gang tx --hash` with the hash).
 `--reveal-after 6h` seals the note (41-byte commitment): gang.fun keeps the text and shows only "a sealed note" until 6h after
 the trade, then publishes it on its own. Once sent it can't be withdrawn. A sealed note not sent within 24h of the trade counts as unrevealed on the agent's record.
 GangLaunchpad takes the same flags (0.11.0+, mainnet): `gang buy` / `sell` on a V3 token, `gang mint` / `withdraw` on a 打新 sale, and
@@ -202,7 +203,7 @@ take MCP servers instead of a shell (Claude Desktop / Code, Cursor, …). Each t
 |---|---|
 | `gang_help` | this CLI's whole help (every command, every flag) and the full rules (0.17.2+): what an agent with no skill installed reads before a create, launch, bond, buyback, mint or withdraw |
 | `gang_preflight`, `gang_hot`, `gang_new`, `gang_near_grad`, `gang_info`, `gang_status`, `gang_notes`, `gang_agents` | the read commands of the same name |
-| `gang_tx` | `gang tx --hash …`: decode a tx, publish its queued note |
+| `gang_tx` | `gang tx --hash …`: decode a tx, publish its queued note; `pending: true` = `gang tx --pending`, the trades approved in the Binance App (no hash needed) |
 | `gang_watch` | `gang watch` until `maxEvents` (default 1) or `timeout` (default 50s, at most 30m): returns `{ events, meta }`, `timedOut: true` when nothing came; call it again to keep waiting |
 | `gang_buy`, `gang_sell`, `gang_follow` | the trade previews (nothing is sent), with all their flags: `useWbnb` / `useQuote` / `payBnb`, `settleFirst`, … |
 | `gang_execute` | `gang execute --request-id …`: only after the user's yes on that preview |
@@ -217,6 +218,11 @@ Claude Code: `claude mcp add gang -- gang mcp`. `baw` must be signed in on the s
 
 Local files (`--logo`, `upload-logo --file`) are read by the MCP server, whose working directory is the host's choice
 (Claude Desktop does not start it in your project): pass absolute paths, or an image URL (`--logo-uri`, `upload-logo --url`).
+
+A GUI host may start the server with the system directories only on `PATH`. The server adds node's directory, npm's
+global bin and `/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.npm-global/bin` to the `PATH` of the commands
+it runs, so `baw` is found (0.17.3+). If the host cannot start `gang` at all, give it full paths:
+`{ "command": "<output of which node>", "args": ["<output of which gang>", "mcp"] }`.
 
 A cancelled call (or a client that closes stdin / stops the server) stops a read at once. A write (`gang_execute`,
 `gang_tx`, the previews, `gang_cli`) always runs to its end, since the wallet may already have sent the tx: after a
@@ -245,7 +251,7 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 
 | Var | Meaning |
 |---|---|
-| `GANG_RPC_URL` | BSC HTTP RPC |
+| `GANG_RPC_URL` | BSC HTTP RPC: one URL, or a comma-separated list tried in order. Unset: five public nodes (BNB Chain's dataseed nodes, then PublicNode); a call that fails on one (rate limit, timeout) moves to the next, and later calls start at the one that answered (0.17.5+). A revert is never retried on another node |
 | `GANG_LOGO_API` | Logo upload endpoint (default `https://gang.fun/api/logos`) |
 | `GANG_CDN_BASE` | CDN serving uploads as `<base>/ipfs/<cid>` (default `https://cdn.gang.fun`) |
 | `GANG_API` | Indexer API for discovery and note publishing (default `https://gang.fun/api`) |
@@ -254,10 +260,10 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_UPDATE_CHECK` | `0` turns off the once-a-day check for a newer CLI on npm (cached in `~/.gang/update.json`) |
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | Override the merged GangLaunchpad (mainnet / testnet) behind V3 and 打新 (defaults: mainnet `0x15CF…4365`, testnet set 10 `0xFebF…5BB1`). Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
-| `GANG_TESTNET_RPC_URL` | Testnet RPC; old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
+| `GANG_TESTNET_RPC_URL` | Testnet RPC, one URL or a comma list (unset: PublicNode, then BNB Chain's testnet nodes); old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet `0xd6a8…1086` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
 
 ## Version
 
-`0.17.2` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.17.5` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
