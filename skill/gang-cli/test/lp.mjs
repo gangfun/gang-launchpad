@@ -128,8 +128,9 @@ const base = ['create', '--name', 'L', '--symbol', 'L', '--from', ME, '--testnet
 const taxed = [...base, '--buy-tax', '2', '--sell-tax', '2']
 refused([...base, '--lp', '50'], /--lp needs a taxed token/)
 refused([...base, '--buy-tax', '0', '--sell-tax', '0', '--lp', '50'], /--lp needs a taxed token/)
-refused([...taxed, '--lp', '50', '--buyback', '50'], /give one of --buyback \/ --lp, not several/)
-refused([...taxed, '--lp', '50', '--split', `${A}:100`], /give one of --split \/ --lp, not several/)
+// with --buyback / --split it is a combined recipient (test/combo.mjs), where --lp-to does not apply
+refused([...taxed, '--lp', '50', '--buyback', '60'], /more than 100%/)
+refused([...taxed, '--lp', '50', '--split', `${A}:100`, '--lp-to', A], /--lp-to does not apply to a combined recipient/)
 refused([...taxed, '--lp', '50', '--recipient', A], /--lp makes the recipient your LP splitter: leave --recipient out/)
 refused([...taxed, '--lp', '50', '--dividend', '100'], /nothing to add to the pool/)
 refused([...taxed, '--lp', '101'], /--lp must be a number between 0 and 100/)
