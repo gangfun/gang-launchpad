@@ -29,8 +29,8 @@ interface IHasPairView {
 /// @notice Internal library over the raw data FlywheelTaxHandler records on every pool trade:
 ///         - spot: the pair's reserves now;
 ///         - blockStart: the price at this block's first touch (spot if nothing touched the pair yet this block);
-///         - prevStart: the start price of the block touched before (so a buy whose price a dump in the very next block
-///           keeps out of the recent high still counts);
+///         - prevStart: the start price of the block touched before, while at most PREV_START_BLOCKS old (so a buy
+///           whose price a dump in the very next block keeps out of the recent high still counts);
 ///         - high: the recent high of block-start prices, decaying 0.5% a minute: a dump followed by mints finds the
 ///           pre-dump price here, less only 0.5% for every minute the dump was held;
 ///         - average: the TWAP over at least the last 30 minutes (the newest observation at least that old, to now);
@@ -38,6 +38,9 @@ interface IHasPairView {
 library FlywheelOracle {
     uint32 internal constant TWAP_WINDOW = 30 minutes;
     uint256 internal constant OBS_SLOTS = 8;
+    /// @notice The previous block's start counts only this many blocks on (~9 s): it is there for the block right after
+    ///         a buy, and a stale one must not keep refusing mints in a quiet pool (re-review R7 L-1).
+    uint256 internal constant PREV_START_BLOCKS = 20;
 
     error NotLaunched();
 
@@ -54,10 +57,19 @@ library FlywheelOracle {
         average = twap(handler, token, pair);
     }
 
-    /// @dev The start of the block touched before this one (this block not touched yet: the last touched block's).
+    /// @dev The start of the block touched before this one (this block not touched yet: the last touched block's), or 0
+    ///      once that block is more than PREV_START_BLOCKS old.
     function prevStart(address handler, address token) internal view returns (uint256) {
         (uint32 b, uint224 bp) = IFlywheelOracleData(handler).blockRefOf(token);
-        return b == uint32(block.number) ? IFlywheelOracleData(handler).prevBlockStartOf(token) : bp;
+        uint256 blockNumber;
+        uint256 price;
+        if (b == uint32(block.number)) {
+            uint256 packed = IFlywheelOracleData(handler).prevBlockStartOf(token);
+            (blockNumber, price) = (packed >> 224, uint224(packed));
+        } else {
+            (blockNumber, price) = (b, bp);
+        }
+        return block.number - blockNumber > PREV_START_BLOCKS ? 0 : price;
     }
 
     function spotOf(address pair, address token) internal view returns (uint256) {

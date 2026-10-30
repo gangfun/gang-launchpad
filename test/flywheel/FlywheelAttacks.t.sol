@@ -365,11 +365,16 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.prank(a);
         vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
         pad.mintPost(t, 10, 0, address(0));
-        // two more touched blocks and it is gone
-        vm.roll(vm.getBlockNumber() + 1);
-        handler.observe(t);
-        vm.roll(vm.getBlockNumber() + 1);
+        // nobody touches the pair (the refused mints roll back their own observation): the pushed start still lifts
+        // the floor for a few seconds, then it no longer counts (re-review R7 L-1: the refusal lifts on its own)
+        vm.roll(vm.getBlockNumber() + 10);
+        vm.prank(a);
+        vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
+        pad.mintPost(t, 10, 0, address(0));
+        vm.roll(vm.getBlockNumber() + 20);
         (,,,, ok) = pad.previewMintPost(t, a, 10);
         assertTrue(ok);
+        vm.prank(a);
+        pad.mintPost(t, 10, 0, address(0));
     }
 }
