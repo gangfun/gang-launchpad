@@ -1,6 +1,6 @@
-# Continuous mint (持续打新, `fly`)
+# Mint Flywheel (铸币飞轮, `fly`)
 
-A continuous-mint sale is like a 打新 sale until it launches. Wallets mint **10,000 shares at one price**
+A Mint Flywheel sale is like a 打新 sale until it launches. Wallets mint **10,000 shares at one price**
 (100,000 tokens a share), each within a **quota**. Before launch they can sell shares back at that price, less the exit
 fee. When the sale fills, or the creator opens it early at 30% sold, it launches into a PancakeSwap V2 pool **at the mint
 price**. After launch, **minting goes on**: the money goes into the pool (part of it buys from the pool), so each mint
