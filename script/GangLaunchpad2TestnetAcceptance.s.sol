@@ -18,13 +18,16 @@ interface IMintableQuote {
 }
 
 /// @title GangLaunchpad2TestnetAcceptance — the creator fee of GangLaunchpad 2.0 end to end on BSC testnet
-/// @notice With the deploy wallet (an Agent ID holder and the 2.0 owner), each step checked against the chain:
+/// @notice With the deploy wallet (an Agent ID holder and the 2.0 owner), each step checked in the simulation forge runs
+///         before it broadcasts (re-run the script, or read the chain, to confirm what landed):
 ///         A. a WBNB curve token: buy 0.002 BNB through the 2.0 GangRouter (creator 70% / bucket 30% of the 1%), sell
 ///            half straight on the pad (70% of that fee kept too), claim to the wallet (paid in WBNB, counter 0).
 ///         B. a taxed test-quote token (the creator its own recipient): with the wallet cap off for the run (one
 ///            wallet can then graduate it; the cap is turned back on at the end), buy to graduation through the live
 ///            migrator, claim after graduation; the pad then holds no test quote beyond dust.
 /// @dev TESTNET ONLY. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD2, GANG_ROUTER2, TEST_QUOTE (default the testnet one).
+///      The wallet cap is turned off and on in separate transactions: if the graduating buy fails on chain (forge
+///      stops), the cap stays off. A re-run turns it back on first; or `cast send <pad> "setWalletCapEnabled(bool)" true`.
 contract GangLaunchpad2TestnetAcceptance is Script {
     uint256 internal constant BPS = 10_000;
 
@@ -42,6 +45,12 @@ contract GangLaunchpad2TestnetAcceptance is Script {
         if (!pad.routers(router)) revert Check("router not listed");
         if (Ownable(address(pad)).owner() != me) revert Check("deploy wallet is not the 2.0 owner");
         if (!pad.isAgent(me)) revert Check("deploy wallet holds no Agent ID");
+        if (!pad.walletCapEnabled()) {
+            // an earlier run stopped between turning the cap off and on again
+            vm.startBroadcast(pk);
+            pad.setWalletCapEnabled(true);
+            vm.stopBroadcast();
+        }
         _wbnbCurve(pad, router, pk, me);
         _graduateAndClaim(pad, testQuote, pk, me);
         console.log("acceptance ok");
@@ -101,6 +110,7 @@ contract GangLaunchpad2TestnetAcceptance is Script {
     function _graduateAndClaim(IGangPad pad, address testQuote, uint256 pk, address me) internal {
         IGangLaunchpad.TaxConfig memory tax =
             IGangLaunchpad.TaxConfig({buyTaxBps: 300, sellTaxBps: 300, dividendBps: 4_000, recipient: me});
+        uint256 padQ0 = IERC20(testQuote).balanceOf(address(pad)); // other test-quote curves of the shared set
         vm.startBroadcast(pk);
         address t = pad.create("Creator Fee B", "CFB", "", "", testQuote, address(0), tax);
         IMintableQuote(testQuote).mintUnlimited(me, 20 ether);
@@ -123,7 +133,7 @@ contract GangLaunchpad2TestnetAcceptance is Script {
         pad.claimCreatorFee(t, me);
         vm.stopBroadcast();
         if (IERC20(testQuote).balanceOf(me) - q0 != owed) revert Check("B claim after graduation");
-        if (IERC20(testQuote).balanceOf(address(pad)) > 1) revert Check("B pad holds only dust");
+        if (IERC20(testQuote).balanceOf(address(pad)) > padQ0 + 1) revert Check("B pad holds only dust beyond before");
         console.log("B claimed after graduation");
     }
 }

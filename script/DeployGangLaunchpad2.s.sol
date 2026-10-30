@@ -32,7 +32,7 @@ import {DeployGang} from "./DeployGang.s.sol";
 ///            self-check, with the pad still closed allowed, plus 2.0 probes), start the hand-over of the handler and
 ///            the pad to OWNER and print the accept batch, which ends with `setMigrator` (the pad opens only once the
 ///            Safe owns it). OWNER = the deployer (testnet): `setMigrator` right away.
-///         Phase 2 also prints the cut-over batch (`tokenDeployer.setLaunchpad(1.0, false)`: 1.0 stops creating; its
+///         Once 2.0 is open (testnet: phase 1; mainnet: a phase-2 run after batch 2), phase 2 also prints the cut-over batch (`tokenDeployer.setLaunchpad(1.0, false)`: 1.0 stops creating; its
 ///         tokens trade and graduate as before). The Safe runs it only once the backend, site and CLI use 2.0.
 /// @dev Mainnet broadcast needs GANG_MAINNET_OK=true; mainnet GANG_PAD, the registry, OWNER, KEEPER and the gateway
 ///      must be the known ones, the TWAP window 1.0's, RECIPIENT empty, and the Safe must own every shared contract.
@@ -98,7 +98,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         if (!wired) {
             // review 2026-10-31 M-1: batch 1 can't be undone (registry addPad, the vault's operator binding), so every
             // check that needs no shared listing runs first; a failure here fails the simulation: nothing broadcast
-            _checkPre(s, c, x);
+            _checkPre(s, c, x, true);
             console.log("\n=== Safe batch 1: list GangLaunchpad 2.0 on the shared contracts, then run phase 2 ===");
             console.log(_wiringJson(s, x, c.mainnet, Ownable(s.vault).owner()));
             return s;
@@ -264,7 +264,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     ///      pad allowed to be still closed when the Safe opens it; then the 2.0 probes and the two owned contracts.
     ///      Not view: the probes call state-changing entries (all revert; outside the broadcast).
     function _check2(Stack memory s, Cfg memory c, Ctx memory x) internal {
-        _checkPre(s, c, x);
+        _checkPre(s, c, x, c.owner != c.deployer);
         _checkVault(s);
         _checkBucket(s, c);
         _checkPlatform(s, c);
@@ -282,9 +282,10 @@ contract DeployGangLaunchpad2 is DeployGang {
 
     /// @dev Everything that needs no shared listing: the pad (closed allowed when the Safe opens it), both libraries,
     ///      the handler (its keeper the shared bucket's), the router, the gateway listing, the 2.0 probes. Runs before
-    ///      Safe batch 1 is printed (review M-1) and again in phase 2.
-    function _checkPre(Stack memory s, Cfg memory c, Ctx memory x) internal {
-        allowClosedPad = c.owner != c.deployer;
+    ///      Safe batch 1 is printed (review M-1) and again in phase 2. `closedOk`: the pad may still be closed —
+    ///      always before the listing (it opens only after it), and after it when the Safe opens it.
+    function _checkPre(Stack memory s, Cfg memory c, Ctx memory x, bool closedOk) internal {
+        allowClosedPad = closedOk;
         _checkPad(s, c);
         _checkLibs(s, c);
         _checkLibsUsdt(s, c);
