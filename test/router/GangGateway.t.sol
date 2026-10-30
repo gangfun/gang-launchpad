@@ -320,15 +320,17 @@ contract GangGatewayTest is GangFixture {
 
     function test_info_fairMintingThenLaunched() public {
         address t = _createFair(creator, address(0), 1);
-        (uint8 status, address quote, address pair,, uint256 left) = gw.getTokenInfo(t);
+        (uint8 status, address quote, address pair, uint256 feeBps, uint256 left) = gw.getTokenInfo(t);
         assertEq(status, 3);
+        assertEq(feeBps, 0);
         assertEq(quote, address(0));
         assertEq(pair, address(0));
         assertEq(left, 0);
         _fill(t);
-        (status,, pair,,) = gw.getTokenInfo(t);
+        (status,, pair, feeBps,) = gw.getTokenInfo(t);
         assertEq(status, 2);
         assertEq(pair, _salePair(t));
+        assertEq(feeBps, 0);
     }
 
     function test_info_notGang() public {

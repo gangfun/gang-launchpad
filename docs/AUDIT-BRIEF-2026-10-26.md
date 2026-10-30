@@ -1207,7 +1207,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 
 ## 25. 聚合器用的内盘网关 GangGateway（2026-10-30）
 
-> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。**尚未部署**；主网上线要 Safe `setRouter(网关代理, true)`。
+> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试网验收脚本、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。**测试网已部署并验收**（25.9）；主网未部署，上线要 Safe `setRouter(网关代理, true)`。
 
 ### 25.1 需求
 
@@ -1250,7 +1250,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 | 只授权给 pad 的用户被经网关卖出 | `pullFor` 只花对网关的授权，`ERC20InsufficientAllowance` |
 | **用户被骗调用的合约，在用户自己的 tx 里强卖他已授权给网关的内盘代币** | **接受的剩余风险**。所得付给用户，攻击者拿最多 5% 手续费。**而且损失不止 5%**（audit M-1）：攻击者可以在同一 tx 里，或用 bundle 包住这笔 tx，先卖掉自己在同一条曲线上的库存压价，强卖之后再买回。用户的损失上限取决于攻击者的库存：每个 Agent 地址最多 1%，库存地址可以是 7702 委托的 Agent EOA、持 Agent ID 的合约，或 bundle 里的普通 EOA。审计 PoC 测得损失 9.35%（1 个库存地址）、30.8%（5 个）、53.8%（20 个）。`test/router/GangGatewayPhishing.t.sol` 固定了这一点（损失 > 5%、> 25%）。缓解：接入说明要求按每笔精确授权，卖完授权归 0，钓鱼合约就没有可卖的（`test_exactApproval_leavesNothingToForceSell`）；用户撤销授权或 Safe 下架网关可以立即止损 |
 | 毕业后残留的授权 | 毕业后 `pullFor` 永远 `NotLocked`，网关代码里也没有对代币的 `transferFrom`，残留授权在 v1 用不上。但升级可以改变这一点，所以升级要经 48 小时时间锁 |
-| registry 被盗（Safe 直接控制、没有时间锁），返回假 pad | 网关只从 `msg.sender` 拉资金，从不 `transferFrom` 用户的代币，所以假 pad 碰不到用户对网关的授权，最多拿走调用者那一笔自己付的 `funds`。买入的 `amountOut` 按 `to` 的余额变化计算：**registry 被升级成把真 Gang 币（锁定期）指向假 pad 时**，假 pad 转不动这个币，伪造不了成交，`minAmount > 0` 时回滚 `Slippage`（复审 PoC 证实，买卖都会回滚）。**误登记的 pad（`addPad`）为它自己发的币伪造成交，余额检查防不住**：那些币它想 mint 多少就能 mint 多少。这只能靠 Safe 审核 `addPad`。`test_buy_lyingPadCannotFakeAFill` 只覆盖「不转币的 pad」这一较弱的情形 |
+| registry 被盗（Safe 直接控制、没有时间锁），返回假 pad | 网关只从 `msg.sender` 拉资金，从不 `transferFrom` 用户的代币，所以假 pad 碰不到用户对网关的授权，最多拿走调用者那一笔自己付的 `funds`。买入的 `amountOut` 按 `to` 的余额变化计算：**registry 被升级成把真 Gang 币（锁定期）指向假 pad 时**，假 pad 转不动这个币，伪造不了成交，买入 `minAmount > 0` 时回滚 `Slippage`；卖出时假 pad 动不了用户的代币，最多是什么也没发生（`minFunds > 0` 时回滚）。复审 PoC 证实。**误登记的 pad（`addPad`）为它自己发的币伪造成交，余额检查防不住**：那些币它想 mint 多少就能 mint 多少。这只能靠 Safe 审核 `addPad`。`test_buy_lyingPadCannotFakeAFill` 只覆盖「不转币的 pad」这一较弱的情形 |
 | BNB 退款 / 手续费接收方重入 | `nonReentrant`，重入失败后整笔回滚 `BnbTransferFailed`（`test_sell_reentrantFeeRecipientReverts`） |
 | fee-on-transfer 计价币 | pad 的 `pullExact` 拒绝，网关不另外处理 |
 | 部署填错 registry | 主网必须是 `M.PAD_REGISTRY`，owner 必须是 Safe，并对 registry 跑 `GangPadRegistryDeployLib.check`（audit L-3） |
@@ -1310,6 +1310,14 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 
 这一轮修改只是注释、文档，以及 `getTokenInfo` 已毕业时返回的 `protocolFeeBps`，修改后网关的单元测试 40/40 通过。
 
+第三次独立复审（2026-10-30，审上面这一轮修改，以及部署脚本新加的 `GANG_PAD`）：没有 Medium 或更高问题。已处理的：
+- 打新币的两种状态都显式返回 `protocolFeeBps = 0`，并加了断言；
+- 本节 registry 那一行关于卖出的说法改准确；
+- `GANG_PAD` 设置后，只检查被列入的那个 pad 的 `wbnb`，不再因为别的 pad 读取失败而整个脚本失败；
+- 脚本的 NatSpec 写明了 `GANG_PAD`。
+
+`GANG_PAD` 的用途：测试网 registry 里还登记了另一个团队的 pad，部署时不要列入。
+
 ### 25.8 对外接口
 
 - 函数：
@@ -1335,3 +1343,18 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
   1. 跑 `script/DeployGangGateway.s.sol`；
   2. Safe 在 pad 上执行 `setRouter(网关代理, true)`；
   3. 把接口草案（对外版）里的地址补上。
+
+### 25.9 测试网
+
+三轮审查（审计、复审、修复后再复审）都没有遗留 Medium 或更高问题，之后部署到 BSC 测试网。网关代理是 `0x5020f4197A4E855474B464cD3617C048dd65635c`，只列入第 10 套 pad。部署后重跑自检通过。
+
+`script/GatewayTestnetAcceptance.s.sol` 在链上跑通：
+
+- 新建一个曲线币，经聚合器式 adapter 用 BNB 买入，买到的数量和 `tryBuy` 一致。
+- 精确授权后，经 adapter 卖出一半，收 1% 路由手续费；手续费和卖家所得合计等于 `trySell`，卖完授权归 0。
+- 直接调网关把剩下一半卖掉。
+- 每一步之后，网关和 adapter 都不留余额。
+- 拒绝路径用 `eth_call` 核对：`TraderNotOrigin`、`NotAgent`、`FeeRateTooHigh`、`BadMsgValue`；pad 没列入网关时 `tryBuy` 返回 0。
+- 第 10 套 19 个币的 `getTokenInfo` 逐个核对正确。
+
+详见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`。

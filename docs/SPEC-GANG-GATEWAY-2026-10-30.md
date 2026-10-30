@@ -2,7 +2,7 @@
 
 - 日期：2026-10-30 Asia/Shanghai
 - 作者：Claude（按和聚合器沟通后的「GangGateway 接口草案」实现，接入方式对齐 four.meme 内盘）
-- 性质：**未部署**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。
+- 性质：**测试网已部署 `0x5020f4197A4E855474B464cD3617C048dd65635c`（列入第 10 套 pad，验收通过，见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`）；主网未部署**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。
 
 ## 一句话
 
@@ -79,8 +79,8 @@ slot 0 `ReentrancyGuard._status`、1 `registry`、2 `wbnb`、3–49 `__gap`（47
 ## 部署
 
 ```bash
-# 测试网（部署钱包是 pad owner 时会直接 setRouter）
-DEPLOYER_PRIVATE_KEY=… GANG_PAD_REGISTRY=<registry 代理> \
+# 测试网（部署钱包是 pad owner 时会直接 setRouter；GANG_PAD 只列入这一个 pad）
+DEPLOYER_PRIVATE_KEY=… GANG_PAD_REGISTRY=<registry 代理> GANG_PAD=<pad> \
   forge script script/DeployGangGateway.s.sol --rpc-url $BSC_TESTNET_RPC_URL --broadcast --legacy --with-gas-price 100000000
 # 主网：OWNER 只能是 Safe；之后 Safe 执行脚本打印的 setRouter
 GANG_MAINNET_OK=true DEPLOYER_PRIVATE_KEY=… GANG_PAD_REGISTRY=0x4fF77D4d9ac080939a24E1B805206bA094C44e5C \

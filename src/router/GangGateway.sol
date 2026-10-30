@@ -159,8 +159,8 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
         if (kind == KIND_FAIR) {
             (,,,, address q,, bool launched,,,,, address p,,) = IGangGatewayPad(pad).sales(token);
             quote = _external(q);
-            if (launched) return (STATUS_POOL, quote, p, protocolFeeBps, 0);
-            return (STATUS_MINTING, quote, address(0), protocolFeeBps, 0);
+            if (launched) return (STATUS_POOL, quote, p, 0, 0);
+            return (STATUS_MINTING, quote, address(0), 0, 0);
         }
     }
 

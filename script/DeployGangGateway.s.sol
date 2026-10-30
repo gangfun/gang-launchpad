@@ -14,7 +14,7 @@ import {GangPadRegistryDeployLib as RG} from "./GangPadRegistryDeployLib.sol";
 /// @title DeployGangGateway — the upgradeable four.meme-style curve entry for aggregators (AUDIT-BRIEF §25)
 /// @notice Deploys implementation → 48 h TimelockController (the Safe) → TransparentUpgradeableProxy initialized with
 ///         the pad registry and WBNB, then reads everything back (GangGatewayDeployLib.check) and refuses to finish if
-///         anything differs. Then, for every pad the registry knows: when the deploy wallet owns the pad (testnet
+///         anything differs. Then, for every pad the registry knows (only GANG_PAD when set): when the deploy wallet owns the pad (testnet
 ///         stacks) it lists the gateway (`setRouter(proxy, true)`); otherwise it prints that call for the pad owner
 ///         (mainnet: a Safe transaction). The gateway serves a pad only once that pad lists it.
 ///         The registry is checked first (GangPadRegistryDeployLib.check: this build's code, its ProxyAdmin, owner and
@@ -23,7 +23,9 @@ import {GangPadRegistryDeployLib as RG} from "./GangPadRegistryDeployLib.sol";
 ///      OWNER (the timelock's proposer / executor / canceller; mainnet:
 ///      default and only accepted value the Safe, else OwnerNotSafe; testnet: default the deployer);
 ///      ROUTER_TIMELOCK_DELAY (seconds, default 48 h; mainnet: 48 h only); GANG_GATEWAY (re-run: deploy nothing, only
-///      check that proxy and print what is pending); mainnet broadcast needs GANG_MAINNET_OK=true.
+///      check that proxy and print what is pending); GANG_PAD (optional: list the gateway on this registered pad
+///      only, e.g. leave another team's testnet pad alone; the others are printed as pending); mainnet broadcast needs
+///      GANG_MAINNET_OK=true.
 contract DeployGangGateway is Script {
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
@@ -50,8 +52,12 @@ contract DeployGangGateway is Script {
         address registryOwner = registry.owner();
         if (mainnet && registryOwner != M.OWNER_SAFE) revert WiringCheck("registry owner not the Safe");
         RG.check(RG.load(address(registry)), registryOwner, pads);
+        address only = vm.envOr("GANG_PAD", address(0));
+        if (only != address(0) && !registry.isPad(only)) revert WiringCheck("GANG_PAD not in the registry");
         for (uint256 i; i < pads.length; i++) {
-            if (IGangPad(pads[i]).wbnb() != wbnb) revert WiringCheck("pad.wbnb");
+            if ((only == address(0) || pads[i] == only) && IGangPad(pads[i]).wbnb() != wbnb) {
+                revert WiringCheck("pad.wbnb");
+            }
         }
 
         address owner = vm.envOr("OWNER", mainnet ? M.OWNER_SAFE : deployer);
@@ -67,7 +73,9 @@ contract DeployGangGateway is Script {
             vm.startBroadcast(pk);
             g = G.deploy(address(registry), wbnb, owner, delay);
             for (uint256 i; i < pads.length; i++) {
-                if (Ownable(pads[i]).owner() == deployer) IGangPad(pads[i]).setRouter(g.proxy, true);
+                if ((only == address(0) || pads[i] == only) && Ownable(pads[i]).owner() == deployer) {
+                    IGangPad(pads[i]).setRouter(g.proxy, true);
+                }
             }
             vm.stopBroadcast();
         }
