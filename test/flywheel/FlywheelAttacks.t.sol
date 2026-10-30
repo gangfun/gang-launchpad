@@ -341,4 +341,35 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         vm.roll(vm.getBlockNumber() + 1);
         vm.warp(vm.getBlockTimestamp() + 3);
     }
+
+    /// @dev Re-review R6 L-1: someone pushes one block's start up (a buy at the end of a block, sold back as the next
+    ///      block's first trade). Mints in the next touched block are refused rather than priced far above the pool,
+    ///      and the preview says so.
+    function test_aPushedBlockStartRefusesRatherThanOvercharges() public {
+        address t = _create(_wide(), 1);
+        _fillAndLaunch(t);
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
+        address g = _newAgent();
+        (, uint256 rQ) = _res(t);
+        _poolBuy(t, g, (rQ * 1_500) / 10_000); // block X-1: +32%
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        _poolSell(t, g, IERC20(t).balanceOf(g)); // block X: first trade sells it back (X's start is the pushed price)
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        address a = _newAgent();
+        (,,,, bool ok) = pad.previewMintPost(t, a, 10);
+        assertFalse(ok);
+        vm.prank(a);
+        vm.expectRevert(IFlywheelPad.PriceAbovePool.selector);
+        pad.mintPost(t, 10, 0, address(0));
+        // two more touched blocks and it is gone
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
+        vm.roll(vm.getBlockNumber() + 1);
+        (,,,, ok) = pad.previewMintPost(t, a, 10);
+        assertTrue(ok);
+    }
 }

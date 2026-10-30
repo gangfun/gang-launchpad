@@ -99,9 +99,10 @@ library FlywheelPostLogic {
         PadCommon.toPlatform(d, s.quote, q.fee);
         FlywheelLogic.payDev(owedDev, s, token, q.devCut);
 
-        q.tokensOut = Math.mulDiv(
-            q.paid, 1 << 112, buyerPrice(spot, blockStart, FlywheelOracle.prevStart(d.taxHandler, token), high, average)
-        );
+        uint256 price = buyerPrice(spot, blockStart, FlywheelOracle.prevStart(d.taxHandler, token), high, average);
+        // never priced more than HIGH_GAP_BPS above the pool, whatever lifted the floor (re-review R6 L-1)
+        if (price * BPS > spot * (BPS + HIGH_GAP_BPS)) revert IFlywheelPad.PriceAbovePool();
+        q.tokensOut = Math.mulDiv(q.paid, 1 << 112, price);
         if (q.tokensOut < minTokensOut) revert IFlywheelPad.Slippage();
         uint256 net = q.paid - q.devCut;
         uint256 b = _buyPart(s.buyBps, net, spot, blockStart, rQ);

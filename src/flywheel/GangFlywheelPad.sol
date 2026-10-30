@@ -367,7 +367,8 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
 
     /// @notice What `mintPost(token, shares, 0, …)` by `user` would accept, cost (price and fee) and deliver if sent
     ///         now; `ok` false when it would be refused (not launched / minting off / no Agent ID / no quota / price
-    ///         more than 10% below its average or its recent high / the wallet's pace / the supply cap).
+    ///         more than 10% below its average or its recent high / a price more than 10% above the pool / the wallet's
+    ///         pace / the supply cap).
     function previewMintPost(address token, address user, uint256 shares)
         external
         view
@@ -381,11 +382,10 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
         fee = (paid * s.mintFeeBps) / 10_000;
         (uint256 spot, uint256 blockStart, uint256 high, uint256 average) = FlywheelPostLogicView.prices(taxHandler, token);
-        tokensOut = Math.mulDiv(
-            paid,
-            1 << 112,
-            FlywheelPostLogic.buyerPrice(spot, blockStart, FlywheelOracle.prevStart(taxHandler, token), high, average)
-        );
+        uint256 price =
+            FlywheelPostLogic.buyerPrice(spot, blockStart, FlywheelOracle.prevStart(taxHandler, token), high, average);
+        tokensOut = Math.mulDiv(paid, 1 << 112, price);
+        if (price * 10_000 > spot * (10_000 + FlywheelPostLogic.HIGH_GAP_BPS)) return (accepted, paid, fee, tokensOut, false);
         // minted: at most the buyer's tokens plus the liquidity's (at most `paid` of quote at spot)
         ok = FlywheelPostLogicView.allowed(a, paid, spot, high, average, s.pair, token)
             && tokensOut + Math.mulDiv(paid, 1 << 112, spot) <= IMintRoom(token).mintRoom();

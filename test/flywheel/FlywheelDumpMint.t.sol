@@ -143,7 +143,7 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
         for (uint256 i; i < ws.length; i++) q += int256(wbnb.balanceOf(ws[i]));
     }
 
-    function _run(uint256 nWallets) internal returns (int256 cons, int256 liq) {
+    function _run(uint256 nWallets, uint256 buyBpsOfPool) internal returns (int256 cons, int256 liq) {
         address t = _create(_wide(), 1);
         _fillAndLaunch(t);
         vm.warp(vm.getBlockTimestamp() + 600);
@@ -156,10 +156,10 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
         vm.roll(vm.getBlockNumber() + 1);
         handler.observe(t);
 
-        // block A: an outside buy of 10% of the pool's quote
+        // block A: an outside buy of `buyBpsOfPool` of the pool's quote
         uint256 before = _price(t);
         (, uint256 rQ) = _res(t);
-        _poolBuy(t, _plain(), (rQ * 1_000) / 10_000);
+        _poolBuy(t, _plain(), (rQ * buyBpsOfPool) / 10_000);
         uint256 p0 = _price(t);
         int256 q0 = _quote();
         uint256 bag = IERC20(t).balanceOf(whale);
@@ -196,15 +196,25 @@ contract FlywheelBackrunDumpTest is FlywheelFixture {
         liq = (_quote() - q0) + overshoot;
     }
 
-    function test_tenWallets() public {
-        (int256 cons, int256 liq) = _run(10);
+    /// @dev A big buy (+21%): the previous block's start lifts the floor more than 10% above the pool, so the mints are
+    ///      refused (PriceAbovePool) and the attacker is left with its round trip.
+    function test_bigBuy_sixtyWallets_mintsRefused() public {
+        (int256 cons, int256 liq) = _run(60, 1_000);
+        assertEq(minted, 0);
+        assertLt(cons, 0);
+        assertLt(liq, 0);
+    }
+
+    /// @dev A smaller buy (+8%, under the 10% cap): the mints go through at 99% of the previous block's start, and lose.
+    function test_smallBuy_tenWallets() public {
+        (int256 cons, int256 liq) = _run(10, 400);
         assertGt(minted, 0, "the attack never got to mint");
         assertLt(cons, 0, "backrun dump-then-mint paid (held)");
         assertLt(liq, 0, "backrun dump-then-mint paid (sold)");
     }
 
-    function test_sixtyWallets() public {
-        (int256 cons, int256 liq) = _run(60);
+    function test_smallBuy_sixtyWallets() public {
+        (int256 cons, int256 liq) = _run(60, 400);
         assertGt(minted, 0, "the attack never got to mint");
         assertLt(cons, 0, "backrun dump-then-mint paid (held)");
         assertLt(liq, 0, "backrun dump-then-mint paid (sold)");
