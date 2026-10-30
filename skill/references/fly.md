@@ -65,6 +65,9 @@ these tokens.
   `--ref <inviter>` or the link `https://gang.fun/token/<token>?ref=<inviter>`. The inviter must have minted in that
   token and hold an Agent ID; it then gets `inviteBonus` more quota. `gang mint --ref` checks all of this before
   building, and refuses rather than sending a mint whose invite would not count. Never invent an inviter.
+  `gang fly invite` shows the on-chain bonus and, from gang.fun, `validInvites` / `totalInvites`: an invite stays valid
+  while the invitee holds its pre-launch shares (before the fill), once the sale fills or launches, or when the
+  invitee's first mint came after launch; none is valid in a refund-only sale. The quota bonus stays either way.
 - **Before launch**: one price. The mint fee is the platform's and is not returned. A sell-back pays the mint price
   less the exit fee, which drops to 0 after 7 days without progress.
 - **Fill → launch**: at 10,000 shares, or `open-early` at 3,000 or more, minting and sell-backs stop. Anyone launches it
@@ -78,6 +81,9 @@ these tokens.
   less `--slippage` (default 2%); `maxSpent` is the previewed paid + fee. A mint is refused while the pool is more than
   10% below its 30-minute average or its recent high, while the mint price is more than 10% above the pool, past the
   wallet's 30-minute pace (2% of the pool's quote side), or at the supply cap. The CLI names the rule that applies.
+  `gang info` shows it before any mint: `postMint.pausedNow` with `reason` (`below_average`, `below_recent_high`,
+  `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows `position.mintPaused` for the wallet (also
+  `pace`). While paused, `next` is a pool buy.
 - **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
   25%. Sell tax above 1% goes to holders. Only **minted** tokens earn: a wallet's weight is its balance, capped at what it
   minted. Below the hold line it is **out until its next mint**. Before a sell, check `sellableBeforeOut`. A sell past it
