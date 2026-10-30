@@ -3,7 +3,7 @@
 Read-only, no wallet needed. Data comes from the gang.fun indexer (`GANG_API`, default `https://gang.fun/api`) and covers
 every track: **v3** (GangLaunchpad curves), **fair** (打新 sales; "graduated" = launched, progress = shares sold),
 **v2** (LaunchpadV2 family) and **soft** (legacy BNB curve, 20 BNB graduation). `--track all|v3|fair|v2|soft` narrows
-it (default all). If the API is down the command fails; `gang list` still reads the chain, without volume data.
+it (default all). If the API is down the command fails; `gang list` still reads the chain (the newest 20 tokens per V2 / Soft / U / S pad; `--limit` for more), without volume data.
 
 Every token row has the same fields. If the list reached the page cap (2000 tokens per track), the output includes `truncated: true`. The fields to use:
 
