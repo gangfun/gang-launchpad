@@ -70,6 +70,9 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 - **平台内盘收入降到原来的 30%**：每笔从成交额的 1% 降到 0.3%。bucket 的回购和 feeVault 按比例减少。
 - **刷量更便宜**：creator 自买自卖，每笔实际只付 0.3%，用来做假成交量的成本变低。pons 一样有这个问题，这里接受。
 - **刷币赚手续费**：creator 能拿到的只是别人交易手续费的 70%，自己的钱换不出净收益；但用一个币吸引别人交易就能获利，这正是本规格要的激励。
+- **自己推毕业更便宜**：用小号把自己的币买到毕业，手续费的实际成本也从 1% 降到约 0.3%。按"毕业数"或"成交量"发的平台激励、榜单要重新评估。
+- **creator 分成不走税收接收方**：70% 永远给 `curves[token].creator`，不管接收地址是不是回购 / Split / LP 模块，也不管是不是 `dividendBps = 10000`（税全给持币人）。CLI 和网站介绍这些模块时要写明"内盘 creator 分成另算，归 creator 本人"，免得和"dev 收入全部回购"之类的说法冲突。
+- **creator 地址不能改**：私钥丢了，分成就永远锁在 pad 上（pad 没有 sweep / rescue）；私钥被盗，以后的分成也会被领走。creator 是不能主动发起调用的合约时同样领不出来。目前所有 `create` 都由 EOA 或 Agentic Wallet 直接发起，暂不处理；以后任何代用户调 `create` 的合约都要把"能调 `claimCreatorFee`"列为审计项。
 - **合约持有的钱变多**：pad 现在会长期持有 creator 没领的分成。审计重点见 §8。
 
 ## 6. 测试
@@ -77,7 +80,8 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 - 新增 `test/gang/CreatorFee.t.sol`：拆分比例和事件、卖出、路由 `buyFor` / `sellFor`、BNB 经 GangRouter 买入、只有 creator 能领、领到任意地址、只能领一次、各种回滚、毕业后照样能领、两个同报价币的币互不影响、creator 被拉黑时交易不受影响，以及买卖守恒的 fuzz。
 - 已有断言改成新规则：`LaunchpadV3.t.sol`（bucket 收 30%、creator 70%）、`LaunchpadV3Fuzz.t.sol`、`OriginTrader.t.sol`、`MergeGuards.t.sol`（pad 事件清单加两个新事件，托管对账加 creator 分成）、`PadMergeGuards.t.sol`、`FairMixedIsolation.t.sol`。
 - 不变量 `CoreInvariants.t.sol`：handler 新增 `v3ClaimCreatorFee` 动作；每笔内盘交易检查 bucket + creator = 1%、creator = 其中 70%；领取必须正好付出记账的数；pad 余额恒等式（§4）把 creator 分成算进去。
-- 本地结果：非 fork 测试 1150 通过 / 0 失败 / 103 跳过（改动前 1140 / 0 / 103）。fork 测试 36 通过 / 3 失败，和改动前的 `origin/main` 一样：`RouterPoolFork` 的两个 `test_fork_pool_fair*` 在 `origin/main` 上同样失败，另一个是 RPC 缺历史状态（missing trie node）。
+- 审计后补充（§9）：同一个 WBNB 下两条曲线 + 一个打新 sale 依次经过 bucket 拒收（曲线交易整笔回滚、不记分成；打新撤出费转为 owed）、`flushFees`、发射、毕业、两个 creator 领取的确定性用例；不变量里领取失败计为错误，不再被忽略。
+- 本地结果：非 fork 测试 1151 通过 / 0 失败 / 103 跳过（改动前 1140 / 0 / 103）。fork 测试 36 通过 / 3 失败，和改动前的 `origin/main` 一样：`RouterPoolFork` 的两个 `test_fork_pool_fair*` 在 `origin/main` 上同样失败，另一个是 RPC 缺历史状态（missing trie node）。
 
 ## 7. 上线方式
 
@@ -86,7 +90,12 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 - 旧 pad 上的币不变：内盘 1% 仍全部进 bucket，creator 拿不到分成。旧 pad 停止创建新币（`TokenDeployer.setLaunchpad(旧 pad, false)`），已有的币照常交易、毕业。
 - 新 pad 需要新的 `GangTaxHandler`（handler 的 `launchpad` 只能设一次），共用现有的 vault、bucket、migrator、QuoteRegistry、TokenDeployer，由 Safe 把新 pad / 新 handler 接上。
 - 构造或初始化时绑死 pad 地址的合约要为新 pad 重新部署：`GangRouter`（`pad` 在初始化时设定）、`GangBond`、`GangBuybackSplitterFactory`、`GangLiquiditySplitterFactory`（后两者还绑定 handler）。`GangGateway` 经 registry 找 pad，不用重部署，只要 registry `addPad(新 pad)`、新 pad `setRouter(gateway)`。
-- 下游：indexer 要索引新 pad 和两个新事件，网站展示 creator 可领的分成，CLI 增加领取命令并把创建默认指到新 pad。
+- `CurveLogic` 的 `buy` / `sell` 多了一个参数，selector 变了：新 pad 必须链接新部署的 `CurveLogic`（和 `FairLogic`），不能复用旧库地址，否则 pad 能创建币却无法交易，而且无法补救。部署自检要检查 `CREATOR_FEE_SHARE_BPS() == 7000`，并实际跑一笔买入、卖出和领取。
+- 下游：
+  - indexer 要索引新 pad 和两个新事件。`Buy` / `Sell` 的 `protocolFee` 是整笔 1%，平台收入要减去同一笔交易的 `CreatorFeeAccrued`。同一笔交易里 `CreatorFeeAccrued` 先于 `Buy` / `Sell` 发出，按交易聚合，不要按相邻日志配对。
+  - 网站展示 creator 可领的分成。
+  - CLI 增加领取命令，并把创建默认指到新 pad。旧 pad 没有 `creatorFeeOf` / `claimCreatorFee`，按 pad 代际分开处理。
+  - `to` 是 pad 自己时回滚的是 `ZeroAddress`，提示文案要单独写。
 - 部署脚本、Safe 批次和测试网验收另写记录文档，按「审计 → 修复 → 独立复审 → 测试网 → 用户确认后主网」的流程走。
 
 ## 8. 审计重点
@@ -96,3 +105,18 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 3. `claimCreatorFee` 的权限（只有 creator）、重入（`nonReentrant`，先清零后转账）、`to` 的检查。
 4. 同一报价币下多个曲线和打新 sale 共用 pad 余额时的隔离（§4 的恒等式）。
 5. 打新币不能被当作曲线币来领取（`curves[token].creator` 为 0 时回滚 `UnknownToken`）。
+
+## 9. 审计记录
+
+2026-10-31 两个独立审计（互不知道对方结论，各自写了 Foundry PoC）。结论：无 critical / high / medium。
+
+| 来源 | 级别 | 内容 | 处理 |
+|---|---|---|---|
+| A、B | low | creator 地址不能改，私钥丢失或 creator 是合约时分成会锁死 | 记入 §5，待产品决定是否加"设置领取地址"；目前不改 |
+| B | low | 部署自检认不出旧 pad / 旧 `CurveLogic` | 记入 §7，在新 pad 的部署脚本里实现 |
+| B | info | 不变量的领取动作吞掉回滚 | 已改：回滚计为错误 |
+| A | info | 缺 bucket 拒收和同报价全路径的确定性用例 | 已补 `test_sameQuote_allPathsLeaveCreatorFee` |
+| A、B | info | 刷量 / 自己推毕业更便宜；分成不走税收接收方模块；下游口径 | 记入 §5、§7 |
+
+审计确认没问题的：交易者付出、拿到的数量和报价与改动前逐 wei 一致；毕业、打新发射、withdraw、`flushFees` 都不会动用 creator 分成；只有 creator 能领，打新币和陌生地址领取会回滚；重入被 `nonReentrant` 和"先清零后转账"挡住；creator 自买自卖无法净赚（fuzz）；`curves` 布局、`Buy` / `Sell` ABI、registry 的报价不受影响。
+
