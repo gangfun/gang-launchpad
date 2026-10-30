@@ -23,7 +23,7 @@
 | tax handler | GangTaxHandler `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c`，owner = GangHandlerAdmin |
 | GangHandlerAdmin | `0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985`，owner = 多签 `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
 
-## 多签批量（待执行）
+## 多签批量（已执行）
 
 导入 Safe Transaction Builder：`docs/MAINNET-LP-MODULE-SAFE-BATCH-2026-10-31.json`。一笔：
 
@@ -31,13 +31,15 @@
 |---|---|---|
 | GangHandlerAdmin `0xF56A…E985` | `setFactory(0xE043…C248, true)` | `0x71013c10…e0436867…01`，与部署脚本打印的一致 |
 
-已有的回购工厂、分账工厂不受影响。在服务端（indexer、keeper）和网站认 `lp-burn-v1` 之后执行。执行后核对：
+已有的回购工厂、分账工厂不受影响。2026-10-31 在服务端（gangfun-server v1.2.58：indexer、keeper）和网站（gang-web-legacy v1.2.95）认 `lp-burn-v1` 并上线之后，由多签执行：[`0x19d3f826…1c87`](https://bscscan.com/tx/0x19d3f826be031462432bc3a3b63b88b1251d15e27b3c58072f406d01985d1c87)，区块 130700192。
+
+执行后核对（2026-10-31 已跑）：新工厂已允许；分账工厂 `0x27e0…067c`、回购工厂 v3 `0xf1d5…F1Cd` 仍允许，回购 v1 `0x6bcd…8546`、v2 `0x9346…8F2f` 仍停用；handler 的 owner 仍是管理合约、没有待接收的 owner；管理合约 owner 仍是多签；脚本检查模式打印「nothing to do」；真实 Agent `0xf7A8…14aA` 静态调用 `factory.create(5000, salt, 0)` 返回 `predict` 的地址（估算 gas 338,187）。命令：
 
 ```sh
 GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985 \
   LP_FACTORY=0xE0436867dAFcf42Ee1418083251a9B8B61F0C248 \
   forge script script/DeployGangLiquiditySplitterFactory.s.sol --rpc-url https://bsc-dataseed.binance.org
-# 执行前打印一笔 Safe 调用；执行后应打印 "Safe batch: nothing to do (factory allowed)"
+# 应打印 "Safe batch: nothing to do (factory allowed)"
 ```
 
 ## 上主网前的演练（主网 fork）
@@ -55,6 +57,6 @@ GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004
 
 ## 还要做的
 
-1. 服务端（indexer、keeper：drain 类型加 `lp-burn-v1`，`AddTooSoon` 当「不是现在」）和网站认 `lp-burn-v1`。
-2. 多签执行上面的批量。
+1. ~~服务端（indexer、keeper：drain 类型加 `lp-burn-v1`，`AddTooSoon` 当「不是现在」）和网站认 `lp-burn-v1`~~（2026-10-31 已上线：gangfun-server v1.2.58、gang-web-legacy v1.2.95）。
+2. ~~多签执行上面的批量~~（已执行，见上）。
 3. CLI 发版：`gang create … --lp <0-100> [--lp-to <addr>]`、`gang lp …`，主网工厂地址指向 `0xE043…C248`。
