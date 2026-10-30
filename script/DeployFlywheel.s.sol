@@ -100,7 +100,7 @@ contract DeployFlywheel is Script {
                 console.log("\n=== Safe batch: list the pad on the shared contracts, then run phase 2 ===");
                 console.log(_wiringJson(sh, o, mainnet, Ownable(sh.vault).owner()));
             } else {
-                _check(sh, o, owner, keeper, mainnet);
+                _check(sh, o, owner, me, keeper, mainnet);
                 if (owner != me) _printAccept(sh, o, mainnet, owner);
             }
         } else {
@@ -115,7 +115,7 @@ contract DeployFlywheel is Script {
             }
             _handOver(o, owner, me);
             vm.stopBroadcast();
-            _check(sh, o, owner, keeper, mainnet);
+            _check(sh, o, owner, me, keeper, mainnet);
             _log(o);
             if (owner != me) _printAccept(sh, o, mainnet, owner);
         }
@@ -203,13 +203,16 @@ contract DeployFlywheel is Script {
     }
 
     /// @dev Audit C-3: every setting phase 1 made, so a dropped phase 1 transaction is caught.
-    function _check(Shared memory sh, Own memory o, address owner, address keeper, bool mainnet) internal view {
+    function _check(Shared memory sh, Own memory o, address owner, address me, address keeper, bool mainnet)
+        internal
+        view
+    {
         _requireShared(sh, o);
         GangFlywheelPad p = GangFlywheelPad(payable(o.pad));
         FlywheelTaxHandler h = FlywheelTaxHandler(o.handler);
         if (p.migrator() == address(0)) {
-            if (Ownable(o.pad).owner() == owner) revert NotWired("pad.setMigrator");
-            console.log("pad.setMigrator: last tx of the Safe accept batch");
+            if (owner == me) revert NotWired("pad.setMigrator");
+            console.log("pad.setMigrator: in the Safe batch below");
         } else if (p.migrator() != sh.migrator) {
             revert NotWired("pad.setMigrator");
         }
@@ -237,10 +240,23 @@ contract DeployFlywheel is Script {
         console.log("self-check ok");
     }
 
+    /// @dev Only what is left for the Safe: the acceptOwnership calls it has not made, then `setMigrator` if the pad is
+    ///      not open yet; nothing on a re-run once both are done (re-review of the audit fixes).
     function _printAccept(Shared memory sh, Own memory o, bool mainnet, address owner) internal view {
         bool open = GangFlywheelPad(payable(o.pad)).migrator() != address(0);
-        console.log("\n=== Safe batch: accept ownership of the 3 flywheel contracts", open ? "===" : "and open the pad ===");
-        console.log(_acceptJson(sh, o, mainnet, owner, !open));
+        address[3] memory cs = [o.deployer, o.handler, o.pad];
+        bool[3] memory accept;
+        bool any;
+        for (uint256 i; i < 3; i++) {
+            accept[i] = Ownable(cs[i]).owner() != owner;
+            any = any || accept[i];
+        }
+        if (!any && open) {
+            console.log("\nnothing left for the Safe: it owns the 3 flywheel contracts and the pad is open");
+            return;
+        }
+        console.log("\n=== Safe batch: accept ownership and / or open the pad (setMigrator) ===");
+        console.log(_acceptJson(sh, o, mainnet, owner, accept, !open));
     }
 
     function _log(Own memory o) internal pure {
@@ -268,16 +284,25 @@ contract DeployFlywheel is Script {
         );
     }
 
-    /// @dev The three acceptOwnership calls, then (audit C-1) `setMigrator` — the pad opens as the Safe takes it.
-    function _acceptJson(Shared memory sh, Own memory o, bool mainnet, address safe, bool openPad)
-        internal
-        pure
-        returns (string memory j)
-    {
-        j = _head(mainnet, safe, "gang: accept ownership of the 3 continuous-mint contracts");
-        bytes memory accept = abi.encodeWithSignature("acceptOwnership()");
-        j = string.concat(j, _tx(o.deployer, accept, false), _tx(o.handler, accept, true), _tx(o.pad, accept, true));
-        if (openPad) j = string.concat(j, _tx(o.pad, abi.encodeCall(GangFlywheelPad.setMigrator, (sh.migrator)), true));
+    /// @dev The acceptOwnership calls (deployer, handler, pad), then (audit C-1) `setMigrator`: the pad opens as the
+    ///      Safe takes it.
+    function _acceptJson(
+        Shared memory sh,
+        Own memory o,
+        bool mainnet,
+        address safe,
+        bool[3] memory accept,
+        bool openPad
+    ) internal pure returns (string memory j) {
+        j = _head(mainnet, safe, "gang: accept ownership of the continuous-mint contracts, open the pad");
+        address[3] memory cs = [o.deployer, o.handler, o.pad];
+        bool comma;
+        for (uint256 i; i < 3; i++) {
+            if (!accept[i]) continue;
+            j = string.concat(j, _tx(cs[i], abi.encodeWithSignature("acceptOwnership()"), comma));
+            comma = true;
+        }
+        if (openPad) j = string.concat(j, _tx(o.pad, abi.encodeCall(GangFlywheelPad.setMigrator, (sh.migrator)), comma));
         j = string.concat(j, "]}");
     }
 

@@ -31,7 +31,7 @@ contract DeployFlywheelHarness is DeployFlywheel {
     }
 
     function acceptJson(address[5] memory sh, address[3] memory o, address safe) external pure returns (string memory) {
-        return _acceptJson(Shared(sh[0], sh[1], sh[2], sh[3], sh[4]), Own(o[0], o[1], o[2]), true, safe, true);
+        return _acceptJson(Shared(sh[0], sh[1], sh[2], sh[3], sh[4]), Own(o[0], o[1], o[2]), true, safe, [true, true, true], true);
     }
 }
 
@@ -128,7 +128,7 @@ contract FlywheelDeployScriptForkTest is Test {
         assertEq(p.migrator(), address(0), "not open while the deploy wallet owns it");
         assertEq(p.owner(), me);
         assertEq(Ownable2Step(o[2]).pendingOwner(), SAFE);
-        vm.expectRevert();
+        vm.expectRevert(IFlywheelPad.MigratorNotSet.selector);
         p.create(["X", "X", "", ""], address(0), address(0), _cfg(0), 1);
 
         // the accept batch: three acceptOwnership, then setMigrator opens the pad
