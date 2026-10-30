@@ -28,6 +28,7 @@
 | **GangLaunchpad**（V3 和打新共用一个内盘） | `0x15CFD2dc8278Fb87a1783ef42111618E20874365`（区块 130104322） |
 | **GangRouter**（代理，用户授权这个地址） | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
 | GangPadRegistry（代理，聚合器查币所在的 pad、拿曲线报价） | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
+| GangGateway（代理，聚合器经它在内盘买卖，接口对齐 four.meme；已列入 pad） | `0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8` |
 | GangTaxHandler（外盘税） | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
@@ -41,6 +42,7 @@
 - **owner = 上面的 Safe 多签**：内盘、外盘处理合约、金库、手续费池等核心合约都已由它在链上接受所有权；路由的 ProxyAdmin 归时间锁。平台收入进手续费池：80% 回购销毁 GANG，20% 给 Safe。
 - **GangRouter** 负责用 BNB 在内盘买入 / 打新，以及所有 **PancakeSwap 外盘买卖**（V3、打新，以及已毕业的 V2 / Soft / U / S 币）。它是可升级代理，升级要在公开的时间锁里等 **48 小时**，只有 Safe 能提案、执行、取消；CLI 每笔只授权这一笔的数量。
 - **聚合器路由**可以在内盘上替人交易（`buyFor` / `sellFor` / `mintFor` / `withdrawFor`），但只能替发起这笔交易的钱包（`trader == tx.origin`），并且要先由 Safe 按 [审计说明 §23 / §23.9](docs/AUDIT-BRIEF-2026-10-26.md) 的清单核对后 `setRouter` 列入。目前白名单里只有 GangRouter。
+- **GangGateway** 是给聚合器的内盘入口，接口对齐 four.meme 内盘：用户把代币授权给网关，聚合器合约直接调用。卖出只接受卖家本人或 Safe 加白的聚合器合约（`setCaller`）。升级要等 48 小时时间锁；加白立即生效。规格见 [docs/SPEC-GANG-GATEWAY-2026-10-30.md](docs/SPEC-GANG-GATEWAY-2026-10-30.md)，部署见 [docs/MAINNET-GANG-GATEWAY-2026-10-30.md](docs/MAINNET-GANG-GATEWAY-2026-10-30.md)。
 
 ---
 
