@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.19.0'
+  version: '0.19.1'
   requires:
     bins: [baw, gang]
   install:
