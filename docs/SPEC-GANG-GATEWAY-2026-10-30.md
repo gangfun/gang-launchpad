@@ -2,7 +2,7 @@
 
 - 日期：2026-10-30 Asia/Shanghai
 - 作者：Claude（按和聚合器沟通后的「GangGateway 接口草案」实现，接入方式对齐 four.meme 内盘；卖出调用方白名单是 2026-10-30 用户决定加的）
-- 性质：**测试网已部署带卖出调用方白名单的版本 `0xb325dde51129C592E443ecbEE1E219D14C66e091`（列入第 10 套 pad，验收通过；没有白名单的第一版 `0x5020…635c` 已下架），见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`；主网未部署**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。
+- 性质：**测试网已部署带卖出调用方白名单的版本 `0xb325dde51129C592E443ecbEE1E219D14C66e091`（列入第 10 套 pad，验收通过；没有白名单的第一版 `0x5020…635c` 已下架），见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`**；**主网已部署 `0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8`（owner、时间锁 = Safe），待 Safe 在 pad 上 `setRouter` 列入，见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。
 
 ## 一句话
 

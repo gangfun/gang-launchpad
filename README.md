@@ -28,6 +28,7 @@
 | **GangLaunchpad** (V3 and 打新, one pad) | `0x15CFD2dc8278Fb87a1783ef42111618E20874365` (block 130104322) |
 | **GangRouter** (proxy: the address users approve) | `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4` |
 | GangPadRegistry (proxy: aggregators find a token's pad and quote its curve) | `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
+| GangGateway (proxy: four.meme-style curve entry for aggregators; pending the Safe's pad listing) | `0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8` |
 | GangTaxHandler (pool tax) | `0x6D8d3dE459629cBb7b552169a55D754db60cAe0c` |
 | SharedDividendVault | `0x1BDBDD73f51079c64BCA3917629c84c257921aCc` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
@@ -41,6 +42,7 @@ Full list (router implementation, ProxyAdmin, migrator, deployer, QuoteRegistry,
 - **Owner = the Safe multisig** above: it accepted ownership of the pad, handler, vault, fee bucket and the other core contracts on-chain; the router's ProxyAdmin belongs to the timelock. Platform income goes to the fee bucket: 80% GANG buyback and burn, 20% to the Safe.
 - **GangRouter** is how BNB curve buys / mints and all **PancakeSwap pool trades** (V3, 打新, and graduated V2 / Soft / U / S tokens) go. It is an upgradeable proxy whose upgrades wait **48 hours** in the public timelock, which only the Safe can schedule, execute or cancel; the CLI approves only each trade's exact amount.
 - **Aggregator routers** can trade on the pad (`buyFor` / `sellFor` / `mintFor` / `withdrawFor`), only for the wallet that sent the tx (`trader == tx.origin`), once the Safe whitelists them with `setRouter` after the checklist in [AUDIT-BRIEF §23 / §23.9](docs/AUDIT-BRIEF-2026-10-26.md). Today only GangRouter is whitelisted.
+- **GangGateway** is the aggregators' curve entry, shaped like four.meme's inner pool: users approve the gateway on the token and the aggregator's contract calls it. Sells take only the seller itself or an aggregator contract the Safe listed (`setCaller`). Upgrades wait 48 hours in a timelock; listings take effect at once. Spec: [docs/SPEC-GANG-GATEWAY-2026-10-30.md](docs/SPEC-GANG-GATEWAY-2026-10-30.md); deployment: [docs/MAINNET-GANG-GATEWAY-2026-10-30.md](docs/MAINNET-GANG-GATEWAY-2026-10-30.md).
 
 ---
 
