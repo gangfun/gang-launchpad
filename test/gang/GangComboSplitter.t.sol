@@ -40,7 +40,7 @@ contract FakeComboFactory {
 
 /// @notice GangComboSplitter (组合：回购 + 加池 + 分账) on the whole merged deployment, over pairs that keep the V2
 ///         oracle and mint LP as UniswapV2Pair does: the factory's checks, binding, the three-way split to the wei,
-///         payees (owed, release, moving a slot, other assets, sweep), shortfalls, both chunk kinds on one pace and
+///         payees (owed, release, moving a slot, other assets), shortfalls, both chunk kinds on one pace and
 ///         price guard, the keeper's plan (`previewWork` / `work`), the deploy script, and the pool tax end to end.
 contract GangComboSplitterTest is GangFixture {
     address keeper = makeAddr("keeper");
@@ -141,6 +141,8 @@ contract GangComboSplitterTest is GangFixture {
     function _bal(address asset, address who) internal view returns (uint256) {
         return IERC20(asset).balanceOf(who);
     }
+
+    uint256 constant VALUE = (uint256(1) << 248) - 1;
 
     function _lp(address t, address who) internal view returns (uint256) {
         return LpMockPair(_curvePair(t)).balanceOf(who);
@@ -340,38 +342,57 @@ contract GangComboSplitterTest is GangFixture {
         assertEq(_bal(address(wbnb), kol2), 0.12 ether);
     }
 
-    /// @dev Another asset (another token's tax in another quote, a stray transfer) goes to the payees at their shares;
-    ///      a refusal that burns its gas costs at most PUSH_GAS and is owed (as GangSplitModule).
-    function test_otherAsset_toPayees() public {
+    /// @dev Another asset (another token's tax in another quote, a stray transfer): the buy-back and liquidity share
+    ///      to 0xdead, the rest to the payees at their shares; a refusal that burns its gas costs at most PUSH_GAS and is
+    ///      owed (as GangSplitModule).
+    function test_otherAsset_keptShareToDeadRestToPayees() public {
         (GangComboSplitter m,, address dev, address kol) = _setup(address(wbnb), false);
         quoteTok.mintUnlimited(address(m), 1 ether);
         assertEq(m.undistributed(address(quoteTok)), 1 ether);
+        uint256 dead0 = _bal(address(quoteTok), m.DEAD());
+        vm.expectEmit(address(m));
+        emit GangComboSplitter.Distributed(address(quoteTok), 1 ether, 0.6 ether);
         assertEq(m.distribute(address(quoteTok)), 1 ether);
-        assertEq(_bal(address(quoteTok), kol), 0.3 ether);
+        assertEq(_bal(address(quoteTok), m.DEAD()) - dead0, 0.6 ether, "30% + 30% to 0xdead");
+        assertEq(_bal(address(quoteTok), kol), 0.12 ether, "kol 30% of the payees' 40%");
         assertEq(m.buybackLeft() + m.lpLeft(), 0, "other assets are never set aside");
-        vm.expectRevert(GangComboSplitter.HasPayees.selector);
-        m.sweep(address(quoteTok));
 
         GasBurnQuote gb = new GasBurnQuote();
         gb.mint(address(m), 1 ether);
         gb.setBlocked(kol, true);
         uint256 g = gasleft();
         m.distribute(address(gb));
-        assertLt(g - gasleft(), m.PUSH_GAS() + 200_000, "a refusal costs at most PUSH_GAS");
-        assertEq(m.owedOf(address(gb), 1), 0.3 ether);
-        assertEq(gb.balanceOf(dev), 0.7 ether);
+        assertLt(g - gasleft(), 2 * m.PUSH_GAS() + 200_000, "a refusal costs at most PUSH_GAS");
+        assertEq(m.owedOf(address(gb), 1), 0.12 ether);
+        assertEq(gb.balanceOf(dev), 0.28 ether);
+        assertEq(gb.balanceOf(m.DEAD()), 0.6 ether);
     }
 
-    function test_sweep_noPayeesToTheDev() public {
+    function test_otherAsset_noPayeesAllToDead() public {
         (GangComboSplitter m,) = _setupKept(address(wbnb), 5_000, 5_000);
         quoteTok.mintUnlimited(address(m), 1 ether);
-        vm.expectRevert(GangComboSplitter.NoPayees.selector);
-        m.distribute(address(quoteTok));
-        vm.expectRevert(GangComboSplitter.NotSweepable.selector);
-        m.sweep(address(wbnb));
         uint256 dev0 = _bal(address(quoteTok), m.dev());
-        m.sweep(address(quoteTok));
-        assertEq(_bal(address(quoteTok), m.dev()) - dev0, 1 ether);
+        uint256 dead0 = _bal(address(quoteTok), m.DEAD());
+        m.distribute(address(quoteTok));
+        assertEq(_bal(address(quoteTok), m.DEAD()) - dead0, 1 ether);
+        assertEq(_bal(address(quoteTok), m.dev()), dev0, "nothing to the dev");
+    }
+
+    /// @dev Combo audit 2026-10-31 L-2: a dev binds a decoy token D, then launches the real token R naming the same
+    ///      combo in another quote; R's tax can't skip the buy-back and liquidity shares to reach the dev.
+    function test_otherAsset_decoyBindGainsTheDevNothingExtra() public {
+        address dev = _newAgent();
+        address kol = makeAddr("kolDecoy");
+        GangComboSplitter m = _combo(dev, 3_000, 3_000, _list(dev, kol), _shares(7_000, 3_000));
+        address decoy = _createV3(dev, address(wbnb), _tax(TAX, TAX, 5_000, address(m)));
+        m.bind(decoy);
+        address real = _createV3(dev, address(quoteTok), _tax(TAX, TAX, 5_000, address(m)));
+        assertTrue(real != decoy);
+        quoteTok.mintUnlimited(address(m), 10 ether); // R's tax, in its quote
+        uint256 dev0 = _bal(address(quoteTok), dev);
+        m.distribute(address(quoteTok));
+        assertEq(_bal(address(quoteTok), dev) - dev0, 2.8 ether, "the dev's payee share of 40%, not more");
+        assertEq(_bal(address(quoteTok), m.DEAD()), 6 ether);
     }
 
     // ---------------------------------------------------------------- shortfall
@@ -390,57 +411,61 @@ contract GangComboSplitterTest is GangFixture {
         assertEq(m.lpLeft(), 1.5 ether);
         assertEq(m.buybackLeft(), 1.5 ether);
         assertEq(m.buybackLeft() + m.lpLeft() + m.owedTotal(address(blq)), 3.6 ether, "held = balance");
-        // previews see the shared amounts before anyone splits
         deal(address(blq), address(m), 1.8 ether);
-        (, uint256 quoteIn,) = m.previewBurn();
-        assertEq(quoteIn, 0, "not graduated: no chunk preview");
         m.split();
         assertEq(m.buybackLeft() + m.lpLeft() + m.owedTotal(address(blq)), 1.8 ether);
+        // the owed quote is released after the shortfall: what is left of it
+        blq.setBlocked(kol, false);
+        assertEq(m.release(address(blq), 1, ALL), 0.3 ether);
     }
 
-    // ---------------------------------------------------------------- the chunks
-    function test_chunks_burnThenAddOnOnePace() public {
+    /// @dev Equal parts: a buy-back first (a tie), then, the buy-back part smaller, a liquidity add — each to the wei,
+    ///      one per gap for both kinds.
+    function test_chunks_largerPartOnOnePace() public {
         (GangComboSplitter m, address t,,) = _setup(address(wbnb), true);
         address pair = _curvePair(t);
         wbnb.mintUnlimited(address(m), 10 ether);
-        (uint256 q0, uint256 b0) = m.burnChunk(0); // splits, records the observation
-        assertEq(q0 + b0, 0);
+        (bool k0, uint256 q0,,) = m.chunk(0); // splits, records the observation
+        assertFalse(k0 && q0 != 0);
+        assertEq(q0, 0);
         assertEq(m.buybackLeft(), 3 ether);
         assertEq(m.lpLeft(), 3 ether);
         _next(10 minutes);
 
         // a buy-back chunk, to the wei
         (uint256 rT, uint256 rQ) = _reserves(t, pair);
-        (bool ok, uint256 pq, uint256 pOut) = m.previewBurn();
+        (bool ok, bool burnKind, uint256 pq, uint256 pOut) = m.previewChunk();
         assertTrue(ok);
+        assertTrue(burnKind, "a tie: the buy-back");
         assertEq(pq, (rQ * 50) / 10_000, "capped");
         uint256 out = (pq * 9975 * rT) / (rQ * 10_000 + pq * 9975);
         assertEq(pOut, out - (out * TAX) / 10_000);
         uint256 dead0 = _bal(t, m.DEAD());
-        (uint256 q, uint256 burned) = m.burnChunk(pOut);
+        (bool burned, uint256 q, uint256 tokens,) = m.chunk(pOut);
+        assertTrue(burned);
         assertEq(q, pq);
-        assertEq(burned, pOut);
-        assertEq(_bal(t, m.DEAD()) - dead0, burned);
+        assertEq(tokens, pOut);
+        assertEq(_bal(t, m.DEAD()) - dead0, tokens);
 
-        // the liquidity chunk waits for the same gap
-        (bool ready,,) = m.previewAdd();
+        (bool ready,,,) = m.previewChunk();
         assertFalse(ready);
         vm.expectRevert(GangComboSplitter.ChunkTooSoon.selector);
-        m.addChunk(0);
-        vm.expectRevert(GangComboSplitter.ChunkTooSoon.selector);
-        m.burnChunk(0);
+        m.chunk(0);
         _next(4 minutes);
 
-        // a liquidity chunk: reserves before the deposit = after the mint less the deposit; matched rounded up
+        // the buy-back part is now the smaller: a liquidity chunk; reserves before the deposit = after the mint less
+        // the deposit; matched rounded up
         m.split();
+        assertLt(m.buybackLeft(), m.lpLeft());
         uint256 lpLeft0 = m.lpLeft();
-        (, uint256 chunk, uint256 pOut2) = m.previewAdd();
+        (, bool burnKind2, uint256 chunkAmt, uint256 pOut2) = m.previewChunk();
+        assertFalse(burnKind2);
         uint256 supply0 = LpMockPair(pair).totalSupply();
         uint256 lp0 = _lp(t, m.DEAD());
-        (uint256 q2, uint256 tokensIn, uint256 liq) = m.addChunk(pOut2);
+        (bool burned2, uint256 q2, uint256 tokensIn, uint256 liq) = m.chunk(pOut2);
+        assertFalse(burned2);
         (uint256 rT1, uint256 rQ1) = _reserves(t, pair);
-        uint256 half = chunk / 2;
-        uint256 match_ = q2 - half;
+        uint256 match_ = q2 - chunkAmt / 2;
         assertEq(tokensIn, pOut2 - (pOut2 * TAX) / 10_000, "sell tax on the deposit");
         uint256 rTb = rT1 - tokensIn;
         uint256 rQb = rQ1 - match_;
@@ -452,19 +477,44 @@ contract GangComboSplitterTest is GangFixture {
         assertEq(m.lpLeft(), lpLeft0 - q2);
         assertEq(_bal(t, address(m)), 0);
         assertEq(_lp(t, address(m)), 0);
+        assertGt(m.unsplit(), 0, "the deposit let the handler swap back, paying this recipient mid-chunk");
+    }
+
+    /// @dev Combo audit 2026-10-31 M-1: dust in the smaller part can't hold the shared pace — whoever calls `chunk`,
+    ///      it works the larger part.
+    function test_chunks_dustCantStarveTheLargerPart() public {
+        address dev = _newAgent();
+        GangComboSplitter m = _combo(dev, 5_000, 2_000, _list(dev, makeAddr("k")), _shares(5_000, 5_000));
+        address t = _createV3(dev, address(wbnb), _tax(TAX, TAX, 5_000, address(m)));
+        m.bind(t);
+        _graduate(t);
+        wbnb.mintUnlimited(address(m), 1.5 ether);
+        m.chunk(0);
+        address griefer = _newAgent();
+        uint256 chunks;
+        for (uint256 i; i < 6; i++) {
+            _next(4 minutes + (i == 0 ? 6 minutes : 0));
+            uint256 lp0 = m.lpLeft();
+            vm.startPrank(griefer);
+            wbnb.transfer(address(m), 10);
+            (bool burned, uint256 q,,) = m.chunk(0);
+            vm.stopPrank();
+            assertTrue(burned, "the griefer's call is for the buy-back, the larger part");
+            assertGe(m.lpLeft(), lp0, "the smaller part is never chunked");
+            if (q != 0) chunks++; // (none while the price guard holds after a run of buys)
+        }
+        assertGt(chunks, 2, "the buy-back advanced");
     }
 
     function test_chunks_refusedBeforeGraduationOrEmpty() public {
         (GangComboSplitter m,,,) = _setup(address(wbnb), false);
-        vm.expectRevert(GangComboSplitter.NothingToBurn.selector);
-        m.burnChunk(0);
-        vm.expectRevert(GangComboSplitter.NothingToAdd.selector);
-        m.addChunk(0);
+        vm.expectRevert(GangComboSplitter.NothingToChunk.selector);
+        m.chunk(0);
         wbnb.mintUnlimited(address(m), 1 ether);
         vm.expectRevert(GangComboSplitter.NotTradable.selector);
-        m.burnChunk(0);
-        vm.expectRevert(GangComboSplitter.NotTradable.selector);
-        m.addChunk(0);
+        m.chunk(0);
+        (bool ready,,,) = m.previewChunk();
+        assertFalse(ready);
         (bool due,) = m.previewWork();
         assertFalse(due);
     }
@@ -472,30 +522,32 @@ contract GangComboSplitterTest is GangFixture {
     function test_chunks_skipAfterPump() public {
         (GangComboSplitter m, address t,,) = _setup(address(wbnb), true);
         wbnb.mintUnlimited(address(m), 10 ether);
-        m.burnChunk(0);
+        m.chunk(0);
         _next(10 minutes);
         (, uint256 rQ) = _reserves(t, _curvePair(t));
         _poolBuy(t, address(wbnb), _curvePair(t), _newAgent(), (rQ * 5) / 100);
-        (bool r1,,) = m.previewBurn();
-        (bool r2,,) = m.previewAdd();
-        assertFalse(r1 || r2);
-        (uint256 q,) = m.burnChunk(0);
+        (bool ready,,,) = m.previewChunk();
+        assertFalse(ready);
+        (, uint256 q,,) = m.chunk(0);
         assertEq(q, 0);
-        (uint256 q2,,) = m.addChunk(0);
-        assertEq(q2, 0);
+        assertEq(m.lastChunkAt(), 0, "no chunk counted");
     }
 
     function test_chunks_slippage() public {
         (GangComboSplitter m,,,) = _setup(address(wbnb), true);
         wbnb.mintUnlimited(address(m), 10 ether);
-        m.burnChunk(0);
+        m.chunk(0);
         _next(10 minutes);
-        (,, uint256 pOut) = m.previewBurn();
+        (,,, uint256 pOut) = m.previewChunk();
         vm.expectRevert(GangComboSplitter.Slippage.selector);
-        m.burnChunk(pOut + 1);
-        (,, uint256 pOut2) = m.previewAdd();
+        m.chunk(pOut + 1);
+        m.chunk(pOut); // a buy-back
+        _next(4 minutes);
+        m.split();
+        (, bool burn,, uint256 pOut2) = m.previewChunk();
+        assertFalse(burn);
         vm.expectRevert(GangComboSplitter.Slippage.selector);
-        m.addChunk(pOut2 + 1);
+        m.chunk(pOut2 + 1);
     }
 
     /// @dev LP audit 2026-10-30 L-1, kept: quote left unsynced in the pair before the keeper's call can't fail it.
@@ -504,7 +556,7 @@ contract GangComboSplitterTest is GangFixture {
         address pair = _curvePair(t);
         (, uint256 rQ) = _reserves(t, pair);
         wbnb.mintUnlimited(address(m), rQ * 2);
-        m.burnChunk(0);
+        m.chunk(0);
         _next(10 minutes);
         (bool due, uint256 minOut) = m.previewWork();
         assertTrue(due);
@@ -516,9 +568,8 @@ contract GangComboSplitterTest is GangFixture {
         assertEq(m.lastChunkAt(), block.timestamp, "the chunk went through");
     }
 
-    // ---------------------------------------------------------------- keeper plan
-    /// @dev The keeper's loop: work(previewWork's minOut) whenever due. Chunks go to the larger part; the observation
-    ///      comes first; nothing is due inside the gap.
+    /// @dev The keeper's loop: work(previewWork's minOut) whenever due. The observation comes first; each chunk goes to
+    ///      the larger part (checked step by step); nothing is due inside the gap.
     function test_keeper_planFollowsTheLargerPart() public {
         address dev = _newAgent();
         address kol = makeAddr("kol");
@@ -532,8 +583,8 @@ contract GangComboSplitterTest is GangFixture {
         wbnb.mintUnlimited(address(m), 10 ether);
         (due, minOut) = m.previewWork();
         assertTrue(due, "the observation the chunks need");
-        assertEq(minOut, 0);
-        m.work(0);
+        assertEq(minOut >> 248, 3, "observe");
+        m.work(minOut);
         assertEq(m.buybackLeft(), 5 ether);
         assertEq(m.lpLeft(), 2 ether);
         assertEq(m.lastChunkAt(), 0);
@@ -543,26 +594,35 @@ contract GangComboSplitterTest is GangFixture {
         _next(10 minutes);
         (due, minOut) = m.previewWork();
         assertTrue(due);
-        (,, uint256 burnOut) = m.previewBurn();
-        assertEq(minOut, (burnOut * 9_900) / 10_000, "a buy-back chunk: the larger part");
+        (,,, uint256 out) = m.previewChunk();
+        assertEq(minOut >> 248, 1, "a buy-back: the larger part");
+        assertEq(minOut & VALUE, (out * 9_900) / 10_000);
         uint256 bb0 = m.buybackLeft();
         m.work(minOut);
         assertLt(m.buybackLeft(), bb0);
         (due,) = m.previewWork();
         assertFalse(due, "inside the gap");
 
-        // run it down: both parts get chunks, the larger first each time
         uint256 burns;
         uint256 adds;
         for (uint256 i; i < 200; i++) {
             _next(4 minutes);
             (due, minOut) = m.previewWork();
             if (!due) continue;
+            m.split();
             uint256 b = m.buybackLeft();
             uint256 l = m.lpLeft();
             m.work(minOut);
-            if (m.buybackLeft() < b) burns++;
-            if (m.lpLeft() < l) adds++;
+            uint8 action = uint8(minOut >> 248);
+            if (action == 1) {
+                assertGe(b, l, "a buy-back only when it is the larger part");
+                assertLt(m.buybackLeft(), b);
+                burns++;
+            } else if (action == 2) {
+                assertGt(l, b, "a liquidity add only when it is the larger part");
+                assertLt(m.lpLeft(), l);
+                adds++;
+            }
         }
         assertGt(burns, 1);
         assertGt(adds, 1);
@@ -570,6 +630,30 @@ contract GangComboSplitterTest is GangFixture {
         m.split();
         assertLt(m.buybackLeft() * 10_000, rQ * m.WORK_MIN_BPS(), "run down under the floor");
         assertLt(m.lpLeft() * 10_000, rQ * m.WORK_MIN_BPS());
+    }
+
+    /// @dev Combo audit 2026-10-31 L-1: a `minOut` planned for another action (the state moved between preview and
+    ///      inclusion) makes `work` only split — no chunk with the wrong slippage bound, no revert.
+    function test_keeper_workIgnoresAStalePlan() public {
+        (GangComboSplitter m,,,) = _setup(address(wbnb), true);
+        wbnb.mintUnlimited(address(m), 10 ether);
+        (, uint256 obs) = m.previewWork();
+        m.work(obs);
+        _next(10 minutes);
+        (bool due, uint256 burnPlan) = m.previewWork();
+        assertTrue(due);
+        assertEq(burnPlan >> 248, 1);
+        m.chunk(0); // someone does that buy-back first
+        _next(4 minutes);
+        (, uint256 addPlan) = m.previewWork();
+        assertEq(addPlan >> 248, 2, "now the liquidity part is larger");
+        uint64 last = m.lastChunkAt();
+        m.work(burnPlan); // the stale buy-back plan
+        assertEq(m.lastChunkAt(), last, "no chunk");
+        m.work(0); // a split-only / nothing plan
+        assertEq(m.lastChunkAt(), last, "no chunk without a plan for it");
+        m.work(addPlan);
+        assertEq(m.lastChunkAt(), block.timestamp, "the current plan runs");
     }
 
     /// @dev Chunks small, the payees' part pending: due for a split once it is worth a call, or daily for a small one.
@@ -586,7 +670,9 @@ contract GangComboSplitterTest is GangFixture {
         (due,) = m.previewWork();
         assertTrue(due, "idle a day");
         uint256 k0 = _bal(address(wbnb), kol);
-        m.work(0);
+        (, uint256 plan) = m.previewWork();
+        assertEq(plan >> 248, 4, "a split");
+        m.work(plan);
         assertGt(_bal(address(wbnb), kol), k0);
         // enough at once: due at once
         wbnb.mintUnlimited(address(m), (floor * 10_000) / 4_000 + 10);
@@ -604,7 +690,7 @@ contract GangComboSplitterTest is GangFixture {
         assertFalse(m.keeperServes(address(quoteTok)));
         (due,) = m.previewWork();
         assertFalse(due);
-        m.burnChunk(0); // by hand it still works
+        m.chunk(0); // by hand it still works
         assertGt(m.buybackLeft(), 0);
     }
 

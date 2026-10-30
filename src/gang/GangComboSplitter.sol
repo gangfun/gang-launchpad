@@ -22,11 +22,14 @@ import {ILpPair} from "./GangLiquiditySplitter.sol";
 ///         token with it as `recipient`, anyone `bind`s it.
 ///         The two chunk kinds share one pace and one price guard: one chunk (a buy-back or a liquidity add) per
 ///         CHUNK_GAP, each at most CHUNK_MAX_BPS of the pair's quote reserve, none while the spot price is more than
-///         MAX_PRICE_RISE_BPS above the pair's own TWAP. The keeper's `work` does one thing per call, chosen by
-///         `previewWork` from the same state: a chunk of whichever set-aside part is larger, a TWAP observation the
-///         chunks need, or a split that pays the payees.
-///         Assets other than the bound quote can't be bought back or added: they go to the payees at their shares
-///         (`distribute`), or to the dev when there are none (`sweep`).
+///         MAX_PRICE_RISE_BPS above the pair's own TWAP. A chunk always goes to the larger set-aside part, whoever
+///         calls it (`chunk`): a dust chunk of the smaller part can't hold the shared pace against the larger one
+///         (combo audit 2026-10-31 M-1). The keeper's `work` does one thing per call, the one `previewWork` planned
+///         and encoded in `minOut`'s top byte: a chunk, the TWAP observation it needs, or a split that pays the
+///         payees; when the state no longer leads to that action, `work` only splits (audit L-1).
+///         Assets other than the bound quote can't be bought back or added: the buy-back and liquidity share of them
+///         goes to 0xdead and the rest to the payees (all of it to 0xdead when there are none), so a token the dev
+///         binds as a decoy can't route the real token's tax around those parts to the dev (audit L-2).
 /// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Needs no role from the pad, token,
 ///      vault or handler. The chunk code is GangBuybackSplitter v4's and GangLiquiditySplitter's (with its audit
 ///      fixes), the push code GangSplitModule's, the price math GangBond's: change them together.
@@ -119,8 +122,9 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     event Bound(address indexed token, address indexed quote);
     /// @notice The bound quote that arrived: `toBuyback` and `toLp` set aside, `toPayees` pushed (or owed).
     event Split(uint256 incoming, uint256 toBuyback, uint256 toLp, uint256 toPayees);
-    /// @notice Another asset split among the payees.
-    event Distributed(address indexed asset, uint256 incoming);
+    /// @notice Another asset: `toDead` (the buy-back and liquidity share, or all of it without payees) sent to
+    ///         0xdead, the rest split among the payees.
+    event Distributed(address indexed asset, uint256 incoming, uint256 toDead);
     event PayeeOwed(address indexed asset, uint256 indexed index, uint256 amount);
     event PayeeReleased(address indexed asset, uint256 indexed index, uint256 amount);
     event PayeeChanged(uint256 indexed index, address indexed oldPayee, address indexed newPayee);
@@ -128,7 +132,6 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     event Shortfall(address indexed asset, uint256 amount);
     event BoughtBack(uint256 quoteIn, uint256 burned, uint256 left);
     event LiquidityAdded(uint256 quoteIn, uint256 tokensIn, uint256 liquidity, uint256 left);
-    event Swept(address indexed asset, uint256 amount);
 
     error ZeroAddress();
     error NotClone();
@@ -147,15 +150,11 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     error NotCreator();
     error NotRecipient();
     error NothingOwed();
-    error NothingToBurn();
-    error NothingToAdd();
+    error NothingToChunk();
     error ChunkTooSoon();
     error NotTradable();
     error Slippage();
     error PushStarved();
-    error HasPayees();
-    error NoPayees();
-    error NotSweepable();
 
     /// @dev The implementation, deployed by the factory; it is never initialized itself.
     constructor(address pad_, address gangQuote_) {
@@ -245,24 +244,14 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         _splitQuote();
     }
 
-    /// @notice Split `asset` (anything but the bound quote, which `split` handles) among the payees at their shares.
+    /// @notice Split `asset` that arrived (the bound quote: as `split`; any other: the buy-back and liquidity share to
+    ///         0xdead, the rest among the payees).
     function distribute(address asset) external nonReentrant returns (uint256 incoming) {
         if (asset == quote) {
             _splitQuote();
             return 0;
         }
-        if (_payees.length == 0) revert NoPayees();
         return _distribute(asset);
-    }
-
-    /// @notice No payees only: send the whole balance of any asset but the bound quote to the dev.
-    function sweep(address asset) external nonReentrant {
-        if (_payees.length != 0) revert HasPayees();
-        if (quote == address(0)) revert NotBound();
-        if (asset == quote) revert NotSweepable();
-        uint256 amount = IERC20(asset).balanceOf(address(this));
-        IERC20(asset).safeTransfer(dev, amount);
-        emit Swept(asset, amount);
     }
 
     /// @notice Split `asset` first (a shortfall is shared before anything leaves), then push up to `maxAmount` of what
@@ -281,36 +270,40 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         emit PayeeReleased(asset, index, amount);
     }
 
-    /// @notice Split, then spend one chunk of the buy-back part on the token from its pair and send it to 0xdead
-    ///         (GangBuybackSplitter v4's `burnChunk`). Shares the pace with `addChunk` (sooner reverts ChunkTooSoon).
-    ///         Returns zeros while the price check is not ready. Reverts NotTradable before graduation.
-    /// @param minTokensOut Least tokens to burn (after the buy tax), scaled down to what the pair received.
-    function burnChunk(uint256 minTokensOut) external nonReentrant returns (uint256 quoteIn, uint256 burned) {
-        _splitQuote();
-        if (buybackLeft == 0) revert NothingToBurn();
-        return _burnChunk(minTokensOut);
-    }
-
-    /// @notice Split, then add one chunk of the liquidity part to the pair, LP to 0xdead (GangLiquiditySplitter's
-    ///         `addChunk`: half buys, all of it goes back, the matching quote follows). Shares the pace with
-    ///         `burnChunk`. Returns zeros while the price check is not ready. Gas: ~0.55–0.75M on a real pair (the
-    ///         deposit lets the handler swap back): send it with the node's estimate.
-    /// @param minTokensOut Least tokens the buy half brings in (after the buy tax), scaled down to what the pair got.
-    function addChunk(uint256 minTokensOut)
+    /// @notice Split, then one chunk of the larger set-aside part: a buy-back (GangBuybackSplitter v4's `burnChunk`:
+    ///         buy from the pair, send to 0xdead) or a liquidity add (GangLiquiditySplitter's `addChunk`: half buys,
+    ///         all of it goes back, the matching quote follows, LP to 0xdead). One per CHUNK_GAP for both kinds
+    ///         (sooner reverts ChunkTooSoon). Returns zeros while the price check is not ready. Reverts NotTradable
+    ///         before graduation. Gas: a liquidity chunk takes ~0.55–0.75M on a real pair: use the node's estimate.
+    /// @param minTokensOut Least tokens the chunk's buy brings in (after the buy tax; for a liquidity chunk, its half),
+    ///        scaled down to what the pair received.
+    /// @return burn Whether it was a buy-back (else a liquidity add).
+    /// @return quoteIn Quote spent.
+    /// @return tokensOut Tokens burned, or tokens the pair received back.
+    /// @return liquidity LP minted to 0xdead (a liquidity add).
+    function chunk(uint256 minTokensOut)
         external
         nonReentrant
-        returns (uint256 quoteIn, uint256 tokensIn, uint256 liquidity)
+        returns (bool burn, uint256 quoteIn, uint256 tokensOut, uint256 liquidity)
     {
         _splitQuote();
-        if (lpLeft == 0) revert NothingToAdd();
-        return _addChunk(minTokensOut);
+        uint8 kind = _kindOf(buybackLeft, lpLeft);
+        if (kind == DO_NOTHING) revert NothingToChunk();
+        if (kind == DO_BURN) {
+            (quoteIn, tokensOut) = _burnChunk(minTokensOut);
+            return (true, quoteIn, tokensOut, 0);
+        }
+        (quoteIn, tokensOut, liquidity) = _addChunk(minTokensOut);
     }
 
-    /// @notice IGangRecipientModule's step: split, then what `previewWork` planned from this state — a chunk of the
-    ///         larger set-aside part (`minOut` its tokens out), a TWAP observation, or nothing more.
+    /// @notice IGangRecipientModule's step: split, then the action `previewWork` planned (in `minOut`'s top byte, its
+    ///         value below) if this state still leads to it — a chunk, a TWAP observation, or nothing more; else only
+    ///         the split (the keeper previews again next run).
     function work(uint256 minOut) external nonReentrant {
         _splitQuote();
         (uint8 action,,) = _plan(buybackLeft, lpLeft, 0);
+        if (action != uint8(minOut >> 248)) return;
+        minOut &= (uint256(1) << 248) - 1;
         if (action == DO_BURN) {
             _burnChunk(minOut);
         } else if (action == DO_ADD) {
@@ -355,31 +348,28 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         return _quoteRegistry != address(0) && IQuoteRegistryView(_quoteRegistry).isQuoted(q);
     }
 
-    /// @notice What `burnChunk` would do now (after the split it starts with): whether it buys, the quote it spends
-    ///         and the tokens it burns.
-    function previewBurn() external view returns (bool ready, uint256 quoteIn, uint256 tokensOut) {
-        (uint256 bb,,) = _afterSplit();
-        return _previewChunk(bb, false);
+    /// @notice What `chunk` would do now (after the split it starts with): whether it trades, whether it is a
+    ///         buy-back (else a liquidity add), the chunk's quote (a liquidity chunk: both halves at most) and the
+    ///         tokens its buy brings in after the buy tax.
+    function previewChunk() external view returns (bool ready, bool burn, uint256 amount, uint256 tokensOut) {
+        (uint256 bb, uint256 lp,) = _afterSplit();
+        uint8 kind = _kindOf(bb, lp);
+        if (kind == DO_NOTHING) return (false, false, 0, 0);
+        burn = kind == DO_BURN;
+        (ready, amount, tokensOut) = _previewChunk(burn ? bb : lp, !burn);
     }
 
-    /// @notice What `addChunk` would do now: whether it trades, the chunk (both halves at most) and the tokens its buy
-    ///         half brings in.
-    function previewAdd() external view returns (bool ready, uint256 chunk, uint256 tokensOut) {
-        (, uint256 lp,) = _afterSplit();
-        return _previewChunk(lp, true);
-    }
-
-    /// @notice Due when `work` would act: a chunk (`minOut` = its tokens out less WORK_SLIPPAGE_BPS) of the larger part
-    ///         at least WORK_MIN_BPS of the pair's quote reserve; else the TWAP observation such a part needs
-    ///         (`minOut` 0); else the payees' pending part at least WORK_MIN_BPS of that reserve, or 1/WORK_IDLE_DIV
-    ///         of it WORK_MAX_IDLE after the last payout (`minOut` 0). Never for a quote the keeper doesn't serve, or
-    ///         before graduation.
+    /// @notice Due when `work` would act: a chunk (of the larger part, when it is at least WORK_MIN_BPS of the pair's
+    ///         quote reserve; value = its tokens out less WORK_SLIPPAGE_BPS); else the TWAP observation it needs; else
+    ///         the payees' pending part at least WORK_MIN_BPS of that reserve, or 1/WORK_IDLE_DIV of it WORK_MAX_IDLE
+    ///         after the last payout. `minOut` = the action in its top byte, the value below: pass it to `work` as is.
+    ///         Never for a quote the keeper doesn't serve, or before graduation.
     function previewWork() external view returns (bool due, uint256 minOut) {
         if (!keeperServes(quote)) return (false, 0);
         (uint256 bb, uint256 lp, uint256 pay) = _afterSplit();
-        uint8 action;
-        (action, minOut,) = _plan(bb, lp, pay);
-        return (action != DO_NOTHING, minOut);
+        (uint8 action, uint256 value,) = _plan(bb, lp, pay);
+        if (action == DO_NOTHING) return (false, 0);
+        return (true, (uint256(action) << 248) | value);
     }
 
     // ---------------------------------------------------------------- internal: the split
@@ -459,7 +449,8 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         return (bb + toBuyback, lp + toLp, pay);
     }
 
-    /// @dev Another asset: GangSplitModule's `_distribute`.
+    /// @dev Another asset: GangSplitModule's `_distribute`, the buy-back and liquidity share (all of it without
+    ///      payees) pushed to 0xdead first (one it can't push there goes to the payees with the rest).
     function _distribute(address asset) internal returns (uint256 incoming) {
         uint256 bal = IERC20(asset).balanceOf(address(this));
         uint256 held = owedTotal[asset];
@@ -479,8 +470,10 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         }
         incoming = bal - held;
         if (incoming == 0) return 0;
-        _payAll(asset, incoming);
-        emit Distributed(asset, incoming);
+        uint256 toDead = n == 0 ? incoming : (incoming * (uint256(buybackBps) + lpBps)) / BPS;
+        if (toDead != 0 && !_tryTransfer(asset, DEAD, toDead)) toDead = 0;
+        if (n != 0 && incoming > toDead) _payAll(asset, incoming - toDead);
+        emit Distributed(asset, incoming, toDead);
     }
 
     /// @dev `amount` of `asset` to the payees at their shares: the others rounded down, the first takes the rest.
@@ -548,17 +541,16 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
         uint256 cum;
         (rT, rQ, cum) = _pairState(p, tokenIs0);
         uint256 floor = rQ * WORK_MIN_BPS;
-        bool bbWorth = bb * BPS >= floor && bb != 0;
-        bool lpWorth = lp * BPS >= floor && lp / 2 != 0;
-        if ((bbWorth || lpWorth) && !_tooSoon()) {
+        uint8 kind = _kindOf(bb, lp);
+        bool burn = kind == DO_BURN;
+        if (kind != DO_NOTHING && (burn ? bb : lp) * BPS >= floor && !_tooSoon()) {
             Twap memory w = _twap;
             uint32 seen = w.recent.at;
             (Twap memory next, bool ready) = _twapCheck(w, cum, rT, rQ);
             if (ready) {
-                bool burn = bbWorth && (!lpWorth || bb >= lp);
                 uint256 out = burn ? _amountOut(_chunkOf(bb, rQ), rQ, rT) : _amountOut(_chunkOf(lp, rQ) / 2, rQ, rT);
                 out -= (out * IBondToken(token).buyTaxBps()) / BPS;
-                return (burn ? DO_BURN : DO_ADD, (out * (BPS - WORK_SLIPPAGE_BPS)) / BPS, rQ);
+                return (kind, (out * (BPS - WORK_SLIPPAGE_BPS)) / BPS, rQ);
             }
             if (next.recent.at != seen) return (DO_OBSERVE, 0, rQ);
         }
@@ -567,6 +559,17 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
             if (pay * BPS >= floor || (idle && pay * BPS * WORK_IDLE_DIV >= floor)) return (DO_SPLIT, 0, rQ);
         }
         return (DO_NOTHING, 0, rQ);
+    }
+
+    /// @dev The kind of the next chunk: the larger set-aside part's (a buy-back on a tie), a part that can't make a
+    ///      chunk (a liquidity part under 2 wei has no half) left out.
+    function _kindOf(uint256 bb, uint256 lp) internal pure returns (uint8) {
+        bool canBurn = bb != 0;
+        bool canAdd = lp / 2 != 0;
+        if (!canBurn && !canAdd) return DO_NOTHING;
+        if (!canAdd) return DO_BURN;
+        if (!canBurn) return DO_ADD;
+        return bb >= lp ? DO_BURN : DO_ADD;
     }
 
     /// @dev What a chunk of `left` would do now (`lp`: a liquidity chunk, whose buy is half of it).
@@ -588,7 +591,7 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @dev GangBuybackSplitter v4's chunk (with the LP audit L-1 scaling), on the shared pace.
     function _burnChunk(uint256 minTokensOut) internal returns (uint256 quoteIn, uint256 burned) {
         uint256 left = buybackLeft;
-        if (left == 0) revert NothingToBurn();
+        if (left == 0) revert NothingToChunk();
         if (_tooSoon()) revert ChunkTooSoon();
         (address p, bool tokenIs0) = _pairOf();
         (uint256 rT, uint256 rQ, bool ok) = _rollTwap(p, tokenIs0);
@@ -620,7 +623,7 @@ contract GangComboSplitter is IGangRecipientModule, ReentrancyGuard {
     /// @dev GangLiquiditySplitter's chunk (with its audit fixes), on the shared pace.
     function _addChunk(uint256 minTokensOut) internal returns (uint256 quoteIn, uint256 tokensIn, uint256 liquidity) {
         uint256 left = lpLeft;
-        if (left == 0) revert NothingToAdd();
+        if (left == 0) revert NothingToChunk();
         if (_tooSoon()) revert ChunkTooSoon();
         (address p, bool tokenIs0) = _pairOf();
         (uint256 rT, uint256 rQ, bool ok) = _rollTwap(p, tokenIs0);
