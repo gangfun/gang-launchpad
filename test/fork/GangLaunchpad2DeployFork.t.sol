@@ -14,6 +14,8 @@ import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {GangPadRegistry} from "../../src/gang/GangPadRegistry.sol";
 import {IGangPad} from "../../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {CurveLogic} from "../../src/gang/CurveLogic.sol";
+import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 
 /// @dev Exposes the script's internal JSON builders and the creator-fee probe (same code the script runs / prints).
@@ -54,6 +56,8 @@ contract GangLaunchpad2DeployForkTest is Test {
     address constant PAD_1 = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
     address constant GATEWAY = 0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8;
     address constant SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
+    /// @dev The CurveLogic GangLaunchpad 1.0 links on BSC 56 (no creator fee; buy / sell without `creatorFeeOf`).
+    address constant CURVE_LOGIC_1 = 0x45cf4cC2Fe0A3007a0a9cC58D44bb100537Ac6Fb;
 
     DeployGangLaunchpad2Harness d;
 
@@ -116,6 +120,29 @@ contract GangLaunchpad2DeployForkTest is Test {
             abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad.CREATOR_FEE_SHARE_BPS (a 1.0 pad?)")
         );
         d.checkCreatorFee(PAD_1);
+
+        // review 2026-10-31: leftover env values are refused on mainnet before anything is deployed
+        vm.setEnv("KEEPER", vm.toString(address(0xBAD)));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.KeeperNotDefault.selector, address(0xBAD)));
+        d.run();
+        vm.setEnv("KEEPER_OVERRIDE_OK", "true"); // DeployGang's escape hatch: 2.0 still refuses
+        vm.setEnv("KEEPER", vm.toString(M.KEEPER));
+        _expectCheck("KEEPER is not the platform keeper", "KEEPER", vm.toString(address(0xBAD)), M.KEEPER);
+        vm.setEnv("KEEPER_OVERRIDE_OK", "false");
+        vm.setEnv("TWAP_WINDOW", "600");
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "TWAP_WINDOW differs from 1.0's"));
+        d.run();
+        vm.setEnv("TWAP_WINDOW", vm.toString(uint256(p1.twapWindow())));
+        _expectCheck("RECIPIENT must be empty on mainnet", "RECIPIENT", vm.toString(address(0xCAFE)), address(0));
+
+        // review M-1: a 2.0 pad linked to 1.0's CurveLogic fails phase 1 itself, before Safe batch 1 is printed (the
+        // simulation reverts: nothing would be broadcast, nothing for the Safe to list)
+        address lib = _curveLogicOf();
+        bytes memory good = lib.code;
+        vm.etch(lib, CURVE_LOGIC_1.code);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "CurveLogic is not the 2.0 library"));
+        d.run();
+        vm.etch(lib, good);
 
         // phase 1: deployed, own wiring done, shared listing left to the Safe
         DeployGang.Stack memory s = d.run();
@@ -204,6 +231,40 @@ contract GangLaunchpad2DeployForkTest is Test {
         SharedDividendVault v = SharedDividendVault(p.dividendVault());
         assertEq(v.minimumShareBalanceOf(PAD_1), 10_000 ether);
         assertEq(v.minimumShareBalanceOf(s.pad), 10_000 ether);
+    }
+
+    function _expectCheck(string memory what, string memory key, string memory bad, address restore) internal {
+        vm.setEnv(key, bad);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, what));
+        d.run();
+        vm.setEnv(key, vm.toString(restore));
+    }
+
+    /// @dev The CurveLogic this build links into GangLaunchpad: the PUSH20 in its code whose target has
+    ///      `claimCreatorFee` in its dispatcher.
+    function _curveLogicOf() internal returns (address) {
+        bytes memory code = address(new GangLaunchpad(SAFE, SAFE, SAFE, SAFE, SAFE, SAFE, SAFE, SAFE)).code;
+        for (uint256 i; i + 21 <= code.length; i++) {
+            if (code[i] != 0x73) continue;
+            address a;
+            assembly ("memory-safe") {
+                a := shr(96, mload(add(add(code, 33), i)))
+            }
+            if (a.code.length > 0 && _hasSelector(a.code, CurveLogic.claimCreatorFee.selector)) return a;
+        }
+        revert("CurveLogic not found");
+    }
+
+    function _hasSelector(bytes memory code, bytes4 sel) internal pure returns (bool) {
+        uint256 want = (uint256(0x63) << 32) | uint256(uint32(sel));
+        for (uint256 i; i + 5 <= code.length; i++) {
+            uint256 w;
+            assembly ("memory-safe") {
+                w := shr(216, mload(add(add(code, 32), i)))
+            }
+            if (w == want) return true;
+        }
+        return false;
     }
 
     function _curve(IGangPad p, address t)

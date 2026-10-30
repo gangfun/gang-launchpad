@@ -35,11 +35,13 @@ import {DeployGang} from "./DeployGang.s.sol";
 ///         Phase 2 also prints the cut-over batch (`tokenDeployer.setLaunchpad(1.0, false)`: 1.0 stops creating; its
 ///         tokens trade and graduate as before). The Safe runs it only once the backend, site and CLI use 2.0.
 /// @dev Mainnet broadcast needs GANG_MAINNET_OK=true; mainnet GANG_PAD, the registry, OWNER, KEEPER and the gateway
-///      must be the known ones and the Safe must own every shared contract. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, OWNER
-///      (required on mainnet, as DeployGang), KEEPER (mainnet default the ops keeper; testnet: the 1.0 bucket's keeper
-///      must match, set it), GANG_GATEWAY (mainnet fixed; testnet optional), GANG_PAD_REGISTRY (testnet optional),
-///      RECIPIENT + RECIPIENT_LABEL, TWAP_WINDOW (default: 1.0's), testnet TEST_QUOTE / BLACKLIST_QUOTE (checked as
-///      listed); phase 2: GANG_PAD2, GANG_ROUTER2, GANG_PAD2_BLOCK.
+///      must be the known ones, the TWAP window 1.0's, RECIPIENT empty, and the Safe must own every shared contract.
+///      Before anything is deployed (both chains) KEEPER must be the shared bucket's keeper. Phase 1 runs every check
+///      that needs no shared listing before it prints Safe batch 1 (a failure fails the simulation, nothing is sent).
+///      Env: DEPLOYER_PRIVATE_KEY, GANG_PAD, OWNER (required on mainnet, as DeployGang), KEEPER (mainnet default the
+///      ops keeper; testnet default the deployer), GANG_GATEWAY (mainnet fixed; testnet optional), GANG_PAD_REGISTRY
+///      (testnet optional), RECIPIENT + RECIPIENT_LABEL (testnet), TWAP_WINDOW (default: 1.0's), testnet TEST_QUOTE /
+///      BLACKLIST_QUOTE (checked as listed); phase 2: GANG_PAD2, GANG_ROUTER2, GANG_PAD2_BLOCK.
 ///      Mainnet: link the live PoolCheck only:
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 ///      Never pass CurveLogic / FairLogic: forge deploys them fresh from the deployer.
@@ -63,6 +65,10 @@ contract DeployGangLaunchpad2 is DeployGang {
         Ctx memory x = _ctx(block.chainid == 56);
         Cfg memory c = _cfg2(me, x.pad1);
         if (c.mainnet) _requireMainnetInputs(c, x);
+        // review 2026-10-31 M-2: the handler's keeper is one-shot and must be the shared bucket's (both chains)
+        if (c.keeper != SharedPlatformFeeBucket(IGangPad(x.pad1).platformBucket()).keeper()) {
+            revert WiringCheck("KEEPER is not the shared bucket's keeper");
+        }
 
         console.log("=== DeployGangLaunchpad2 chain", block.chainid, "===");
         console.log("deployer", c.deployer);
@@ -90,14 +96,19 @@ contract DeployGangLaunchpad2 is DeployGang {
 
         _log2(s, c);
         if (!wired) {
+            // review 2026-10-31 M-1: batch 1 can't be undone (registry addPad, the vault's operator binding), so every
+            // check that needs no shared listing runs first; a failure here fails the simulation: nothing broadcast
+            _checkPre(s, c, x);
             console.log("\n=== Safe batch 1: list GangLaunchpad 2.0 on the shared contracts, then run phase 2 ===");
             console.log(_wiringJson(s, x, c.mainnet, Ownable(s.vault).owner()));
             return s;
         }
         _check2(s, c, x);
         if (c.owner != me) _printAccept(s, c);
-        console.log("\n=== Safe batch 3 (cut-over, only once backend / site / CLI use 2.0): 1.0 stops creating ===");
-        console.log(_cutoverJson(s, x, c.mainnet, Ownable(s.tokenDeployer).owner()));
+        if (IGangPad(s.pad).migrator() != address(0)) {
+            console.log("\n=== Safe batch 3 (cut-over, only once backend / site / CLI use 2.0): 1.0 stops creating ===");
+            console.log(_cutoverJson(s, x, c.mainnet, Ownable(s.tokenDeployer).owner()));
+        }
     }
 
     // ---------------------------------------------------------------- config
@@ -125,7 +136,11 @@ contract DeployGangLaunchpad2 is DeployGang {
         if (x.padRegistry != M.PAD_REGISTRY) revert WiringCheck("GANG_PAD_REGISTRY is not the live registry");
         if (x.gateway != MAINNET_GATEWAY) revert WiringCheck("GANG_GATEWAY is not the live gateway");
         if (c.owner != M.OWNER_SAFE) revert WiringCheck("OWNER is not the platform Safe");
+        if (c.keeper != M.KEEPER) revert WiringCheck("KEEPER is not the platform keeper");
         IGangPad p1 = IGangPad(x.pad1);
+        if (c.twapWindow != p1.twapWindow()) revert WiringCheck("TWAP_WINDOW differs from 1.0's");
+        // partner recipients are the Safe's to list on 2.0, never a leftover env value
+        if (_envAddr("RECIPIENT", address(0)) != address(0)) revert WiringCheck("RECIPIENT must be empty on mainnet");
         address[6] memory shared = [
             p1.quoteRegistry(),
             p1.platformBucket(),
@@ -249,20 +264,10 @@ contract DeployGangLaunchpad2 is DeployGang {
     ///      pad allowed to be still closed when the Safe opens it; then the 2.0 probes and the two owned contracts.
     ///      Not view: the probes call state-changing entries (all revert; outside the broadcast).
     function _check2(Stack memory s, Cfg memory c, Ctx memory x) internal {
-        allowClosedPad = c.owner != c.deployer;
-        _checkPad(s, c);
-        _checkLibs(s, c);
-        _checkHandler(s, c);
+        _checkPre(s, c, x);
         _checkVault(s);
         _checkBucket(s, c);
         _checkPlatform(s, c);
-        _checkLibsUsdt(s, c);
-        _checkRouter(s, c);
-        if (x.gateway != address(0) && !IGangPad(s.pad).routers(x.gateway)) revert WiringCheck("pad.routers gateway");
-        if (IGangPad(s.pad).twapWindow() != IGangPad(x.pad1).twapWindow() && vm.envOr("TWAP_WINDOW", uint256(0)) == 0) {
-            revert WiringCheck("pad.twapWindow != 1.0's");
-        }
-        _checkCreatorFee(s.pad);
         address[2] memory own = [s.handler, s.pad];
         for (uint256 i; i < 2; i++) {
             Ownable2Step o = Ownable2Step(own[i]);
@@ -273,6 +278,23 @@ contract DeployGangLaunchpad2 is DeployGang {
             }
         }
         console.log("self-check ok");
+    }
+
+    /// @dev Everything that needs no shared listing: the pad (closed allowed when the Safe opens it), both libraries,
+    ///      the handler (its keeper the shared bucket's), the router, the gateway listing, the 2.0 probes. Runs before
+    ///      Safe batch 1 is printed (review M-1) and again in phase 2.
+    function _checkPre(Stack memory s, Cfg memory c, Ctx memory x) internal {
+        allowClosedPad = c.owner != c.deployer;
+        _checkPad(s, c);
+        _checkLibs(s, c);
+        _checkLibsUsdt(s, c);
+        _checkHandler(s, c);
+        if (IGangTaxHandlerOps(s.handler).keeper() != SharedPlatformFeeBucket(s.bucket).keeper()) {
+            revert WiringCheck("handler keeper != bucket keeper");
+        }
+        _checkRouter(s, c);
+        if (x.gateway != address(0) && !IGangPad(s.pad).routers(x.gateway)) revert WiringCheck("pad.routers gateway");
+        _checkCreatorFee(s.pad);
     }
 
     /// @dev Audit 2026-10-31 (B low): a 1.0 pad, or a 2.0 pad linked to a 1.0 CurveLogic, must not pass. The constant
