@@ -7,8 +7,8 @@ price**. After launch, **minting goes on**: the money goes into the pool (part o
 adds buy pressure. Invites raise a wallet's quota. These sales live on their own pad, GangFlywheelPad (kind 3). The
 unified commands detect them (`kind: "fly"`).
 
-**Mainnet:** the pad is deployed, but it does not open until testing on BSC testnet is done. `gang create --fly` on
-mainnet says so; use `--testnet` until then.
+**Networks:** BSC mainnet since 2026-10-30 (GangFlywheelPad `0x631e66560F4FAE4e486B65349edE48189E48B029`, built in);
+`--testnet` uses BSC testnet set 2.
 
 ```bash
 gang list --kind fly [--status minting|filled|launched|all] [--testnet]   # from the pad, newest first
