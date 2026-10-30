@@ -55,7 +55,9 @@ anything is sent and its reason is printed.
 
 **Pad versions.** New tokens go to the V2 pad once it is live (the CLI knows its address); V1 tokens keep working and
 every other command uses the token's own pad (`padVersion` in `gang info`). Only V2 takes `--guard` / `--twap-window`,
-and on V2 `--quota` is at most 20 while post-launch minting is on. The guard is **off by default**: post-launch minting
+and on V2, with post-launch minting on, `--quota` is at most 20, `--invite-bonus` at most 1, and the pad's Agent ID gate
+must be on (the CLI checks all three before `checkConfig`). A linear tier counts from share 1 on V1 but from the first
+post-launch share on V2; the CLI always reads the price from the pad (`sharePrice`). The guard is **off by default**: post-launch minting
 does not pause when the price drops (the quota cap of 20 per wallet bounds it); `--guard 15|20|30` turns it on, measured
 against the average over `--twap-window` (which only matters then).
 

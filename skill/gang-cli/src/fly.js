@@ -479,8 +479,8 @@ export const FLY_PRESETS = {
 // per wallet bounds what a wallet can mint; the window is still set (it only matters once the guard is on)
 const GUARDS = { off: 0, 15: 1_500, 20: 2_000, 30: 3_000 }
 const TWAP_WINDOWS = { 15: 900, 30: 1_800 }
-// V2: with post-launch minting on, a wallet's quota is at most this many shares
-const MAX_POST_QUOTA = 20
+// V2: with post-launch minting on, a wallet's quota is at most this many shares and an invite adds at most one
+const MAX_POST_QUOTA = 20, MAX_POST_INVITE = 1
 // flag → [preset key, min, max, kind]
 const CREATE_FLAGS = {
   raise: ['raise', 3, 50, 'num'], quota: ['quota', 5, 100, 'int'], 'invite-bonus': ['invite', 0, 3, 'int'],
@@ -720,9 +720,16 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (v2 && v.postMint && v.quota > MAX_POST_QUOTA) {
       fail(`--quota must be 5-${MAX_POST_QUOTA} with post-launch minting on (the V2 pad's rule): lower --quota, or add --no-post-mint`, { quota: v.quota })
     }
+    if (v2 && v.postMint && v.invite > MAX_POST_INVITE) {
+      fail(`--invite-bonus must be 0-${MAX_POST_INVITE} with post-launch minting on (the V2 pad's rule): lower it, or add --no-post-mint`, { inviteBonus: v.invite })
+    }
     // a pad without the Agent ID gate takes no dev cut (checkConfig refuses one): the preset's goes to 0 unless asked for
     const gated = await ctx.read(ctx.pad, FLY_PAD_ABI, 'agentGateEnabled')
     if (!gated && !flag('dev-cut')) v.devCut = 0
+    // V2: post-launch minting needs the Agent ID gate (one wallet per ID is what bounds the per-wallet quota)
+    if (v2 && v.postMint && !gated) {
+      fail('post-launch minting needs the Agent ID gate, which this pad has off right now: add --no-post-mint for a sale that only mints before launch', { pad: ctx.pad })
+    }
     const linear = v.tier === 'linear'
     if (!linear && ['step-pct', 'step-shares', 'max-mul'].some(flag)) fail('--step-pct / --step-shares / --max-mul only apply with --tier linear')
     if (linear) { v.stepPct ??= 1; v.stepShares ??= 1_000; v.maxMul ??= 10 }
