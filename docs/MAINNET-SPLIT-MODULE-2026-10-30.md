@@ -24,7 +24,7 @@
 | GangHandlerAdmin | `0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985`，owner = 多签 `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
 | 实现合约的 `gangQuote` | GANG `0x0c6302401aa5325C2E36F170f52C00B1d220B405`（keeper 自动分账的报价币：WBNB、GANG、QuoteRegistry 里的报价币） |
 
-## 多签批量（待执行）
+## 多签批量（已执行）
 
 导入 Safe Transaction Builder：`docs/MAINNET-SPLIT-MODULE-SAFE-BATCH-2026-10-30.json`。一笔：
 
@@ -32,13 +32,15 @@
 |---|---|---|
 | GangHandlerAdmin `0xF56A…E985` | `setFactory(0x27e0…067c, true)` | `0x71013c10…27e08271…01`，与部署脚本打印的一致 |
 
-已有的回购工厂不受影响。执行后核对：
+2026-10-30 已由多签执行：[`0xf66750f9…2983`](https://bscscan.com/tx/0xf66750f9aea8e9d3882c4e9564e0bd37506702ca23264d5f549f2783fa852983)，区块 130674372。
+
+执行后核对（2026-10-30 已跑）：新工厂已允许；回购工厂 v3 `0xf1d5…F1Cd` 仍允许，v1 `0x6bcd…8546`、v2 `0x9346…8F2f` 仍停用；handler 的 owner 仍是管理合约、没有待接收的 owner；管理合约 owner 仍是多签；脚本检查模式打印「nothing to do」；真实 Agent `0xf7A8…14aA` 静态调用 `factory.create([自己, 0x…bEEF], [7000, 3000], salt)` 返回 `predict` 的地址（估算 gas 407,637）。命令：
 
 ```sh
 GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985 \
   SPLIT_FACTORY=0x27e08271E52B2D129c824CD245e69471a8d3067c \
   forge script script/DeployGangSplitModuleFactory.s.sol --rpc-url https://bsc-dataseed.binance.org
-# 执行前打印一笔 Safe 调用；执行后不再打印 Safe 调用
+# 应打印 "Safe batch: nothing to do (factory allowed)"
 ```
 
 ## 上主网前的演练（主网 fork）
@@ -55,6 +57,6 @@ GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004
 
 ## 还要做的
 
-1. 服务端（indexer、keeper）和网站认 `split-v1`。
-2. 多签执行上面的批量。
+1. ~~服务端（indexer、keeper）和网站认 `split-v1`~~（2026-10-30 已上线：gangfun-server v1.2.55、gang-web-legacy v1.2.92）。
+2. ~~多签执行上面的批量~~（已执行，见上）。
 3. CLI 发版：`gang create … --split`、`gang split …`，主网工厂地址指向 `0x27e0…067c`。
