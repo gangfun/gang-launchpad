@@ -21,12 +21,15 @@ interface IHandlerOwner {
 ///         (a look-alike answering the same views would otherwise pass, audit 2026-10-30 L-4). The comparison is
 ///         exact (metadata hash included): to re-check a deployed factory, run at the commit it was deployed from.
 /// @dev Env: GANG_PAD (mainnet: must be the live pad); HANDLER_ADMIN; SPLIT_FACTORY (optional, an existing one);
+///      GANG_QUOTE (the GANG quote the keeper serves; mainnet: GANG, the default there; testnet: default none);
 ///      DEPLOYER_PRIVATE_KEY (unless the factory exists); mainnet broadcast needs GANG_MAINNET_OK=true.
 contract DeployGangSplitModuleFactory is Script {
     /// @notice The live GangLaunchpad on BSC 56 (docs/MAINNET-GANG-2026-10-27.md).
     address internal constant MAINNET_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
     /// @notice The Safe owning the mainnet GangHandlerAdmin (docs/MAINNET-GANG-2026-10-27.md).
     address internal constant MAINNET_SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
+    /// @notice The platform token GANG on BSC 56, a quote the keeper serves.
+    address internal constant MAINNET_GANG = 0x0c6302401aa5325C2E36F170f52C00B1d220B405;
 
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
@@ -43,14 +46,17 @@ contract DeployGangSplitModuleFactory is Script {
         if (mainnet ? pad != MAINNET_PAD : IGangPad(pad).wbnb() != T.WBNB) revert WiringCheck("pad");
         address admin = vm.envAddress("HANDLER_ADMIN");
 
+        address gangQuote = vm.envOr("GANG_QUOTE", mainnet ? MAINNET_GANG : address(0));
+
         factory = GangSplitModuleFactory(vm.envOr("SPLIT_FACTORY", address(0)));
         if (address(factory) == address(0)) {
             vm.startBroadcast(vm.envUint("DEPLOYER_PRIVATE_KEY"));
-            factory = new GangSplitModuleFactory(pad, admin);
+            factory = new GangSplitModuleFactory(pad, admin, gangQuote);
             vm.stopBroadcast();
         }
 
         check(pad, admin, address(factory));
+        if (GangSplitModule(factory.implementation()).gangQuote() != gangQuote) revert WiringCheck("gangQuote");
         checkCode(address(factory));
         bytes[] memory batch = pendingBatch(admin, address(factory));
         _print(pad, admin, address(factory), batch);
@@ -85,6 +91,7 @@ contract DeployGangSplitModuleFactory is Script {
         if (impl.moduleType() != bytes32("split-v1")) revert WiringCheck("implementation.moduleType");
         if (IHandlerOwner(handler).owner() != admin) revert WiringCheck("admin.handlerOwner");
         if (block.chainid == 56 && GangHandlerAdmin(admin).owner() != MAINNET_SAFE) revert WiringCheck("admin.owner");
+        if (block.chainid == 56 && impl.gangQuote() != MAINNET_GANG) revert WiringCheck("implementation.gangQuote");
     }
 
     /// @notice Revert unless `factory` and its implementation have exactly the runtime code of a factory this repo
@@ -92,8 +99,9 @@ contract DeployGangSplitModuleFactory is Script {
     ///         that differ — the two addresses — are swapped in before comparing).
     function checkCode(address factory) public {
         GangSplitModuleFactory live = GangSplitModuleFactory(factory);
-        GangSplitModuleFactory ref = new GangSplitModuleFactory(live.pad(), live.admin());
         address liveImpl = live.implementation();
+        GangSplitModuleFactory ref =
+            new GangSplitModuleFactory(live.pad(), live.admin(), GangSplitModule(liveImpl).gangQuote());
         address refImpl = ref.implementation();
         bytes memory code = _swap(address(ref).code, refImpl, liveImpl);
         if (keccak256(code) != keccak256(factory.code)) revert WiringCheck("factory.runtimeCode");
@@ -132,6 +140,9 @@ contract DeployGangSplitModuleFactory is Script {
         console.log("  owner                ", GangHandlerAdmin(admin).owner());
         console.log("GangSplitModuleFactory ", factory);
         console.log("  implementation       ", GangSplitModuleFactory(factory).implementation());
+        console.log(
+            "  gangQuote            ", GangSplitModule(GangSplitModuleFactory(factory).implementation()).gangQuote()
+        );
         console.log("block                  ", block.number);
         if (batch.length == 0) {
             console.log("Safe batch: nothing to do (factory allowed)");

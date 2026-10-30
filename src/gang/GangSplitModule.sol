@@ -9,6 +9,10 @@ import {IGangPad} from "./interfaces/IGangPad.sol";
 import {IGangPadHandler} from "./interfaces/IGangPadDeps.sol";
 import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 
+interface IQuoteRegistryView {
+    function isQuoted(address quote) external view returns (bool);
+}
+
 /// @title GangSplitModule (多人分账)
 /// @notice A tax recipient whose income is split among 1–MAX_PAYEES payees at shares fixed when it is cloned (summing
 ///         to BPS): nobody — not the dev, not the platform — can change the list or the shares afterwards. Each payee
@@ -17,7 +21,8 @@ import {IGangRecipientModule} from "./interfaces/IGangRecipientModule.sol";
 ///            clones this implementation, `initialize`s it and has GangHandlerAdmin list it on the tax handler;
 ///         2. the dev creates the token with it as `recipient`;
 ///         3. anyone `bind`s the token (once; the token's creator must be the dev and its recipient this contract):
-///            the bound token's quote is what the keeper splits (`previewWork` / `work`).
+///            the bound token's quote is what the keeper splits (`previewWork` / `work`), when it serves that
+///            quote (`keeperServes`: WBNB, GANG, a QuoteRegistry quote).
 ///         EVERY asset that reaches it is split at the same shares (`distribute(asset)`, anyone): the bound quote, the
 ///         tax of any other token naming it as recipient in another quote, a stray transfer. So whatever token a dev
 ///         points at it, the payees get their shares (audit 2026-10-30 M-1: an all-to-the-first-payee sweep let a dev
@@ -42,6 +47,9 @@ contract GangSplitModule is IGangRecipientModule, ReentrancyGuard {
     ///         dividend shares on transfer (a GangToken ≈ 106–121k, re-review NEW-2). Each slot pushes at most twice
     ///         (its new part, then what it is owed), so a split costs at most 2 × MAX_PAYEES × PUSH_GAS ≈ 6M.
     uint256 public constant PUSH_GAS = 300_000;
+    /// @notice A push starts only with at least PUSH_GAS × 64/63 + this left, so the token always gets its whole
+    ///         PUSH_GAS (63/64 rule) and the bookkeeping after it still runs; less reverts PushStarved.
+    uint256 public constant PUSH_RESERVE = 60_000;
     /// @notice `previewWork` is due once the unsplit quote reaches this share of the pair's quote reserve…
     uint256 public constant WORK_MIN_BPS = 5;
     /// @notice …or WORK_MAX_IDLE after the last split, once it reaches 1/WORK_IDLE_DIV of that (a small token still
@@ -57,6 +65,13 @@ contract GangSplitModule is IGangRecipientModule, ReentrancyGuard {
     /// @notice The factory that deployed the implementation: the only caller of a clone's `initialize`.
     address public immutable factory;
     address internal immutable _self;
+    /// @notice The quotes the keeper serves (`previewWork`), besides the pad's WBNB and the QuoteRegistry's: the
+    ///         platform's GANG (0 where there is none). Any other quote is split by hand (`distribute`): a quote the
+    ///         dev picked could lie about its balance and burn PUSH_GAS on every push, and so drain the shared
+    ///         keeper with a split due every round (pre-testnet review M-1).
+    address public immutable gangQuote;
+    address internal immutable _wbnb;
+    address internal immutable _quoteRegistry;
 
     /// @notice The dev it was made for (the token's creator once bound).
     address public dev;
@@ -98,12 +113,15 @@ contract GangSplitModule is IGangRecipientModule, ReentrancyGuard {
     error PushStarved();
 
     /// @dev The implementation, deployed by the factory; it is never initialized itself.
-    constructor(address pad_) {
+    constructor(address pad_, address gangQuote_) {
         if (pad_ == address(0)) revert ZeroAddress();
         pad = pad_;
         taxHandler = IGangPad(pad_).taxHandler();
         factory = msg.sender;
         _self = address(this);
+        gangQuote = gangQuote_;
+        _wbnb = IGangPad(pad_).wbnb();
+        _quoteRegistry = IGangPad(pad_).quoteRegistry();
     }
 
     /// @notice A clone's setup, by the factory in the tx that clones it: 1–MAX_PAYEES distinct payees (none 0, none
@@ -215,11 +233,19 @@ contract GangSplitModule is IGangRecipientModule, ReentrancyGuard {
         return bal > held ? bal - held : 0;
     }
 
+    /// @notice Whether the keeper serves `q`: the pad's WBNB, `gangQuote`, or a QuoteRegistry quote.
+    function keeperServes(address q) public view returns (bool) {
+        if (q == address(0)) return false;
+        if (q == _wbnb || q == gangQuote) return true;
+        return _quoteRegistry != address(0) && IQuoteRegistryView(_quoteRegistry).isQuoted(q);
+    }
+
     /// @notice Due after graduation when the unsplit bound quote reaches WORK_MIN_BPS of the pair's quote reserve, or
-    ///         WORK_MAX_IDLE after the last split once it reaches 1/WORK_IDLE_DIV of that. `minOut` is always 0.
+    ///         WORK_MAX_IDLE after the last split once it reaches 1/WORK_IDLE_DIV of that; never for a quote the keeper
+    ///         doesn't serve (`keeperServes`). `minOut` is always 0.
     function previewWork() external view returns (bool due, uint256 minOut) {
         address q = quote;
-        if (q == address(0)) return (false, 0);
+        if (!keeperServes(q)) return (false, 0);
         uint256 pending = undistributed(q);
         if (pending == 0) return (false, 0);
         (,,,,,, bool live,,,, address p,) = IGangPadBondView(pad).curves(token);
@@ -290,21 +316,21 @@ contract GangSplitModule is IGangRecipientModule, ReentrancyGuard {
     /// @dev As the tax handler's, with at most PUSH_GAS and at most 32 bytes of return data copied (a hostile asset
     ///      can't make its own split costly with a huge return, re-review I-1): a transfer that reports failure
     ///      instead of reverting.
-    ///      A push that failed because the caller gave too little gas (63/64: only 1/64 of it left) reverts the whole
-    ///      call instead of booking the part as owed (re-review 2 Info-1): a caller can't starve a push on purpose,
-    ///      and gas estimation finds the limit where every push gets its PUSH_GAS. A token whose return is malformed
-    ///      (false, 2, 31 bytes) after moving the coins is booked as owed; the next split's shortfall corrects it.
+    ///      Every push gets its whole PUSH_GAS or the call reverts PushStarved before it (pre-testnet review L-1: a
+    ///      check after the call misread a token behind a proxy, whose outer frame hands back the inner 1/64), so a
+    ///      caller can't starve a push into an owed part, and gas estimation finds a limit where every push gets its
+    ///      PUSH_GAS. A token whose return is malformed (false, 2, 31 bytes) after moving the coins is booked as owed;
+    ///      the next split's shortfall corrects it.
     function _tryTransfer(address asset, address to, uint256 amount) internal returns (bool ok) {
         bytes memory data = abi.encodeCall(IERC20.transfer, (to, amount));
         uint256 size;
         uint256 word;
-        uint256 before = gasleft();
+        if (gasleft() < (PUSH_GAS * 64) / 63 + PUSH_RESERVE) revert PushStarved();
         assembly ("memory-safe") {
             ok := call(PUSH_GAS, asset, 0, add(data, 32), mload(data), 0, 32)
             size := returndatasize()
             word := mload(0)
         }
-        if (!ok && gasleft() <= before / 63) revert PushStarved();
         if (!ok) return false;
         if (size == 0) return asset.code.length > 0;
         return size >= 32 && word == 1;

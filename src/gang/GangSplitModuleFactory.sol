@@ -34,12 +34,13 @@ contract GangSplitModuleFactory {
     error WrongHandler();
     error NotAgent();
 
-    constructor(address pad_, address admin_) {
+    /// @param gangQuote_ The platform's GANG, a quote the keeper serves (GangSplitModule.gangQuote; 0: none).
+    constructor(address pad_, address admin_, address gangQuote_) {
         if (pad_ == address(0) || admin_ == address(0)) revert ZeroAddress();
         if (ISplitModuleLister(admin_).handler() != IGangPad(pad_).taxHandler()) revert WrongHandler();
         pad = pad_;
         admin = admin_;
-        implementation = address(new GangSplitModule(pad_));
+        implementation = address(new GangSplitModule(pad_, gangQuote_));
     }
 
     /// @notice Clone a split module for the caller over `payees` / `shares` (fixed for good), listed as a tax recipient,

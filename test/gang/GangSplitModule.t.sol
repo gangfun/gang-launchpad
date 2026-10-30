@@ -5,6 +5,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Errors} from "@openzeppelin/contracts/utils/Errors.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {TwapMockPairFactory} from "../mocks/TwapMockPair.sol";
 import {GangSplitModule} from "../../src/gang/GangSplitModule.sol";
@@ -123,6 +124,7 @@ contract FakeSplitImpl {
     address public taxHandler;
     address public factory;
     bytes32 public constant moduleType = "split-v1";
+    address public constant gangQuote = address(0x6A46);
 
     constructor(address pad_, address handler_) {
         (pad, taxHandler) = (pad_, handler_);
@@ -155,6 +157,7 @@ contract GangSplitModuleTest is GangFixture {
     uint16 constant TAX = 300;
     address BQ;
     uint256 constant ALL = type(uint256).max;
+    address constant GANG = address(0x6A46);
 
     function _newPairFactory() internal override returns (address) {
         return address(new TwapMockPairFactory());
@@ -168,7 +171,7 @@ contract GangSplitModuleTest is GangFixture {
         handler.transferOwnership(address(admin));
         admin.exec(abi.encodeCall(Ownable2Step.acceptOwnership, ()));
         vm.stopPrank();
-        factory = new GangSplitModuleFactory(address(pad), address(admin));
+        factory = new GangSplitModuleFactory(address(pad), address(admin), GANG);
         vm.prank(owner);
         admin.setFactory(address(factory), true);
     }
@@ -206,7 +209,7 @@ contract GangSplitModuleTest is GangFixture {
     }
 
     function newFactory(address pad_, address admin_) external returns (GangSplitModuleFactory) {
-        return new GangSplitModuleFactory(pad_, admin_);
+        return new GangSplitModuleFactory(pad_, admin_, GANG);
     }
 
     function _next(uint256 dt) internal {
@@ -252,6 +255,7 @@ contract GangSplitModuleTest is GangFixture {
         assertEq(sm.taxHandler(), address(handler));
         assertEq(sm.factory(), address(factory));
         assertEq(sm.moduleType(), bytes32("split-v1"));
+        assertEq(sm.gangQuote(), GANG);
         (address[] memory p, uint16[] memory s) = sm.payeesOf();
         assertEq(p.length, 3);
         assertEq(p[1], b);
@@ -578,13 +582,22 @@ contract GangSplitModuleTest is GangFixture {
     /// @dev Re-review 2 Info-1: at no gas limit does a split succeed with a push starved by 63/64 (a heavy token's
     ///      owed push included): it reverts instead, so the owed part is never skipped by a tight gas limit.
     function test_owed_pushCantBeStarved() public {
+        _assertNoStarvedPush(new HeavyQuote());
+    }
+
+    /// @dev Pre-testnet review L-1: the same through a proxy (the outer frame hands back the inner 1/64, which fooled
+    ///      a check after the call).
+    function test_owed_pushCantBeStarvedBehindProxy() public {
+        _assertNoStarvedPush(HeavyQuote(address(new ERC1967Proxy(address(new HeavyQuote()), ""))));
+    }
+
+    function _assertNoStarvedPush(HeavyQuote q) internal {
         address dev = _newAgent();
         address[] memory p = new address[](2);
         (p[0], p[1]) = (dev, makeAddr("hb"));
         uint16[] memory sh = new uint16[](2);
         (sh[0], sh[1]) = (5_000, 5_000);
         GangSplitModule m = _module(dev, p, sh);
-        HeavyQuote q = new HeavyQuote();
         q.setBlocked(dev, true);
         q.mint(address(m), 8 ether);
         m.distribute(address(q));
@@ -847,6 +860,32 @@ contract GangSplitModuleTest is GangFixture {
         assertFalse(due, "nothing left");
     }
 
+    /// @dev Pre-testnet review M-1: the keeper serves only WBNB, GANG and QuoteRegistry quotes; a module bound to
+    ///      any other quote is never due (a quote lying about its balance can't make every round a split), and is
+    ///      still split by hand.
+    function test_work_onlyServedQuotes() public {
+        (GangSplitModule m,,,,) = _setup(address(quoteTok), true);
+        assertTrue(m.keeperServes(address(wbnb)));
+        assertTrue(m.keeperServes(GANG));
+        assertTrue(m.keeperServes(address(quoteTok)), "a QuoteRegistry quote");
+        assertFalse(m.keeperServes(makeAddr("other")));
+        assertFalse(m.keeperServes(address(0)));
+        quoteTok.mintUnlimited(address(m), 1 ether);
+        (bool due,) = m.previewWork();
+        assertTrue(due);
+
+        // the same quote off the registry: never due, not even idle; distribute still works
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(quoteTok), false, 0);
+        assertFalse(m.keeperServes(address(quoteTok)));
+        (due,) = m.previewWork();
+        assertFalse(due);
+        _next(m.WORK_MAX_IDLE());
+        (due,) = m.previewWork();
+        assertFalse(due);
+        assertEq(m.distribute(address(quoteTok)), 1 ether);
+    }
+
     function test_work_listedForTheKeeper() public {
         (GangSplitModule m,,,,) = _setup(address(wbnb), false);
         address[] memory mods = admin.modules();
@@ -860,7 +899,7 @@ contract GangSplitModuleTest is GangFixture {
         assertEq(script.pendingBatch(address(admin), address(factory)).length, 0);
 
         GangHandlerAdmin rogue = new GangHandlerAdmin(makeAddr("notTheSafe"), address(handler));
-        GangSplitModuleFactory rogueFactory = new GangSplitModuleFactory(address(pad), address(rogue));
+        GangSplitModuleFactory rogueFactory = new GangSplitModuleFactory(address(pad), address(rogue), GANG);
         vm.expectRevert(abi.encodeWithSelector(DeployGangSplitModuleFactory.WiringCheck.selector, "admin.handlerOwner"));
         script.check(address(pad), address(rogue), address(rogueFactory));
         vm.expectRevert(abi.encodeWithSelector(DeployGangSplitModuleFactory.WiringCheck.selector, "factory.admin"));
@@ -880,7 +919,7 @@ contract GangSplitModuleTest is GangFixture {
         script.checkCode(address(fake));
 
         // a new factory on the live admin: one Safe call, and it works as printed
-        GangSplitModuleFactory f2 = new GangSplitModuleFactory(address(pad), address(admin));
+        GangSplitModuleFactory f2 = new GangSplitModuleFactory(address(pad), address(admin), GANG);
         bytes[] memory batch = script.pendingBatch(address(admin), address(f2));
         assertEq(batch.length, 1);
         bytes memory c = batch[0];
