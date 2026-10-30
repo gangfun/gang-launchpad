@@ -48,9 +48,18 @@ GangGateway 已在 2026-10-30 部署到 BSC 主网。owner 和时间锁都归平
   - 最后一个币 `0xB043…13ed` 的 `getTokenInfo` 返回 status 1、BNB 计价、手续费 100、`graduationLeft` ≈ 14.96 BNB。
   - 没有列入之前，`tryBuy` 返回 0，符合预期。
 
-## 待 Safe 执行（上线步骤）
+## 列入 pad 之后（2026-10-30）
 
-1. **把网关列入 pad**，列入后才能交易。
+Safe 执行了下面第 1 步之后，链上直接调用：
+
+- pad 上 `routers(网关)` 为 **true**；原 GangRouter `0xE040…79C4` 仍为 true；pad 的 owner 仍是 Safe，agent 门槛开着。
+- 内盘币 `0x58C9…e67E`（BNB 计价）：`getTokenInfo` 返回 status 1、手续费 100；`tryBuy(币, 0, 0, 0.01 BNB)` 返回约 1,874,478 个币、手续费 0.0001 BNB、`amountMsgValue` 0.01 BNB；`trySell(币, 1000 个)` 返回非零。
+- 不持有 Agent ID 的地址：`tryBuy` 返回 0，模拟 `buyTokenAMAP` 回滚 `NotAgent`。
+- 还没有做真实的主网买卖（部署钱包没有 Agent ID）；白名单为空。
+
+## Safe 操作（上线步骤）
+
+1. **把网关列入 pad**（已执行）。
    - to：GangLaunchpad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`
    - 调用：`setRouter(0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8, true)`
    - calldata：`0xc3c646740000000000000000000000009dd16b73f624bdd8a210cbb2602fdf70f1b450b80000000000000000000000000000000000000000000000000000000000000001`

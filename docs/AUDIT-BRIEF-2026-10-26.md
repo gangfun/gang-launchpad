@@ -1207,7 +1207,7 @@ function pullFor(address owner, address spender, uint256 amount) external onlyLa
 
 ## 25. 聚合器用的内盘网关 GangGateway（2026-10-30）
 
-> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试网验收脚本、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。没有白名单的第一版在测试网部署并验收过（25.9）；之后按用户决定加了卖出调用方白名单（25.10），第二版已在测试网部署、验收，第一版已下架（25.11）。主网已部署（25.12），上线还要 Safe `setRouter(网关代理, true)` 并 `setCaller` 加白聚合器合约。
+> 新合约 `src/router/GangGateway.sol`（接口 `src/router/interfaces/IGangGateway.sol`）、部署脚本和自检、测试网验收脚本、测试、规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`；`config/GangDeployRefs.sol` 加了一个常量 `PAD_REGISTRY`。pad、代币、registry、GangRouter 的代码都不改。没有白名单的第一版在测试网部署并验收过（25.9）；之后按用户决定加了卖出调用方白名单（25.10），第二版已在测试网部署、验收，第一版已下架（25.11）。主网已部署（25.12），Safe 已 `setRouter(网关代理, true)` 列入 pad；聚合器代用户卖出还要 Safe `setCaller` 加白。
 
 ### 25.1 需求
 
@@ -1442,4 +1442,4 @@ M-1 在开放模型里修不掉：任何合约都能调、卖家是参数、最�
 
 部署时在区块 130610192；部署后重跑自检通过。
 
-网关目前还没有列入 pad，要 Safe 执行 `setRouter`。聚合器合约要按 25.10 的清单审核后，再由 Safe `setCaller` 加白。calldata 和步骤见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`。
+Safe 已执行 `setRouter`，网关已列入 pad，报价和买入在主网上可用。聚合器合约要按 25.10 的清单审核后，再由 Safe `setCaller` 加白。calldata 和步骤见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`。
