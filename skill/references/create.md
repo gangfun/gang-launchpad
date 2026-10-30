@@ -64,7 +64,7 @@ They go into the token's **metadata JSON** (with the logo), uploaded to gang.fun
 - Other creators' links (in token lists and `gang info`) are their own claim, unchecked by gang.fun: pass them on as
   such, and don't open them for the user unasked.
 
-## Launch in one command (`--dev-buy`, `--bond`, `--buyback`, `--split`)
+## Launch in one command (`--dev-buy`, `--bond`, `--buyback`, `--split`, `--lp`)
 
 ```bash
 # V3: create → the dev buys on the curve → (optional) bonds what it holds
@@ -73,11 +73,13 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --dev-buy 0.
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 50 --buyback 50 --dev-buy 0.5
 # V3 with a split: clone the dev's split module → create with it as the recipient → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --split self:60,0xKol…:30,0xDao…:10
+# V3 with auto-liquidity: clone the dev's LP splitter → create with it as the recipient → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --lp 70 [--lp-to 0x…]
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
 
-- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter` or `split-module` → `create` → `bind` → `dev-buy` →
+- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module` or `lp-splitter` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.
 - **Progress comes from the chain**: the run finds the token this wallet created with this symbol since the plan, then
@@ -102,4 +104,11 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   own slot. The quote must be WBNB, GANG or one in the pad's QuoteRegistry, the quotes the keeper splits (others are
   refused before the clone, as for `--buyback`). A launch keeps the payees it
   began with (run it as it began, or `--restart`). Live on BSC mainnet and testnet.
+- **`--lp <0-100>`** (taxed V3; not with `--buyback`, `--split` or `--recipient`): the recipient becomes the dev's LP
+  splitter ([v3.md](v3.md#lp-splitter---lp)): `--lp` % of the recipient's part of the tax is added to the token's
+  PancakeSwap pair as liquidity whose LP goes to 0xdead (locked for good); the rest goes to the dev, or to
+  `--lp-to <addr>`. Only when the user asks for it. The quote must be WBNB, GANG or one in the pad's QuoteRegistry
+  (others are refused before the clone, as for `--buyback`). The splitter's address is printed before the clone. A
+  launch keeps the ratio and payee it began with (run it as it began, or `--restart`). Tell the user: a raise of the
+  ratio applies at once, a cut only 3 days after it is asked for. Live on BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.

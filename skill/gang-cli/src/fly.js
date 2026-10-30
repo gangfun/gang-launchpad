@@ -21,7 +21,8 @@ import { poolPayBnb, poolTrade } from './pool.js'
  * GangRouter (pool trades) are GangLaunchpad's.
  */
 export const FLY_PADS = {
-  mainnet: { v1: '0x631e66560F4FAE4e486B65349edE48189E48B029', v2: null, startBlock: 130634782n },
+  // V2 deployed 2026-10-31; creates go there (it says so while its migrator is unset: no fallback to V1)
+  mainnet: { v1: '0x631e66560F4FAE4e486B65349edE48189E48B029', v2: '0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a', startBlock: 130634782n },
   // V1: testnet set 2 (2026-10-30, after the pre-mainnet audit fixes); V2 from block 139842621 (2026-10-31)
   testnet: { v1: '0xD6482850aCAC74BA889804931Fc797294777951c', v2: '0x706973e4F08dBf1604Cf540d0168428521e0E3d6', startBlock: 139749672n },
 }
@@ -233,7 +234,8 @@ async function bindPad(ctx, token) {
 export async function padOpen(ctx) {
   return (await ctx.read(ctx.pad, FLY_PAD_ABI, 'migrator')) !== zeroAddress
 }
-const CLOSED = 'the 铸币飞轮 (Mint Flywheel) pad on BSC mainnet takes no creates right now (no migrator set): use --testnet to try it there'
+/** The create target has no migrator yet: say which pad, and that existing tokens are not affected. */
+const closed = (ctx, testnet) => `the ${ctx.version === 2 ? 'V2 ' : ''}铸币飞轮 (Mint Flywheel) pad on BSC ${testnet ? 'testnet' : 'mainnet'} is not open yet (no migrator set), so it takes no creates right now; existing 铸币飞轮 tokens keep working${testnet ? '' : '. Use --testnet to try it there'}`
 
 const symbolOf = async (ctx, token) => { try { return await ctx.read(token, TOKEN_ABI, 'symbol') } catch { return null } }
 const pct = (bps) => Number(bps) / 100
@@ -557,7 +559,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     ctx.version = create.version
     return out({
       success: true, chainId, createPad: ctx.pad, createPadVersion: ctx.version, pads: ctx.pads.map((p) => ({ version: p.version, pad: p.address })),
-      total, status, count: items.length, items, ...(!(await padOpen(ctx)) && { note: CLOSED }),
+      total, status, count: items.length, items, ...(!(await padOpen(ctx)) && { note: closed(ctx, testnet) }),
     })
   }
 
@@ -691,7 +693,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
     checkMeta()
-    if (!(await padOpen(ctx))) fail(testnet ? 'the 铸币飞轮 pad on BSC testnet has no migrator set: it takes no creates right now' : CLOSED, { pad: ctx.pad })
+    if (!(await padOpen(ctx))) fail(closed(ctx, testnet), { pad: ctx.pad, padVersion: ctx.version })
     const presetName = opt('preset', 'j')
     const preset = FLY_PRESETS[presetName]
     if (!preset) fail(`--preset must be ${Object.keys(FLY_PRESETS).join(' or ')}`, { got: presetName })

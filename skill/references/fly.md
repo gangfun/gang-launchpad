@@ -7,8 +7,9 @@ price**. After launch, **minting goes on**: the money goes into the pool (part o
 adds buy pressure. Invites raise a wallet's quota. These sales live on their own pad, GangFlywheelPad (kind 3). The
 unified commands detect them (`kind: "fly"`).
 
-**Networks:** BSC mainnet since 2026-10-30 (GangFlywheelPad `0x631e66560F4FAE4e486B65349edE48189E48B029`, built in);
-`--testnet` uses BSC testnet set 2.
+**Networks:** BSC mainnet since 2026-10-30. New tokens go to the V2 pad `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a` (CLI
+0.21.0+; while it is not open yet, `gang create --fly` says so), V1 `0x631e66560F4FAE4e486B65349edE48189E48B029` tokens keep
+working. `--testnet` uses BSC testnet (V1 set 2, V2 `0x706973e4F08dBf1604Cf540d0168428521e0E3d6`).
 
 ```bash
 gang list --kind fly [--status minting|filled|launched|all] [--testnet]   # from the pad, newest first
@@ -63,7 +64,7 @@ against the average over `--twap-window` (which only matters then).
 
 `--dev-shares` (default 1, at most quota and max-per-tx) are minted in the create; the creator's own mints carry no dev
 cut. `--quote` / `--ref-pool` / logo / links work as in [create.md](create.md). While the pad's Agent ID gate is off, a
-sale takes no dev cut: the CLI sets the preset's to 0 (an explicit `--dev-cut` above 0 is refused by `checkConfig`). `--bond`, `--buyback`, `--split` and `--dev-buy` are refused: in phase 1, GangBond, the buy-back splitter and the split module do not take
+sale takes no dev cut: the CLI sets the preset's to 0 (an explicit `--dev-cut` above 0 is refused by `checkConfig`). `--bond`, `--buyback`, `--split`, `--lp` and `--dev-buy` are refused: in phase 1, GangBond, the buy-back splitter, the split module and the LP splitter do not take
 these tokens.
 
 ## Rules to tell the user
