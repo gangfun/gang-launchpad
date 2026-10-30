@@ -76,10 +76,12 @@ try {
   {
     const bin = join(dir, 'bin')
     execFileSync('mkdir', ['-p', bin])
-    // execute answers $FAKE_STATUS; tx-history answers no confirmed tx
+    // execute answers $FAKE_STATUS (or baw's error for two request ids); tx-history answers no confirmed tx
     writeFileSync(join(bin, 'baw'), `#!/bin/sh
 case "$1 $2" in
-  "contract-call execute") if [ "$FAKE_STATUS" = PENDING_CONFIRMATION ]; then echo '{"success":true,"data":{"status":"PENDING_CONFIRMATION","orderId":"o-1"}}'; else echo '{"success":true,"data":{"status":"SUCCESS","txHash":"${h(7)}"}}'; fi ;;
+  "contract-call execute") if [ "$4" = expired-1 ]; then echo '{"success":false,"error":{"code":351806,"name":"SERVICE_ERROR","message":"Preview has expired. Please run preview again."}}'; exit 1
+    elif [ "$4" = risk-1 ]; then echo '{"success":false,"error":{"code":351803,"name":"RISK_REJECTED","message":"Rejected by risk control"}}'; exit 1
+    elif [ "$FAKE_STATUS" = PENDING_CONFIRMATION ]; then echo '{"success":true,"data":{"status":"PENDING_CONFIRMATION","orderId":"o-1"}}'; else echo '{"success":true,"data":{"status":"SUCCESS","txHash":"${h(7)}"}}'; fi ;;
   "wallet tx-history") echo '{"success":true,"data":{"transactions":[],"hasMore":false}}' ;;
   *) echo '{"success":false,"error":"unexpected"}' ;;
 esac
@@ -95,6 +97,13 @@ esac
     assert.equal(run(['execute', '--request-id', 'step-1']).agentNote, undefined)
     rememberPreview('trade-1', { print: 'y', chainId: '56', kind: 'v3', noted: false })
     assert.match(run(['execute', '--request-id', 'trade-1']).agentNote.hint, /^This trade carries no note/)
+
+    // a refusal from baw: error is its message (text, like every gang error), its code next to it, a hint for a known one
+    assert.deepEqual(run(['execute', '--request-id', 'expired-1']),
+      { success: false, error: 'Preview has expired. Please run preview again.', code: 351806, errorName: 'SERVICE_ERROR' })
+    const risk = run(['execute', '--request-id', 'risk-1'])
+    assert.deepEqual([risk.success, risk.error, risk.code], [false, 'Rejected by risk control', 351803])
+    assert.match(risk.hint, /Trade all tokens is off/)
 
     // pending: marked, pointed at gang tx --pending, which says "waiting" until the wallet shows the tx
     rememberPreview('wd-1', { print: callPrint(to, '0xdead'), chainId: '56', kind: 'fair', noted: false })

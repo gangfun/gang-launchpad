@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.17.7'
+  version: '0.17.8'
   requires:
     bins: [baw, gang]
   install:
@@ -110,8 +110,8 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
 
 ## Errors
 
-Failures print `{ "success": false, "error": "…", "hint"?: "…" }`. Follow the `hint`; fix the flags instead of
-retrying the same ones. An error with `retry` is transient: do what its `retry` says (often the same read command, or
-`gang tx --hash …` for a note); never rebuild a trade that may already have been sent. Common: `NO_AGENT_ID` (claim a
-.ai Agent ID, [preflight.md](references/preflight.md)), risk-control code `351803` on a sell (`tradeAllTokens` off),
-an expired preview (build a new one).
+Failures print `{ "success": false, "error": "…", "hint"?: "…" }`; a refusal from the Agentic Wallet also carries its
+`code`. Follow the `hint`; fix the flags instead of retrying the same ones. An error with `retry` is transient: do what
+its `retry` says (often the same read command, or `gang tx --hash …` for a note); never rebuild a trade that may already
+have been sent. Common: `NO_AGENT_ID` (claim a .ai Agent ID, [preflight.md](references/preflight.md)), risk-control code
+`351803` on a sell (`tradeAllTokens` off), an expired preview (build a new one).
