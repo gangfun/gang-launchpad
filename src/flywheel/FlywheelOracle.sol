@@ -11,6 +11,7 @@ interface IFlywheelOracleData {
         returns (uint32 launchedAt, uint8 last, uint224 launchPrice, uint256 launchCumulative);
     function observation(address token, uint256 i) external view returns (uint32 timestamp, uint256 cumulative);
     function blockRefOf(address token) external view returns (uint32 blockNumber, uint224 price);
+    function prevBlockStartOf(address token) external view returns (uint256);
     function peakOf(address token) external view returns (uint32 time, uint224 high);
     function decayedHigh(uint256 high, uint256 elapsed) external pure returns (uint256);
 }
@@ -28,6 +29,8 @@ interface IHasPairView {
 /// @notice Internal library over the raw data FlywheelTaxHandler records on every pool trade:
 ///         - spot: the pair's reserves now;
 ///         - blockStart: the price at this block's first touch (spot if nothing touched the pair yet this block);
+///         - prevStart: the start price of the block touched before (so a buy whose price a dump in the very next block
+///           keeps out of the recent high still counts);
 ///         - high: the recent high of block-start prices, decaying 0.5% a minute: a dump followed by mints finds the
 ///           pre-dump price here, less only 0.5% for every minute the dump was held;
 ///         - average: the TWAP over at least the last 30 minutes (the newest observation at least that old, to now);
@@ -49,6 +52,12 @@ library FlywheelOracle {
         blockStart = b == uint32(block.number) ? bp : spot;
         high = recentHigh(handler, token);
         average = twap(handler, token, pair);
+    }
+
+    /// @dev The start of the block touched before this one (this block not touched yet: the last touched block's).
+    function prevStart(address handler, address token) internal view returns (uint256) {
+        (uint32 b, uint224 bp) = IFlywheelOracleData(handler).blockRefOf(token);
+        return b == uint32(block.number) ? IFlywheelOracleData(handler).prevBlockStartOf(token) : bp;
     }
 
     function spotOf(address pair, address token) internal view returns (uint256) {

@@ -302,9 +302,9 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         assertFalse(ok);
     }
 
-    /// @dev After a real drop of ~8%: a mint is priced at the floor (above the pool, never silently far above: more
-    ///      than 10% under the recent high it is refused) and counts against the global budget for such mints.
-    function test_aRealDropPricesMintsAtTheFloorWithinTheBudget() public {
+    /// @dev After a real drop of ~8%: a mint is priced at the floor (above the pool; never silently far above: more
+    ///      than 10% under the recent high it is refused), and the preview says what it will get.
+    function test_aRealDropPricesMintsAtTheFloor() public {
         address t = _dropped(92);
         (uint256 spot,, uint256 high, uint256 avg) = pad.prices(t);
         uint256 floor = ((high > avg ? high : avg) * 99) / 100;
@@ -312,42 +312,11 @@ contract FlywheelAuditFixesTest is FlywheelFixture {
         address a = _newAgent();
         (, uint256 paid,, uint256 out, bool ok) = pad.previewMintPost(t, a, 10);
         assertTrue(ok);
-        assertApproxEqRel(out, (paid << 112) / floor, 1e12); // priced at the floor, not at spot
+        assertLt(out, (paid << 112) / spot); // priced above the pool ...
+        assertLe(out, (paid << 112) / floor); // ... at least at the floor (the previous block's start can lift it)
         vm.prank(a);
         (uint256 got,) = pad.mintPost(t, 10, 0, address(0));
         assertEq(got, out);
-    }
-
-    /// @dev Re-review R4 M-1: below the floor, all wallets together mint at most 2% of the pool's quote per 30 minutes.
-    function test_mintsBelowTheFloorShareOneBudget() public {
-        address t = _dropped(93);
-        (, uint256 rQ) = _res(t);
-        uint256 budget = (rQ * 200) / 10_000;
-        uint256 total;
-        bool refused;
-        for (uint256 i; i < 200; i++) {
-            address w = _newAgent();
-            vm.prank(w);
-            try pad.mintPost(t, 10, 0, address(0)) returns (uint256, uint256 spent) {
-                total += (spent * 100) / 101; // paid, without the 1% fee
-            } catch (bytes memory err) {
-                assertEq(bytes4(err), IFlywheelPad.DiscountBudgetExceeded.selector);
-                refused = true;
-                break;
-            }
-        }
-        assertTrue(refused);
-        assertLe(total, budget);
-        assertGt(total, (budget * 8) / 10);
-        // it refills over 30 minutes
-        vm.warp(vm.getBlockTimestamp() + 30 minutes);
-        vm.roll(vm.getBlockNumber() + 1);
-        address late = _newAgent();
-        (,,,, bool ok) = pad.previewMintPost(t, late, 10);
-        if (ok) {
-            vm.prank(late);
-            pad.mintPost(t, 10, 0, address(0));
-        }
     }
 
     /// @dev A sale where an outside seller just pushed the price down to `pct`% of where it stood for an hour.

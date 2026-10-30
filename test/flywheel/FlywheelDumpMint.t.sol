@@ -115,3 +115,99 @@ contract FlywheelDumpMintOneBlockTest is FlywheelFixture {
         assertGt(minted, 0, "the attack never got to mint");
     }
 }
+
+/// @notice Re-review R5 M-1, kept as a regression: an outside buyer lifts the price in block A; the attacker dumps it
+///         back as the first trade of A+1 (so the buy's price never becomes a recent high, which needs two block
+///         starts), mints with many Agent IDs in A+2 and buys its bag back. Before pricing mints at 99% of the previous
+///         block's start too, 60 IDs made ~6.7% of the pool (held value). Both the conservative P&L (tokens at the
+///         lower of start and end price, minted tokens less exit costs) and the P&L after selling everything must lose.
+contract FlywheelBackrunDumpTest is FlywheelFixture {
+    address[] internal ws;
+    uint256 internal minted;
+
+    function setUp() public {
+        _deploy();
+    }
+
+    function _buyPaid(address t, address who, uint256 quoteIn) internal {
+        TwapMockPair p = TwapMockPair(_sale(t).pair);
+        (uint256 rT, uint256 rQ) = _res(t);
+        uint256 out = _amountOut(quoteIn, rQ, rT);
+        vm.prank(who);
+        wbnb.transfer(address(p), quoteIn);
+        bool t0 = p.token0() == t;
+        p.swap(t0 ? out : 0, t0 ? 0 : out, who, "");
+    }
+
+    function _quote() internal view returns (int256 q) {
+        for (uint256 i; i < ws.length; i++) q += int256(wbnb.balanceOf(ws[i]));
+    }
+
+    function _run(uint256 nWallets) internal returns (int256 cons, int256 liq) {
+        address t = _create(_wide(), 1);
+        _fillAndLaunch(t);
+        vm.warp(vm.getBlockTimestamp() + 600);
+        vm.roll(vm.getBlockNumber() + 1);
+        address whale = _newAgent();
+        ws.push(whale);
+        _poolBuy(t, whale, 2 ether); // inventory (paid by the fixture, not counted)
+        for (uint256 i; i < nWallets; i++) ws.push(_newAgent());
+        vm.warp(vm.getBlockTimestamp() + 1 hours);
+        vm.roll(vm.getBlockNumber() + 1);
+        handler.observe(t);
+
+        // block A: an outside buy of 10% of the pool's quote
+        uint256 before = _price(t);
+        (, uint256 rQ) = _res(t);
+        _poolBuy(t, _plain(), (rQ * 1_000) / 10_000);
+        uint256 p0 = _price(t);
+        int256 q0 = _quote();
+        uint256 bag = IERC20(t).balanceOf(whale);
+        // block A+1: the attacker's dump is its first trade, back to the pre-buy price
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        for (uint256 i; i < 400 && _price(t) > before; i++) {
+            (uint256 rT,) = _res(t);
+            uint256 x = rT / 400;
+            if (x > IERC20(t).balanceOf(whale)) x = IERC20(t).balanceOf(whale);
+            if (x == 0) break;
+            _poolSell(t, whale, x);
+        }
+        // block A+2: many Agent IDs mint
+        vm.roll(vm.getBlockNumber() + 1);
+        vm.warp(vm.getBlockTimestamp() + 1);
+        for (uint256 i = 1; i <= nWallets; i++) {
+            vm.prank(ws[i]);
+            try pad.mintPost(t, 10, 0, address(0)) {
+                minted++;
+            } catch {}
+        }
+        for (uint256 i; i < 4_000 && IERC20(t).balanceOf(whale) < bag; i++) _buyPaid(t, whale, 0.02 ether);
+        uint256 p1 = _price(t);
+        uint256 pl = p1 < p0 ? p1 : p0;
+        int256 mintedValue;
+        for (uint256 i = 1; i < ws.length; i++) mintedValue += int256((IERC20(t).balanceOf(ws[i]) * pl) / 1e18);
+        int256 overshoot = int256(((IERC20(t).balanceOf(whale) - bag) * pl) / 1e18);
+        cons = (_quote() - q0) + overshoot + mintedValue - (mintedValue * 225) / 10_000;
+        for (uint256 i = 1; i < ws.length; i++) {
+            uint256 b = IERC20(t).balanceOf(ws[i]);
+            if (b != 0) _poolSell(t, ws[i], b);
+        }
+        liq = (_quote() - q0) + overshoot;
+    }
+
+    function test_tenWallets() public {
+        (int256 cons, int256 liq) = _run(10);
+        assertGt(minted, 0, "the attack never got to mint");
+        assertLt(cons, 0, "backrun dump-then-mint paid (held)");
+        assertLt(liq, 0, "backrun dump-then-mint paid (sold)");
+    }
+
+    function test_sixtyWallets() public {
+        (int256 cons, int256 liq) = _run(60);
+        assertGt(minted, 0, "the attack never got to mint");
+        assertLt(cons, 0, "backrun dump-then-mint paid (held)");
+        assertLt(liq, 0, "backrun dump-then-mint paid (sold)");
+    }
+}
+

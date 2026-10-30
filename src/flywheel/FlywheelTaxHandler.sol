@@ -112,6 +112,8 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
     mapping(address token => mapping(address user => uint256)) public boughtInWindow;
     mapping(address token => Oracle) public oracleOf;
     mapping(address token => BlockRef) public blockRefOf;
+    /// @notice The start price of the block touched before the current `blockRefOf` one.
+    mapping(address token => uint256) public prevBlockStartOf;
     mapping(address token => Peak) public peakOf;
     mapping(address token => Observation[OBS_SLOTS]) internal _obs;
 
@@ -180,6 +182,7 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
             Oracle({launchedAt: uint32(block.timestamp), last: 0, launchPrice: price, launchCumulative: cum});
         _obs[token][0] = Observation({timestamp: uint32(block.timestamp), cumulative: cum});
         blockRefOf[token] = BlockRef({blockNumber: uint32(block.number), price: price});
+        prevBlockStartOf[token] = price;
         peakOf[token] = Peak({time: uint32(block.timestamp), high: price});
         emit Launched(token, protectedUntil, gate, cap, price);
     }
@@ -311,6 +314,7 @@ contract FlywheelTaxHandler is PostGradHandlerBase {
             // the recent high, from block-start prices that held for two blocks in a row (a pump inside a block, or
             // one block start pushed up, does not raise it; re-review R4 L-1): decayed to now, then raised
             uint256 held = b.price < price ? b.price : price;
+            prevBlockStartOf[token] = b.price;
             b.blockNumber = uint32(block.number);
             b.price = price;
             Peak storage k = peakOf[token];
