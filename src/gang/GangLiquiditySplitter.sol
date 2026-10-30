@@ -33,8 +33,8 @@ interface ILpPair {
 ///         The two taxes leave fewer tokens than half the chunk buys, so part of the other half stays for the next
 ///         chunk: each step is priced on what the pair actually holds, never on a forecast.
 /// @dev Not upgradeable (an EIP-1167 clone of a fixed implementation), no owner. Trades only with the token's pair;
-///      needs no role from the pad, token, vault or handler. The pair's LP is (nearly) all 0xdead's, so tokens or
-///      quote left in the pair (a dust chunk, a rounding) only deepen the pool for good.
+///      needs no role from the pad, token, vault or handler. Quote or tokens a dust chunk leaves in the pair (a buy of
+///      0 tokens, a mint of 0 LP) stay unsynced there: the next swap or anyone's `skim` takes them.
 contract GangLiquiditySplitter is IGangRecipientModule, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -298,6 +298,10 @@ contract GangLiquiditySplitter is IGangRecipientModule, ReentrancyGuard {
         if (half == 0) return (0, 0, 0);
         lastAddAt = uint64(block.timestamp);
 
+        // set aside before any external call (the views read it during the handler's swap-back, LP audit 2026-10-30 I-5)
+        left -= half;
+        lpLeft = left;
+
         // 1. buy with half, priced on what the pair received (as GangBuybackSplitter v4)
         IERC20(quote).safeTransfer(p, half);
         quoteIn = half;
@@ -312,7 +316,9 @@ contract GangLiquiditySplitter is IGangRecipientModule, ReentrancyGuard {
             if (tokenIs0) IBondPair(p).swap(out, 0, address(this), "");
             else IBondPair(p).swap(0, out, address(this), "");
             bought = IERC20(token).balanceOf(address(this)) - bought;
-            if (bought * half < minTokensOut * got) revert Slippage();
+            // `minTokensOut` is for `half`; scaled down when the pair got less (a quote taxing the transfer), never
+            // up: quote someone left in the pair must not raise the bar and fail the keeper's call (LP audit 2026-10-30 L-1)
+            if (bought * half < minTokensOut * (got < half ? got : half)) revert Slippage();
 
             // 2. all of it back into the pair: the sell tax applies, and the handler may sell a chunk of its tax
             //    first (it moves the reserves), so the quote to match is read after
@@ -327,16 +333,17 @@ contract GangLiquiditySplitter is IGangRecipientModule, ReentrancyGuard {
             uint256 room = chunk - half;
             if (match_ > room) match_ = room;
             uint256 supply = ILpPair(p).totalSupply();
-            // a mint of 0 LP reverts in the pair: then the tokens stay in it (a donation, dust only)
+            // a mint of 0 LP reverts in the pair: then the tokens are left in it unsynced (dust only; the next swap
+            // or anyone's skim takes them)
             if (match_ != 0 && (tokensIn * supply) / rT != 0 && (match_ * supply) / rQ != 0) {
                 IERC20(quote).safeTransfer(p, match_);
                 quoteIn += match_;
+                left -= match_;
+                lpLeft = left;
                 liquidity = ILpPair(p).mint(DEAD);
             }
         }
-        // a buy of 0 tokens (a dust chunk) leaves its quote in the pair as a donation
-        left -= quoteIn;
-        lpLeft = left;
+        // a buy of 0 tokens (dust) leaves its quote in the pair unsynced, likewise
         emit LiquidityAdded(quoteIn, tokensIn, liquidity, left);
     }
 

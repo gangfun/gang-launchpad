@@ -720,6 +720,48 @@ contract GangLiquiditySplitterTest is GangFixture {
         assertEq(_lp(t, donor), 0);
     }
 
+    /// @dev LP audit 2026-10-30 L-1: quote left in the pair just before the keeper's call (to be skimmed back after)
+    ///      must not fail `work(previewWork().minOut)`: the bar is scaled down for a quote that delivers less, never up.
+    function test_add_quoteLeftInPairDoesNotFailTheKeeper() public {
+        (GangLiquiditySplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        address pair = _curvePair(t);
+        (, uint256 rQ) = _reserves(t, pair);
+        wbnb.mintUnlimited(address(s), rQ);
+        s.addChunk(0);
+        _next(10 minutes);
+        (bool due, uint256 minOut) = s.previewWork();
+        assertTrue(due);
+        assertGt(minOut, 0);
+        address griefer = _newAgent();
+        vm.prank(griefer);
+        wbnb.transfer(pair, (rQ * 3) / 100);
+        vm.prank(keeper);
+        s.work(minOut);
+        assertEq(s.lastAddAt(), block.timestamp, "the chunk went through");
+    }
+
+    /// @dev LP audit 2026-10-30 I-3: unsynced quote in the pair makes the match reach the other half; capped there, no
+    ///      revert, the pair ends synced.
+    function test_add_quoteLeftInPairCapsTheMatch() public {
+        (GangLiquiditySplitter s, address t,) = _setup(address(wbnb), 10_000, true);
+        address pair = _curvePair(t);
+        (, uint256 rQ) = _reserves(t, pair);
+        wbnb.mintUnlimited(address(s), rQ);
+        s.addChunk(0);
+        _next(10 minutes);
+        (, uint256 chunk,) = s.previewAdd();
+        address donor = _newAgent();
+        vm.prank(donor);
+        wbnb.transfer(pair, rQ / 100);
+        (uint256 q, uint256 tokensIn, uint256 liq) = s.addChunk(0);
+        assertEq(q, chunk, "matched quote capped at the other half");
+        assertGt(tokensIn, 0);
+        assertGt(liq, 0);
+        (uint256 rT1, uint256 rQ1) = _reserves(t, pair);
+        assertEq(IERC20(t).balanceOf(pair), rT1, "synced");
+        assertEq(wbnb.balanceOf(pair), rQ1, "synced");
+    }
+
     /// @dev GangBond audit 2026-10-29 H-1, as for the buy-back: one chunk per CHUNK_GAP.
     function test_add_oneChunkPerGap() public {
         (GangLiquiditySplitter s,,) = _setup(address(wbnb), 10_000, true);

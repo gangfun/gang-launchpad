@@ -130,6 +130,7 @@ contract LpMainnetForkTest is Test {
         s.addChunk(0);
         uint256 minted;
         uint256 spent;
+        uint256 paidMidChunk;
         for (uint256 i; i < 4; i++) {
             vm.warp(block.timestamp + 10 minutes);
             vm.roll(block.number + 1);
@@ -147,7 +148,11 @@ contract LpMainnetForkTest is Test {
             assertEq(IForkPair(pair).balanceOf(address(s)), 0, "holds no LP");
             minted += liq;
             spent += q;
+            // the deposit let the handler sell its tax into the pair and pay this recipient mid-chunk
+            if (s.unsplit() > 0) paidMidChunk++;
+            s.split();
         }
+        assertGt(paidMidChunk, 0, "the handler's swap-back paid in during a chunk");
         assertGt(minted, 0);
         // Pancake may mint its protocol fee LP to feeTo in the same mint: 0xdead got at least ours
         assertGe(IForkPair(pair).balanceOf(DEAD) - deadLp0, minted, "LP at 0xdead");
