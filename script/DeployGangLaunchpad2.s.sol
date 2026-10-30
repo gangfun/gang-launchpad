@@ -32,7 +32,7 @@ import {DeployGang} from "./DeployGang.s.sol";
 ///            self-check, with the pad still closed allowed, plus 2.0 probes), start the hand-over of the handler and
 ///            the pad to OWNER and print the accept batch, which ends with `setMigrator` (the pad opens only once the
 ///            Safe owns it). OWNER = the deployer (testnet): `setMigrator` right away.
-///         Once 2.0 is open (testnet: phase 1; mainnet: a phase-2 run after batch 2), phase 2 also prints the cut-over batch (`tokenDeployer.setLaunchpad(1.0, false)`: 1.0 stops creating; its
+///         Once 2.0 is open (testnet with the deployer owning the shared contracts: phase 1; else a phase-2 run after the listing / batch 2), phase 2 also prints the cut-over batch (`tokenDeployer.setLaunchpad(1.0, false)`: 1.0 stops creating; its
 ///         tokens trade and graduate as before). The Safe runs it only once the backend, site and CLI use 2.0.
 /// @dev Mainnet broadcast needs GANG_MAINNET_OK=true; mainnet GANG_PAD, the registry, OWNER, KEEPER and the gateway
 ///      must be the known ones, the TWAP window 1.0's, RECIPIENT empty, and the Safe must own every shared contract.

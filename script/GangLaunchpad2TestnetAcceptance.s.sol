@@ -27,7 +27,8 @@ interface IMintableQuote {
 ///            migrator, claim after graduation; the pad then holds no test quote beyond dust.
 /// @dev TESTNET ONLY. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD2, GANG_ROUTER2, TEST_QUOTE (default the testnet one).
 ///      The wallet cap is turned off and on in separate transactions: if the graduating buy fails on chain (forge
-///      stops), the cap stays off. A re-run turns it back on first; or `cast send <pad> "setWalletCapEnabled(bool)" true`.
+///      stops), the cap stays off. A re-run turns it back on first, but only if the rest of the re-run simulates
+///      cleanly (forge sends nothing otherwise); else `cast send <pad> "setWalletCapEnabled(bool)" true`.
 contract GangLaunchpad2TestnetAcceptance is Script {
     uint256 internal constant BPS = 10_000;
 
@@ -133,7 +134,8 @@ contract GangLaunchpad2TestnetAcceptance is Script {
         pad.claimCreatorFee(t, me);
         vm.stopBroadcast();
         if (IERC20(testQuote).balanceOf(me) - q0 != owed) revert Check("B claim after graduation");
-        if (IERC20(testQuote).balanceOf(address(pad)) > padQ0 + 1) revert Check("B pad holds only dust beyond before");
+        uint256 padQ = IERC20(testQuote).balanceOf(address(pad));
+        if (padQ < padQ0 || padQ > padQ0 + 1) revert Check("B pad: back to its balance before the run (+ dust)");
         console.log("B claimed after graduation");
     }
 }
