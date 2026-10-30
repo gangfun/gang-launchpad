@@ -75,6 +75,8 @@ library FlywheelLogic {
     uint256 internal constant MIN_SHARE = 1_000 ether;
     address internal constant DEAD = 0x000000000000000000000000000000000000dEaD;
     uint8 internal constant KIND = 3;
+    /// @notice V2: the largest base quota a sale with post-launch minting may set.
+    uint16 internal constant MAX_POST_QUOTA = 10;
 
     // ---------------------------------------------------------------- create
     function create(
@@ -82,6 +84,7 @@ library FlywheelLogic {
         mapping(address => IFlywheelPad.Sale) storage sales,
         mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
         mapping(address => uint256) storage owedDev,
+        mapping(address => IFlywheelPad.PostRules) storage postRules,
         mapping(address => address) storage bridgePoolOf,
         IGangLaunchpad.Deps memory d,
         string[4] calldata text, // name, symbol, logoURI, metaURI
@@ -100,6 +103,9 @@ library FlywheelLogic {
         if (gate == address(0) && cfg.devCutBps != 0) {
             revert IFlywheelPad.BadConfig("devCutBps must be 0 when ungated");
         }
+        // post-launch mints are priced at the pool and bounded per Agent ID (quota): without the gate nothing bounds
+        // the wallets a dump-then-mint can use (audit V2 A-L1)
+        if (gate == address(0) && cfg.postMint) revert IFlywheelPad.BadConfig("postMint needs the Agent ID gate");
         SharedDividendVault vault = SharedDividendVault(d.dividendVault);
         if (vault.minimumShareBalanceOf(address(this)) > MIN_SHARE) revert IFlywheelPad.VaultFloorTooHigh();
 
@@ -138,16 +144,24 @@ library FlywheelLogic {
         s.stepShares = cfg.stepShares;
         s.maxMulX100 = cfg.maxMulX100;
         s.postMint = cfg.postMint;
+        postRules[token] = IFlywheelPad.PostRules({guardBps: cfg.guardBps, twapWindow: cfg.twapWindow});
 
         emit IFlywheelPad.Created(token, msg.sender, text[0], text[1], text[2], quote, price, cfg);
         _mint(c, sales, accounts, owedDev, d, msg.sender, token, devShares, devShares, address(0), 0);
     }
 
-    /// @notice Every reason `create` would refuse `cfg` (empty = fine).
+    /// @notice Every reason `create` would refuse `cfg` (empty = fine), except the ones that depend on the pad's Agent
+    ///         ID gate (the pad's `checkConfig` adds those). `guardBps` and `twapWindow` are checked even with postMint
+    ///         off.
     function checkConfig(IFlywheelPad.FlyConfig calldata cfg, uint256 devShares) public pure returns (string memory) {
         if (cfg.raiseBnb < MIN_RAISE_BNB || cfg.raiseBnb > MAX_RAISE_BNB) return "raiseBnb must be 3-50 BNB";
         if (cfg.baseQuota < 5 || cfg.baseQuota > 100) return "baseQuota must be 5-100";
+        // V2: post-launch mints are priced at the pool, so a quota bounds what a dump-then-mint with many Agent IDs
+        // can take (the J-preset grid in test/flywheel/FlywheelV2.t.sol)
+        if (cfg.postMint && cfg.baseQuota > MAX_POST_QUOTA) return "baseQuota must be 5-10 with postMint";
         if (cfg.inviteBonus > 3) return "inviteBonus must be 0-3";
+        // V2: invite shares add to what one dump-then-mint can take with its Agent IDs (audit V2 A-M1)
+        if (cfg.postMint && cfg.inviteBonus > 1) return "inviteBonus must be 0-1 with postMint";
         if (cfg.maxPerTx < 1 || cfg.maxPerTx > 10) return "maxPerTx must be 1-10";
         if (cfg.holdBps < 6_000 || cfg.holdBps > 9_000) return "holdBps must be 6000-9000";
         if (cfg.mintFeeBps < 100 || cfg.mintFeeBps > 300) return "mintFeeBps must be 100-300";
@@ -165,6 +179,10 @@ library FlywheelLogic {
             if (cfg.maxMulX100 < 100 || cfg.maxMulX100 > 1_000) return "maxMulX100 must be 100-1000";
         }
         if (cfg.postMint && (cfg.supplyCapMul < 10 || cfg.supplyCapMul > 500)) return "supplyCapMul must be 10-500";
+        if (cfg.guardBps != 0 && cfg.guardBps != 1_500 && cfg.guardBps != 2_000 && cfg.guardBps != 3_000) {
+            return "guardBps must be 0, 1500, 2000 or 3000";
+        }
+        if (cfg.twapWindow != 900 && cfg.twapWindow != 1_800) return "twapWindow must be 900 or 1800";
         if (devShares == 0 || devShares > cfg.baseQuota || devShares > cfg.maxPerTx) {
             return "devShares must be 1..min(baseQuota, maxPerTx)";
         }

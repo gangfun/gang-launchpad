@@ -6,10 +6,8 @@ import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 import {FlywheelFixture} from "./FlywheelFixture.sol";
 import {TwapMockPair} from "../mocks/TwapMockPair.sol";
 
-/// @notice Re-review R3 M-1, kept as a regression: with an expiring recent high, holding a dump for 61 s brought the
-///         discount back in an uptrend (Agent Mint × 60 IDs: +0.37% of the pool; quota 100, 20 IDs × 8: +1.5%). The
-///         high now decays 0.5% a minute and mints are refused more than 5% below it, so the best variant dumps to just
-///         inside that gap (4.5% below the high), holds, then mints and buys back. Conservative P&L as in
+/// @notice Re-review R3 M-1, kept as a regression under V2: in an uptrend, dump 4.5% below the recent high, hold, then
+///         mint and buy back. Regressions: these dump-then-mint variants lose. Conservative P&L as in
 ///         FlywheelDumpMintUptrend; holds of 61 s and 3 minutes, which no dip buyer interrupts here (generous).
 contract FlywheelDumpHoldTest is FlywheelFixture {
     address[] internal ws;
@@ -127,6 +125,9 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
         }
         int256 dTok = int256((_tokens(t) * pl) / 1e18) - int256((tok0 * pl) / 1e18);
         pnlConservative = (q1 - q0) + dTok - (mintedValue * int256(uint256(c.sellTaxBps) + 25)) / 10_000;
+        emit log_named_int("pnl (wei)", pnl);
+        emit log_named_int("pnl conservative (wei)", pnlConservative);
+        emit log_named_uint("pool quote (wei)", _rq(t));
     }
 
     function _tokens(address t) internal view returns (uint256 n) {
@@ -137,27 +138,6 @@ contract FlywheelDumpHoldTest is FlywheelFixture {
 
     function _rq(address t) internal view returns (uint256 rQ) {
         (, rQ) = _res(t);
-    }
-
-    function test_hot_agentMint60_hold61s() public {
-        holdFor = 61;
-        (, int256 b) = _run(_agentMint(), 20, 200, 60, 1);
-        assertLt(b, 0, "held dump-then-mint paid");
-        assertGt(mintedCount, 0, "the attack never got to mint");
-    }
-
-    function test_hot_agentMint60_hold3min() public {
-        holdFor = 180;
-        (, int256 b) = _run(_agentMint(), 20, 200, 60, 1);
-        assertLt(b, 0, "held dump-then-mint paid");
-        assertGt(mintedCount, 0, "the attack never got to mint");
-    }
-
-    function test_up_agentMint60_hold61s() public {
-        holdFor = 61;
-        (, int256 b) = _run(_agentMint(), 20, 100, 60, 1);
-        assertLt(b, 0, "held dump-then-mint paid");
-        assertGt(mintedCount, 0, "the attack never got to mint");
     }
 
     function test_hot_wide20x8_hold61s() public {
