@@ -1,8 +1,8 @@
-# 规格 · 内盘手续费分给 creator（pons 模式，70%）
+# 规格 · GangLaunchpad 2.0：内盘手续费分给 creator（pons 模式，70%）
 
 - 日期：2026-10-31 Asia/Shanghai
 - 作者：Claude（按用户 2026-10-31 的决定：参考 pons，内盘给 creator 奖励，比例 70%；只做 V3 曲线）
-- 性质：**合约已改，未部署**。合约 `src/gang/CurveLogic.sol`、`src/gang/GangLaunchpad.sol`，接口 `src/gang/interfaces/IGangLaunchpad.sol` / `IGangPad.sol`，测试 `test/gang/CreatorFee.t.sol`（其余改动见 §6）。已部署的 GangLaunchpad 不能升级，这套规则只对新一代 pad 上创建的币生效（§7）。
+- 性质：**合约已改，未部署**。合约 `src/gang/CurveLogic.sol`、`src/gang/GangLaunchpad.sol`，接口 `src/gang/interfaces/IGangLaunchpad.sol` / `IGangPad.sol`，测试 `test/gang/CreatorFee.t.sol`（其余改动见 §6）。已部署的 GangLaunchpad（下称 1.0）不能升级，这套规则只对新部署的 **GangLaunchpad 2.0** 上创建的币生效（§7）。
 
 ## 一句话
 
@@ -85,16 +85,17 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 
 ## 7. 上线方式
 
-已部署的 GangLaunchpad 不可升级，creator 分成只能在新部署的 pad 上生效：
+已部署的 GangLaunchpad 不可升级，creator 分成只能在新部署的 pad 上生效。新 pad 叫 **GangLaunchpad 2.0**，旧的叫 1.0（用户 2026-10-31 定名）。2.0 是 pad 的代际，不是新币种：2.0 上发的仍是 V3 曲线币（`kindOf == 1`）和打新币（`kindOf == 2`），曲线、毕业、`curves` 布局、registry 报价都和 1.0 相同，CLI 的 v3 / 打新命令照用。
 
-- 旧 pad 上的币不变：内盘 1% 仍全部进 bucket，creator 拿不到分成。旧 pad 停止创建新币（`TokenDeployer.setLaunchpad(旧 pad, false)`），已有的币照常交易、毕业。
-- 新 pad 需要新的 `GangTaxHandler`（handler 的 `launchpad` 只能设一次），共用现有的 vault、bucket、migrator、QuoteRegistry、TokenDeployer，由 Safe 把新 pad / 新 handler 接上。
-- 构造或初始化时绑死 pad 地址的合约要为新 pad 重新部署：`GangRouter`（`pad` 在初始化时设定）、`GangBond`、`GangBuybackSplitterFactory`、`GangLiquiditySplitterFactory`（后两者还绑定 handler）。`GangGateway` 经 registry 找 pad，不用重部署，只要 registry `addPad(新 pad)`、新 pad `setRouter(gateway)`。
-- `CurveLogic` 的 `buy` / `sell` 多了一个参数，selector 变了：新 pad 必须链接新部署的 `CurveLogic`（和 `FairLogic`），不能复用旧库地址，否则 pad 能创建币却无法交易，而且无法补救。部署自检要检查 `CREATOR_FEE_SHARE_BPS() == 7000`，并实际跑一笔买入、卖出和领取。
+
+- 1.0 上的币不变：内盘 1% 仍全部进 bucket，creator 拿不到分成。1.0 停止创建新币（`TokenDeployer.setLaunchpad(1.0, false)`），已有的币照常交易、毕业。
+- 2.0 需要新的 `GangTaxHandler`（handler 的 `launchpad` 只能设一次），共用现有的 vault、bucket、migrator、QuoteRegistry、TokenDeployer，由 Safe 把 2.0 / 新 handler 接上。
+- 构造或初始化时绑死 pad 地址的合约要为 2.0 重新部署：`GangRouter`（`pad` 在初始化时设定）、`GangBond`、`GangBuybackSplitterFactory`、`GangLiquiditySplitterFactory`（后两者还绑定 handler）。`GangGateway` 经 registry 找 pad，不用重部署，只要 registry `addPad(2.0)`、2.0 `setRouter(gateway)`。
+- `CurveLogic` 的 `buy` / `sell` 多了一个参数，selector 变了：2.0 必须链接新部署的 `CurveLogic`（和 `FairLogic`），不能复用旧库地址，否则 pad 能创建币却无法交易，而且无法补救。部署自检要检查 `CREATOR_FEE_SHARE_BPS() == 7000`，并实际跑一笔买入、卖出和领取。
 - 下游：
-  - indexer 要索引新 pad 和两个新事件。`Buy` / `Sell` 的 `protocolFee` 是整笔 1%，平台收入要减去同一笔交易的 `CreatorFeeAccrued`。同一笔交易里 `CreatorFeeAccrued` 先于 `Buy` / `Sell` 发出，按交易聚合，不要按相邻日志配对。
+  - indexer 要索引 2.0 和两个新事件。`Buy` / `Sell` 的 `protocolFee` 是整笔 1%，平台收入要减去同一笔交易的 `CreatorFeeAccrued`。同一笔交易里 `CreatorFeeAccrued` 先于 `Buy` / `Sell` 发出，按交易聚合，不要按相邻日志配对。
   - 网站展示 creator 可领的分成。
-  - CLI 增加领取命令，并把创建默认指到新 pad。旧 pad 没有 `creatorFeeOf` / `claimCreatorFee`，按 pad 代际分开处理。
+  - CLI 增加领取命令，并把创建默认指到 2.0。1.0 没有 `creatorFeeOf` / `claimCreatorFee`，按 pad 代际分开处理。
   - `to` 是 pad 自己时回滚的是 `ZeroAddress`，提示文案要单独写。
 - 部署脚本、Safe 批次和测试网验收另写记录文档，按「审计 → 修复 → 独立复审 → 测试网 → 用户确认后主网」的流程走。
 
@@ -113,7 +114,7 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
 | 来源 | 级别 | 内容 | 处理 |
 |---|---|---|---|
 | A、B | low | creator 地址不能改，私钥丢失或 creator 是合约时分成会锁死 | 记入 §5，待产品决定是否加"设置领取地址"；目前不改 |
-| B | low | 部署自检认不出旧 pad / 旧 `CurveLogic` | 记入 §7，在新 pad 的部署脚本里实现 |
+| B | low | 部署自检认不出 1.0 pad / 旧 `CurveLogic` | 记入 §7，在 2.0 的部署脚本里实现 |
 | B | info | 不变量的领取动作吞掉回滚 | 已改：回滚计为错误 |
 | A | info | 缺 bucket 拒收和同报价全路径的确定性用例 | 已补 `test_sameQuote_allPathsLeaveCreatorFee` |
 | A、B | info | 刷量 / 自己推毕业更便宜；分成不走税收接收方模块；下游口径 | 记入 §5、§7 |
