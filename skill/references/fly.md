@@ -1,0 +1,98 @@
+# Continuous mint (持续打新, `fly`)
+
+A continuous-mint sale is like a 打新 sale until it launches. Wallets mint **10,000 shares at one price**
+(100,000 tokens a share), each within a **quota**. Before launch they can sell shares back at that price, less the exit
+fee. When the sale fills, or the creator opens it early at 30% sold, it launches into a PancakeSwap V2 pool **at the mint
+price**. After launch, **minting goes on**: the money goes into the pool (part of it buys from the pool), so each mint
+adds buy pressure. Invites raise a wallet's quota. These sales live on their own pad, GangFlywheelPad (kind 3). The
+unified commands detect them (`kind: "fly"`).
+
+**Mainnet:** the pad is deployed, but it does not open until testing on BSC testnet is done. `gang create --fly` on
+mainnet says so; use `--testnet` until then.
+
+```bash
+gang list --kind fly [--status minting|filled|launched|all] [--testnet]   # from the pad, newest first
+gang info --token <addr>                  # the sale, rules, launchAt; after launch: prices, protection, supply, tax
+gang status --token <addr>                # quota / quotaLeft, invites, shares, sell-back; after launch reward + poolSellAll
+gang create --fly --name … --symbol … [--preset j|steady] [flags below] [--dev-shares 1] [--quote … --ref-pool …] [--logo …]
+gang mint --token <addr> --shares <n> [--ref <inviter>] [--slippage 2]   # before launch, or after it (post-launch mint)
+gang withdraw --token <addr> (--shares <n> | --all)                       # sell back before launch
+gang fly open-early --token <addr>        # creator only, ≥ 3,000 shares sold
+gang fly launch --token <addr>            # anyone, once launchAt has passed (gang.fun's keeper also launches)
+gang fly invite --token <addr> [--who <addr>]   # invite link, invites, bonus, quota left
+gang buy | sell --token <addr> …          # after launch: the pool (pool.md)
+gang claim --token <addr>                 # holder reward
+gang release --token <addr>               # push the creator a dev cut / tax share that failed (= gang fly claim-dev)
+```
+
+All of them take `--testnet`, `--calldata` and `--from`. `gang fly <sub>` runs the same code as the unified commands.
+
+## Create
+
+The CLI is the only way to create one (the website has no create page). Agent ID required. `checkConfig` runs before
+anything is sent and its reason is printed.
+
+| Flag | Range | `--preset j` (default) | `--preset steady` |
+|---|---|---|---|
+| `--raise` (BNB worth of the quote; share price = raise / 10,000) | 3–50 | 20 | 20 |
+| `--quota` (shares per wallet, before and after launch together) | 5–100 | 10 | 100 |
+| `--invite-bonus` (quota per invited wallet) | 0–3 | 1 | 0 |
+| `--max-per-tx` | 1–10 | 10 | 10 |
+| `--hold` (hold line, % of what a wallet minted) | 60–90 | 60 | 60 |
+| `--mint-fee` / `--exit-fee` (%) | 1–3 / 1–2 | 1 / 1 | 1 / 1 |
+| `--dev-cut` (% of other wallets' mints to the creator) | 0–10 | 10 | 0 |
+| `--buy-pct` (% of each post-launch mint that buys from the pool) | 0–50 | 30 | 0 |
+| `--sell-tax` (%; buy tax is fixed at 1%) | 1–2 | 2 | 1 |
+| `--launch-delay` (s after the fill) | 0–300 | 60 | 60 |
+| `--window` (protection, s) | 300–1800 | 600 | 600 |
+| `--cap-mul` (protected buy cap = `--quota` × this × 100,000 tokens; invite bonus not counted) | 1–2 | 1 | 1 |
+| `--post-mint` / `--no-post-mint` | | on | off |
+| `--tier flat\|standard\|linear` (post-launch share price) | | standard | flat |
+| `--step-pct` / `--step-shares` / `--max-mul` (linear only) | 0–10 / 100–100,000 / 1–10 | | |
+| `--supply-cap` (× the full pre-launch supply) | 10–500 | 100 | 100 |
+
+`--dev-shares` (default 1, at most quota and max-per-tx) are minted in the create; the creator's own mints carry no dev
+cut. `--quote` / `--ref-pool` / logo / links work as in [create.md](create.md). While the pad's Agent ID gate is off, a
+sale takes no dev cut: the CLI sets the preset's to 0 (an explicit `--dev-cut` above 0 is refused by `checkConfig`). `--bond`, `--buyback` and `--dev-buy` are refused: in phase 1, GangBond and the buy-back splitter do not take
+these tokens.
+
+## Rules to tell the user
+
+- **Quota**: each wallet has `quota = --quota + invite bonus` shares, shared by pre-launch and post-launch mints, and at
+  most `maxPerTx` per mint. `gang status` shows `quotaLeft`. A sell-back gives its shares back to the quota (the mint
+  fee is not returned).
+- **Invites**: an inviter counts only on a wallet's **first** mint in that token, before or after launch, through
+  `--ref <inviter>` or the link `https://gang.fun/token/<token>?ref=<inviter>`. The inviter must have minted in that
+  token and hold an Agent ID; it then gets `inviteBonus` more quota. `gang mint --ref` checks all of this before
+  building, and refuses rather than sending a mint whose invite would not count. Never invent an inviter.
+- **Before launch**: one price. The mint fee is the platform's and is not returned. A sell-back pays the mint price
+  less the exit fee, which drops to 0 after 7 days without progress.
+- **Fill → launch**: at 10,000 shares, or `open-early` at 3,000 or more, minting and sell-backs stop. Anyone launches it
+  `launchDelay` later (`gang info`: `launchAt`, `launchableNow`). A filled sale still not launched 7 days after
+  `launchAt` reopens sell-backs, and can then launch only while at least 3,000 shares are held. Below that it only refunds
+  (`status: refund`).
+- **Protection** after launch (`info.protection`): until `until`, a pool buy needs an Agent ID, and a wallet buys at
+  most the cap (gross tokens from the pool). `gang buy` checks both first. Post-launch mints are not limited by it.
+- **Post-launch mint**: the share price follows the tier table (`info.postMint.sharePriceNow`). The tokens come at no
+  less than the pool price, and the result shows `mintPricePerToken` against `poolPrice`. `minTokensOut` is the preview
+  less `--slippage` (default 2%); `maxSpent` is the previewed paid + fee. A mint is refused while the pool is more than
+  10% below its 30-minute average or its recent high, while the mint price is more than 10% above the pool, past the
+  wallet's 30-minute pace (2% of the pool's quote side), or at the supply cap. The CLI names the rule that applies.
+- **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
+  25%. Sell tax above 1% goes to holders. Only **minted** tokens earn: a wallet's weight is its balance, capped at what it
+  minted. Below the hold line it is **out until its next mint**. Before a sell, check `sellableBeforeOut`. A sell past it
+  is refused without `--confirm-out`, which you add only with the user's yes.
+- **Notes**: `--note` is not matched to these txs yet, and `--follow` is refused.
+- **Private RPC**: the CLI does not broadcast. The Agentic Wallet sends through its own RPC. In the public mempool, a
+  large pool buy can be front-run. For a large buy, use `--calldata` and send the tx through a
+  private submission endpoint. The output says so (`mempoolNote`).
+
+## Errors
+
+`success: false` comes with `error` and a `hint`: the pad's reason (`TooEarly`, `TooFewShares`, `PaceExceeded`,
+`PriceBelowRecentHigh`, `ProtectionCapExceeded`, …), or the CLI's own check (quota used up, inviter not eligible, not
+the creator). Fix the flags or wait instead of retrying the same ones.
+
+Flow: preview, then show the shares, the cost including the mint fee, the quota left, and for a post-launch mint the
+mint price against the pool price. Confirm, then `gang execute`, then `gang tx --hash …`, which decodes `Minted`,
+`Referred`, `PostMinted`, `Filled`, `Launched`, the handler's `Tax*` events and the rest.
