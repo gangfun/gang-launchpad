@@ -53,7 +53,7 @@ assert.deepEqual(post.next, [`gang sell --token ${t(5)} --all`, `gang claim --to
 // the J preset is the spec's template; the invite link is the site's token page with ?ref=
 assert.deepEqual(FLY_PRESETS.j, {
   raise: 20, quota: 10, invite: 1, maxPerTx: 10, hold: 60, mintFee: 1, exitFee: 1, devCut: 10, buyPct: 30, sellTax: 2,
-  launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100, guard: '20', twapWindow: 30,
+  launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100, guard: 'off', twapWindow: 30,
 })
 assert.equal(inviteLink(t(6), t(7)), `https://gang.fun/token/${t(6)}?ref=${t(7)}`)
 
@@ -73,7 +73,8 @@ assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 800n, blockStart: 800n, gua
 assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1101n }), ['above_pool'])
 assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1100n }), [])
 assert.deepEqual(pauseReasons({ v: 2, ...base, room: 1n }), ['supply_cap'])
-assert.deepEqual([FLY_PRESETS.j.guard, FLY_PRESETS.j.twapWindow, FLY_PRESETS.steady.guard], ['20', 30, 'off'])
+// the guard is off by default on every preset; the window is set anyway
+assert.deepEqual([FLY_PRESETS.j.guard, FLY_PRESETS.j.twapWindow, FLY_PRESETS.steady.guard], ['off', 30, 'off'])
 
 // refused before any RPC or wallet call
 const gang = (...args) => {

@@ -471,10 +471,12 @@ const WITHDRAW_TOLERANCE_BPS = 10n
 
 /** J-template preset (spec §3–4) and the plain one; every field a flag can override. */
 export const FLY_PRESETS = {
-  j: { raise: 20, quota: 10, invite: 1, maxPerTx: 10, hold: 60, mintFee: 1, exitFee: 1, devCut: 10, buyPct: 30, sellTax: 2, launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100, guard: '20', twapWindow: 30 },
+  j: { raise: 20, quota: 10, invite: 1, maxPerTx: 10, hold: 60, mintFee: 1, exitFee: 1, devCut: 10, buyPct: 30, sellTax: 2, launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100, guard: 'off', twapWindow: 30 },
   steady: { raise: 20, quota: 100, invite: 0, maxPerTx: 10, hold: 60, mintFee: 1, exitFee: 1, devCut: 0, buyPct: 0, sellTax: 1, launchDelay: 60, window: 600, capMul: 1, postMint: false, tier: 'flat', supplyCap: 100, guard: 'off', twapWindow: 30 },
 }
-// V2 only: the post-launch TWAP guard (off or 15 / 20 / 30% below the average) and its window (15 or 30 minutes)
+// V2 only: the post-launch TWAP guard (off or 15 / 20 / 30% below the average) and its window (15 or 30 minutes). The
+// guard is off by default (the user's choice): minting does not pause on a price drop, and V2's quota cap of 20 shares
+// per wallet bounds what a wallet can mint; the window is still set (it only matters once the guard is on)
 const GUARDS = { off: 0, 15: 1_500, 20: 2_000, 30: 3_000 }
 const TWAP_WINDOWS = { 15: 900, 30: 1_800 }
 // V2: with post-launch minting on, a wallet's quota is at most this many shares
@@ -772,6 +774,11 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
       step: 'create', kind: 'fly', padVersion: ctx.version, pad: ctx.pad, name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata, quote: sym || quote, preset: presetName, config: cfgView(cfg),
       sharePrice: await units(ctx, quote, quoteWbnb ? price : (price * 100n) / 102n), devShares, devCost: await units(ctx, quote, need),
+      ...(v2 && v.postMint && {
+        guardNote: cfg.guardBps
+          ? `post-launch mints pause while the pool is more than ${cfg.guardBps / 100}% below its ${cfg.twapWindow / 60}-minute average (--guard ${cfg.guardBps / 100})`
+          : 'the price guard is off (the default): post-launch minting does not pause when the price drops; the quota cap of 20 shares per wallet bounds it. Turn it on with --guard 15|20|30 (% below the average, over --twap-window 15|30 minutes)',
+      }),
       minWallets: Math.ceil(TOTAL_SHARES / cfg.baseQuota),
       note: '10,000 shares at one price; it launches once they are sold (or you open early at ≥ 30%: gang fly open-early), launchDelay later, by anyone (gang fly launch; gang.fun\'s keeper does it too). Minters can sell back before that at the mint price less the exit fee. No GangBond or buy-back on these tokens.',
     }))

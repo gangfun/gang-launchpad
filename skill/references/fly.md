@@ -50,12 +50,14 @@ anything is sent and its reason is printed.
 | `--tier flat\|standard\|linear` (post-launch share price) | | standard | flat |
 | `--step-pct` / `--step-shares` / `--max-mul` (linear only) | 0–10 / 100–100,000 / 1–10 | | |
 | `--supply-cap` (× the full pre-launch supply) | 10–500 | 100 | 100 |
-| `--guard off\|15\|20\|30` (V2: post-launch mints pause this % below the average) | | 20 | off |
+| `--guard off\|15\|20\|30` (V2: post-launch mints pause this % below the average) | | off | off |
 | `--twap-window 15\|30` (V2: the average's window, minutes) | | 30 | 30 |
 
 **Pad versions.** New tokens go to the V2 pad once it is live (the CLI knows its address); V1 tokens keep working and
 every other command uses the token's own pad (`padVersion` in `gang info`). Only V2 takes `--guard` / `--twap-window`,
-and on V2 `--quota` is at most 20 while post-launch minting is on.
+and on V2 `--quota` is at most 20 while post-launch minting is on. The guard is **off by default**: post-launch minting
+does not pause when the price drops (the quota cap of 20 per wallet bounds it); `--guard 15|20|30` turns it on, measured
+against the average over `--twap-window` (which only matters then).
 
 `--dev-shares` (default 1, at most quota and max-per-tx) are minted in the create; the creator's own mints carry no dev
 cut. `--quote` / `--ref-pool` / logo / links work as in [create.md](create.md). While the pad's Agent ID gate is off, a

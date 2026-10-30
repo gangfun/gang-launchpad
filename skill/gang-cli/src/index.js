@@ -480,7 +480,8 @@ GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET
 for BNB buys / mints and every pool trade; both default to the built-in mainnet / testnet set 10 addresses),
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
 GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2, where new tokens go; built in once live). --guard / --twap-window
-(V2 only): post-launch mints pause while the pool is the guard % below its average over that window (default 20 / 30)
+(V2 only): the guard is off by default (post-launch minting does not pause on a price drop; the quota cap of 20 per
+wallet bounds it); --guard 15|20|30 pauses mints while the pool is that % below its average over --twap-window (30)
 
 Private RPC: this CLI never broadcasts itself. Trades go out through the Agentic Wallet (gang execute), which picks its
 own RPC; a --calldata tx is sent by whatever signs it. To keep a large pool buy out of the public mempool (front-running),
