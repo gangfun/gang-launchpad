@@ -102,7 +102,7 @@ balanceOf(pad, q) = Σ 未发射 sale 的 (已售份数 × 每份价格) + owedF
   1. 部署 handler、pad（连同新的 `CurveLogic` / `FairLogic`）、可升级 Router，接好部署钱包自己能接的（handler 的 pad / keeper、pad 的 Router 和 Gateway、Agent gate、V3 factory、沿用 1.0 的 TWAP 窗口、USDT 桥接池）。共享合约的登记在测试网直接做，主网打印 **Safe 批次 1**（9 笔：vault 登记 pad、阈值、operator、排除新 Router，migrator、TokenDeployer、bucket 两个 operator、registry `addPad`）。
   2. 批次 1 执行后重跑：完整自检（pad 尚未开放也可以），外加 2.0 专属检查：`CREATOR_FEE_SHARE_BPS() == 7000`，并且对未知币调用 `buy` / `sell` / `claimCreatorFee` 必须由新库回滚 `UnknownToken`（链接了旧 `CurveLogic` 就过不了）。然后把 handler 和 pad 转给 Safe，打印 **Safe 批次 2**（接受两份所有权，最后 `setMigrator` 开放 2.0）和 **Safe 批次 3**（切换：`TokenDeployer.setLaunchpad(1.0, false)`，等后端、网站、CLI 都切到 2.0 后再执行）。
 - 主网输入写死（1.0 地址、registry、Gateway、Safe、keeper），共享合约必须都归 Safe；2.0 的 bucket 检查以线上 bucket 当前的 feeVault / burner 为准。
-- 模块（handler admin、三个 factory、Bond）用现有脚本对 2.0 再部署一次；这几个脚本在主网只认 1.0 的地址，2.0 主网地址确定后再加进去。1.0 handler 上人工列入的合作方接收地址不会自动带过来，需要 Safe 在 2.0 上重新列入。
+- 模块（handler admin、三个 factory、Bond）用现有脚本对 2.0 再部署一次；这几个脚本在主网只认 1.0 的地址，2.0 主网地址确定后再加进去。1.0 handler 上人工列入的合作方接收地址不会自动带过来，需要 Safe 在 2.0 上重新列入。2.0 的回购 factory 用的是当前代码，克隆出的模块 `moduleType` 是 `buyback-burn-v4`（1.0 主网是 v3；调用方式相同，见 `docs/MAINNET-BUYBACK-SPLITTER-2026-10-28.md` §v4），后端、网站、CLI 都要认 v4。
 - 按「审计 → 修复 → 独立复审 → 测试网 → 用户确认后主网」的流程走，测试网和主网的部署记录另写文档。
 
 ## 8. 审计重点
