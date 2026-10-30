@@ -5,7 +5,7 @@
 部署前完成的流程：内部审计 → 修复 → 多轮复审 → 测试网部署验收 → 主网前三方审计 → 修复 → 独立复审 → 测试网用修复后的代码重新部署验收（见 `docs/TESTNET-FLYWHEEL-2026-10-30.md`）。
 
 - 链：BSC 主网（chainId 56），区块 130634782–130634823（2026-10-30 16:40:55–16:41:14 +08:00）
-- 当前状态：**第一阶段已完成，发射台尚未开放**（`migrator` 为 0，任何人都还不能创建代币）。三个合约的 owner 暂时是部署钱包，第二阶段交给 Safe。
+- 当前状态：**第一阶段、Safe 第 1 批、第二阶段都已完成，发射台尚未开放**（`migrator` 为 0，任何人都还不能创建代币）。三个合约的 `pendingOwner` 是 Safe，等 Safe 接手（第 2 批）。
 
 ## 地址
 
@@ -21,7 +21,7 @@
 | 注册表 | GangPadRegistry `0x4fF77D4d9ac080939a24E1B805206bA094C44e5C` |
 | handler 的 keeper | `0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7`（`M.KEEPER`） |
 | 最终 owner | Safe `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
-| 部署钱包 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`（第二阶段之后对三个合约没有任何权限） |
+| 部署钱包 | `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`（Safe 接手（第 2 批）之后对三个合约没有任何权限） |
 | 广播记录 | `broadcast/DeployFlywheel.s.sol/56/` |
 | 源码验证 | 5 个合约都已在 BscScan 验证（2026-10-30，`forge verify-contract`，Etherscan v2 接口；solc 0.8.28，优化 200 runs，cancun，`src/flywheel/**` 用 via-ir） |
 
@@ -53,7 +53,7 @@
 
 ## Safe 操作（上线步骤）
 
-1. **把 pad 列入共用合约和注册表**（待执行）。Transaction Builder 文件：`docs/MAINNET-FLYWHEEL-SAFE-BATCH-1-2026-10-30.json`，7 笔：
+1. **把 pad 列入共用合约和注册表**（已执行，2026-10-30）。Transaction Builder 文件：`docs/MAINNET-FLYWHEEL-SAFE-BATCH-1-2026-10-30.json`，7 笔：
 
    | # | to | 调用 |
    |---|---|---|
@@ -66,5 +66,14 @@
    | 7 | GangPadRegistry `0x4fF7…4e5C` | `addPad(pad)`：之后 `lookup(token)` 对这个 pad 的币返回 kind 3 |
 
    这一批执行后发射台仍然关着。
-2. **第二阶段**：第 1 批执行后，部署钱包带 `FLYWHEEL_PAD=0x631e…B029 FLYWHEEL_HANDLER=0xa832…84CF FLYWHEEL_DEPLOYER=0x2C95…072E` 重跑脚本：检查第 1 批的列入，自检，把三个合约的 owner 转给 Safe（Ownable2Step），并输出第 2 批。
-3. **第 2 批：Safe 接手 owner，开放发射台**。三个合约各一笔 `acceptOwnership()`，最后一笔 `pad.setMigrator(迁移器)`。`setMigrator` 执行之后任何人都能创建持续铸币的币，所以等 keeper 能处理新 handler、CLI 支持 kind 3 之后再执行。
+2. **第二阶段**（已执行，2026-10-30，区块 130640343–130640353，17:22:38–17:22:42 +08:00）：部署钱包带 `FLYWHEEL_PAD=0x631e…B029 FLYWHEEL_HANDLER=0xa832…84CF FLYWHEEL_DEPLOYER=0x2C95…072E` 重跑脚本，先模拟后广播。脚本检查了第 1 批的列入并自检通过，然后把三个合约的 owner 转给 Safe（Ownable2Step，Safe 接手前 owner 仍是部署钱包）：
+
+   | 交易 | gas |
+   |---|---|
+   | `MintTokenDeployer.transferOwnership(Safe)` [`0x2da200f6…5fbc`](https://bscscan.com/tx/0x2da200f6f15c22a9aeae5d00653a8a6365f44a36521032398161c9d3b3ee5fbc) | 47,721 |
+   | `handler.transferOwnership(Safe)` [`0xaa945733…adc7`](https://bscscan.com/tx/0xaa94573314e9a568baf2bef3d07316664e0a59a3b965d114ac129e11d784adc7) | 49,101 |
+   | `pad.transferOwnership(Safe)` [`0x9395c8a5…73f0`](https://bscscan.com/tx/0x9395c8a577de1e92eefc82b99b3e34e3193146c4eca60ca1ba1721d7810f73f0) | 48,870 |
+
+   脚本输出的 Safe 批次是「三笔 `acceptOwnership()` + `pad.setMigrator(迁移器)`」，这里拆成下面两批，接手和开放分开签。两批都在主网 fork 上用 Safe 身份按顺序预演过：执行后三个合约的 owner 是 Safe，`migrator()` 是迁移器。
+3. **第 2 批：Safe 接手 owner**（待执行）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-2-ACCEPT-2026-10-30.json`，3 笔：MintTokenDeployer、handler、pad 各一笔 `acceptOwnership()`。执行后部署钱包对三个合约没有任何权限，发射台仍然关着。
+4. **第 3 批：开放发射台**（待执行）。`docs/MAINNET-FLYWHEEL-SAFE-BATCH-3-OPEN-2026-10-30.json`，1 笔：pad `setMigrator(0xfE38fFce7f918cffC26575D125ed6D09864c3604)`，只能设一次。执行后任何人都能创建持续铸币的币，所以要等 keeper、后端、网站和 CLI 都支持 kind 3 并在测试网验收之后再执行。必须在第 2 批之后执行（需要 Safe 是 pad 的 owner）。
