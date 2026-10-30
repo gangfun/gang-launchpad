@@ -252,7 +252,9 @@ contract GangLiquiditySplitter is IGangRecipientModule, ReentrancyGuard {
     /// @notice Split what arrived, then add one chunk of the LP part to the pair (see the contract notes): one per
     ///         CHUNK_GAP (sooner reverts AddTooSoon), at most CHUNK_MAX_BPS of the pair's quote reserve. Returns zeros
     ///         without trading while the price check is not ready (as GangBuybackSplitter's `burnChunk`). Reverts
-    ///         NotTradable before graduation.
+    ///         NotTradable before graduation. Gas: the deposit lets the handler sell a chunk of its tax (GangToken gives
+    ///         that up to 600k), so a chunk takes ~0.55–0.75M on a real pair: send it with the node's estimate, not a
+    ///         fixed or trimmed limit (too little reverts SwapBackOutOfGas).
     /// @param minTokensOut Least tokens the buy half brings in (after the buy tax), scaled to the share of it the pair
     ///        received (a quote taxing the transfer delivers less); checked only when a chunk is added.
     /// @return quoteIn Quote spent (the buy and the deposit); the rest of the chunk stays set aside.
