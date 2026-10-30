@@ -68,7 +68,7 @@ assert.deepEqual(pauseReasons({ v: 1, ...base, prev: 1200n }), ['above_pool']) /
 // V2: no recent-high rule; the guard only when on, strictly below; above_pool from max(spot, blockStart)
 assert.deepEqual(pauseReasons({ v: 2, ...base, high: 5000n }), [])
 assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 500n, blockStart: 500n, high: 5000n, guardBps: 0n }), [])
-assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 799n, blockStart: 799n, guardBps: 2000n }), ['below_average'])
+assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 799n, blockStart: 799n, guardBps: 2000n }), ['below_guard'])
 assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 800n, blockStart: 800n, guardBps: 2000n }), [])
 assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1101n }), ['above_pool'])
 assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1100n }), [])

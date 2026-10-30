@@ -350,7 +350,7 @@ export function pauseReasons({ v, spot, blockStart, high, average, prev = 0n, gu
     const floor = (ref * (BPS - TWAP_FLOOR_BPS)) / BPS
     if (floor > price) price = floor
   } else if (guardBps !== 0n && spot * BPS < average * (BPS - guardBps)) {
-    reasons.push('below_average')
+    reasons.push('below_guard') // gang.fun's code for V2's guard (V1 keeps below_average)
   }
   if (price * BPS > spot * (BPS + GAP_BPS)) reasons.push('above_pool')
   // one share: the buyer's tokens and the liquidity's (at most its price of quote at spot) must fit under the cap
@@ -365,6 +365,7 @@ function pauseText(reason, v, rules) {
   return {
     why: {
       below_average: `the pool price is more than ${guard}% below its ${avg}`,
+      below_guard: `the pool price is more than ${guard}% below its ${avg} (the sale's guard)`,
       below_recent_high: 'the pool price is more than 10% below its recent high',
       above_pool: v === 1 ? 'a mint would be priced more than 10% above the pool (it dropped in the last blocks)' : 'a mint would be priced more than 10% above the pool (it dropped earlier in this block)',
       supply_cap: 'the token\'s supply cap leaves no room for a mint',

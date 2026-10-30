@@ -95,7 +95,7 @@ these tokens.
   - V2: only with the guard on, while the pool is more than the guard below its average over the TWAP window; and while
     the price is more than 10% above the pool in the block of a dump (`info.postMint.rules`).
   The CLI names the rule that applies. `gang info` shows it before any mint: `postMint.pausedNow` with `reason`
-  (`below_average`, `below_recent_high` (V1), `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows
+  (V1: `below_average`, `below_recent_high`; V2: `below_guard`; both: `above_pool`, `supply_cap`) and when minting resumes; `gang status` shows
   `position.mintPaused` for the wallet (also `pace`). While paused, `next` is a pool buy. `info` checks the supply cap
   with a conservative bound, so it may flag `supply_cap` slightly early near the cap; a mint's own preview is exact.
 - **Tax and rewards**: pool buys pay 1% and sells pay 1–2%. The first 1% is split: holders 50%, platform 25%, creator
