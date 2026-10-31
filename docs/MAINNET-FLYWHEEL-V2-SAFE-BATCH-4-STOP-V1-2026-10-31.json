@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 0,
+  "meta": {
+    "name": "gang: stop new creates on the continuous-mint pad V1",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E"
+  },
+  "transactions": [
+    {
+      "to": "0x2C95228AfA6eF211371A87f480aBa0f5c0Da072E",
+      "value": "0",
+      "data": "0x4836a796000000000000000000000000631e66560f4fae4e486b65349ede48189e48b0290000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}

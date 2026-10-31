@@ -204,7 +204,7 @@ assert.equal(unknown.structuredContent.error, 'not a gang command: nonsense (gan
 const help = await call('gang_help', {})
 assert.equal(help.isError, false)
 for (const c of ['gang create', 'gang mint', 'gang withdraw', 'gang claim', 'gang release', 'gang quote', 'gang list', 'gang upload-logo',
-  'gang bond post', 'gang bond burn', 'gang buyback set-payee', 'gang split set-payee', 'gang lp set-payee', 'gang lp add', 'gang v3 income', 'gang tx', '--dev-buy', '--keep-logo-uri']) {
+  'gang bond post', 'gang bond burn', 'gang buyback set-payee', 'gang split set-payee', 'gang lp set-payee', 'gang lp add', 'gang combo set-payee', 'gang combo chunk', 'gang v3 income', 'gang tx', '--dev-buy', '--keep-logo-uri']) {
   assert.ok(help.structuredContent.help.includes(c), `help mentions ${c}`)
 }
 assert.ok(help.structuredContent.rules.some((r) => /no early withdrawal/.test(r)))

@@ -49,8 +49,9 @@ contract ProtectionProbe {
 }
 
 /// @title FlywheelTestnetAccept — acceptance run of the continuous-mint pad on BSC testnet (97)
-/// @notice Phase 1 (ACCEPT_PHASE=1): a test-quote sale (raise 3, quota 100, launchDelay 0, protection 300 s) filled to
-///         30% by 30 throwaway wallets minting along a referral chain (one sells back and re-mints), the creator opens
+/// @notice Phase 1 (ACCEPT_PHASE=1): a test-quote sale (raise 3, quota 10 — the V2 ceiling with post-launch minting —,
+///         guard 20% over a 15-minute TWAP, launchDelay 0, protection 300 s) filled to 30% by 300 throwaway wallets
+///         minting along a referral chain (one sells back and re-mints), the creator opens
 ///         early (launch in the same tx), a probe checks the launch protection refuses a buyer without an Agent ID;
 ///         a WBNB sale takes a BNB mint with change refunded and a sell-back. Phase 2 (ACCEPT_PHASE=2, after the
 ///         protection): post-launch mints (preview checked against the mint), router buy and sell, the keeper sells
@@ -59,7 +60,7 @@ contract ProtectionProbe {
 ///      DEPLOYER_PRIVATE_KEY (the testnet deployer = keeper), FLYWHEEL_PAD, FLYWHEEL_HANDLER; phase 2: ACCEPT_TOKEN.
 ///      Run with --broadcast --slow --legacy --with-gas-price 100000000.
 contract FlywheelTestnetAccept is Script {
-    uint256 internal constant WALLETS = 30;
+    uint256 internal constant WALLETS = 300;
     uint256 internal constant GAS_FUND = 0.004 ether;
     address internal constant TEST_QUOTE = 0x02B3dE73aF2c1F99c7EFbDb65bcB960AACF4CF1c;
     address internal constant PAD_REGISTRY = 0xB11B83C83DEd269B040faecC1D61B4885BA8e56e;
@@ -90,7 +91,7 @@ contract FlywheelTestnetAccept is Script {
     function _cfg() internal pure returns (IFlywheelPad.FlyConfig memory) {
         return IFlywheelPad.FlyConfig({
             raiseBnb: 3 ether,
-            baseQuota: 100,
+            baseQuota: 10,
             inviteBonus: 1,
             maxPerTx: 10,
             holdBps: 6_000,
@@ -107,7 +108,9 @@ contract FlywheelTestnetAccept is Script {
             stepBps: 0,
             stepShares: 0,
             maxMulX100: 0,
-            supplyCapMul: 100
+            supplyCapMul: 100,
+            guardBps: 2_000,
+            twapWindow: 900
         });
     }
 
@@ -131,7 +134,7 @@ contract FlywheelTestnetAccept is Script {
         console.log("ACCEPT_TOKEN", s);
         console.log("ACCEPT_BNB_TOKEN", w);
 
-        // 30 wallets: Agent ID, quote, then 100 shares each along a referral chain (each invited by the previous one)
+        // 300 wallets: Agent ID, quote, then 10 shares each along a referral chain (each invited by the previous one)
         for (uint256 i; i < WALLETS; i++) {
             (uint256 key, address who) = _wallet(i);
             (, address prev) = i == 0 ? (0, me) : _wallet(i - 1);
@@ -141,9 +144,7 @@ contract FlywheelTestnetAccept is Script {
             }
             ITestQuote(TEST_QUOTE).mintUnlimited(who, 10 ether);
             IERC20(TEST_QUOTE).approve(address(pad), type(uint256).max);
-            for (uint256 k; k < 10; k++) {
-                pad.mint(s, 10, 1, prev);
-            }
+            pad.mint(s, 10, 1, prev);
             if (i == 0) {
                 // a sell-back, then the shares minted again
                 uint256 payout = pad.withdraw(s, 5, 0);
@@ -159,7 +160,7 @@ contract FlywheelTestnetAccept is Script {
             }
             vm.stopBroadcast();
         }
-        if (pad.quotaLeft(s, me) != 90 + 1) revert Check("creator's referral bonus missing");
+        if (pad.quotaLeft(s, me) != 1) revert Check("creator's referral bonus missing");
 
         // the creator opens early (launchDelay 0: launch in the same tx); a probe checks the launch protection
         vm.startBroadcast(pk);
@@ -181,6 +182,8 @@ contract FlywheelTestnetAccept is Script {
     function _phase2(address s) internal {
         IFlywheelPad.Sale memory sale = pad.sales(s);
         if (!sale.launched) revert Check("not launched");
+        (uint16 guardBps, uint32 twapWindow) = pad.postRulesOf(s);
+        if (guardBps != 2_000 || twapWindow != 900) revert Check("post rules not stored");
         (uint64 until,,) = handler.protectionOf(s);
         if (block.timestamp < until) {
             revert Check("protection window still open: wait for handler.protectionOf(token)");
@@ -188,7 +191,7 @@ contract FlywheelTestnetAccept is Script {
         // post-launch mints by up to five wallets with quota left (a re-run skips the ones that used theirs); the
         // preview must match
         uint256 minted;
-        for (uint256 i = 10; i < 30 && minted < 5; i++) {
+        for (uint256 i = 10; i < WALLETS && minted < 5; i++) {
             (uint256 key, address who) = _wallet(i);
             uint256 want = pad.quotaLeft(s, who);
             if (want == 0) continue;
