@@ -50,7 +50,7 @@ contract MergeGuardsTest is GangFixture {
     /// @dev gangfun-server indexer/src/v3.js V3_PAD_EVENTS + fairMint.js FAIR_PAD_EVENTS, and the CLI's
     ///      skill/gang-cli/src/v3.js / fair.js PAD_ABI events. All emitted by the one pad.
     function _downstreamPadEvents() internal pure returns (string[] memory s) {
-        s = new string[](15);
+        s = new string[](16);
         // v3.js V3_PAD_EVENTS (CLI v3.js:53-57 has the same strings)
         s[0] =
             "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)";
@@ -79,6 +79,8 @@ contract MergeGuardsTest is GangFixture {
         s[13] = "event CreatorFeeAccrued(address indexed token, address indexed creator, uint256 amount)";
         s[14] =
             "event CreatorFeeClaimed(address indexed token, address indexed creator, address indexed to, uint256 amount)";
+        // graduation target the creator picked (SPEC-CURVE-GRAD-TARGET-2026-10-31): new
+        s[15] = "event GradTargetSet(address indexed token, uint256 gradBnb)";
     }
 
     /// @dev Events the indexer / CLI read from the one tax handler: v3.js V3_ROUTER_EVENTS, V3_REGISTRY_EVENTS,

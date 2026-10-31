@@ -25,8 +25,8 @@ library PadCommon {
     /// @dev The one vault floor of the pad (V3 `TAXED_MIN_SHARE` = 打新 `MIN_SHARE_BALANCE`): holders need a balance
     ///      strictly above it for dividend shares.
     uint256 internal constant MIN_SHARE = 10_000 ether;
-    /// @dev QuoteRegistry rates are "15 BNB worth of quote" (V2 graduation target): V3's TARGET_GRAD_BNB and 打新's
-    ///      REGISTRY_REF_BNB.
+    /// @dev QuoteRegistry rates are "15 BNB worth of quote" (V2 graduation target, 打新's REGISTRY_REF_BNB); toQuote
+    ///      scales them to any BNB amount (a V3 graduation target, a 打新 raise).
     uint256 internal constant REF_BNB = 15 ether;
     uint256 internal constant MIN_REF_DEPTH_BNB = 1 ether;
 

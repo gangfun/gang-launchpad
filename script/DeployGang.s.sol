@@ -466,11 +466,12 @@ contract DeployGang is Script {
     }
 
     /// @dev Both external libraries are linked and live: a delegatecall into an address without code returns nothing,
-    ///      so the pad's decode of these views reverts (WBNB needs no pool: 15 BNB → 15 WBNB, 10_000 shares).
+    ///      so the pad's decode of these views reverts (WBNB needs no pool: the default target in BNB → as much WBNB
+    ///      (1.0: 15, 2.0: 9), 15 BNB → 10_000 shares).
     function _checkLibs(Stack memory s, Cfg memory c) internal view {
         IGangPad pad = IGangPad(s.pad);
         try pad.graduationAmountOf(c.wbnb, address(0)) returns (uint256 g) {
-            if (g != 15 ether) revert WiringCheck("CurveLogic graduationAmountOf");
+            if (g == 0 || g != pad.TARGET_GRAD_BNB()) revert WiringCheck("CurveLogic graduationAmountOf");
         } catch {
             revert WiringCheck("CurveLogic not linked");
         }

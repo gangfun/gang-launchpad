@@ -22,6 +22,7 @@ contract CoreHandler is GangFixture {
 
     address[] public v3Tokens;
     mapping(address => bytes32) public v3ConfigHash;
+    mapping(address => uint256) public v3GradAtCreate;
     address[] public sales;
     mapping(address => mapping(address => bool)) public everOut;
     /// @notice kindOf as read right after create (must never change).
@@ -205,8 +206,12 @@ contract CoreHandler is GangFixture {
         address recipient = noRecipient ? address(0) : self ? creator : treasury;
         IGangLaunchpad.TaxConfig memory tax = _tax(buyBps, sellBps, dividendBps, recipient);
         if (_pick(seed, 5, 5) == 0) tax = _tax(0, 0, 0, address(0)); // untaxed GangToken
+        // half the curves take the 9 BNB default, the rest a picked target (6 / 9 / 12 / 15 BNB)
+        uint256 pick = _pick(seed, 11, 8);
         vm.prank(creator);
-        address t = pad.create("T", "T", "", "", q, address(0), tax);
+        address t = pick < 4
+            ? pad.create("T", "T", "", "", q, address(0), tax)
+            : pad.createWithGradTarget("T", "T", "", "", q, address(0), tax, pad.GRAD_BNB_TIERS()[pick - 4]);
         v3Tokens.push(t);
         kindAtCreate[t] = pad.kindOf(t);
         if (q == address(blq)) blqTokens++;
@@ -217,6 +222,7 @@ contract CoreHandler is GangFixture {
         }
         (uint16 b, uint16 s, uint16 d, address r) = pad.taxConfigOf(t);
         v3ConfigHash[t] = keccak256(abi.encode(b, s, d, r));
+        v3GradAtCreate[t] = pad.gradAmtOf(t);
     }
 
     function v3Buy(uint256 seed, uint256 amount, uint8 path) external action {
@@ -735,6 +741,25 @@ contract CoreInvariantsTest is Test {
             (uint16 b, uint16 s, uint16 d, address r) = h.pad().taxConfigOf(t);
             assertEq(keccak256(abi.encode(b, s, d, r)), h.v3ConfigHash(t), "tax config immutable");
         }
+    }
+
+    /// @dev SPEC-CURVE-GRAD-TARGET: every curve's target is one of the tiers, priced as the view prices it at create
+    ///      (fixed-rate quotes here), and neither changes afterwards.
+    function invariant_v3GradTargetFixed() public view {
+        for (uint256 i = 0; i < h.v3TokenCount(); i++) {
+            address t = h.v3Tokens(i);
+            uint256 g = h.pad().gradTargetOf(t);
+            assertTrue(g == 6 ether || g == 9 ether || g == 12 ether || g == 15 ether, "target is a tier");
+            assertEq(h.pad().gradAmtOf(t), h.v3GradAtCreate(t), "gradAmt fixed");
+            (,,,, uint128 ga,,,,,,,) = h.pad().curves(t);
+            assertEq(
+                ga, h.pad().graduationAmountFor(_curveQuoteOf(t), address(0), g), "gradAmt = the target in the quote"
+            );
+        }
+    }
+
+    function _curveQuoteOf(address t) internal view returns (address q) {
+        (, q,,,,,,,,,,) = h.pad().curves(t);
     }
 
     /// @dev Spec §19 (feat/v3-no-curve-tax, kept): a curve trade (buy direct / via the router / with BNB, or sell)

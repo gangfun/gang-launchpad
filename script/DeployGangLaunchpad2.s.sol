@@ -52,6 +52,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     address internal constant MAINNET_GATEWAY = 0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8;
     address internal constant TESTNET_PAD_REGISTRY = 0xB11B83C83DEd269B040faecC1D61B4885BA8e56e;
     uint256 internal constant CREATOR_FEE_SHARE_BPS = 7_000;
+    uint256 internal constant DEFAULT_GRAD_BNB = 9 ether;
 
     struct Ctx {
         address pad1;
@@ -301,11 +302,18 @@ contract DeployGangLaunchpad2 is DeployGang {
     /// @dev Audit 2026-10-31 (B low): a 1.0 pad, or a 2.0 pad linked to a 1.0 CurveLogic, must not pass. The constant
     ///      proves the pad source; `buy` / `sell` / `claimCreatorFee` on an unknown token must reach the new library
     ///      and revert there with UnknownToken (a 1.0 library has no such selectors: the delegatecall reverts empty).
+    ///      The graduation targets: default 9 BNB, and a picked 6 BNB target priced by the library (WBNB: 6 WBNB).
     function _checkCreatorFee(address pad) internal {
         try IGangPad(pad).CREATOR_FEE_SHARE_BPS() returns (uint256 v) {
             if (v != CREATOR_FEE_SHARE_BPS) revert WiringCheck("pad.CREATOR_FEE_SHARE_BPS");
         } catch {
             revert WiringCheck("pad.CREATOR_FEE_SHARE_BPS (a 1.0 pad?)");
+        }
+        if (IGangPad(pad).TARGET_GRAD_BNB() != DEFAULT_GRAD_BNB) revert WiringCheck("pad.TARGET_GRAD_BNB");
+        try IGangPad(pad).graduationAmountFor(IGangPad(pad).wbnb(), address(0), 6 ether) returns (uint256 g) {
+            if (g != 6 ether) revert WiringCheck("CurveLogic graduationAmountFor");
+        } catch {
+            revert WiringCheck("CurveLogic is not the 2.0 library");
         }
         address probe = address(uint160(uint256(keccak256("gang.deploy2.unknown-token"))));
         bytes[3] memory calls = [

@@ -136,11 +136,12 @@ contract GangLaunchpad2DeployForkTest is Test {
         _expectCheck("RECIPIENT must be empty on mainnet", "RECIPIENT", vm.toString(address(0xCAFE)), address(0));
 
         // review M-1: a 2.0 pad linked to 1.0's CurveLogic fails phase 1 itself, before Safe batch 1 is printed (the
-        // simulation reverts: nothing would be broadcast, nothing for the Safe to list)
+        // simulation reverts: nothing would be broadcast, nothing for the Safe to list). The library check is the
+        // first to hit it: 2.0's graduationAmountOf takes the target, a selector 1.0's library doesn't have.
         address lib = _curveLogicOf();
         bytes memory good = lib.code;
         vm.etch(lib, CURVE_LOGIC_1.code);
-        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "CurveLogic is not the 2.0 library"));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "CurveLogic not linked"));
         d.run();
         vm.etch(lib, good);
 
@@ -183,6 +184,14 @@ contract GangLaunchpad2DeployForkTest is Test {
         vm.prank(creator);
         address t = p.create("Two", "TWO", "", "", M.WBNB, address(0), untaxed);
         assertEq(GangPadRegistry(M.PAD_REGISTRY).padOf(t), s.pad, "registry finds 2.0's token");
+        assertEq(p.gradTargetOf(t), 9 ether, "default target");
+        assertEq(p.gradAmtOf(t), 9 ether);
+        // a picked target, and a USDT one priced through the live reference pool, scaled from the default
+        vm.prank(creator);
+        address t6 = p.createWithGradTarget("Six", "SIX", "", "", M.WBNB, address(0), untaxed, 6 ether);
+        assertEq(p.gradAmtOf(t6), 6 ether, "picked 6 BNB");
+        uint256 u9 = p.graduationAmountOf(M.USDT, M.USDT_REF_POOL);
+        assertApproxEqAbs(p.graduationAmountFor(M.USDT, M.USDT_REF_POOL, 15 ether), (u9 * 15) / 9, 1e6, "USDT scales");
 
         SharedPlatformFeeBucket bucket = SharedPlatformFeeBucket(p.platformBucket());
         uint256 acc0 = bucket.accruedQuote(M.WBNB);
@@ -207,7 +216,7 @@ contract GangLaunchpad2DeployForkTest is Test {
         (,,,,,, bool done,,,, address pair,) = _curve(p, t);
         assertTrue(done && pair != address(0), "graduated through the live migrator");
         uint256 owed = p.creatorFeeOf(t);
-        assertGt(owed, 0.1 ether, "about 0.7% of ~15 BNB");
+        assertGt(owed, 0.05 ether, "about 0.7% of ~9 BNB (the default target)");
         uint256 before = IERC20(M.WBNB).balanceOf(creator);
         vm.prank(creator);
         p.claimCreatorFee(t, creator);
