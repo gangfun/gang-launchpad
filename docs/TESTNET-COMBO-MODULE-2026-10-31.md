@@ -45,6 +45,34 @@ CLI（PR #96）在同一个测试网工厂上另建了一个组合模块 `0x8Da5
 - 拉盘后暂停、转进交易对收税的报价币。
 - 主网的多签 owner 和 `gangQuote` 检查（只在 chainid 56 生效）。
 
+## GangLaunchpad 2.0（测试网第二轮）
+
+2.0 是新一代 pad，有自己的 handler 和 GangHandlerAdmin；组合工厂只认一个 pad，所以每代各部署一个。合约代码与上面相同（同一个提交），只换 `GANG_PAD` / `HANDLER_ADMIN`。
+
+| 项 | 地址 / 交易 |
+|---|---|
+| pad（2.0） | `0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E`，handler `0x5d77…4278`，admin `0xEbFD66D7959f345cbE8023Fa09bDe6f6C8D2eF38` |
+| GangComboSplitterFactory | [`0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD`](https://testnet.bscscan.com/address/0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD)，部署 [`0x27f33fed…120d`](https://testnet.bscscan.com/tx/0x27f33fed3a7a437b2ed838edea357be83fb7fdca56c2585c36ed4b3e40b5120d) |
+| 实现合约 | [`0x43e36F4D953C74B40a7E382693dc77d96467C914`](https://testnet.bscscan.com/address/0x43e36F4D953C74B40a7E382693dc77d96467C914) |
+| `admin.setFactory(factory, true)` | [`0x36f8fef1…1e86`](https://testnet.bscscan.com/tx/0x36f8fef132fe67f6e6c109001016a7160cbdeb11e26a10a6c3dbce694b0d1e86)（部署钱包是 2.0 admin 的 owner，脚本直接执行） |
+
+同一个验收脚本（`COMBO_FACTORY` 指向 2.0 的工厂；比例、收款人同上）：
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 克隆模块 | [`0x4Ea62AfA019a3Df382B96D23628F2236A9EE26Fa`](https://testnet.bscscan.com/address/0x4Ea62AfA019a3Df382B96D23628F2236A9EE26Fa) | [`0xa024bbbd…d320`](https://testnet.bscscan.com/tx/0xa024bbbd9b8f7beab14dfc515f8fccdba570afabcad25e0ee86e96967298d320) |
+| 在 2.0 上建币（买卖税 3%，分红 40%，毕业目标默认 9 BNB） | [`0xb664b14463887302127AaCc44ea4DA80Af8E35ee`](https://testnet.bscscan.com/address/0xb664b14463887302127AaCc44ea4DA80Af8E35ee)，交易对 `0xBfF7…6B15` | [`0x257e1e75…23fc`](https://testnet.bscscan.com/tx/0x257e1e75c458fb1dccf1a17082aaf415dad6c25ab981020fb415924829f123fc) |
+| `bind` | 通过（2.0 的 `kindOf` / `curves` / `routeOf` 与 1.0 相同） | [`0xa7a969e2…0b5d`](https://testnet.bscscan.com/tx/0xa7a969e29b380cdd4a597c39560381c2b947a712fe383b585ec945dde8d70b5d) |
+| 毕业、池子买卖交税 | 一次运行 326 笔，325 笔成功上链，剩下 1 笔是下面的 `split()` | |
+| `split()` | forge 给的 gas limit 只有 113,501，回滚 `PushStarved`（同第一轮，钱没动）；改用 keeper 方式 `work(previewWork().minOut)`（动作字节 4，节点估算 503,568）：回购、加池各 0.002360408044981967，B 0.000944163217992787、部署钱包 0.002203047508649837，逐 wei 一致 | [`0xcaa88743…71f5`](https://testnet.bscscan.com/tx/0xcaa88743e352887be7b4ba27afda38550f6bb2fea6f7ecc02fdbc47afbd171f5) |
+| 等税攒够 | 2.0 这轮税少，回购 / 加池余额都低于储备的 0.05%（`WORK_MIN_BPS`，约 0.0045），`previewWork` 按设计不 due；部署钱包直接转给模块 0.02 测试报价币 | [`0xe8fa7a56…5009`](https://testnet.bscscan.com/tx/0xe8fa7a560bb53c05192ca81cf515dbfa4637d53339119175f27595691cfd5009) |
+| keeper `work`：动作字节 3 | 先拆分（回购、加池各 +0.006，即 0.02 的 30%），再记观察点 | [`0x29141a1c…8a71`](https://testnet.bscscan.com/tx/0x29141a1ca6f4581b50e605c2ff7103bb7d47b61bf911ce98e25fcbd081688a71) |
+| 10 分钟后：动作字节 1 | `BoughtBack(0.008360408044981967, 178,844.63…, 0)`：回购余额花完；同数量的代币转进 0xdead | [`0x06ce234f…faae3`](https://testnet.bscscan.com/tx/0x06ce234fa263d3cd0a75d3ef3cc46445c466dfa894bd74fd4d08a535339faae3) |
+| 4 分钟后：动作字节 2 | `LiquidityAdded(quoteIn 0.008104463673810194, tokensIn 86,619.31…, liquidity 18,435,368,871,107,957,657, left 0.000255944371171773)`：加池余额减少 = `quoteIn`；铸给 0xdead 的 LP = `liquidity`；存币时 handler 的 swap-back 在块中付给模块 0.000504495801998308，留到下次拆分 | [`0x31655617…cf73`](https://testnet.bscscan.com/tx/0x316556170afa8e89b78291e7f4fa62e03606045d8646ec25dabf88a168c6cf73) |
+| 收尾 | 模块不持有代币、不持有 LP；一次性钱包剩下的 0.0063 tBNB 收回 | `--sig "sweep()"` |
+
+2.0 的内盘创作者分成（`creatorFeeOf` = 0.0636）记在 pad 里给 dev 自己领，不经过组合模块，两者互不影响。CLI（PR #98，2.0 那一版）按 pad 版本选组合工厂：在 2.0 上建币时用 2.0 的工厂，模块和币在同一个 pad 上。
+
 ## 复跑
 
 ```sh
