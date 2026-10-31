@@ -394,15 +394,19 @@ contract DeployGangLaunchpad2 is DeployGang {
             console.log(string.concat("gang:", vm.toString(s.pad), "@", vm.toString(s.padBlock)));
         }
         console.log("PENDING: the handler's recipient listings of 1.0 (partners) are not copied; the Safe lists them");
-        console.log("PENDING: modules (GangBond, Buyback / Split / LP factories + a GangHandlerAdmin) for 2.0");
+        console.log("PENDING: modules (GangBond, Buyback / Split / LP / Combo factories + a GangHandlerAdmin) for 2.0");
     }
 
     function _printAccept(Stack memory s, Cfg memory c) internal view {
-        bool acceptH = Ownable(s.handler).owner() != c.owner;
+        address handlerOwner = Ownable(s.handler).owner();
+        // once the modules are in, the owner's GangHandlerAdmin holds the handler: nothing for the Safe to accept
+        bool acceptH = handlerOwner != c.owner && !_isOwnersAdmin(handlerOwner, s.handler, c.owner);
         bool acceptP = Ownable(s.pad).owner() != c.owner;
         bool open = IGangPad(s.pad).migrator() != address(0);
         if (!acceptH && !acceptP && open) {
-            console.log("\nnothing left for the Safe: it owns the handler and the pad, and 2.0 is open");
+            console.log(
+                "\nnothing left for the Safe: it owns the pad and the handler (itself or through its GangHandlerAdmin), and 2.0 is open"
+            );
             return;
         }
         console.log("\n=== Safe batch 2: accept the handler and the pad, open 2.0 (setMigrator) ===");
