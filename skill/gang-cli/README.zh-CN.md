@@ -2,7 +2,7 @@
 
 用 Binance **Agentic Wallet** 操作 [gang.fun](https://gang.fun)。内盘买入/发币需要 SPACE ID `.ai` Agent ID。本 CLI 只组 calldata，签名走 `baw`，不持有私钥。
 
-**`gang create`：** 在 GangLaunchpad 上发 V3 币（`gang create --fair` 发打新）；不带 `--buy-tax` / `--sell-tax` 就是无税币。LaunchpadV2 / Soft / LaunchpadU / LaunchpadS **不再发新币**，存量币照常交易（`gang buy` / `gang sell`）。新币毕业 ≈ **15 BNB**。Soft 存量链上仍为 20 BNB 毕业。
+**`gang create`：** 在 GangLaunchpad 上发 V3 币（`gang create --fair` 发打新）；不带 `--buy-tax` / `--sell-tax` 就是无税币。LaunchpadV2 / Soft / LaunchpadU / LaunchpadS **不再发新币**，存量币照常交易（`gang buy` / `gang sell`）。V3 新币在 GangLaunchpad 1.0 上 **15 BNB** 毕业；2.0 上由 creator 用 `--grad` 选 **6 / 9 / 12 / 15 BNB**（默认 9）。Soft 存量链上仍为 20 BNB 毕业。
 
 **一个动作一条命令（0.12.0+）：** `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` / `release` 对所有币都能用：CLI 先读出这个币的类型，再执行 V3、打新或 V2 / Soft 的逻辑。`gang v3 …` / `gang fair …` 保留为别名。
 
@@ -14,7 +14,7 @@
 
 **自动加池子收款（0.20.0+）：** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` 把 V3 币的税收接收地址设成 dev 自己的加池合约（GangLiquiditySplitter，`lp-burn-v1`，和回购合约同一套规则）：接收地址那份税的 `--lp`% 加进这个币的 PancakeSwap 池子做流动性，LP 打进 0xdead 永久锁定，其余给 dev（或 `--lp-to` 指定的地址）。毕业后由 keeper 分块加池（一半买币，买到的币全部连同对应的报价币放回池子；每 4 分钟最多一块）。比例和收款地址的改法同 `--buyback`（提高立即生效，下调 3 天公告后生效；收款地址立即生效）。报价币要求同 `--buyback` / `--split`。`gang lp …` 查看和操作。已在 BSC 主网（工厂 `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`，2026-10-31 平台多签已放行，已内置）和测试网第 10 套（工厂 `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`）可用。
 
-**GangLaunchpad 2.0 和 creator 分成（0.22.0+）：** 2.0 是同一个内盘的新一代（V3 曲线和打新都一样）。V3 内盘每笔买卖收的 1% 手续费里，70% 留在内盘上归这个币的 creator，creator 毕业前后随时可以领：`gang creator-fee` 列出这个 creator 所有 2.0 币各自可领多少，`gang creator-fee --token <addr> --claim [--to <addr>]` 领取。这笔钱只归 creator 本人，不给税收接收地址，也不经过回购 / 分账 / 加池模块；1.0 的币和打新没有这项。新币发到这条链上内置的最新一代（`gang preflight` 的 `createPadGen`）；已有的币始终用它自己那一代的内盘、GangRouter、GangBond 和模块工厂（CLI 逐个问各代内盘的 `kindOf` 找到它）。BSC 测试网上 2.0 已上线并且是发币目标（内盘 `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`，GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`）；BSC 主网在 2.0 部署前仍是 1.0。
+**GangLaunchpad 2.0 和 creator 分成（0.22.0+）：** 2.0 是同一个内盘的新一代（V3 曲线和打新都一样）。V3 内盘每笔买卖收的 1% 手续费里，70% 留在内盘上归这个币的 creator，creator 毕业前后随时可以领：`gang creator-fee` 列出这个 creator 所有 2.0 币各自可领多少，`gang creator-fee --token <addr> --claim [--to <addr>]` 领取。这笔钱只归 creator 本人，不给税收接收地址，也不经过回购 / 分账 / 加池模块；1.0 的币和打新没有这项。2.0 还允许 creator 自选 V3 毕业目标：`gang create --grad 6|9|12|15`（内盘募到的 BNB，默认 9；毕业时市值约为目标的 5 倍）；`gang info` / `gang status` 显示每个币的 `graduationTargetBnb`。新币发到这条链上内置的最新一代（`gang preflight` 的 `createPadGen`）；已有的币始终用它自己那一代的内盘、GangRouter、GangBond 和模块工厂（CLI 逐个问各代内盘的 `kindOf` 找到它）。BSC 测试网上 2.0 已上线并且是发币目标（内盘 `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`，GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`）；BSC 主网在 2.0 部署前仍是 1.0。
 
 ## 安装
 
@@ -230,7 +230,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 ## 规则（短）
 
 - 内盘每钱包 1%；多付同笔退回。
-- **新**发币（GangLaunchpad）≈15 BNB 毕业。LaunchpadV2 只剩存量币。Soft 存量归档：20 BNB，仅买卖。
+- **新**发币（GangLaunchpad）：1.0 上 15 BNB 毕业，2.0 上按 creator 的 `--grad`（6 / 9 / 12 / 15，默认 9）。LaunchpadV2 只剩存量币。Soft 存量归档：20 BNB，仅买卖。
 - 毕业前不可转账；毕业（或打新发射）后走 PancakeSwap：`gang buy` / `gang sell`
   经 GangRouter 在外盘成交。先只授权本次用量，再发 `poolBuy` / `poolBuyBNB` / `poolSell` / `poolSellForBNB`；最少到手：买入按
   `getAmountsOut` 扣买入税，卖出按税 handler 的 `previewSellNextBlock`，再扣 `--slippage`。`--use-quote` / `--pay-bnb` 选买入用什么付，

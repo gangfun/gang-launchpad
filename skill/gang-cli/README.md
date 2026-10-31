@@ -2,7 +2,7 @@
 
 Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve buys/creates require a SPACE ID `.ai` Agent ID. This CLI builds calldata; `baw` signs — no keys in this package.
 
-**`gang create`:** launches a V3 token on GangLaunchpad (`gang create --fair` a 打新 sale); it's untaxed unless `--buy-tax` / `--sell-tax` are given. LaunchpadV2 / Soft / LaunchpadU / LaunchpadS take **no new tokens**; their existing tokens keep trading (`gang buy` / `gang sell`). New tokens graduate at ≈ **15 BNB**. Soft archive tokens still graduate at 20 BNB on-chain.
+**`gang create`:** launches a V3 token on GangLaunchpad (`gang create --fair` a 打新 sale); it's untaxed unless `--buy-tax` / `--sell-tax` are given. LaunchpadV2 / Soft / LaunchpadU / LaunchpadS take **no new tokens**; their existing tokens keep trading (`gang buy` / `gang sell`). New V3 tokens graduate at **15 BNB** on GangLaunchpad 1.0; on 2.0 the creator picks **6 / 9 / 12 / 15 BNB** with `--grad` (default 9). Soft archive tokens still graduate at 20 BNB on-chain.
 
 **One command per action (0.12.0+):** `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` / `release` work on every token: the CLI reads the token's kind and runs the V3, 打新 or V2 / Soft code. `gang v3 …` / `gang fair …` stay as aliases.
 
@@ -14,7 +14,7 @@ Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve bu
 
 **Auto-liquidity recipient (0.20.0+):** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` makes a V3 token's tax recipient the dev's LP splitter (GangLiquiditySplitter, `lp-burn-v1`, the buy-back splitter's sibling): `--lp` % of the recipient's part of the tax is added to the token's PancakeSwap pair as liquidity whose LP goes to 0xdead (locked for good), the rest goes to the dev or `--lp-to`. After graduation the keeper adds it in chunks (half buys the token, all of it goes back in with the matching quote; one per 4 minutes). The ratio and payee change as for `--buyback` (a raise at once, a cut after a 3-day notice; the payee at once). Same quotes as `--buyback` / `--split`. `gang lp …` shows and drives it. Live on BSC mainnet (factory `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`, allowed by the platform's Safe on 2026-10-31, built in) and testnet set 10 (factory `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`).
 
-**GangLaunchpad 2.0 and the creator fee (0.22.0+):** 2.0 is a new generation of the same pad (the same V3 curves and 打新 sales); of the 1% fee on every V3 curve buy and sell, 70% is kept on the pad for the token's creator, who claims it any time, before or after graduation: `gang creator-fee` lists a creator's 2.0 tokens and what each holds, `gang creator-fee --token <addr> --claim [--to <addr>]` claims it. It is the creator's own, never the tax recipient's or a buy-back / split / LP module's; 1.0 tokens and 打新 sales have none. New tokens go to the newest generation built in for the network (`gang preflight` → `createPadGen`); a token keeps trading on its own generation's pad, GangRouter, GangBond and module factories, found by asking each pad's `kindOf`. On the BSC testnet 2.0 is live and the create target (pad `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`, GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`); BSC mainnet stays on 1.0 until 2.0 is deployed there.
+**GangLaunchpad 2.0 and the creator fee (0.22.0+):** 2.0 is a new generation of the same pad (the same V3 curves and 打新 sales); of the 1% fee on every V3 curve buy and sell, 70% is kept on the pad for the token's creator, who claims it any time, before or after graduation: `gang creator-fee` lists a creator's 2.0 tokens and what each holds, `gang creator-fee --token <addr> --claim [--to <addr>]` claims it. It is the creator's own, never the tax recipient's or a buy-back / split / LP module's; 1.0 tokens and 打新 sales have none. 2.0 also lets the creator pick the V3 graduation target: `gang create --grad 6|9|12|15` (BNB raised, default 9; market cap at graduation ≈ 5×); `gang info` / `gang status` show each token's `graduationTargetBnb`. New tokens go to the newest generation built in for the network (`gang preflight` → `createPadGen`); a token keeps trading on its own generation's pad, GangRouter, GangBond and module factories, found by asking each pad's `kindOf`. On the BSC testnet 2.0 is live and the create target (pad `0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be`, GangRouter `0xb21828C49A526FA293C48990070a518e9ab9FC08`); BSC mainnet stays on 1.0 until 2.0 is deployed there.
 
 ## Install
 
@@ -261,7 +261,7 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 ## Rules (short)
 
 - 1% per-wallet cap on the curve; excess input refunded in-tx.
-- **New** creates (GangLaunchpad) → ≈15 BNB graduation → PancakeSwap V2, LP burned. LaunchpadV2: existing tokens only.
+- **New** creates (GangLaunchpad) → graduation at 15 BNB (1.0) or the creator's `--grad` pick (2.0: 6 / 9 / 12 / 15, default 9) → PancakeSwap V2, LP burned. LaunchpadV2: existing tokens only.
 - Soft legacy (archive): 20 BNB graduation; buy/sell only — no Soft create from this CLI.
 - Before graduation: no transfers, curve only.
 - Graduated / launched: `gang buy` / `gang sell` trade in the PancakeSwap

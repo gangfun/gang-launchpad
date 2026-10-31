@@ -1,14 +1,15 @@
 /**
  * GangLaunchpad generations (1.0 / 2.0) without a chain: which generation a create goes to, how the env overrides it,
  * how a token is moved to its own generation's pad / router / GangBond, how a 1.0 pad is told from a 2.0 one, the 2.0
- * creator fee in gang portfolio, and the creator-fee flags refused before any RPC. The on-chain paths are covered by the
+ * creator fee in gang portfolio, the graduation target a 2.0 creator picks, and the creator-fee / --grad flags refused
+ * before any RPC. The on-chain paths are covered by the
  * testnet run listed in the CLI's release notes.
  *
  *   node skill/gang-cli/test/gens.mjs
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { atTokenPad, creatorFeeShareOf, GANG_GENS, gangGens, genOf, padNets } from '../src/gangpad.js'
+import { atTokenPad, creatorFeeShareOf, GANG_GENS, gangGens, genOf, gradTargetBnbOf, gradTiersOf, padNets } from '../src/gangpad.js'
 import { bondAddress } from '../src/bond.js'
 import { _test } from '../src/portfolio.js'
 
@@ -90,6 +91,27 @@ await assert.rejects(creatorFeeShareOf({ chainId: '97x', pad: V2.pad, read: asyn
 // the failed read is not cached: the next call asks again
 assert.equal(await creatorFeeShareOf({ chainId: 'x1', pad: t(3), read: async () => 7000n }), 7000)
 
+// ---- the V3 graduation target: 2.0 has tiers to pick from and a target per token; 1.0 (and an older 2.0 build) neither
+const E = 10n ** 18n
+const tierRead = (byFn) => async (_a, _abi, fn, args) => {
+  if (!(fn in byFn)) throw new Error(`unexpected ${fn}`)
+  const v = byFn[fn]
+  if (v instanceof Error) throw v
+  return typeof v === 'function' ? v(args) : v
+}
+assert.equal(await gradTiersOf({ chainId: '97', pad: V1.pad, read: never }), null)
+assert.deepEqual(await gradTiersOf({ chainId: 'g1', pad: t(1), read: tierRead({ GRAD_BNB_TIERS: [6n * E, 9n * E, 12n * E, 15n * E] }) }), [6, 9, 12, 15])
+assert.equal(await gradTiersOf({ chainId: 'g1', pad: t(2), read: tierRead({ GRAD_BNB_TIERS: noData }) }), null)
+// a built-in 2.0 pad from before the pick (no GRAD_BNB_TIERS): no tiers, not an error
+assert.equal(await gradTiersOf({ chainId: 'g2', pad: V2.pad, read: tierRead({ GRAD_BNB_TIERS: noData }) }), null)
+await assert.rejects(gradTiersOf({ chainId: 'g1', pad: t(3), read: tierRead({ GRAD_BNB_TIERS: httpErr }) }), /x/)
+await assert.rejects(gradTiersOf({ chainId: 'g1', pad: t(4), read: tierRead({ GRAD_BNB_TIERS: internal }) }), /x/)
+const tiered = { GRAD_BNB_TIERS: [6n * E, 9n * E, 12n * E, 15n * E], TARGET_GRAD_BNB: 9n * E }
+// the token's own pick; a token without one (0) falls back to the pad's default; a pad without tiers: its TARGET_GRAD_BNB
+assert.equal(await gradTargetBnbOf({ chainId: 'g3', pad: t(5), read: tierRead({ ...tiered, gradTargetOf: 6n * E }) }, t(9)), 6)
+assert.equal(await gradTargetBnbOf({ chainId: 'g3', pad: t(5), read: tierRead({ ...tiered, gradTargetOf: 0n }) }, t(9)), 9)
+assert.equal(await gradTargetBnbOf({ chainId: '97', pad: V1.pad, read: tierRead({ TARGET_GRAD_BNB: 15n * E }) }, t(9)), 15)
+
 // ---- gang portfolio: the tokens with a creator fee waiting, nothing when the network has no 2.0 pad
 const fees = {
   scanned: [{ padGen: '2.0' }],
@@ -120,6 +142,12 @@ const refused = (args, re) => {
 refused(['creator-fee', '--claim'], /--claim needs --token/)
 refused(['creator-fee', '--token', t(4), '--to', t(5)], /--to goes with --claim/)
 refused(['creator-fee', '--from', 'foo'], /--from must be a 0x address/)
+// --grad belongs to a V3 curve create, and is a number of BNB
+refused(['create', '--fair', '--name', 'A', '--symbol', 'A', '--grad', '9', '--testnet'], /--grad is a V3 curve setting.*打新/)
+refused(['create', '--fly', '--name', 'A', '--symbol', 'A', '--grad', '9', '--testnet'], /--grad is a V3 curve setting.*铸币飞轮/)
+refused(['fair', 'create', '--name', 'A', '--symbol', 'A', '--grad', '9', '--testnet'], /--grad is a V3 curve setting.*打新/)
+refused(['create', '--name', 'A', '--symbol', 'A', '--grad', 'nine', '--testnet'], /--grad must be the graduation target in BNB raised/)
 assert.match(spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'help'], { encoding: 'utf8' }).stdout, /gang creator-fee --token <addr> --claim \[--to <addr>\]/)
+assert.match(spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'help'], { encoding: 'utf8' }).stdout, /\[--grad 6\|9\|12\|15\]/)
 
 console.log('gens: ok')

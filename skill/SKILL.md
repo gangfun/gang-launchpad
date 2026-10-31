@@ -29,13 +29,15 @@ ID**. Each wallet may hold at most **1% of a token's supply** from the curve; cu
 Before graduation a token **can't be transferred**, only bought and sold on the curve.
 
 **Every new token launches on GangLaunchpad** (BSC mainnet; `--testnet` = BSC testnet, whose tokens have no value), as one of two kinds:
-- **V3**: a bonding curve that graduates at ≈ **15 BNB** of its quote into PancakeSwap V2 (LP burned). Untaxed unless
-  created with a buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
+- **V3**: a bonding curve that graduates into PancakeSwap V2 (LP burned) once its target is raised in its quote: on 1.0
+  always 15 BNB; on 2.0 the creator picks 6 / 9 / 12 / 15 BNB with `--grad` (default 9). Untaxed unless created with a
+  buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
 - **打新 (fair mint)**: shares at one fixed price; the sale launches its pool when it fills ([fair.md](references/fair.md)).
 
 **GangLaunchpad 2.0** is a new generation of the same pad: the same V3 curves and 打新 sales, plus a **creator fee**: of
 the 1% fee on every V3 curve buy and sell, 70% is kept for the token's creator, who claims it any time with
-`gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)). New tokens go to the newest generation the
+`gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)), and a **graduation target the creator
+picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)). New tokens go to the newest generation the
 CLI knows on that network (`gang preflight` → `createPadGen`; 2.0 is on the BSC testnet first, mainnet stays on 1.0
 until 2.0 is deployed there). A token keeps trading on the generation it was created on; the CLI finds it.
 

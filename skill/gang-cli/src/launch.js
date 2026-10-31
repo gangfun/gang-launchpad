@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync,
 import { dirname, join } from 'node:path'
 import { createPublicClient, parseAbi, formatUnits, encodeFunctionData, isAddress, zeroAddress } from 'viem'
 import { DIR } from './notes.js'
-import { creatorFeeShareOf, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { creatorFeeShareOf, gradTiersOf, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { bondAddress, BOND_ABI } from './bond.js'
 import { walletFor } from './fair.js'
 import { parseAmount, parseIntIn, step } from './steps.js'
@@ -236,6 +236,12 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
 
   const client = createPublicClient({ chain: net.chain, transport: rpcTransport(net.rpcs) })
   const read = (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args })
+  // --grad (2.0): checked here, before a module clone, since the create that takes it comes later
+  if (kind === 'v3' && flag('grad')) {
+    const tiers = await gradTiersOf({ chainId: net.chainId, pad: net.pad, read })
+    if (!tiers) fail(`--grad: GangLaunchpad ${net.gen ?? net.pad} has no graduation target to pick: leave --grad out`)
+    if (!tiers.includes(Number(opt('grad')))) fail(`--grad must be one of ${tiers.join(' / ')} (BNB raised)`, { got: opt('grad') ?? null })
+  }
   const key = [net.chainId, net.pad, me.toLowerCase(), kind, name, symbol].join('|')
   const cloneStep = buyback ? 'buyback-splitter' : split ? 'split-module' : 'lp-splitter'
   const steps = [...(mod ? [cloneStep] : []), kind === 'v3' ? 'create' : 'create (dev shares included)', ...(mod ? ['bind'] : []),

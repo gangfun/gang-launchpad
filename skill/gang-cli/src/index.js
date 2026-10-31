@@ -278,14 +278,17 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          copy an image to gang.fun → logoUrl (ipfs://<cid>, for --logo-uri) and url (CDN)
 
   gang create --name <n> --symbol <s> [--buy-tax <1-5> --sell-tax <1-5> [--dividend 0-100] [--recipient <0x…>]]
-              [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL] [--twitter @handle]
-              [--description <text>] [--testnet]
+              [--grad 6|9|12|15] [--quote 0x… --ref-pool 0x…] [--logo <file> | --logo-uri URL] [--website URL]
+              [--twitter @handle] [--description <text>] [--testnet]
                                          a V3 token on GangLaunchpad (LaunchpadV2 / Soft / U / S take no new tokens; --taxed,
                                          the old V2 track, is refused). No --buy-tax / --sell-tax: untaxed (no pool tax, no
                                          dividend, no recipient). Taxed: own buy / sell tax in % (fixed at create), only in the
                                          pool after graduation: 0.5% of volume to the platform; of the rest --dividend % to
                                          holders, the remainder to --recipient (default: you, the creator; or a partner on the
-                                         platform whitelist) in the quote. Curve trades pay only the 1% fee, no tax
+                                         platform whitelist) in the quote. Curve trades pay only the 1% fee, no tax.
+                                         --grad (GangLaunchpad 2.0): the graduation target in BNB raised, 6 / 9 / 12 / 15
+                                         (default 9; market cap at graduation ≈ 5×); 1.0 graduates every curve at 15 and
+                                         refuses --grad. info / status show each token's graduationTargetBnb
   gang create --fair --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] [--mint-fee 1] [--exit-fee 1]
               [--shares 1] [--quote 0x… --ref-pool 0x…] [--logo …] [--website URL] [--twitter @handle] [--description …]
                                          a 打新 (fair mint) sale: one price per share both ways, the last share launches on
@@ -294,7 +297,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          mint fee 1–3%, withdraw fee 1–2% (none after 7 days without 10 new shares). Wraps /
                                          approves first when needed (re-run after each)
                                          both: --quote = WBNB (default) or any 18-decimal token; --ref-pool = a Pancake V2 pair
-                                         or V3 pool holding it, which prices the 15 BNB graduation target / the raise (mainnet
+                                         or V3 pool holding it, which prices the graduation target / the raise (mainnet
                                          USDT defaults to the USDT/WBNB pool) unless gang set a fixed rate. --website /
                                          --twitter / --description and the logo go into the token's metadata JSON (uploaded to
                                          gang.fun; the token's contractURI / metaURI, permanent). --logo-uri images are copied
@@ -1043,7 +1046,10 @@ function checkFlyCreate() {
             : `--${wrong} is a V3 tax setting; a 铸币飞轮 token's tax goes to holders, the platform and the creator in fixed parts`)
   }
 }
+// --grad picks a V3 curve's graduation target (2.0); a 打新 / 铸币飞轮 sale ends at its own --raise
+const GRAD_ONLY_V3 = (what) => `--grad is a V3 curve setting (the graduation target, 2.0): ${what} fills at its --raise instead, so leave --grad out`
 function create() {
+  if (flag('grad') && (flag('fly') || flag('fair'))) fail(GRAD_ONLY_V3(flag('fly') ? 'a 铸币飞轮 sale' : 'a 打新 sale'))
   if (flag('fly')) {
     checkFlyCreate()
     return runFly('create', { ...PAD_IO })

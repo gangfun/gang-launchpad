@@ -16,7 +16,8 @@ aliases of the same code.
 - `gang list --kind v3 [--status curve|graduated|all]` / `--kind fair [--status minting|launched|all]`: GangLaunchpad
   tokens from gang.fun. `gang list` without `--kind`: the older V2 / Soft / U / S tokens, read from the chain.
 - `gang info --token <addr>` (`gang token` is the older name): one token on any pad. `progressPct` = raised /
-  graduation target (V3 and V2 ≈ 15 BNB of the quote; Soft archive tokens 20 BNB). `myRoomTokens` (when signed in):
+  graduation target (V3: `graduationTargetBnb`, 15 BNB on 1.0, the creator's pick of 6 / 9 / 12 / 15 on 2.0; V2 ≈ 15 BNB
+  of the quote; Soft archive tokens 20 BNB). `myRoomTokens` (when signed in):
   how many more tokens this wallet may buy before the 1% cap (10,000,000). `graduated: true` → it trades in the pool at
   `pair`.
 - `gang status --token <addr>`: this wallet's position (V3 dividend and 打新 reward: see their references; graduated:
