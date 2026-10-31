@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1793426782000,
+  "meta": {
+    "name": "Allow the combined tax recipient factory (combo-v1)",
+    "description": "GangHandlerAdmin.setFactory(GangComboSplitterFactory 0xd33C38BE3f8472b3013167830F0638C1704e1DBd, true): its clones (combo-v1) split a V3 token's tax into a buy-back share (bought and burned to 0xdead in chunks), a liquidity share (added to its PancakeSwap pair in chunks, LP to 0xdead) and fixed shares for up to 10 payees. Source verified on BscScan. Existing factories are not changed. gang-launchpad PR #95.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E",
+    "createdFromOwnerAddress": "",
+    "checksum": ""
+  },
+  "transactions": [
+    {
+      "to": "0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985",
+      "value": "0",
+      "data": "0x71013c10000000000000000000000000d33c38be3f8472b3013167830f0638c1704e1dbd0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "factory",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setFactory",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "factory": "0xd33C38BE3f8472b3013167830F0638C1704e1DBd",
+        "allowed": "true"
+      }
+    }
+  ]
+}
