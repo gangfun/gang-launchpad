@@ -23,7 +23,7 @@
 ## 2. 阶段 1
 
 1. 先模拟一遍：不带 `--broadcast`，带 `--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3`。看到 `Safe batch 1` 就说明 batch 1 之前的检查都过了。
-2. 再正式广播：`GANG_MAINNET_OK=true`，带 `--broadcast --slow`。
+2. 再正式广播：`GANG_MAINNET_OK=true`，带 `--broadcast --slow`，同样带上面的 `--libraries`。
 3. 确认所有回执成功，记下 `GANG_PAD2`、`GANG_ROUTER2`、`GANG_PAD2_BLOCK`。
 
 ## 3. 核对 batch 1
@@ -43,13 +43,13 @@
 
 ## 5. 阶段 2
 
-1. 带 `GANG_PAD2` / `GANG_ROUTER2` / `GANG_PAD2_BLOCK` 广播。自检显示 `self-check ok`，并发起 pad 和 handler 的交接。
+1. 带 `GANG_PAD2` / `GANG_ROUTER2` / `GANG_PAD2_BLOCK`，以及 `GANG_MAINNET_OK=true` 和 `--libraries`，正式广播。自检显示 `self-check ok`，并发起 pad 和 handler 的交接。
 2. Safe batch 2：accept handler、accept pad、`setMigrator`。执行后 2.0 开放。
 3. 只读重跑一次。应显示 nothing left，并打印 batch 3，**马上存好**。
 
 ## 6. 模块
 
-每个脚本都用 `GANG_PAD2=<2.0>`。主网上脚本只认已登记、归 Safe 的 2.0，残留的 `GANG_PAD`（1.0）不会被用到。
+每个脚本都用 `GANG_PAD2=<2.0>`，广播时带 `GANG_MAINNET_OK=true`。主网上脚本只认已登记、归 Safe 的 2.0，残留的 `GANG_PAD`（1.0）不会被用到。
 
 1. `DeployGangBuybackSplitterFactory`：部署 admin2 和回购 factory。要求 Safe 持有 handler，且没有进行中的交接。Safe 再执行：
    - `handler.transferOwnership(admin2)`
@@ -66,7 +66,7 @@ Safe 执行 `admin2.exec(list(合作方, label))`。只迁真正的合作方：1
 
 ## 8. 后端、网站、CLI
 
-- indexer：加 `gang:<pad2>@<block>`、bond 和 router（`GANG_PAD_ROUTERS`）；
+- indexer：加 `gang:<pad2>@<block>`、bond 和 router；
 - keeper：加 bond；
 - 网站：填主网 2.0 地址；
 - CLI：在 `GANG_GENS.mainnet` 加 2.0，发布 0.22.0。

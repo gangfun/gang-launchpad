@@ -279,7 +279,10 @@ contract DeployGangLaunchpad2 is DeployGang {
         for (uint256 i; i < 2; i++) {
             Ownable2Step o = Ownable2Step(own[i]);
             // audit 2026-10-31 C info-1: once the modules are in, a GangHandlerAdmin of the owner holds the handler
-            if (i == 0 && _isOwnersAdmin(o.owner(), s.handler, c.owner)) continue;
+            if (i == 0 && _isOwnersAdmin(o.owner(), s.handler, c.owner)) {
+                if (o.pendingOwner() != address(0)) revert WiringCheck("handler hand-over pending");
+                continue;
+            }
             if (c.owner == c.deployer) {
                 if (o.owner() != c.deployer || o.pendingOwner() != address(0)) revert WiringCheck("owner = deployer");
             } else if (o.owner() != c.owner && o.pendingOwner() != c.owner) {
