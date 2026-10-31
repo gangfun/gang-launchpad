@@ -6,13 +6,15 @@
 
 **一个动作一条命令（0.12.0+）：** `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` / `release` 对所有币都能用：CLI 先读出这个币的类型，再执行 V3、打新或 V2 / Soft 的逻辑。`gang v3 …` / `gang fair …` 保留为别名。
 
-**铸币飞轮（0.18.0+）：** `gang create --fly` 在 GangFlywheelPad（单独的发射台，kind 3）上开一场铸币飞轮：按份 mint，每个钱包有额度，邀请可以加额度；打满后按 mint 价开池，开池后还能继续 mint。统一命令会自动识别这类币（`kind: "fly"`），`gang fly …` 是别名。2026-10-30 起在 BSC 主网运行（发射台 `0x631e66560F4FAE4e486B65349edE48189E48B029`，已内置）；`--testnet` 走 BSC 测试网第 2 套。规则见 `skill/references/fly.md`。
+**铸币飞轮（0.18.0+）：** `gang create --fly` 在 GangFlywheelPad（单独的发射台，kind 3）上开一场铸币飞轮：按份 mint，每个钱包有额度，邀请可以加额度；打满后按 mint 价开池，开池后还能继续 mint。统一命令会自动识别这类币（`kind: "fly"`），`gang fly …` 是别名。2026-10-30 起在 BSC 主网运行（V1 发射台 `0x631e66560F4FAE4e486B65349edE48189E48B029`）；0.21.0 起新币发在 V2 发射台 `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a`（已内置；V2 开放前 `create --fly` 会直接说明），其他命令按代币自己的发射台走。`--testnet` 走 BSC 测试网（V1 第 2 套，V2 `0x7069…E3d6`）。规则见 `skill/references/fly.md`。
 
 **V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`，都已内置）；`--testnet` 走 BSC 测试网第 10 套。
 
 **多人分账收款（0.19.0+）：** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` 把 V3 币的税收接收地址设成 dev 自己的分账模块（GangSplitModule，`split-v1`）：接收地址那份税按固定比例分给 1–10 个地址，名单和比例永久不能改（dev 和平台都改不了；每个收款人只能把自己那一份换到别的地址）。`self` 表示发币钱包（也可以写 `me`）；收款人序号和合约一致，从 0 开始（`--index`）。报价币只能是 keeper 会分账的：WBNB（默认）、GANG 或发射台 QuoteRegistry 里的报价币（其他的在克隆前就拒绝，和 `--buyback` 一样）；转进模块的其他资产仍可用 `gang split distribute` 手动分。`gang split …` 查看和操作。已在 BSC 主网（工厂 `0x27e08271E52B2D129c824CD245e69471a8d3067c`，2026-10-30 平台多签已放行，已内置）和测试网第 10 套可用。
 
 **自动加池子收款（0.20.0+）：** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` 把 V3 币的税收接收地址设成 dev 自己的加池合约（GangLiquiditySplitter，`lp-burn-v1`，和回购合约同一套规则）：接收地址那份税的 `--lp`% 加进这个币的 PancakeSwap 池子做流动性，LP 打进 0xdead 永久锁定，其余给 dev（或 `--lp-to` 指定的地址）。毕业后由 keeper 分块加池（一半买币，买到的币全部连同对应的报价币放回池子；每 4 分钟最多一块）。比例和收款地址的改法同 `--buyback`（提高立即生效，下调 3 天公告后生效；收款地址立即生效）。报价币要求同 `--buyback` / `--split`。`gang lp …` 查看和操作。已在 BSC 主网（工厂 `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`，2026-10-31 平台多签已放行，已内置）和测试网第 10 套（工厂 `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`）可用。
+
+**组合收款（0.22.0+）：** 一次有税发射里同时给 `--buyback`、`--lp`、`--split` 中的两个或三个，V3 币的税收接收地址就是一个组合合约（GangComboSplitter，`combo-v1`）：`gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 --split self:70,0x…:30` 把接收地址那份税的 30% 回购销毁、30% 加进池子做流动性（LP 打进 0xdead），其余 40% 推给收款人；`--split` 的比例是「剩下那部分」的比例（这里分别是接收地址那份的 28% / 12%）。不给 `--split` 时剩下的全给 dev；`--buyback` + `--lp` = 100 时不能有收款人。**全部永久不可改**：比例、收款人和份额以后都不能改（不像单独的 `--buyback` / `--lp`，dev 可以调比例）；收款人只能把自己那一份换到新地址。打进来的其他资产：回购 + 加池那部分比例打进 0xdead，其余给收款人。`--buyback-to` / `--lp-to` 不适用。只给一个参数时仍走各自的单独模块。`gang combo status|distribute|release|set-payee|bind|chunk` 查看和操作。已在 BSC 主网（工厂 `0xd33C38BE3f8472b3013167830F0638C1704e1DBd`，2026-10-31 部署，已内置）和测试网第 10 套（工厂 `0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE`）可用。
 
 ## 安装
 
@@ -91,12 +93,15 @@ gang create … --buy-tax 3 --sell-tax 3 --split self:60,0x…:30,0x…:10 [--de
 gang split status|distribute|release|set-payee|bind --token 0x… [--asset 0x…] [--index <i>] [--to 0x…]  # 分账模块：名单（--index 从 0 开始）、待分和欠款；手动分账；收款人换自己的地址
 gang create … --buy-tax 3 --sell-tax 3 --lp 70 [--lp-to 0x…] [--dev-buy …]  # V3：接收地址那份税 70% 加进池子做流动性（LP 打进 0xdead），其余给你（或 --lp-to 指定的地址）
 gang lp status|set|set-payee|apply|bind|release|add --token 0x… [--pct 0-100] [--to 0x…] [--slippage 1]  # 加池合约：比例、收款地址、待加池金额、下一块；add = 现在手动加一块（任何人）
+gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 [--split self:70,0x…:30] [--dev-buy …]  # V3 组合收款：30% 回购销毁，30% 加池，其余给收款人（比例按剩下那部分算；默认给你）。永久不可改
+gang combo status|distribute|release|set-payee|bind|chunk --token 0x… [--asset 0x…] [--index <i>] [--to 0x…] [--slippage 1]  # 组合合约：比例、收款人、待回购 / 待加池、欠款、下一块和 keeper 的计划；chunk = 现在手动做一块（任何人）
 gang create --fair … [--shares <n>] --bond <数量> [--bond-hold …] --bond-days <7-90>                    # 打新：发币（含 dev 份额）→ 押金
 gang execute --request-id <id>
 gang tx --pending                            # 在 Binance App 里批准过的交易：按预览时的调用自动找到交易，再按下面这条处理
 # 铸币飞轮（GangFlywheelPad；主网，--testnet 走测试网第 2 套）。--preset j（默认，J 模板）或 steady，每一项都能单独改：
 # --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90 --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10
 # --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800 --cap-mul 1-2 --post-mint|--no-post-mint
+# 只限 V2 发射台：--guard off|15|20|30（默认 off：价格下跌时不暂停 mint）--twap-window 15|30（默认 30）；开池后 mint 打开时 --quota ≤ 10
 # --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [设置…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <邀请人>] [--slippage 2]   # 开池前按发售价；开池后 mintPost（不低于池子价格）
@@ -198,7 +203,7 @@ gang agents --window 30d --sort follow
 
 | 工具 | 对应 |
 |---|---|
-| `gang_help` | 本 CLI 的完整帮助（所有命令、所有参数）和完整规则（0.17.2+）：没装 skill 的 Agent 在发币、一条命令发射、押金、回购、分账、自动加池子、打新认购 / 撤回之前先读它 |
+| `gang_help` | 本 CLI 的完整帮助（所有命令、所有参数）和完整规则（0.17.2+）：没装 skill 的 Agent 在发币、一条命令发射、押金、回购、分账、自动加池子、组合收款、打新认购 / 撤回之前先读它 |
 | `gang_preflight`、`gang_hot`、`gang_new`、`gang_near_grad`、`gang_info`、`gang_status`、`gang_portfolio`、`gang_notes`、`gang_agents` | 同名的只读命令（`gang_portfolio`：0.17.6+） |
 | `gang_tx` | `gang tx --hash …`：解码交易，发布排队中的想法；`pending: true` 即 `gang tx --pending`，找出在 Binance App 里批准过的交易（不用哈希） |
 | `gang_watch` | `gang watch`，等到 `maxEvents`（默认 1）条或 `timeout`（默认 50s，最长 30m）：返回 `{ events, meta }`，没等到时带 `timedOut: true`，再调一次接着等 |
@@ -246,12 +251,14 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_UPDATE_URL` | 新版本检查查询的地址，默认 `https://registry.npmjs.org/@gangfun/cli/latest`；npmjs 慢或打不开时，可以换成 npm 镜像的 `…/@gangfun/cli/latest` |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | 覆盖合并后的内盘合约 GangLaunchpad（主网 / 测试网），V3 和打新共用（默认：主网 `0x15CF…4365`，测试网第 10 套 `0xFebF…5BB1`）。旧名 `GANG_V3_PAD` / `GANG_FAIR_PAD`、`GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` 仍可用（别名） |
 | `GANG_TESTNET_RPC_URL` | 测试网 RPC，可填一个或逗号分隔的多个（不设时先用 PublicNode，再用 BNB Chain 的测试网节点）；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
-| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad（铸币飞轮）。默认：主网 `0x631e…B029`（2026-10-30 起开放），测试网第 2 套 `0xD648…951c` |
+| `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2（铸币飞轮），新币发在这里。默认：主网 `0x2818…8a5a`，测试网 `0x7069…E3d6` |
+| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad V1（铸币飞轮）。默认：主网 `0x631e…B029`（2026-10-30 起开放），测试网第 2 套 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond（押金承诺，`gang bond`）。默认：主网 `0xe92d…14E4`（2026-10-29 起，CLI 0.16.2+），测试网 `0xd6a8…1086` |
 | `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory（`--split`）。默认：主网 `0x27e0…067c`（2026-10-30 起，CLI 0.19.0+），测试网第 10 套 `0x5F7d…567E` |
 | `GANG_LP_FACTORY` / `GANG_TESTNET_LP_FACTORY` | GangLiquiditySplitterFactory（`--lp`）。默认（CLI 0.20.0+）：主网 `0xE043…C248`（2026-10-31 起），测试网第 10 套 `0xA729…1591` |
+| `GANG_COMBO_FACTORY` / `GANG_TESTNET_COMBO_FACTORY` | GangComboSplitterFactory（同时给 `--buyback` / `--lp` / `--split` 中的几个）。默认（CLI 0.22.0+）：主网 `0xd33C…1DBd`（2026-10-31 起），测试网第 10 套 `0x52a8…4CFE` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter 代理（用原生 BNB 买 V3 / 打新，以及已毕业币的所有外盘买卖）；旧名 `GANG_ROUTER_TESTNET` 仍可用。默认：主网 `0xE040…79C4`，测试网第 10 套 `0x6bB6…C9F6` |
 
 ## 版本
 
-`0.20.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.22.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

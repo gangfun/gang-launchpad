@@ -16,7 +16,7 @@ import {PadCommon} from "../gang/PadCommon.sol";
 import {IFlywheelPad} from "./interfaces/IFlywheelPad.sol";
 import {IFlywheelPadView} from "./interfaces/IFlywheelPadView.sol";
 import {FlywheelLogic} from "./FlywheelLogic.sol";
-import {FlywheelPostLogic, FlywheelPostLogicView} from "./FlywheelPostLogic.sol";
+import {FlywheelPostLogic} from "./FlywheelPostLogic.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {FlywheelOracle} from "./FlywheelOracle.sol";
 
@@ -36,8 +36,11 @@ interface IWBNBLike {
 ///           filled or opened early by the dev (≥ 30% sold); the dev's cut is held until launch;
 ///         - launch (after `launchDelay`, anyone): the pool at the mint price, LP to 0xdead, then a few minutes of
 ///           launch protection (FlywheelTaxHandler);
-///         - after launch (if `postMint`): mints at the tier price per share for tokens at the pool price; the money
-///           goes into the pool (part of it bought from the pair), less the platform's mint fee and the dev's cut.
+///         - after launch (if `postMint`): mints at the tier price per share for tokens at the pool price (V2: the
+///           higher of the price now and at the block's start); the money goes into the pool (part of it bought from
+///           the pair), less the platform's mint fee and the dev's cut. The dev picks the post-launch guard at create:
+///           off, or refuse mints while the pool is 15/20/30% below its TWAP, over a 15- or 30-minute window
+///           (`postRulesOf`).
 ///         Minted tokens earn the holders' part of the pool tax (the handler's holder rule; this pad's `baselineOf`).
 ///         The pad has no power over a sale once created: no pause, no parameter change, no admin exit for escrow.
 /// @dev The two paths live in external libraries (FlywheelLogic, FlywheelPostLogic) run by delegatecall, so the pad
@@ -79,6 +82,9 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     /// @notice Dev cuts the creator could not receive; anyone can `claimDev`.
     mapping(address token => uint256) public owedDev;
     address[] public allTokens;
+    /// @notice Each sale's post-launch guard and TWAP window (V2; fixed at create). Not in `Sale`, whose getter
+    ///         indexers decode as it was.
+    mapping(address token => PostRules) public postRulesOf;
 
     constructor(
         address owner_,
@@ -139,6 +145,8 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         emit V3FactorySet(factory_);
     }
 
+    /// @notice The TWAP window used when pricing a non-BNB quote's reference pool at create (PoolCheck). Not a sale's
+    ///         post-launch TWAP window: each sale fixes its own at create (`postRulesOf`).
     function setTwapWindow(uint32 window) external onlyOwner {
         _config.twapWindow = window;
         emit TwapWindowUpdated(window);
@@ -172,7 +180,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         returns (address token)
     {
         token = FlywheelLogic.create(
-            _config, _sales, accounts, owedDev, bridgePoolOf, _deps(), text, quote, refPool, cfg, devShares
+            _config, _sales, accounts, owedDev, postRulesOf, bridgePoolOf, _deps(), text, quote, refPool, cfg, devShares
         );
         kindOf[token] = KIND;
         logoURIOf[token] = text[2];
@@ -253,7 +261,18 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         returns (uint256 tokensOut, uint256 spent)
     {
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), msg.sender, token, shares, minTokensOut, maxSpent, referrer, 0
+            _sales,
+            accounts,
+            owedDev,
+            postRulesOf,
+            _deps(),
+            msg.sender,
+            token,
+            shares,
+            minTokensOut,
+            maxSpent,
+            referrer,
+            0
         );
     }
 
@@ -269,7 +288,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     ) external nonReentrant returns (uint256 tokensOut, uint256 spent) {
         _forTrader(trader, token);
         (tokensOut, spent) = FlywheelPostLogic.mintPost(
-            _sales, accounts, owedDev, _deps(), trader, token, shares, minTokensOut, maxSpent, referrer, 0
+            _sales, accounts, owedDev, postRulesOf, _deps(), trader, token, shares, minTokensOut, maxSpent, referrer, 0
         );
     }
 
@@ -286,6 +305,7 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
             _sales,
             accounts,
             owedDev,
+            postRulesOf,
             _deps(),
             msg.sender,
             token,
@@ -378,9 +398,10 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     }
 
     /// @notice What `mintPost(token, shares, 0, …)` by `user` would accept, cost (price and fee) and deliver if sent
-    ///         now; `ok` false when it would be refused (not launched / minting off / no Agent ID / no quota / price
-    ///         more than 10% below its average or its recent high / a price more than 10% above the pool / the wallet's
-    ///         pace / the supply cap).
+    ///         now (the same pricing code the mint runs); `ok` false when it would be refused (not launched / minting
+    ///         off / no Agent ID / no quota / the sale's guard: price more than `guardBps` below its TWAP / a price
+    ///         more than 10% above the pool / the wallet's pace / the supply cap, checked against exactly what the mint
+    ///         would newly mint).
     function previewMintPost(address token, address user, uint256 shares)
         external
         view
@@ -393,17 +414,16 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
         if (accepted == 0) return (0, 0, 0, 0, false);
         paid = (accepted * s.basePrice * FlywheelPostLogic.tierX100(s, uint256(s.totalShares) + accepted)) / 100;
         fee = (paid * s.mintFeeBps) / 10_000;
-        (uint256 spot, uint256 blockStart, uint256 high, uint256 average) =
-            FlywheelPostLogicView.prices(taxHandler, token);
-        uint256 price =
-            FlywheelPostLogic.buyerPrice(spot, blockStart, FlywheelOracle.prevStart(taxHandler, token), high, average);
-        tokensOut = Math.mulDiv(paid, 1 << 112, price);
-        if (price * 10_000 > spot * (10_000 + FlywheelPostLogic.HIGH_GAP_BPS)) {
+        FlywheelPostLogic.Pricing memory p = FlywheelPostLogic.pricing(taxHandler, token, s.pair, postRulesOf[token]);
+        tokensOut = Math.mulDiv(paid, 1 << 112, p.price);
+        if (p.belowAverage || p.abovePool) return (accepted, paid, fee, tokensOut, false);
+        if ((FlywheelPostLogic.recentSpent(a) + paid) * 10_000 > p.rQ * FlywheelPostLogic.PACE_POOL_BPS) {
             return (accepted, paid, fee, tokensOut, false);
         }
-        // minted: at most the buyer's tokens plus the liquidity's (at most `paid` of quote at spot)
-        ok = FlywheelPostLogicView.allowed(a, paid, spot, high, average, s.pair, token)
-            && tokensOut + Math.mulDiv(paid, 1 << 112, spot) <= IMintRoom(token).mintRoom();
+        // the supply cap, exactly (audit V2 B-1): what the mint would newly mint, as `mintPost` computes it
+        uint256 net = paid - (user == s.creator ? 0 : (paid * s.devCutBps) / 10_000);
+        uint256 minted = FlywheelPostLogic.newlyMinted(p, s.pair, token, s.quote, s.buyBps, net, tokensOut);
+        ok = minted <= IMintRoom(token).mintRoom();
     }
 
     /// @notice The exit fee a sell-back pays now (0 once the sale has been stale for 7 days).
@@ -414,20 +434,28 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
     /// @notice Every reason `create` would refuse `cfg` now (with the Agent ID gate as currently set).
     function checkConfig(FlyConfig calldata cfg, uint256 devShares) external view returns (bool ok, string memory) {
         string memory reason = FlywheelLogic.checkConfig(cfg, devShares);
-        if (bytes(reason).length == 0 && !_config.agentGateEnabled && cfg.devCutBps != 0) {
-            reason = "devCutBps must be 0 when ungated";
+        if (bytes(reason).length == 0 && !_config.agentGateEnabled) {
+            if (cfg.devCutBps != 0) reason = "devCutBps must be 0 when ungated";
+            else if (cfg.postMint) reason = "postMint needs the Agent ID gate";
         }
         return (bytes(reason).length == 0, reason);
     }
 
-    /// @notice The prices mints are checked and priced with (UQ112x112, quote per token): spot, this block's start, the
-    ///         recent high of block-start prices (decaying 0.5% a minute) and the 30-minute TWAP.
+    /// @notice The prices mints are priced and checked with (UQ112x112, quote per token): spot, this block's start
+    ///         (a mint pays the higher of the two), and the TWAP over the sale's window (the guard compares spot with
+    ///         it). `high` is the handler's recent high of block-start prices (decaying 0.5% a minute), for information
+    ///         only: V2 neither prices nor refuses mints with it.
     function prices(address token)
         external
         view
         returns (uint256 spot, uint256 blockStart, uint256 high, uint256 average)
     {
-        return FlywheelOracle.prices(taxHandler, token);
+        address pair = _sales[token].pair;
+        if (pair == address(0)) revert NotLaunched();
+        spot = FlywheelOracle.spotOf(pair, token);
+        blockStart = FlywheelOracle.blockStart(taxHandler, token, spot);
+        high = FlywheelOracle.recentHigh(taxHandler, token);
+        average = FlywheelOracle.twap(taxHandler, token, pair, postRulesOf[token].twapWindow);
     }
 
     function isAgent(address account) external view returns (bool) {
@@ -456,6 +484,11 @@ contract GangFlywheelPad is IFlywheelPad, IFlywheelPadView, Ownable2Step, Reentr
 
     function agentGateEnabled() external view returns (bool) {
         return _config.agentGateEnabled;
+    }
+
+    /// @notice The reference-pool pricing window (`setTwapWindow`), not a sale's TWAP window (`postRulesOf`).
+    function twapWindow() external view returns (uint32) {
+        return _config.twapWindow;
     }
 
     // ---------------------------------------------------------------- internal

@@ -157,7 +157,8 @@ const refused = (args, re) => {
 const base = ['create', '--name', 'S', '--symbol', 'S', '--from', ME, '--testnet']
 const taxed = [...base, '--buy-tax', '2', '--sell-tax', '2']
 refused([...base, '--split', `${A}:100`], /--split needs a taxed token/)
-refused([...taxed, '--split', `${A}:100`, '--buyback', '50'], /--split or --buyback, not both/)
+// with --buyback / --lp it is a combined recipient (test/combo.mjs): at 100% buy-back + LP no payees are left
+refused([...taxed, '--split', `${A}:100`, '--buyback', '50', '--lp', '50'], /--split is refused/)
 refused([...taxed, '--split', `${A}:100`, '--recipient', A], /leave --recipient out/)
 refused([...taxed, '--split', `${A}:100`, '--dividend', '100'], /nothing to split/)
 refused([...taxed, '--split', `${A}:60,${B}:30`], /add up to 90%/)

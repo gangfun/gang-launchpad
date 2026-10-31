@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { normalize, rank } from '../src/discover.js'
 import { _test } from '../src/portfolio.js'
-import { FLY_PRESETS, inviteLink } from '../src/fly.js'
+import { FLY_PRESETS, inviteLink, pauseReasons } from '../src/fly.js'
 
 const t = (n) => `0x${String(n).padStart(40, '0')}`
 const now = Math.floor(Date.now() / 1000)
@@ -53,9 +53,28 @@ assert.deepEqual(post.next, [`gang sell --token ${t(5)} --all`, `gang claim --to
 // the J preset is the spec's template; the invite link is the site's token page with ?ref=
 assert.deepEqual(FLY_PRESETS.j, {
   raise: 20, quota: 10, invite: 1, maxPerTx: 10, hold: 60, mintFee: 1, exitFee: 1, devCut: 10, buyPct: 30, sellTax: 2,
-  launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100,
+  launchDelay: 60, window: 600, capMul: 1, postMint: true, tier: 'standard', supplyCap: 100, guard: 'off', twapWindow: 30,
 })
 assert.equal(inviteLink(t(6), t(7)), `https://gang.fun/token/${t(6)}?ref=${t(7)}`)
+
+// post-launch mint rules per pad version (prices in any unit: only the ratios matter); one share fits unless room is tiny
+const base = { spot: 1000n, blockStart: 1000n, high: 1000n, average: 1000n, one: 1n, room: 10n ** 40n }
+assert.deepEqual(pauseReasons({ v: 1, ...base }), [])
+// V1: 10% under the average or the recent high; the 99% floor of the references can push the buyer price >10% above
+assert.deepEqual(pauseReasons({ v: 1, ...base, spot: 899n }), ['below_average', 'below_recent_high', 'above_pool'])
+assert.deepEqual(pauseReasons({ v: 1, ...base, spot: 900n, blockStart: 900n }), []) // at the bounds: 90% of both, floor 990 = 900 × 1.1
+assert.deepEqual(pauseReasons({ v: 1, ...base, high: 1200n }), ['below_recent_high', 'above_pool'])
+assert.deepEqual(pauseReasons({ v: 1, ...base, prev: 1200n }), ['above_pool']) // a fresh previous block start
+// V2: no recent-high rule; the guard only when on, strictly below; above_pool from max(spot, blockStart)
+assert.deepEqual(pauseReasons({ v: 2, ...base, high: 5000n }), [])
+assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 500n, blockStart: 500n, high: 5000n, guardBps: 0n }), [])
+assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 799n, blockStart: 799n, guardBps: 2000n }), ['below_guard'])
+assert.deepEqual(pauseReasons({ v: 2, ...base, spot: 800n, blockStart: 800n, guardBps: 2000n }), [])
+assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1101n }), ['above_pool'])
+assert.deepEqual(pauseReasons({ v: 2, ...base, blockStart: 1100n }), [])
+assert.deepEqual(pauseReasons({ v: 2, ...base, room: 1n }), ['supply_cap'])
+// the guard is off by default on every preset; the window is set anyway
+assert.deepEqual([FLY_PRESETS.j.guard, FLY_PRESETS.j.twapWindow, FLY_PRESETS.steady.guard], ['off', 30, 'off'])
 
 // refused before any RPC or wallet call
 const gang = (...args) => {
@@ -79,6 +98,7 @@ refused(['create', '--fly', '--name', 'A', '--symbol', 'A', '--cap', '1'], /--qu
 refused(['create', '--fly', '--fair', '--name', 'A', '--symbol', 'A'], /not both/)
 refused(['create', '--name', 'A', '--symbol', 'A', '--quota', '10'], /add --fly/)
 refused(['create', '--fair', '--name', 'A', '--symbol', 'A', '--invite-bonus', '1'], /add --fly/)
+refused(['create', '--name', 'A', '--symbol', 'A', '--guard', '20'], /add --fly/)
 refused(['fly', 'nope'], /usage: gang fly/)
 // the alias takes the same create checks as gang create --fly
 refused(['fly', 'create', '--name', 'A', '--symbol', 'A', '--shares', '5'], /--dev-shares/)

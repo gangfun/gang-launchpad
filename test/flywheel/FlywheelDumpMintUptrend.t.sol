@@ -6,11 +6,11 @@ import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 import {FlywheelFixture} from "./FlywheelFixture.sol";
 import {TwapMockPair} from "../mocks/TwapMockPair.sol";
 
-/// @notice Re-review of R2-2 M-1, kept as a regression: with spot above the 30-minute TWAP (an uptrend), a 0.99 × TWAP
-///         floor alone left "dump to ~0.98 TWAP in block N, mint in N+1, buy back" profitable (20 Agent IDs: ~0.8% of
-///         the pool at spot/TWAP 1.10). The recent high (highest block-start price of the last one to two minutes)
-///         prices those mints at the pre-dump level. Conservative P&L: tokens at the lower of the start and end price,
-///         minted tokens less their exit costs; the inventory's purchase is not counted (generous to the attacker).
+/// @notice Re-review of R2-2 M-1, kept as a measurement under V2: with spot above the 30-minute TWAP (an uptrend),
+///         "dump to ~0.98 TWAP in block N, mint in N+1, buy back". V1 priced those mints at the pre-dump level (the
+///         recent high); V2 prices them at the pool. Regressions: these dump-then-mint variants lose. Conservative P&L:
+///         tokens at the lower of the start and end price, minted tokens less their exit costs; the inventory's
+///         purchase is not counted (generous to the attacker).
 contract FlywheelDumpMintUptrendTest is FlywheelFixture {
     address[] internal ws;
 
@@ -124,6 +124,9 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
         }
         int256 dTok = int256((_tokens(t) * pl) / 1e18) - int256((tok0 * pl) / 1e18);
         pnlConservative = (q1 - q0) + dTok - (mintedValue * int256(uint256(c.sellTaxBps) + 25)) / 10_000;
+        emit log_named_int("pnl (wei)", pnl);
+        emit log_named_int("pnl conservative (wei)", pnlConservative);
+        emit log_named_uint("pool quote (wei)", _rq(t));
     }
 
     function _tokens(address t) internal view returns (uint256 n) {
@@ -166,6 +169,7 @@ contract FlywheelDumpMintUptrendTest is FlywheelFixture {
         assertLt(b, 0, "dump-then-mint paid");
     }
 
+    /// @dev 20 IDs at the quota cap (10 shares each): loses.
     function test_uptrend_twentyWallets() public {
         (, int256 b) = _run(_wide(), 20, 100, 20, 8);
         assertLt(b, 0, "dump-then-mint paid");

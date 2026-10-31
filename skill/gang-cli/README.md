@@ -6,13 +6,15 @@ Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve bu
 
 **One command per action (0.12.0+):** `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` / `release` work on every token: the CLI reads the token's kind and runs the V3, 打新 or V2 / Soft code. `gang v3 …` / `gang fair …` stay as aliases.
 
-**铸币飞轮 / Mint Flywheel (0.18.0+):** `gang create --fly` starts a sale on GangFlywheelPad (its own pad, kind 3): shares with a quota per wallet (invites add quota), a pool at the mint price once it fills, and minting that goes on after launch. The unified commands detect these tokens (`kind: "fly"`); `gang fly …` is the alias. Live on BSC mainnet since 2026-10-30 (pad `0x631e66560F4FAE4e486B65349edE48189E48B029`, built in); `--testnet` uses BSC testnet set 2. Rules: `skill/references/fly.md`.
+**铸币飞轮 / Mint Flywheel (0.18.0+):** `gang create --fly` starts a sale on GangFlywheelPad (its own pad, kind 3): shares with a quota per wallet (invites add quota), a pool at the mint price once it fills, and minting that goes on after launch. The unified commands detect these tokens (`kind: "fly"`); `gang fly …` is the alias. Live on BSC mainnet since 2026-10-30 (V1 pad `0x631e66560F4FAE4e486B65349edE48189E48B029`); from 0.21.0 new tokens go to the V2 pad `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a` (built in; `create --fly` says so while it is not open yet), and every other command follows the token's own pad. `--testnet` uses BSC testnet (V1 set 2, V2 `0x7069…E3d6`). Rules: `skill/references/fly.md`.
 
 **V3 tax tokens and 打新 (0.9.0+):** on GangLaunchpad, live on BSC mainnet since 2026-10-27 (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`, GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`, both built in); `--testnet` uses BSC testnet set 10.
 
 **Split recipient (0.19.0+):** `gang create … --buy-tax … --sell-tax … --split self:60,0x…:30,0x…:10` makes a V3 token's tax recipient the dev's split module (GangSplitModule, `split-v1`): the recipient's part of the tax is split among 1–10 payees at shares fixed for good (nobody, not the dev, not the platform, can change them; a payee can only move its own slot). `self` is the creating wallet (`me` also works); payee slots are numbered as in the contract, from 0 (`--index`). The quote must be one the keeper splits: WBNB (default), GANG or a quote in the pad's QuoteRegistry (others are refused before the clone, as for `--buyback`); `gang split distribute` still splits any asset sent to the module. `gang split …` shows and drives it. Live on BSC mainnet (factory `0x27e08271E52B2D129c824CD245e69471a8d3067c`, allowed by the platform's Safe on 2026-10-30, built in) and testnet set 10.
 
 **Auto-liquidity recipient (0.20.0+):** `gang create … --buy-tax … --sell-tax … --lp 70 [--lp-to 0x…]` makes a V3 token's tax recipient the dev's LP splitter (GangLiquiditySplitter, `lp-burn-v1`, the buy-back splitter's sibling): `--lp` % of the recipient's part of the tax is added to the token's PancakeSwap pair as liquidity whose LP goes to 0xdead (locked for good), the rest goes to the dev or `--lp-to`. After graduation the keeper adds it in chunks (half buys the token, all of it goes back in with the matching quote; one per 4 minutes). The ratio and payee change as for `--buyback` (a raise at once, a cut after a 3-day notice; the payee at once). Same quotes as `--buyback` / `--split`. `gang lp …` shows and drives it. Live on BSC mainnet (factory `0xE0436867dAFcf42Ee1418083251a9B8B61F0C248`, allowed by the platform's Safe on 2026-10-31, built in) and testnet set 10 (factory `0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591`).
+
+**Combined recipient (0.22.0+):** two or three of `--buyback`, `--lp`, `--split` on one taxed launch make a V3 token's tax recipient one GangComboSplitter (`combo-v1`): `gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 --split self:70,0x…:30` buys back and burns 30% of the recipient's part, adds 30% to the pair as liquidity (LP to 0xdead) and pushes the rest (40%) to the payees, whose `--split` shares are of that rest (here 28% / 12% of the recipient's part); without `--split` the rest goes to the dev, and `--buyback` + `--lp` = 100 takes no payees. **Everything is permanent**: the ratios, payees and shares can never change (unlike a lone `--buyback` / `--lp`, whose ratio the dev can change); a payee can only move its own slot. Any other asset sent to it: the buy-back + LP share to 0xdead, the rest to the payees. `--buyback-to` / `--lp-to` don't apply. One flag alone still uses its own module. `gang combo status|distribute|release|set-payee|bind|chunk` shows and drives it. On BSC mainnet (factory `0xd33C38BE3f8472b3013167830F0638C1704e1DBd`, deployed 2026-10-31, built in) and testnet set 10 (factory `0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE`).
 
 ## Install
 
@@ -83,6 +85,7 @@ gang create --fair --name <n> --symbol <s> [--raise 15] [--cap 0.5] [--hold 60] 
 # steady; every setting can be overridden: --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90
 # --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10 --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800
 # --cap-mul 1-2 --post-mint|--no-post-mint --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
+# V2 pad only: --guard off|15|20|30 (default off: no pause on price drops) --twap-window 15|30 (default 30); --quota ≤ 10 with post-launch minting
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [settings…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <inviter>] [--slippage 2]   # before launch: the sale price; after: mintPost (pool price or above)
 gang fly open-early --token <addr>           # creator, ≥ 30% sold
@@ -111,6 +114,8 @@ gang create … --buy-tax 3 --sell-tax 3 --split self:60,0x…:30,0x…:10 [--de
 gang split status|distribute|release|set-payee|bind --token 0x… [--asset 0x…] [--index <i>] [--to 0x…]  # the split module: payees (slot --index from 0), what waits / is owed; split by hand; a payee moves its own slot
 gang create … --buy-tax 3 --sell-tax 3 --lp 70 [--lp-to 0x…] [--dev-buy …]  # V3: the recipient's part of the tax 70% added to the pool as liquidity (LP to 0xdead), the rest to you (or --lp-to)
 gang lp status|set|set-payee|apply|bind|release|add --token 0x… [--pct 0-100] [--to 0x…] [--slippage 1]  # the LP splitter: ratio, payee, what is set aside, the next chunk; add = one chunk now (anyone)
+gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 [--split self:70,0x…:30] [--dev-buy …]  # V3, combined recipient: 30% bought back + burned, 30% added as liquidity, the rest to the payees (shares of the rest; default you). PERMANENT
+gang combo status|distribute|release|set-payee|bind|chunk --token 0x… [--asset 0x…] [--index <i>] [--to 0x…] [--slippage 1]  # the combined recipient: ratios, payees, set aside, owed, the next chunk and the keeper's plan; chunk = one chunk now (anyone)
 gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>                 # 打新: create (dev shares) → bond
 gang execute --request-id <id>
 gang tx --pending                            # trades approved in the Binance App: found by the exact call previewed, then as below
@@ -222,7 +227,7 @@ take MCP servers instead of a shell (Claude Desktop / Code, Cursor, …). Each t
 
 | Tool | Runs |
 |---|---|
-| `gang_help` | this CLI's whole help (every command, every flag) and the full rules (0.17.2+): what an agent with no skill installed reads before a create, launch, bond, buyback, split, lp, mint or withdraw |
+| `gang_help` | this CLI's whole help (every command, every flag) and the full rules (0.17.2+): what an agent with no skill installed reads before a create, launch, bond, buyback, split, lp, combo, mint or withdraw |
 | `gang_preflight`, `gang_hot`, `gang_new`, `gang_near_grad`, `gang_info`, `gang_status`, `gang_portfolio`, `gang_notes`, `gang_agents` | the read commands of the same name (`gang_portfolio`: 0.17.6+) |
 | `gang_tx` | `gang tx --hash …`: decode a tx, publish its queued note; `pending: true` = `gang tx --pending`, the trades approved in the Binance App (no hash needed) |
 | `gang_watch` | `gang watch` until `maxEvents` (default 1) or `timeout` (default 50s, at most 30m): returns `{ events, meta }`, `timedOut: true` when nothing came; call it again to keep waiting |
@@ -282,12 +287,14 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_UPDATE_URL` | Where that check asks, default `https://registry.npmjs.org/@gangfun/cli/latest`; set an npm mirror's `…/@gangfun/cli/latest` if npmjs is slow or blocked |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | Override the merged GangLaunchpad (mainnet / testnet) behind V3 and 打新 (defaults: mainnet `0x15CF…4365`, testnet set 10 `0xFebF…5BB1`). Old names `GANG_V3_PAD` / `GANG_FAIR_PAD`, `GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` still work as aliases |
 | `GANG_TESTNET_RPC_URL` | Testnet RPC, one URL or a comma list (unset: PublicNode, then BNB Chain's testnet nodes); old names `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` still work |
-| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
+| `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2 (铸币飞轮), where new tokens go. Defaults: mainnet `0x2818…8a5a`, testnet `0x7069…E3d6` |
+| `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad V1 (铸币飞轮). Defaults: mainnet `0x631e…B029` (open since 2026-10-30), testnet set 2 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | GangBond (creator bonds, `gang bond`). Defaults: mainnet `0xe92d…14E4` (since 2026-10-29, CLI 0.16.2+), testnet `0xd6a8…1086` |
 | `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | GangSplitModuleFactory (`--split`). Defaults: mainnet `0x27e0…067c` (since 2026-10-30, CLI 0.19.0+), testnet set 10 `0x5F7d…567E` |
 | `GANG_LP_FACTORY` / `GANG_TESTNET_LP_FACTORY` | GangLiquiditySplitterFactory (`--lp`). Defaults (CLI 0.20.0+): mainnet `0xE043…C248` (since 2026-10-31), testnet set 10 `0xA729…1591` |
+| `GANG_COMBO_FACTORY` / `GANG_TESTNET_COMBO_FACTORY` | GangComboSplitterFactory (several of `--buyback` / `--lp` / `--split`). Defaults (CLI 0.22.0+): mainnet `0xd33C…1DBd` (since 2026-10-31), testnet set 10 `0x52a8…4CFE` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | GangRouter proxy (native-BNB V3 buys / mints, and every PancakeSwap trade of a graduated token); old name `GANG_ROUTER_TESTNET` still works. Defaults: mainnet `0xE040…79C4`, testnet set 10 `0x6bB6…C9F6` |
 
 ## Version
 
-`0.20.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.22.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
