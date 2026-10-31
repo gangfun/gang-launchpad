@@ -14,39 +14,45 @@ import { bondAddress } from '../src/bond.js'
 import { _test } from '../src/portfolio.js'
 
 const t = (n) => `0x${String(n).padStart(40, '0')}`
-const [V2, V1] = GANG_GENS.testnet
+// testnet: 2.0 with the graduation pick (the create target), the first 2.0 (its tokens only), 1.0 (set 10)
+const [V2, V2a, V1] = GANG_GENS.testnet
 const ENV = ['GANG_TESTNET_PAD', 'GANG_TESTNET_ROUTER', 'GANG_TESTNET_BOND', 'GANG_TESTNET_LP_FACTORY']
 const clean = () => { for (const k of ENV) delete process.env[k] }
 clean()
 
 // ---- built in: testnet creates on 2.0 and keeps 1.0 for its tokens; mainnet has 1.0 only until 2.0 is deployed
-assert.deepEqual(gangGens(true).map((g) => g.gen), ['2.0', '1.0'])
+assert.deepEqual(gangGens(true).map((g) => g.gen), ['2.0', '2.0', '1.0'])
 assert.deepEqual(gangGens(false).map((g) => g.gen), ['1.0'])
 const net = padNets('v3').testnet
 assert.deepEqual([net.gen, net.pad, net.router, net.bond], ['2.0', V2.pad, V2.router, V2.bond])
 assert.equal(bondAddress(true), V2.bond)
 // each generation has its own contracts: never one generation's pad with another's router
-for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory']) assert.notEqual(V2[k].toLowerCase(), V1[k].toLowerCase(), k)
+for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory']) {
+  assert.equal(new Set([V2, V2a, V1].map((g) => g[k].toLowerCase())).size, 3, k)
+}
 
 // ---- env: a known pad picks its generation with its own contracts; the other generation stays for its tokens
 process.env.GANG_TESTNET_PAD = V1.pad.toLowerCase()
-assert.deepEqual(gangGens(true).map((g) => [g.gen, g.router, g.bond]), [['1.0', V1.router, V1.bond], ['2.0', V2.router, V2.bond]])
+assert.deepEqual(gangGens(true).map((g) => [g.gen, g.router, g.bond]), [['1.0', V1.router, V1.bond], ['2.0', V2.router, V2.bond], ['2.0', V2a.router, V2a.bond]])
+// the first 2.0 named by the env: its own router, not the newer 2.0's
+process.env.GANG_TESTNET_PAD = V2a.pad
+assert.deepEqual(gangGens(true).map((g) => g.router), [V2a.router, V2.router, V1.router])
 // an unknown pad gets only what the env names: no built-in router or bond of another pad
 process.env.GANG_TESTNET_PAD = t(0xaa)
 const [own] = gangGens(true)
 assert.deepEqual([own.gen, own.pad, own.router, own.bond, own.lpFactory], [null, t(0xaa), null, null, null])
-assert.deepEqual(gangGens(true).slice(1).map((g) => g.gen), ['2.0', '1.0'])
+assert.deepEqual(gangGens(true).slice(1).map((g) => g.gen), ['2.0', '2.0', '1.0'])
 process.env.GANG_TESTNET_ROUTER = t(0xbb)
 assert.equal(gangGens(true)[0].router, t(0xbb))
 clean()
 // a contract override applies to the create target only
 process.env.GANG_TESTNET_BOND = t(0xcc)
-assert.deepEqual(gangGens(true).map((g) => g.bond), [t(0xcc), V1.bond])
+assert.deepEqual(gangGens(true).map((g) => g.bond), [t(0xcc), V2a.bond, V1.bond])
 assert.equal(bondAddress(true), t(0xcc))
 clean()
 // one naming another generation's contract (an old GANG_TESTNET_ROUTER for set 10) is left out: 2.0 keeps its own router
 process.env.GANG_TESTNET_ROUTER = V1.router
-assert.deepEqual(gangGens(true).map((g) => g.router), [V2.router, V1.router])
+assert.deepEqual(gangGens(true).map((g) => g.router), [V2.router, V2a.router, V1.router])
 clean()
 
 // ---- a token's generation: kindOf asked of every pad
@@ -58,6 +64,8 @@ const kinds = (byPad, failing = []) => async (address, _abi, fn) => {
 const ctxOf = (read) => ({ ...padNets('v3').testnet, read })
 assert.deepEqual(await genOf(ctxOf(kinds({ [V1.pad]: 1 })), t(1)).then((r) => [r.g.gen, r.kind]), ['1.0', 'v3'])
 assert.deepEqual(await genOf(ctxOf(kinds({ [V2.pad]: 2 })), t(1)).then((r) => [r.g.gen, r.kind]), ['2.0', 'fair'])
+// a token of the first 2.0: that pad, not the create target
+assert.deepEqual(await genOf(ctxOf(kinds({ [V2a.pad]: 1 })), t(1)).then((r) => [r.g.pad, r.kind]), [V2a.pad, 'v3'])
 assert.deepEqual(await genOf(ctxOf(kinds({})), t(1)), { g: null, kind: 'none' })
 // one pad unreadable and no other has it: unknown (null), not "none"
 assert.deepEqual(await genOf(ctxOf(kinds({}, [V1.pad])), t(1)), { g: null, kind: null })
@@ -102,8 +110,8 @@ const tierRead = (byFn) => async (_a, _abi, fn, args) => {
 assert.equal(await gradTiersOf({ chainId: '97', pad: V1.pad, read: never }), null)
 assert.deepEqual(await gradTiersOf({ chainId: 'g1', pad: t(1), read: tierRead({ GRAD_BNB_TIERS: [6n * E, 9n * E, 12n * E, 15n * E] }) }), [6, 9, 12, 15])
 assert.equal(await gradTiersOf({ chainId: 'g1', pad: t(2), read: tierRead({ GRAD_BNB_TIERS: noData }) }), null)
-// a built-in 2.0 pad from before the pick (no GRAD_BNB_TIERS): no tiers, not an error
-assert.equal(await gradTiersOf({ chainId: 'g2', pad: V2.pad, read: tierRead({ GRAD_BNB_TIERS: noData }) }), null)
+// the first 2.0 pad, from before the pick (no GRAD_BNB_TIERS): no tiers, not an error
+assert.equal(await gradTiersOf({ chainId: 'g2', pad: V2a.pad, read: tierRead({ GRAD_BNB_TIERS: noData }) }), null)
 await assert.rejects(gradTiersOf({ chainId: 'g1', pad: t(3), read: tierRead({ GRAD_BNB_TIERS: httpErr }) }), /x/)
 await assert.rejects(gradTiersOf({ chainId: 'g1', pad: t(4), read: tierRead({ GRAD_BNB_TIERS: internal }) }), /x/)
 const tiered = { GRAD_BNB_TIERS: [6n * E, 9n * E, 12n * E, 15n * E], TARGET_GRAD_BNB: 9n * E }

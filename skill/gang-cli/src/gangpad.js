@@ -40,7 +40,15 @@ export const GANG_GENS = {
     },
   ],
   testnet: [
-    // 2026-10-31, pad block 139866088; its modules from the same scripts as 1.0's (docs/TESTNET-GANGLAUNCHPAD2-2026-10-31.md)
+    // 2026-10-31, pad block 139940227: 2.0 with the graduation target the creator picks (GRAD_BNB_TIERS, createWithGradTarget;
+    // docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md); buy-back factory buyback-burn-v4, split-v1, lp-burn-v1, its own GangBond
+    {
+      gen: '2.0', pad: '0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E', router: '0x5a4FA2D91638a305EdF027894753c943f095dDAA',
+      bond: '0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9', splitterFactory: '0xDC9EdA9a29F4Ff66E7dAb6E5A2142df5a7aC0f6e',
+      splitFactory: '0xb9ab949C717a4F7f05c7B003C612C437280C3513', lpFactory: '0xAEec7e7948FfDb7a212E14c0b9cc1DA2922436E4',
+    },
+    // 2026-10-31, pad block 139866088: the first 2.0 (creator fee, no graduation pick), no longer creating; its tokens trade
+    // and claim here. Its modules from the same scripts as 1.0's (docs/TESTNET-GANGLAUNCHPAD2-2026-10-31.md)
     {
       gen: '2.0', pad: '0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be', router: '0xb21828C49A526FA293C48990070a518e9ab9FC08',
       bond: '0x913966122b9f8CC00C0d81000988A483c6B7F97f', splitterFactory: '0xBc26A6585B3Dc2Cbf1522475fB5b18df6C1033AE',
