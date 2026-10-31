@@ -75,11 +75,13 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --split self:60,0xKol…:30,0xDao…:10
 # V3 with auto-liquidity: clone the dev's LP splitter → create with it as the recipient → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --lp 70 [--lp-to 0x…]
+# V3 with buy-back + auto-liquidity + payees at once: clone the dev's combined recipient → create → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 20 --buyback 30 --lp 30 --split self:70,0xKol…:30
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
 
-- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module` or `lp-splitter` → `create` → `bind` → `dev-buy` →
+- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module`, `lp-splitter` or `combo-module` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.
 - **Progress comes from the chain**: the run finds the token this wallet created with this symbol since the plan, then
@@ -95,7 +97,7 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   when the user asks for a buy-back. The quote must be WBNB, GANG or one in the pad's QuoteRegistry (others are
   refused before the clone). The splitter's address is printed before the clone. A launch keeps the mode, ratio and payee it began with (run it as it began, or
   `--restart`). Tell the user: a raise of the ratio applies at once, a cut only 3 days after it is asked for.
-- **`--split <addr>:<pct>[,<addr>:<pct>…]`** (taxed V3; not with `--buyback` or `--recipient`): the recipient becomes the
+- **`--split <addr>:<pct>[,<addr>:<pct>…]`** (taxed V3; not with `--recipient`; with `--buyback` / `--lp` see the combined recipient below): the recipient becomes the
   dev's split module ([v3.md](v3.md#split-module---split)): the recipient's part of the tax is split among 1–10 payees.
   `self` = the creating wallet (`me` also works); shares in % with up to 2 decimals, at least 0.01, adding up to 100;
   no address twice. The first payee also takes the rounding dust; slots are numbered from 0 in that order. Everything
@@ -104,11 +106,22 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   own slot. The quote must be WBNB, GANG or one in the pad's QuoteRegistry, the quotes the keeper splits (others are
   refused before the clone, as for `--buyback`). A launch keeps the payees it
   began with (run it as it began, or `--restart`). Live on BSC mainnet and testnet.
-- **`--lp <0-100>`** (taxed V3; not with `--buyback`, `--split` or `--recipient`): the recipient becomes the dev's LP
+- **`--lp <0-100>`** (taxed V3; not with `--recipient`; with `--buyback` / `--split` see the combined recipient below): the recipient becomes the dev's LP
   splitter ([v3.md](v3.md#lp-splitter---lp)): `--lp` % of the recipient's part of the tax is added to the token's
   PancakeSwap pair as liquidity whose LP goes to 0xdead (locked for good); the rest goes to the dev, or to
   `--lp-to <addr>`. Only when the user asks for it. The quote must be WBNB, GANG or one in the pad's QuoteRegistry
   (others are refused before the clone, as for `--buyback`). The splitter's address is printed before the clone. A
   launch keeps the ratio and payee it began with (run it as it began, or `--restart`). Tell the user: a raise of the
   ratio applies at once, a cut only 3 days after it is asked for. Live on BSC mainnet and testnet.
+- **Two or three of `--buyback`, `--lp`, `--split`** (taxed V3; not with `--recipient`): one combined recipient
+  ([v3.md](v3.md#combined-recipient-several-of---buyback---lp---split)) does them all. `--buyback` % of the recipient's
+  part is bought back and burned, `--lp` % added to the pair as liquidity (LP to 0xdead), and the rest (100 − both) is
+  pushed to the `--split` payees, whose shares are **of that rest** and add up to 100 (`--buyback 30 --lp 30 --split
+  self:70,0xKol…:30` = 28% / 12% of the recipient's part). Without `--split` the rest goes to the dev;
+  `--buyback` + `--lp` = 100 takes no `--split`; above 100 is refused. `--buyback-to` / `--lp-to` are refused (name
+  payees with `--split`). **Show the user every ratio and payee and say all of it is permanent**: unlike a lone
+  `--buyback` / `--lp`, nobody (not the dev, not the platform) can ever change the ratios, payees or shares; a payee can
+  only move its own slot. Any other asset sent to it: the buy-back + LP share goes to 0xdead, the rest to the payees.
+  Same quotes as `--buyback`. A launch keeps everything it began with (run it as it began, or `--restart`). Live on
+  BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.
