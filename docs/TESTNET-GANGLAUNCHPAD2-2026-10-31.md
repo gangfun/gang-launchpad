@@ -1,12 +1,74 @@
-# 测试网 · GangLaunchpad 2.0（内盘 creator 分成）
+# 测试网 · GangLaunchpad 2.0（内盘 creator 分成 + 可选毕业门槛）
 
 - 日期：2026-10-31 Asia/Shanghai
 - 网络：BSC 测试网（97），和第 10 套 GangLaunchpad（1.0，`0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1`）并列，共用它的共享合约
-- 规格：`docs/SPEC-CURVE-CREATOR-FEE-2026-10-31.md`
-- 部署前的流程：合约两轮独立审计 → 修复 → 复审；部署脚本独立审查 → 修复 → 两轮复审；本地 anvil（fork 测试网）彩排两次；主网 fork 测试 `test/fork/GangLaunchpad2DeployFork.t.sol` 通过
+- 规格：`docs/SPEC-CURVE-CREATOR-FEE-2026-10-31.md`、`docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md`
 - 部署钱包：`0xCa8e…00b6`（测试网上它拥有全部共享合约，阶段 1 直接完成登记并开放）
 
-## 地址
+当天部署过两次：
+- **当前（第二版）**：加入了可选毕业门槛（6 / 9 / 12 / 15 BNB，默认 9），源码是 `ccea84d`。这个改动先经过独立审计，修复后又做了独立复审。
+- **第一版**：只有 creator 分成，记录在本文后半部分。第二版上线后，第一版已停止创建（`TokenDeployer.setLaunchpad(第一版, false)`，交易 [`0x1fa62a1c…fb4f`](https://testnet.bscscan.com/tx/0x1fa62a1c99c995a3a3d974acd1a96d2851f1b04af0c01177d1ade239f5b5fb4f)）。第一版上已有的币照常交易、领取。
+
+## 第二版（当前）
+
+### 地址
+
+| 合约 | 地址 |
+|---|---|
+| **GangLaunchpad 2.0** | [`0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E`](https://testnet.bscscan.com/address/0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E)，起始区块 139940227 |
+| GangTaxHandler | [`0x5d77FD790B019F86c2473f9CcaeB22609A574278`](https://testnet.bscscan.com/address/0x5d77FD790B019F86c2473f9CcaeB22609A574278) |
+| GangRouter（代理：pad 列入、用户授权的地址） | [`0x5a4FA2D91638a305EdF027894753c943f095dDAA`](https://testnet.bscscan.com/address/0x5a4FA2D91638a305EdF027894753c943f095dDAA) |
+| GangRouter 实现 / ProxyAdmin / Timelock | `0xb65d10F295a0E91643308caf22F325B58f8e5750` / `0x47e367808E7C9E42f5a9F3a5D436496Aeeb5fE3E` / `0x5264d34a05125438827c94467acbAdd318cfc356` |
+| CurveLogic / FairLogic | `0x8c61E0D4fa2b3D2540452d545BA77ec65e147599` / `0xEf8A86a23919D66F5706665E9939E07aD21Aaa8a` |
+| GangHandlerAdmin（handler 的 owner） | [`0xEbFD66D7959f345cbE8023Fa09bDe6f6C8D2eF38`](https://testnet.bscscan.com/address/0xEbFD66D7959f345cbE8023Fa09bDe6f6C8D2eF38) |
+| GangBuybackSplitterFactory（`buyback-burn-v4`） | [`0xDC9EdA9a29F4Ff66E7dAb6E5A2142df5a7aC0f6e`](https://testnet.bscscan.com/address/0xDC9EdA9a29F4Ff66E7dAb6E5A2142df5a7aC0f6e) |
+| GangSplitModuleFactory（`split-v1`） | [`0xb9ab949C717a4F7f05c7B003C612C437280C3513`](https://testnet.bscscan.com/address/0xb9ab949C717a4F7f05c7B003C612C437280C3513) |
+| GangLiquiditySplitterFactory（`lp-burn-v1`） | [`0xAEec7e7948FfDb7a212E14c0b9cc1DA2922436E4`](https://testnet.bscscan.com/address/0xAEec7e7948FfDb7a212E14c0b9cc1DA2922436E4) |
+| GangBond | [`0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9`](https://testnet.bscscan.com/address/0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9) |
+
+### 部署
+
+命令和第一版相同（见下文），结果：
+- 24 笔交易，合计 gas 18,081,201，全部成功；
+- 阶段 1 自检 `self-check ok`，再用 `GANG_PAD2` / `GANG_ROUTER2` / `GANG_PAD2_BLOCK` 只读重跑阶段 2，也是 `self-check ok`；
+- 自检包括 `TARGET_GRAD_BNB = 9 BNB`，`graduationAmountFor(WBNB, 0, 6 BNB) = 6 WBNB`，以及 10 BNB 被 `BadGradTarget` 拒绝。
+
+模块用现有的四个脚本部署，`GANG_PAD` 指向第二版，`HANDLER_ADMIN` 指向新的 admin。
+
+链上核对：
+- handler 的 owner 是 admin，`admin.handler()` 指回 handler；
+- 三个 factory 的 `pad()` 都是第二版，`admin.isFactory` 都为真，LABEL 分别是 `buyback-burn-v4` / `split-v1` / `lp-burn-v1`；
+- `GangBond.pad()` 是第二版；
+- `GRAD_BNB_TIERS = [6, 9, 12, 15] BNB`，`CREATOR_FEE_SHARE_BPS = 7000`，migrator 是共享 migrator。
+
+部署记录：`broadcast/<脚本>/97/` 下本次新增的带时间戳文件：
+- `DeployGangLaunchpad2` `run-1793423929106`，它的 `run-latest.json` 指向这一次；
+- Buyback `run-1793424031266`；
+- Split `run-1793424058051`；
+- LP `run-1793424074514`；
+- Bond `run-1793424085838`。
+
+### 验收（`script/GangLaunchpad2TestnetAcceptance.s.sol`）
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 用 `create` 建 WBNB 曲线币 A（无税，默认门槛） | [`0xf289cF3Cb4f9299a50425ce0eF0D90594b441F4D`](https://testnet.bscscan.com/address/0xf289cF3Cb4f9299a50425ce0eF0D90594b441F4D)：`gradTargetOf` = 9 BNB，`gradAmt` = 9 WBNB | [`0x7e0d3d93…d514`](https://testnet.bscscan.com/tx/0x7e0d3d9341c22ac7b0018a061c0e24806fd0d453cff4fa0c7c3441db97efd514) |
+| 经 Router 用 0.002 BNB 买入 | creator 记 14,000,000,000,000 wei（1% 的 70%） | [`0x6a103067…bdf1`](https://testnet.bscscan.com/tx/0x6a103067688e6eb45588cb22e35d5c43b52dc341be460b92d5aa1f1d576dbdf1) |
+| 在 pad 上直接卖出一半 | creator 累计 20,932,286,145,571 wei | [`0xc10e3935…f91f`](https://testnet.bscscan.com/tx/0xc10e393591f070aaf75de05696d0fb9de7ceac7b37387971258022ea1bf1f91f) |
+| creator 领取 | 收到 20,932,286,145,571 wei WBNB | [`0x27d580bc…dda9`](https://testnet.bscscan.com/tx/0x27d580bc47f4d7d59aa3da60da6370ab2a4ed23cadac2f51a5ef382dcff0dda9) |
+| 用 `createWithGradTarget(…, 6 BNB)` 建测试报价币曲线币 B（税 3%、分红 40%、接收地址 = creator） | [`0x5B8eB81078d3B94F66b01A97F5a06Ab0D9Dd6Be8`](https://testnet.bscscan.com/address/0x5B8eB81078d3B94F66b01A97F5a06Ab0D9Dd6Be8)：`gradTargetOf` = 6 BNB，`gradAmt` 等于 `graduationAmountFor` 的报价 | [`0x6673797f…02a7`](https://testnet.bscscan.com/tx/0x6673797f872fcf66ad83fec46cee8e4da93abaa459b80142a52ff7f6558502a7) |
+| 临时关闭钱包上限，一笔买到毕业，再打开上限 | 经共享 migrator 毕业，交易对 [`0x073A5357828729bF90cBE6290924CBC510442096`](https://testnet.bscscan.com/address/0x073A5357828729bF90cBE6290924CBC510442096)；creator 记 42,424,242,424,242,424 wei | 关 [`0x25fe23bb…a9c5`](https://testnet.bscscan.com/tx/0x25fe23bbc2c9736d17097abc399b31e5d2fadd7362a6f8bd8e8503657cf2a9c5)，买 [`0x1dc5bff1…9964`](https://testnet.bscscan.com/tx/0x1dc5bff17b445d7fc63d6e3c50f1f78d3723dceb581ab0f4faf826c5562e9964)，开 [`0x2e8b9ca9…0d3d`](https://testnet.bscscan.com/tx/0x2e8b9ca9196b9eb999ee2bf65e4721512f5d2c903422bc8fb0e7618ab8df0d3d) |
+| 毕业后领取 | 收到全部分成 | [`0xb5a6c4e2…a0a3`](https://testnet.bscscan.com/tx/0xb5a6c4e20a3d9b1a674ee2e5220af8c4e2abd718e9cdc6a0262dbf4d51c3a0a3) |
+
+直接读链复核：
+- A、B 的 `creatorFeeOf` 都已归零，钱包上限已重新打开；
+- 第二版持有的 WBNB 为 989,673,407,775,435 wei，正好等于 A 的 `realQuote`，没有零头。
+
+部署和验收合计约花 0.0056 tBNB。
+
+## 第一版（已停止创建）
+
+### 地址
 
 | 合约 | 地址 |
 |---|---|
@@ -22,7 +84,7 @@
 
 部署记录：`broadcast/DeployGangLaunchpad2.s.sol/97/`（24 笔，合计 gas 17,828,329，全部成功）。
 
-## 部署
+### 部署
 
 ```
 GANG_PAD=0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1 GANG_GATEWAY=0xb325dde51129C592E443ecbEE1E219D14C66e091 \
@@ -33,7 +95,7 @@ KEEPER 不设（默认部署钱包，等于共享 bucket 的 keeper）；路由 
 
 之后用 `GANG_PAD2` / `GANG_ROUTER2` / `GANG_PAD2_BLOCK` 只读重跑阶段 2：`self-check ok`。
 
-## 验收
+### 验收
 
 ### 2.0 creator 分成（`script/GangLaunchpad2TestnetAcceptance.s.sol`）
 
@@ -56,7 +118,7 @@ KEEPER 不设（默认部署钱包，等于共享 bucket 的 keeper）；路由 
 - A、B 的 `creatorFeeOf` 为 0，Gateway 币为 27,859,999,999,998；钱包上限已打开；`CREATOR_FEE_SHARE_BPS = 7000`；migrator = 共享 migrator。
 - 2.0 的 WBNB 余额 1,017,664,018,804,275 = A 的 `realQuote` 989,804,018,804,277 + Gateway 币的 creator 分成 27,859,999,999,998，零头 0。
 
-## 模块
+### 模块
 
 现有脚本，`GANG_PAD` 指向 2.0，`HANDLER_ADMIN` 为新 admin；测试网上部署钱包拥有 handler 和 admin，脚本直接执行接线。合约代码和 1.0 上用的完全相同。
 
@@ -70,7 +132,7 @@ KEEPER 不设（默认部署钱包，等于共享 bucket 的 keeper）；路由 
 
 链上核对：handler 的 owner = admin，`admin.handler()` = 2.0 handler；三个 factory 的 `pad()` 都是 2.0，`admin.isFactory` 都为真；`GangBond.pad()` = 2.0。模块各自的端到端验收（克隆、收税、分账）留到 CLI 接入 2.0 后在测试网上跑。部署记录：上面四个脚本 `broadcast/<脚本>/97/` 下本次新增的带时间戳文件（这几个目录的 `run-latest.json` 仍是 1.0 那次的，没有改）。
 
-## 还没做
+### 还没做（写于第一版部署时）
 
 - 模块的端到端验收（见上）。
 - 后端（indexer / keeper）、网站、CLI 接入 2.0。
