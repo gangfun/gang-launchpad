@@ -18,7 +18,7 @@
 以下都**不能**设：
 - `KEEPER*`、`TWAP_WINDOW`、`RECIPIENT*`、`FEE_VAULT`、`BURNER`
 - `MAINNET_OWNER_IS_DEPLOYER`
-- `GANG_PAD2`、`GANG_ROUTER2`、`HANDLER_ADMIN`、`GANG_BOND`、`ADMIN_OWNER`
+- `GANG_PAD2`、`GANG_ROUTER2`、`HANDLER_ADMIN`、`GANG_BOND`、`ADMIN_OWNER`、`COMBO_FACTORY`、`GANG_QUOTE`
 
 ## 2. 阶段 1
 
@@ -55,9 +55,9 @@
    - `handler.transferOwnership(admin2)`
    - `admin2.exec(acceptOwnership())`
    - `admin2.setFactory(buyback, true)`
-2. `DeployGangSplitModuleFactory` 和 `DeployGangLiquiditySplitterFactory`，都带 `HANDLER_ADMIN=admin2`。Safe 再一批执行两个 `setFactory`。
+2. `DeployGangSplitModuleFactory`、`DeployGangLiquiditySplitterFactory` 和 `DeployGangComboSplitterFactory`（组合模块 combo-v1），都带 `HANDLER_ADMIN=admin2`。combo 的 `gangQuote` 在主网固定为 GANG，`GANG_QUOTE` 不用设。Safe 再一批执行三个 `setFactory`。
 3. `DeployGangBond`。
-4. 用 `cast call` 核对：各 factory 的 `pad()` 和 bond 的 `pad()` 都是 2.0，`admin2.isFactory` 都为真。
+4. 用 `cast call` 核对：四个 factory 的 `pad()` 和 bond 的 `pad()` 都是 2.0，`admin2.isFactory` 都为真。combo 脚本带 `COMBO_FACTORY=<已部署的>` 只读重跑一次，应显示 nothing to do。
 5. 阶段 2 再只读跑一次：admin2 持有 handler 时也应该是 `self-check ok`。
 
 ## 7. 合作方 recipient
@@ -69,7 +69,7 @@ Safe 执行 `admin2.exec(list(合作方, label))`。只迁真正的合作方：1
 - indexer：加 `gang:<pad2>@<block>`、bond 和 router；
 - keeper：加 bond；
 - 网站：填主网 2.0 地址；
-- CLI：在 `GANG_GENS.mainnet` 加 2.0，发布 0.22.0。
+- CLI：在 `GANG_GENS.mainnet` 加 2.0（含 `comboFactory`），发布 0.23.0。
 
 三边各自验证通过。
 

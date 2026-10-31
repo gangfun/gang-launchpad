@@ -7,6 +7,7 @@ import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {DeployGang} from "../../script/DeployGang.s.sol";
 import {DeployGangBond} from "../../script/DeployGangBond.s.sol";
 import {DeployGangBuybackSplitterFactory} from "../../script/DeployGangBuybackSplitterFactory.s.sol";
+import {DeployGangComboSplitterFactory} from "../../script/DeployGangComboSplitterFactory.s.sol";
 import {DeployGangSplitModuleFactory} from "../../script/DeployGangSplitModuleFactory.s.sol";
 import {GangModulePadScript} from "../../script/GangModulePadScript.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
@@ -14,7 +15,12 @@ import {SharedPlatformFeeBucket} from "../../src/common/SharedPlatformFeeBucket.
 import {GangPadRegistry} from "../../src/gang/GangPadRegistry.sol";
 import {GangHandlerAdmin} from "../../src/gang/GangHandlerAdmin.sol";
 import {GangBond} from "../../src/gang/GangBond.sol";
+import {GangComboSplitter} from "../../src/gang/GangComboSplitter.sol";
+import {GangComboSplitterFactory} from "../../src/gang/GangComboSplitterFactory.sol";
 import {IGangPad} from "../../src/gang/interfaces/IGangPad.sol";
+import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {DeployGangLaunchpad2Harness} from "./GangLaunchpad2DeployFork.t.sol";
 
 /// @notice The 2026-10-31 full audit's deployment findings, on a BSC mainnet fork (BSC_RPC_URL; skipped without it):
@@ -24,12 +30,15 @@ import {DeployGangLaunchpad2Harness} from "./GangLaunchpad2DeployFork.t.sol";
 ///         - L-3: the module scripts bind only to 2.0 on mainnet (GANG_PAD2), never to a leftover GANG_PAD = 1.0;
 ///         - info-1: phase 2 still checks out (and prints batch 3) once a GangHandlerAdmin of the Safe holds the
 ///           handler;
-///         - info-5: a pending bucket keeper change stops phase 1.
+///         - info-5: a pending bucket keeper change stops phase 1;
+///         - the combo factory (main's combo-v1): its script binds only to 2.0 as well, deploys over the Safe's admin2,
+///           and a combined recipient works on a 2.0 token at a picked 6 BNB target.
 /// @dev Sets process-wide env: run alone (`--match-path`), not with the other fork suites.
 contract GangLaunchpad2DeployGuardsForkTest is Test {
     address constant PAD_1 = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
     address constant GATEWAY = 0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8;
     address constant SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
+    address constant GANG = 0x0c6302401aa5325C2E36F170f52C00B1d220B405;
 
     DeployGangLaunchpad2Harness d;
     uint256 pk;
@@ -67,6 +76,8 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         vm.setEnv("SPLITTER_FACTORY", vm.toString(address(0)));
         vm.setEnv("ADMIN_OWNER", vm.toString(address(0)));
         vm.setEnv("GANG_BOND", vm.toString(address(0)));
+        vm.setEnv("COMBO_FACTORY", vm.toString(address(0)));
+        vm.setEnv("GANG_QUOTE", vm.toString(GANG));
     }
 
     function _exec(string memory json) internal {
@@ -122,6 +133,9 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         vm.revertToState(snap);
         _resetEnv();
         _moduleScripts_bindOnlyTo20();
+        vm.revertToState(snap);
+        _resetEnv();
+        _combo_on20();
         vm.revertToState(snap);
         _resetEnv();
         _adminHandoverPending_refused();
@@ -286,4 +300,137 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         GangBond bond = bondScript.run();
         assertEq(bond.pad(), s.pad, "bound to 2.0");
     }
+
+    // ---------------------------------------------------------------- combo-v1 on 2.0
+    /// @dev Runbook step 6 with the combo factory: refused on 1.0; on 2.0, the buy-back script's Safe-owned admin2
+    ///      takes the handler, the combo script deploys over it and prints the Safe's setFactory; then a dev clones
+    ///      a combined recipient (30% buy-back, 30% liquidity, the rest 70 / 30 to itself and a KOL) for a 6 BNB
+    ///      token, which graduates at 6 BNB; pool sells pay the tax and the keeper's loop burns, adds LP and pays.
+    function _combo_on20() internal {
+        DeployGangComboSplitterFactory combo = new DeployGangComboSplitterFactory();
+        vm.setEnv("GANG_PAD2", vm.toString(PAD_1));
+        vm.setEnv("HANDLER_ADMIN", vm.toString(address(0xBEEF)));
+        vm.expectRevert(
+            abi.encodeWithSelector(GangModulePadScript.ModulePad.selector, "GANG_PAD2 is not GangLaunchpad 2.0")
+        );
+        combo.run();
+
+        vm.setEnv("GANG_PAD2", vm.toString(address(0)));
+        vm.setEnv("HANDLER_ADMIN", vm.toString(address(0)));
+        DeployGang.Stack memory s = _fullDeploy();
+        (GangHandlerAdmin admin,) = new DeployGangBuybackSplitterFactory().run();
+        vm.prank(SAFE);
+        Ownable2Step(s.handler).transferOwnership(address(admin));
+        vm.prank(SAFE);
+        admin.exec(abi.encodeWithSignature("acceptOwnership()"));
+
+        vm.setEnv("HANDLER_ADMIN", vm.toString(address(admin)));
+        GangComboSplitterFactory f = combo.run();
+        assertEq(f.pad(), s.pad, "bound to 2.0");
+        assertEq(f.admin(), address(admin));
+        bytes[] memory batch = combo.pendingBatch(address(admin), address(f));
+        assertEq(batch.length, 1, "one Safe call: setFactory");
+        vm.prank(SAFE);
+        admin.setFactory(address(f), true);
+        assertEq(combo.pendingBatch(address(admin), address(f)).length, 0);
+        vm.setEnv("COMBO_FACTORY", vm.toString(address(f)));
+        combo.run(); // re-check of the deployed factory: nothing left
+
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        IGangPad p = IGangPad(s.pad);
+        address dev = makeAddr("combo2-dev");
+        address kol = makeAddr("combo2-kol");
+        address[] memory payees = new address[](2);
+        (payees[0], payees[1]) = (dev, kol);
+        uint16[] memory shares = new uint16[](2);
+        (shares[0], shares[1]) = (7_000, 3_000);
+        vm.prank(dev, dev);
+        GangComboSplitter m = GangComboSplitter(f.create(3_000, 3_000, payees, shares, keccak256("combo2")));
+        vm.prank(dev, dev);
+        address t = p.createWithGradTarget(
+            "Combo two",
+            "CMB2",
+            "",
+            "",
+            M.WBNB,
+            address(0),
+            IGangLaunchpad.TaxConfig({buyTaxBps: 300, sellTaxBps: 300, dividendBps: 4000, recipient: address(m)}),
+            6 ether
+        );
+        m.bind(t);
+        assertEq(p.gradAmtOf(t), 6 ether);
+
+        // the wallet cap off so one buyer graduates it (fewer fresh accounts for the fork to fetch)
+        vm.prank(SAFE);
+        p.setWalletCapEnabled(false);
+        address b = makeAddr("combo2-buyer");
+        deal(M.WBNB, b, 8 ether);
+        vm.prank(b, b);
+        IERC20(M.WBNB).approve(s.pad, type(uint256).max);
+        bool graduated;
+        address pair;
+        for (uint256 i; i < 20 && !graduated; i++) {
+            vm.prank(b, b);
+            p.buy(t, 0.5 ether, 0);
+            (,,,,,, graduated,,,, pair,) = p.curves(t);
+        }
+        assertTrue(graduated && pair != address(0), "graduated");
+        assertApproxEqAbs(IERC20(M.WBNB).balanceOf(pair), 6 ether, 1, "at its 6 BNB target");
+
+        for (uint256 i; i < 6; i++) {
+            _poolSell(t, pair, b, IERC20(t).balanceOf(b) / 4);
+            vm.warp(block.timestamp + 60);
+            vm.roll(block.number + 2);
+        }
+        IComboHandler2 h = IComboHandler2(s.handler);
+        uint256 mc = h.maxChunk(t);
+        vm.warp(block.timestamp + 60);
+        vm.roll(block.number + 2);
+        vm.prank(h.keeper());
+        if (mc != 0) h.process(t, mc, 1);
+        assertGt(IERC20(M.WBNB).balanceOf(address(m)), 0, "the pool tax reached the combined recipient");
+        deal(M.WBNB, address(m), IERC20(M.WBNB).balanceOf(address(m)) + 0.5 ether); // a backlog worth both parts
+
+        uint256 kol0 = IERC20(M.WBNB).balanceOf(kol);
+        uint256 dead0 = IERC20(t).balanceOf(DEAD);
+        uint256 deadLp0 = IERC20(pair).balanceOf(DEAD);
+        for (uint256 i; i < 30; i++) {
+            (bool due, uint256 minOut) = m.previewWork();
+            if (due) m.work(minOut);
+            vm.warp(block.timestamp + 4 minutes);
+            vm.roll(block.number + 1);
+        }
+        assertGt(IERC20(t).balanceOf(DEAD), dead0, "bought back and burned");
+        assertGt(IERC20(pair).balanceOf(DEAD), deadLp0, "Pancake LP added to 0xdead");
+        assertGt(IERC20(M.WBNB).balanceOf(kol), kol0, "the KOL paid");
+        assertEq(IERC20(t).balanceOf(address(m)), 0, "holds no token");
+    }
+
+    address constant DEAD = 0x000000000000000000000000000000000000dEaD;
+
+    function _poolSell(address t, address pair, address who, uint256 amount) internal {
+        if (amount == 0) return;
+        bool tIs0 = IComboPair2(pair).token0() == t;
+        vm.prank(who, who);
+        IERC20(t).transfer(pair, amount);
+        (uint112 r0, uint112 r1,) = IComboPair2(pair).getReserves();
+        (uint256 rT, uint256 rQ) = tIs0 ? (uint256(r0), uint256(r1)) : (uint256(r1), uint256(r0));
+        uint256 inT = IERC20(t).balanceOf(pair) - rT;
+        uint256 out = (inT * 9975 * rQ) / (rT * 10_000 + inT * 9975);
+        vm.prank(who, who);
+        if (tIs0) IComboPair2(pair).swap(0, out, who, "");
+        else IComboPair2(pair).swap(out, 0, who, "");
+    }
+}
+
+interface IComboPair2 {
+    function token0() external view returns (address);
+    function getReserves() external view returns (uint112, uint112, uint32);
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external;
+}
+
+interface IComboHandler2 {
+    function maxChunk(address token) external view returns (uint256);
+    function process(address token, uint256 amount, uint256 minQuoteOut) external returns (uint256);
+    function keeper() external view returns (address);
 }
