@@ -32,7 +32,8 @@ aliases of the same code.
   sells, realized PnL, launches), `bonds` on its V3 / 打新 launches, and `errors` for tokens that could not be read.
 - `gang quote --token <addr> --amount <n>`: V2 / Soft / U / S curve buys only. Fields: tokens out, spent, fee, refund;
   a non-zero `refund` = the 1% wallet cap or the graduation clamp. On a GangLaunchpad token `gang quote` refuses: the
-  `gang buy` preview simulates the trade and shows `expectTokens` (nothing is sent before `gang execute`).
+  `gang buy` preview simulates the trade and shows `expectTokens` (nothing is sent before `gang execute`), plus `spent` /
+  `refund` / `cutBy` when the wallet cap or the token's own graduation amount trims the buy.
 
 ## `gang buy --token <addr> --amount <n> [--slippage 1]`
 
