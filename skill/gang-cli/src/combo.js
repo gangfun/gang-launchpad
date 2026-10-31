@@ -25,8 +25,9 @@ import { parseSplitSpec } from './split.js'
  * Env: GANG_COMBO_FACTORY / GANG_TESTNET_COMBO_FACTORY override the built-in factory addresses.
  */
 
-// BSC 56: not deployed yet (GANG_COMBO_FACTORY sets one); a combined launch on mainnet is refused until then
-export const MAINNET_COMBO_FACTORY = null
+// BSC 56: deployed 2026-10-31 (pad 0x15CF…4365); a clone reverts NotFactory until the platform's Safe allows the
+// factory on GangHandlerAdmin
+export const MAINNET_COMBO_FACTORY = '0xd33C38BE3f8472b3013167830F0638C1704e1DBd'
 // BSC 97, set 10
 export const TESTNET_COMBO_FACTORY = '0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE'
 export const COMBO_TYPE = 'combo-v1'
@@ -167,7 +168,7 @@ export function comboFactoryAddress(testnet) {
 
 export const comboNotDeployed = (testnet) => (testnet
   ? 'GangComboSplitterFactory (the combined recipient) is not deployed on the BSC testnet in this CLI version: set GANG_TESTNET_COMBO_FACTORY to its address, or give one of --buyback / --lp / --split alone'
-  : 'the combined recipient (more than one of --buyback / --lp / --split; GangComboSplitterFactory) is not on BSC mainnet yet: give one of --buyback / --lp / --split alone, or try it with --testnet. Once it is deployed, a newer CLI has it built in (or set GANG_COMBO_FACTORY to its address)')
+  : 'GangComboSplitterFactory (the combined recipient) is not deployed on BSC mainnet in this CLI version: set GANG_COMBO_FACTORY to its address, or give one of --buyback / --lp / --split alone')
 
 const COMBO_REST_NOTE = 'in a combined launch --split lists the payees of what --buyback and --lp leave, their shares adding up to 100 (of that rest)'
 

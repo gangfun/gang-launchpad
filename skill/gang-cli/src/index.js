@@ -379,8 +379,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          dev can change); a payee can only move its own slot (gang combo set-payee). Any other
                                          asset sent to it: its buy-back + LP share goes to 0xdead, the rest to the payees.
                                          Steps: clone your combined recipient (GangComboSplitterFactory; listed in the same tx)
-                                         → create → bind → the rest of the launch. BSC testnet only for now (mainnet: not
-                                         deployed yet, refused). Quote: WBNB (default), GANG or one in the QuoteRegistry only
+                                         → create → bind → the rest of the launch. Quote: WBNB (default), GANG or one listed
+                                         in the pad's QuoteRegistry only
   gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
                                          打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
                                          chain (a token this wallet created with this symbol since the plan); a run that finds

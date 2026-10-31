@@ -75,8 +75,8 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --split self:60,0xKol…:30,0xDao…:10
 # V3 with auto-liquidity: clone the dev's LP splitter → create with it as the recipient → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --lp 70 [--lp-to 0x…]
-# V3 with buy-back + auto-liquidity + payees at once (BSC testnet only for now): clone the dev's combined recipient → create → bind → (dev buy, bond)
-gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 20 --buyback 30 --lp 30 --split self:70,0xKol…:30 --testnet
+# V3 with buy-back + auto-liquidity + payees at once: clone the dev's combined recipient → create → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 20 --buyback 30 --lp 30 --split self:70,0xKol…:30
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
@@ -122,7 +122,6 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   payees with `--split`). **Show the user every ratio and payee and say all of it is permanent**: unlike a lone
   `--buyback` / `--lp`, nobody (not the dev, not the platform) can ever change the ratios, payees or shares; a payee can
   only move its own slot. Any other asset sent to it: the buy-back + LP share goes to 0xdead, the rest to the payees.
-  Same quotes as `--buyback`. A launch keeps everything it began with (run it as it began, or `--restart`). **BSC
-  testnet only for now**: on mainnet the factory is not deployed yet and the CLI refuses a combined launch (give one of
-  the three alone there).
+  Same quotes as `--buyback`. A launch keeps everything it began with (run it as it began, or `--restart`). Live on
+  BSC mainnet and testnet.
 - `--note` goes on the create only; the buy and the bond carry none.
