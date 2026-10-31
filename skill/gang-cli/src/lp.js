@@ -1,6 +1,6 @@
 import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, hexToString, isAddress, maxUint128, zeroAddress } from 'viem'
 import { atPad, atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, listedBy, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
-import { notListed, splitPlan } from './buyback.js'
+import { notListed, splitPlan, sweepAsset, sweepPlan, sweepReads } from './buyback.js'
 import { walletFor } from './fair.js'
 import { parseNum, revertOf as revertIn, step } from './steps.js'
 
@@ -207,8 +207,8 @@ function lpCtx(testnet) {
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
 
-const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release', 'split', 'add']
-const USAGE = 'usage: gang lp <status|set|set-payee|apply|bind|release|split|add> --token <addr> (split: or --module <addr>) [--pct <0-100>] [--to <addr>] [--slippage 1] [--testnet] — see gang help'
+const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release', 'split', 'sweep', 'add']
+const USAGE = 'usage: gang lp <status|set|set-payee|apply|bind|release|split|sweep|add> --token <addr> (split / sweep: or --module <addr>) [--pct <0-100>] [--to <addr>] [--asset <addr>|wbnb] [--slippage 1] [--testnet] — see gang help'
 
 /** `gang lp <sub>`: the LP splitter of a V3 token (its tax recipient), found from --token. */
 export async function runLp(sub, { opt, flag, out, fail, summarize }) {
@@ -217,8 +217,8 @@ export async function runLp(sub, { opt, flag, out, fail, summarize }) {
   const rawOnly = flag('calldata')
   let ctx
   try { ctx = lpCtx(testnet) } catch (e) { return fail(e.message) }
-  // split may name the splitter itself (--module), e.g. the --to of a creator-fee claim
-  const named = sub === 'split' && flag('module')
+  // split / sweep may name the splitter itself (--module), e.g. the --to of a creator-fee claim
+  const named = (sub === 'split' || sub === 'sweep') && flag('module')
   if (named && flag('token')) fail('give --token (its tax recipient is the splitter) or --module, not both')
   let token = opt('token')
   const chainId = Number(ctx.chainId)
@@ -299,6 +299,17 @@ export async function runLp(sub, { opt, flag, out, fail, summarize }) {
     return send('split', [], {
       step: 'split', ...plan,
       note: `anyone may: splits what arrived since the last split. ${plan.toPayee} goes to the payee now (should that push fail, it is owed: gang lp release --token ${s.token}${tn}); ${plan.setAside} (${s.lpPct}%) is set aside for the pool, which the keeper adds in chunks once the token trades in its pair (each chunk splits first too, so after graduation this runs by itself)`,
+    })
+  }
+
+  if (sub === 'sweep') {
+    if (!(await listedBy(ctx, s.splitter))) return fail(notListed('LP splitter', testnet), { module: s.splitter })
+    const asset = sweepAsset(opt, fail, ctx.wbnb)
+    const plan = sweepPlan({ asset, ...(await sweepReads(ctx.read, s.splitter, LP_ABI, asset)), payee: s.payee, cmd: 'gang lp' })
+    if (plan.error) return fail(plan.error, { splitter: s.splitter, asset })
+    return send('sweep', [asset], {
+      step: 'sweep', ...plan,
+      note: 'anyone may: sends the splitter\'s whole balance of this asset (not its own quote; e.g. a creator fee or another token\'s tax in another quote) to the payee; none of it goes into the pool',
     })
   }
 

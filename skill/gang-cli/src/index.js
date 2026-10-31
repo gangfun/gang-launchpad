@@ -473,6 +473,9 @@ BUYBACK (a V3 token whose recipient is a buy-back splitter; GANG_SPLITTER_FACTOR
                                          buy-back part set aside (the preview shows both). The keeper's chunks split first, so
                                          after graduation it runs by itself; before it (a creator fee claimed --to the
                                          splitter) only this pays the payee. Only a splitter a GangLaunchpad pad listed.
+  gang buyback sweep (--token <addr> | --module <splitter>) --asset <addr>|wbnb
+                                         anyone: send the splitter's whole balance of an asset that is not its own quote (a
+                                         creator fee or a tax in another quote) to the payee; split never moves it.
                                          --testnet, --calldata, --from as in gang v3
 SPLIT (a V3 token whose recipient is a split module, split-v1; GANG_SPLIT_FACTORY / GANG_TESTNET_SPLIT_FACTORY):
   gang split status --token <addr>       payees and shares (fixed), the dev, the bound token / quote, what waits to be split
@@ -509,6 +512,8 @@ LP (a V3 token whose recipient is an LP splitter, lp-burn-v1; GANG_LP_FACTORY / 
   gang lp split (--token <addr> | --module <splitter>)
                                          anyone: split what arrived since the last split: the payee's part is pushed now, the
                                          pool's part set aside (the preview shows both); as gang buyback split
+  gang lp sweep (--token <addr> | --module <splitter>) --asset <addr>|wbnb
+                                         anyone: another asset than the splitter's quote to the payee; as gang buyback sweep
   gang lp add --token <addr> [--slippage 1]
                                          anyone: one chunk now, as the keeper does (graduated tokens; one per 4 minutes; ≤ 0.5%
                                          of the pair's quote reserve; waits for a 10-minute average and skips when the price is

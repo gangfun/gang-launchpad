@@ -5,8 +5,8 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { notListed, splitPlan } from '../src/buyback.js'
-import { notThroughModule, payOutCmd } from '../src/creatorfee.js'
+import { notListed, splitPlan, sweepPlan } from '../src/buyback.js'
+import { claimToModule, notThroughModule, payOutCmd } from '../src/creatorfee.js'
 import { atPad, GANG_GENS, listedBy } from '../src/gangpad.js'
 
 const E18 = 10n ** 18n
@@ -89,6 +89,35 @@ const M = '0x00000000000000000000000000000000000000b2'
   assert.doesNotMatch(notThroughModule('buy-back splitter', { kind: 'buyback' }), /split --module/)
 }
 
+// ---- sweep: another asset than the splitter's quote, all to the payee
+{
+  const Q = '0x00000000000000000000000000000000000000e5', W = '0x00000000000000000000000000000000000000f6'
+  const p = sweepPlan({ asset: W, quote: Q, balance: 14n * 10n ** 12n, decimals: 18, symbol: 'WBNB', payee: A, cmd: 'gang buyback' })
+  assert.deepEqual(p, { asset: W, assetSymbol: 'WBNB', amount: '0.000014', payee: A })
+  assert.equal(sweepPlan({ asset: W, quote: Q, balance: 1234n, decimals: 6, symbol: 'X', payee: A, cmd: 'gang lp' }).amount, '0.001234')
+  assert.match(sweepPlan({ asset: Q.toUpperCase().replace('0X', '0x'), quote: Q, balance: 1n, payee: A, cmd: 'gang lp' }).error, /that is the splitter's own quote: sweep never moves it; gang lp split splits it/)
+  assert.match(sweepPlan({ asset: W, quote: '0x0000000000000000000000000000000000000000', balance: 1n, payee: A, cmd: 'gang buyback' }).error, /not bound to a token yet/)
+  assert.match(sweepPlan({ asset: W, quote: Q, balance: 0n, symbol: 'WBNB', payee: A, cmd: 'gang buyback' }).error, /holds no WBNB: nothing to sweep/)
+}
+
+// ---- the claim's --to note: a module whose own quote is another one gets a warning and the sweep / distribute --asset
+{
+  const Q = '0x00000000000000000000000000000000000000e5', W = '0x00000000000000000000000000000000000000f6'
+  const same = claimToModule({ moduleType: 'buyback-burn-v4', at: M, net: ' --testnet', bound: Q, quote: Q.toUpperCase().replace('0X', '0x') })
+  assert.equal(same.warning, null)
+  assert.match(same.payOut, /^gang buyback split --module/)
+  const other = claimToModule({ moduleType: 'buyback-burn-v4', at: M, net: ' --testnet', bound: Q, quote: W, quoteSymbol: 'WBNB', boundSymbol: 'MockSPCXB' })
+  assert.equal(other.warning, 'the module\'s own quote is MockSPCXB, this fee is in WBNB: split / distribute of the module\'s quote leave it where it is')
+  assert.equal(other.payOut, `gang buyback sweep --module ${M} --asset ${W} --testnet (anyone) sends all of it to the payee (WBNB is not split: no buy-back share)`)
+  assert.match(claimToModule({ moduleType: 'lp-burn-v1', at: M, bound: Q, quote: W, quoteSymbol: 'WBNB' }).payOut, /^gang lp sweep --module .* --asset .*no pool share/)
+  assert.equal(claimToModule({ moduleType: 'split-v1', at: M, bound: Q, quote: W }).payOut, `gang split distribute --module ${M} --asset ${W} (anyone) pays the payees their shares of it`)
+  assert.match(claimToModule({ moduleType: 'combo-v1', at: M, bound: Q, quote: W }).payOut, /^gang combo distribute --module .* --asset /)
+  const unbound = claimToModule({ moduleType: 'lp-burn-v1', at: M, bound: '0x0000000000000000000000000000000000000000', quote: W })
+  assert.match(unbound.warning, /not bound to a token yet/)
+  assert.match(unbound.payOut, /^gang lp split --module/)
+  assert.deepEqual(claimToModule({ moduleType: 'nope', at: M, bound: Q, quote: W }), { payOut: null, warning: null })
+}
+
 // ---- refusals before any RPC, and the help
 const cli = new URL('../src/index.js', import.meta.url).pathname
 const gang = (...args) => {
@@ -100,9 +129,10 @@ for (const cmd of ['buyback', 'lp']) {
   assert.equal(both.success, false)
   assert.match(both.error, /give --token \(its tax recipient is the splitter\) or --module, not both/)
   assert.match(gang(cmd, 'split', '--module', 'nope', '--testnet').error, /--module must be an? (buy-back|LP) splitter address/)
-  assert.match(gang(cmd, 'nope').error, new RegExp(`usage: gang ${cmd} <[a-z|-]*\\|split`))
+  assert.match(gang(cmd, 'nope').error, new RegExp(`usage: gang ${cmd} <[a-z|-]*\\|split\\|sweep`))
+  assert.match(gang(cmd, 'sweep', '--token', A, '--module', M, '--testnet').error, /not both/)
 }
 const help = spawnSync(process.execPath, [cli, 'help'], { encoding: 'utf8', env: { ...process.env, GANG_UPDATE_CHECK: '0' } }).stdout
-for (const c of ['gang buyback split (--token <addr> | --module <splitter>)', 'gang lp split (--token <addr> | --module <splitter>)']) assert.ok(help.includes(c), `help mentions ${c}`)
+for (const c of ['gang buyback split (--token <addr> | --module <splitter>)', 'gang lp split (--token <addr> | --module <splitter>)', 'gang buyback sweep (--token <addr> | --module <splitter>) --asset <addr>|wbnb', 'gang lp sweep (--token <addr> | --module <splitter>) --asset <addr>|wbnb']) assert.ok(help.includes(c), `help mentions ${c}`)
 
 console.log('splitnow: ok')
