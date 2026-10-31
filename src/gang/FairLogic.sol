@@ -80,6 +80,7 @@ library FairLogic {
         if (quote == address(0)) quote = d.wbnb;
         PadCommon.requireQuote(d, quote);
         (uint256 raiseQuote, address refUsed) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, cfg.raiseBnb);
+        if (raiseQuote > PadCommon.MAX_QUOTE_AMOUNT) revert IGangLaunchpad.QuoteAmountTooLarge();
         uint256 price = raiseQuote / TOTAL_SHARES;
         if (price == 0) revert IGangLaunchpad.PriceTooSmall();
 
@@ -210,6 +211,7 @@ library FairLogic {
     ) external view returns (uint256 raiseQuote, uint256 sharePrice) {
         if (quote == address(0)) quote = d.wbnb;
         (raiseQuote,) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, raiseBnb);
+        if (raiseQuote > PadCommon.MAX_QUOTE_AMOUNT) revert IGangLaunchpad.QuoteAmountTooLarge();
         sharePrice = raiseQuote / TOTAL_SHARES;
     }
 

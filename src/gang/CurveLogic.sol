@@ -79,6 +79,7 @@ library CurveLogic {
         PadCommon.requireQuote(d, quote);
         (uint256 lockedGrad, address refUsed) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, gradBnb);
         if (lockedGrad < MIN_GRAD_AMT) revert IGangLaunchpad.GradAmtTooSmall();
+        if (lockedGrad > PadCommon.MAX_QUOTE_AMOUNT) revert IGangLaunchpad.QuoteAmountTooLarge();
 
         if (tax.buyTaxBps == 0) {
             token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, address(0), 0, 0, false);
@@ -362,6 +363,7 @@ library CurveLogic {
         if (!isGradTier(gradBnb)) revert IGangLaunchpad.BadGradTarget();
         if (quote == address(0)) quote = d.wbnb;
         (g,) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, gradBnb);
+        if (g > PadCommon.MAX_QUOTE_AMOUNT) revert IGangLaunchpad.QuoteAmountTooLarge();
     }
 
     /// @dev Room left under the 1% wallet cap (max when the cap is off). Internal: also inlined into the pad's view.

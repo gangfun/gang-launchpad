@@ -10,6 +10,7 @@ import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
 import {SharedMigrator} from "../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
+import {GangHandlerAdmin} from "../src/gang/GangHandlerAdmin.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
@@ -70,6 +71,10 @@ contract DeployGangLaunchpad2 is DeployGang {
         if (c.keeper != SharedPlatformFeeBucket(IGangPad(x.pad1).platformBucket()).keeper()) {
             revert WiringCheck("KEEPER is not the shared bucket's keeper");
         }
+        // audit 2026-10-31 C info-5: a keeper change under way would leave the one-shot handler keeper on the old one
+        if (SharedPlatformFeeBucket(IGangPad(x.pad1).platformBucket()).pendingKeeper() != address(0)) {
+            revert WiringCheck("bucket keeper change pending");
+        }
 
         console.log("=== DeployGangLaunchpad2 chain", block.chainid, "===");
         console.log("deployer", c.deployer);
@@ -100,6 +105,7 @@ contract DeployGangLaunchpad2 is DeployGang {
             // review 2026-10-31 M-1: batch 1 can't be undone (registry addPad, the vault's operator binding), so every
             // check that needs no shared listing runs first; a failure here fails the simulation: nothing broadcast
             _checkPre(s, c, x, true);
+            _checkMine(s, me);
             console.log("\n=== Safe batch 1: list GangLaunchpad 2.0 on the shared contracts, then run phase 2 ===");
             console.log(_wiringJson(s, x, c.mainnet, Ownable(s.vault).owner()));
             return s;
@@ -272,6 +278,8 @@ contract DeployGangLaunchpad2 is DeployGang {
         address[2] memory own = [s.handler, s.pad];
         for (uint256 i; i < 2; i++) {
             Ownable2Step o = Ownable2Step(own[i]);
+            // audit 2026-10-31 C info-1: once the modules are in, a GangHandlerAdmin of the owner holds the handler
+            if (i == 0 && _isOwnersAdmin(o.owner(), s.handler, c.owner)) continue;
             if (c.owner == c.deployer) {
                 if (o.owner() != c.deployer || o.pendingOwner() != address(0)) revert WiringCheck("owner = deployer");
             } else if (o.owner() != c.owner && o.pendingOwner() != c.owner) {
@@ -279,6 +287,33 @@ contract DeployGangLaunchpad2 is DeployGang {
             }
         }
         console.log("self-check ok");
+    }
+
+    /// @dev `who` is a GangHandlerAdmin over `handler`, owned by `owner`.
+    function _isOwnersAdmin(address who, address handler, address owner) internal view returns (bool) {
+        if (who.code.length == 0) return false;
+        try GangHandlerAdmin(who).handler() returns (address h) {
+            return h == handler && GangHandlerAdmin(who).owner() == owner;
+        } catch {
+            return false;
+        }
+    }
+
+    /// @dev Audit 2026-10-31 C L-1: batch 1 lists the pad and binds its handler for good, so before it is printed both
+    ///      must be this deployer's own: deployed by it (a CREATE address of one of its nonces, not a look-alike of the
+    ///      same code at another address) and still owned by it, with no handover started.
+    function _checkMine(Stack memory s, address me) internal view {
+        address[2] memory own = [s.handler, s.pad];
+        uint256 nonce = vm.getNonce(me);
+        for (uint256 i; i < 2; i++) {
+            Ownable2Step o = Ownable2Step(own[i]);
+            if (o.owner() != me || o.pendingOwner() != address(0)) revert WiringCheck("2.0 not the deployer's own");
+            bool made;
+            for (uint256 n; n < nonce && !made; n++) {
+                made = vm.computeCreateAddress(me, n) == own[i];
+            }
+            if (!made) revert WiringCheck("2.0 not deployed by this deployer");
+        }
     }
 
     /// @dev Everything that needs no shared listing: the pad (closed allowed when the Safe opens it), both libraries,

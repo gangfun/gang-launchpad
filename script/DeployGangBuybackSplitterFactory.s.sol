@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
+import {GangModulePadScript} from "./GangModulePadScript.sol";
 import {VmSafe} from "forge-std/Vm.sol";
-import {GangTestnetRefs as T} from "../config/GangDeployRefs.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {GangHandlerAdmin} from "../src/gang/GangHandlerAdmin.sol";
 import {GangBuybackSplitter} from "../src/gang/GangBuybackSplitter.sol";
@@ -28,12 +28,14 @@ interface IOwnable2Step {
 ///         the script itself. A later module kind / version: deploy its factory with HANDLER_ADMIN set (step 2 only);
 ///         the factories the admin still allows besides it are printed with the optional `setFactory(old, false)` that
 ///         stops each (its clones keep working) — the Safe's call, never in the batch.
-/// @dev Env: GANG_PAD (mainnet: must be the live pad); HANDLER_ADMIN, SPLITTER_FACTORY (optional, existing ones);
-///      ADMIN_OWNER (default: whoever holds the handler now — the Safe, or the owner of the older admin holding it);
+/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or
+///      GANG_PAD); HANDLER_ADMIN, SPLITTER_FACTORY (optional, existing ones); ADMIN_OWNER (default: whoever holds the
+///      handler now — the Safe, or the owner of the older admin holding it; mainnet: must be the Safe, with no handover
+///      pending, audit 2026-10-31 L-2);
 ///      DEPLOYER_PRIVATE_KEY (unless both exist); mainnet broadcast needs GANG_MAINNET_OK=true.
-contract DeployGangBuybackSplitterFactory is Script {
-    /// @notice The live GangLaunchpad on BSC 56 (docs/MAINNET-GANG-2026-10-27.md).
-    address internal constant MAINNET_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
+contract DeployGangBuybackSplitterFactory is GangModulePadScript {
+    /// @notice The platform Safe (docs/MAINNET-GANG-2026-10-27.md): on mainnet it holds the handler and owns the admin.
+    address internal constant MAINNET_SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
 
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
@@ -46,9 +48,16 @@ contract DeployGangBuybackSplitterFactory is Script {
             vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
         if (mainnet && broadcasting && !vm.envOr("GANG_MAINNET_OK", false)) revert MainnetNotAllowed();
 
-        address pad = vm.envAddress("GANG_PAD");
-        if (mainnet ? pad != MAINNET_PAD : IGangPad(pad).wbnb() != T.WBNB) revert WiringCheck("pad");
+        address pad = _modulePad(mainnet);
         address handler = IGangPad(pad).taxHandler();
+        if (mainnet) {
+            // L-2: the Safe holds the handler (no handover half-done) and will own the new admin
+            if (ownerBehind(handler) != MAINNET_SAFE || IOwnable2Step(handler).pendingOwner() != address(0)) {
+                revert WiringCheck("handler not settled with the Safe");
+            }
+            address ao = vm.envOr("ADMIN_OWNER", address(0));
+            if (ao != address(0) && ao != MAINNET_SAFE) revert WiringCheck("ADMIN_OWNER must be the Safe on mainnet");
+        }
 
         admin = GangHandlerAdmin(vm.envOr("HANDLER_ADMIN", address(0)));
         factory = GangBuybackSplitterFactory(vm.envOr("SPLITTER_FACTORY", address(0)));
@@ -56,13 +65,15 @@ contract DeployGangBuybackSplitterFactory is Script {
             uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
             vm.startBroadcast(pk);
             if (address(admin) == address(0)) {
-                admin = new GangHandlerAdmin(vm.envOr("ADMIN_OWNER", ownerBehind(handler)), handler);
+                address ao = vm.envOr("ADMIN_OWNER", address(0)); // 0 = unset
+                admin = new GangHandlerAdmin(ao == address(0) ? ownerBehind(handler) : ao, handler);
             }
             if (address(factory) == address(0)) factory = new GangBuybackSplitterFactory(pad, address(admin));
             vm.stopBroadcast();
         }
 
         check(pad, address(admin), address(factory));
+        if (mainnet && admin.owner() != MAINNET_SAFE) revert WiringCheck("admin.owner");
         bytes[] memory batch = pendingBatch(address(admin), address(factory));
         _print(pad, address(admin), address(factory), batch);
 
