@@ -17,6 +17,7 @@ import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {CurveLogic} from "../../src/gang/CurveLogic.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
+import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 
 /// @dev Exposes the script's internal JSON builders and the creator-fee probe (same code the script runs / prints).
 contract DeployGangLaunchpad2Harness is DeployGangLaunchpad2 {
@@ -211,6 +212,34 @@ contract GangLaunchpad2DeployForkTest is Test {
         uint256 u9 = p.graduationAmountOf(M.USDT, M.USDT_REF_POOL);
         assertApproxEqAbs(p.graduationAmountFor(M.USDT, M.USDT_REF_POOL, 15 ether), (u9 * 15) / 9, 1e6, "USDT scales");
 
+        // the live GangGateway (aggregators) through the live registry, on the 6 BNB token: its own amount left, and
+        // tryBuy / trySell to the wei
+        {
+            IGangGateway gw = IGangGateway(GATEWAY);
+            (uint8 st,,, uint256 feeBps, uint256 left) = gw.getTokenInfo(t6);
+            assertEq(st, 1, "gateway: curve");
+            assertEq(feeBps, 100);
+            assertEq(left, 6 ether, "gateway: the token's own 6 BNB left");
+            address gb = makeAddr("gateway-buyer2");
+            agents.mint(gb, 3);
+            vm.deal(gb, 1 ether);
+            (,, uint256 est, uint256 cost,,,,) = gw.tryBuy(t6, gb, 0, 0.5 ether);
+            vm.prank(gb, gb);
+            (uint256 out, uint256 used) = gw.buyTokenAMAP{value: 0.5 ether}(t6, gb, 0.5 ether, est);
+            assertEq(out, est, "gateway buy matches tryBuy");
+            assertEq(used, cost);
+            (,,,, left) = gw.getTokenInfo(t6);
+            (,, uint128 rq,,,,,,,,,) = _curve(p, t6);
+            assertEq(left, 6 ether - rq);
+            uint256 half = out / 2;
+            (,, uint256 funds,) = gw.trySell(t6, half);
+            vm.startPrank(gb, gb);
+            IERC20(t6).approve(GATEWAY, half);
+            uint256 got = gw.sellToken(0, t6, gb, half, 0, 0, address(0));
+            vm.stopPrank();
+            assertEq(got, funds, "gateway sell matches trySell");
+        }
+
         SharedPlatformFeeBucket bucket = SharedPlatformFeeBucket(p.platformBucket());
         uint256 acc0 = bucket.accruedQuote(M.WBNB);
         address buyer = makeAddr("buyer2");
@@ -239,7 +268,10 @@ contract GangLaunchpad2DeployForkTest is Test {
         vm.prank(creator);
         p.claimCreatorFee(t, creator);
         assertEq(IERC20(M.WBNB).balanceOf(creator) - before, owed, "claimed after graduation");
-        assertLe(IERC20(M.WBNB).balanceOf(s.pad), 1, "2.0 holds only dust");
+        {
+            (,, uint128 rq6,,,,,,,,,) = _curve(p, t6); // the gateway's 6 BNB token is still on the curve
+            assertLe(IERC20(M.WBNB).balanceOf(s.pad), rq6 + p.creatorFeeOf(t6) + 1, "2.0 holds only dust");
+        }
 
         // Safe batch 3 (cut-over): 1.0 stops creating; 2.0 keeps creating
         vm.prank(SAFE);
