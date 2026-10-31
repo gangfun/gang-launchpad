@@ -110,6 +110,13 @@ export function v3Ctx(testnet) {
 const symbolOf = async (ctx, token) => { try { return await ctx.read(token, ERC20_ABI, 'symbol') } catch { return null } }
 const pct = (bps) => Number(bps) / 100
 const bnbOf = (wei) => Number(wei / 10n ** 15n) / 1000
+/**
+ * The graduation target in words. A non-WBNB quote fixes the amount in the quote at create (`inQuote`, e.g. "1234.5
+ * USDT"): the BNB figure is what that was worth then, a nominal target whose BNB worth moves with the quote's price.
+ */
+const gradLine = (bnb, inQuote) => (inQuote
+  ? `the curve graduates into PancakeSwap once ${inQuote} is raised: ${bnb} BNB priced in the quote at create, fixed in the quote, so what it is worth in BNB moves with the quote's price (market cap at graduation ≈ 5× the target)`
+  : `the curve graduates into PancakeSwap once ${bnb} BNB is raised (market cap then ≈ ${bnb * 5} BNB)`)
 const VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667n
 const ceilDiv = (a, b) => (a + b - 1n) / b
 
@@ -302,8 +309,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ? { warning: `this token pays its tax to the split module, but the module is bound to another token (${split.token}): the keeper never splits this token's tax (${c.quote}); it is split only by hand (gang split distribute --token ${token}${net} --asset ${c.quote})` } : null
     // 2.0: the creator's part of the curve fee, waiting on the pad
     const gen = await curveCreatorFee(ctx, token, c, net)
+    const nonWbnb = c.quote.toLowerCase() !== String(ctx.wbnb).toLowerCase()
+    const graduationNote = c.graduationTargetBnb != null && !c.graduated
+      ? gradLine(c.graduationTargetBnb, nonWbnb ? `${c.graduationAt} ${c.quoteSymbol || 'of the quote'}` : null) : null
     return out({
-      success: true, chainId: Number(ctx.chainId), ...fees, ...pub, ...gen, taxNote, ...(swapBack && { swapBack }), ...(buyback && { buyback }),
+      success: true, chainId: Number(ctx.chainId), ...fees, ...pub, ...gen, ...(graduationNote && { graduationNote }), taxNote, ...(swapBack && { swapBack }), ...(buyback && { buyback }),
       ...(split && { split: { ...split, ...splitWarn } }), ...(lp && { lp: { ...lp, ...lpWarn } }),
     })
   }
@@ -406,10 +416,11 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
     // the target: --grad (2.0, createWithGradTarget) or the pad's default (create: 9 BNB on 2.0, 15 on 1.0)
     const targetBnb = grad ?? bnbOf(await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'TARGET_GRAD_BNB'))
-    // the target in the quote: WBNB as is; a fixed rate in QuoteRegistry; else --ref-pool prices it
+    // the target in the quote: WBNB as is; a fixed rate in QuoteRegistry; else --ref-pool prices it. On 2.0 it is read
+    // with graduationAmountFor for the very target the create takes, so GradAmtTooSmall / QuoteAmountTooLarge show here
     let gradAmt
     try {
-      gradAmt = grad !== null ? await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'graduationAmountFor', [quote, refPool, parseUnits(String(grad), 18)])
+      gradAmt = tiers ? await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'graduationAmountFor', [quote, refPool, parseUnits(String(targetBnb), 18)])
         : await ctx.read(ctx.pad, PAD_ABI, 'graduationAmountOf', [quote, refPool])
     } catch (e) {
       return fail('cannot price the graduation target in this quote', revertOf(e) || { detail: e.shortMessage || e.message })
@@ -434,7 +445,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       step: 'create', chainId: Number(ctx.chainId), name, symbol, logoURI: logo.logoURI, ...(logo.uploaded && { uploaded: true }),
       metaURI: meta.metaURI, metadata: meta.metadata,
       quote: (await symbolOf(ctx, quote)) || quote, graduationTargetBnb: targetBnb, graduationAt: await units(ctx, quote, gradAmt),
-      graduation: `the curve graduates into PancakeSwap once ${targetBnb} BNB${quote.toLowerCase() === String(ctx.wbnb).toLowerCase() ? '' : ' worth of the quote'} is raised (market cap then ≈ ${targetBnb * 5} BNB)${tiers ? `; ${grad !== null ? 'picked with --grad' : 'the default'}, --grad picks ${tiers.join(' / ')}` : ''}`,
+      graduation: `${gradLine(targetBnb, quote.toLowerCase() === String(ctx.wbnb).toLowerCase() ? null : `${await units(ctx, quote, gradAmt)} ${(await symbolOf(ctx, quote)) || 'of the quote'}`)}${tiers ? `; ${grad !== null ? 'picked with --grad' : 'the default'}, --grad picks ${tiers.join(' / ')}` : ''}`,
       ...(refPool !== zeroAddress && quote.toLowerCase() !== String(ctx.wbnb).toLowerCase() && { refPool }),
       buyTaxPct: buyTax, sellTaxPct: sellTax, dividendPct: dividend,
       recipient: recipient === zeroAddress ? null : recipient, recipientLabel: selfRecipient ? 'you (the creator)' : label, tokenIfNext: dry.result,

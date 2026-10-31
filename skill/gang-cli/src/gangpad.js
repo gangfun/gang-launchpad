@@ -196,6 +196,8 @@ export const NOT_ON_MAINNET = 'no gang launchpad address for this network — se
 export const MERGED_ERRORS_ABI = parseAbi([
   'error Untaxed()', 'error NotReclaimable()', 'error NotLocked()', 'error WrongKind()', 'error TransfersLocked()',
   'error StillLocked()', 'error SwapBackOutOfGas()', 'error SellDuringFlashSwap()', 'error BadKind()',
+  // 2.0, both kinds: the graduation amount / raise in the quote is more than a PancakeSwap pair can hold
+  'error QuoteAmountTooLarge()',
 ])
 export const MERGED_HINTS = {
   Untaxed: 'this token is untaxed (0% / 0%): it never gets a pool tax, a tax route or dividends; nothing to release or claim on it',
@@ -207,6 +209,7 @@ export const MERGED_HINTS = {
   StillLocked: 'the token has not graduated / launched yet',
   SwapBackOutOfGas: 'too little gas for the sell-time tax chunk: re-run with the estimated gas limit (do not cap it lower)',
   SellDuringFlashSwap: 'a sell paid in from a flash swap callback is refused by this token',
+  QuoteAmountTooLarge: 'in this quote the graduation target / raise is more than a PancakeSwap pair can hold (the quote is priced far below BNB, often by a skewed --ref-pool): pick another quote or reference pool',
 }
 
 const KIND_ABI = parseAbi(['function kindOf(address token) view returns (uint8)'])
