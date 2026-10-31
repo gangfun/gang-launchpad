@@ -290,6 +290,7 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
     checkMeta() // a bad --website / --twitter / --description fails here, before any wrap / approve round or upload
     const raise = parseNum(fail, 'raise', opt('raise', '15'), 5, 50)
     if (flag('hours')) fail('--hours was removed: a fair-mint sale has no deadline and stays open until it fills')
+    if (flag('grad')) fail('--grad is a V3 curve setting (the graduation target, 2.0): a 打新 sale fills at its --raise instead, so leave --grad out')
     const capPct = parseNum(fail, 'cap', opt('cap', '0.5'), 0.25, 1)
     const holdPct = parseNum(fail, 'hold', opt('hold', '60'), 60, 90)
     const mintFeePct = parseNum(fail, 'mint-fee', opt('mint-fee', '1'), 1, 3)

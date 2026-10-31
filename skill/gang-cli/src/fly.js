@@ -696,6 +696,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (!name || !symbol) fail('--name and --symbol are required')
     checkMeta()
     if (!(await padOpen(ctx))) fail(closed(ctx, testnet), { pad: ctx.pad, padVersion: ctx.version })
+    if (flag('grad')) fail('--grad is a V3 curve setting (the graduation target, 2.0): a 铸币飞轮 sale fills at its --raise instead, so leave --grad out')
     const presetName = opt('preset', 'j')
     const preset = FLY_PRESETS[presetName]
     if (!preset) fail(`--preset must be ${Object.keys(FLY_PRESETS).join(' or ')}`, { got: presetName })

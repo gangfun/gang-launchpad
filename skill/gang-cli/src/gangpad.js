@@ -279,6 +279,47 @@ export async function creatorFeeShareOf(ctx, pad = ctx.pad) {
 }
 
 /**
+ * The V3 curve graduation target (GangLaunchpad 2.0): the creator picks one of GRAD_BNB_TIERS (BNB raised) with
+ * createWithGradTarget, create takes TARGET_GRAD_BNB (9 on 2.0). 1.0 has neither pick nor tiers: every curve 15 BNB.
+ */
+export const GRAD_TARGET_ABI = parseAbi([
+  'function GRAD_BNB_TIERS() pure returns (uint256[4])',
+  'function TARGET_GRAD_BNB() view returns (uint256)',
+  'function gradTargetOf(address token) view returns (uint256)',
+  'function graduationAmountFor(address quote, address refPool, uint256 gradBnb) view returns (uint256)',
+  'error BadGradTarget()',
+  'event GradTargetSet(address indexed token, uint256 gradBnb)',
+])
+const gradTiers = new Map()
+const bnbNum = (wei) => Number(wei / 10n ** 15n) / 1000
+/**
+ * The graduation targets a creator may pick on `pad`, in BNB ([6, 9, 12, 15]); null on a pad without the pick (1.0,
+ * known without a call, or an older 2.0 build: GRAD_BNB_TIERS reverts without data). An RPC error is thrown.
+ */
+export async function gradTiersOf(ctx, pad = ctx.pad) {
+  const known = [...GANG_GENS.mainnet, ...GANG_GENS.testnet].find((g) => sameAddr(g.pad, pad))
+  if (known?.gen === '1.0') return null
+  const key = `${ctx.chainId}:${pad.toLowerCase()}`
+  if (!gradTiers.has(key)) {
+    const p = ctx.read(pad, GRAD_TARGET_ABI, 'GRAD_BNB_TIERS').then((t) => t.map(bnbNum)).catch((e) => {
+      if (noSuchFunction(e)) return null
+      gradTiers.delete(key)
+      throw e
+    })
+    gradTiers.set(key, p)
+  }
+  return gradTiers.get(key)
+}
+/** A token's graduation target in BNB raised: its pick (gradTargetOf) where the pad has one, else the pad's TARGET_GRAD_BNB. */
+export async function gradTargetBnbOf(ctx, token) {
+  if (await gradTiersOf(ctx)) {
+    const v = await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'gradTargetOf', [token])
+    if (v > 0n) return bnbNum(v)
+  }
+  return bnbNum(await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'TARGET_GRAD_BNB'))
+}
+
+/**
  * Why `token` is not a `want` ('v3' | 'fair') token on this pad, as { error, hint, kind } for fail(): points at the right
  * subcommand when kindOf says it is the other kind. `net` is appended to the suggested command (' --testnet' or '').
  */

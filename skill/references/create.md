@@ -17,7 +17,9 @@ gang tx --hash 0x…
 - **Untaxed by default**: the curve charges the 1% fee, the pool after graduation nothing. With `--buy-tax` /
   `--sell-tax` it is a tax token ([v3.md](v3.md)).
 - No creation fee; only gas. Fixed supply 1,000,000,000: 800,000,000 sold on the curve, 200,000,000 reserved for the
-  PancakeSwap pool at graduation (≈ 15 BNB of the quote; the preview shows it as `graduationAt`).
+  PancakeSwap pool at graduation. The curve graduates once its target is raised: 15 BNB of the quote on 1.0; on 2.0
+  `--grad 6|9|12|15` picks it (default 9; market cap at graduation ≈ 5×). The preview shows it as
+  `graduationTargetBnb` and, in the quote, `graduationAt` ([v3.md](v3.md#graduation-target-ganglaunchpad-20)).
 - The creator gets nothing for free: to hold tokens it buys like everyone else, under the same 1% cap. Create and curve
   buys both require an Agent ID.
 - **Quote**: WBNB unless `--quote`, which takes any 18-decimal ERC-20 (other decimals fail with `QuoteNotAllowed`) and
