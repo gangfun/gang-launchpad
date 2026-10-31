@@ -24,10 +24,18 @@ import { bsc, bscTestnet } from 'viem/chains'
  * pad that created it and is served with that generation's GangRouter, GangBond and module factories (each of them is
  * bound to one pad). 2.0 (docs/SPEC-CURVE-CREATOR-FEE-2026-10-31.md) has the same V3 curves and 打新 sales, and keeps
  * 70% of the 1% curve fee for the token's creator (creatorFeeOf / claimCreatorFee); a 1.0 pad has neither.
- * Mainnet 2.0 is not deployed yet: its entry goes first in `mainnet` once it is.
  */
 export const GANG_GENS = {
   mainnet: [
+    // 2026-10-31, pad block 130874052: 2.0 with the creator fee and the graduation target the creator picks; its own
+    // GangRouter, GangBond, buy-back factory (buyback-burn-v4), split-v1, lp-burn-v1 and combo-v1 factories, all bound to
+    // this pad and listed on its own GangHandlerAdmin
+    {
+      gen: '2.0', pad: '0x770331a9accdb53ACb4a45B6c5B7D151fADCe557', router: '0xa83209d6bfC2B220cD86410cCDDC71FEb354844a',
+      bond: '0x231339463d04A2127E6dD5756756Dd56853AE0D8', splitterFactory: '0x77e499c892e5E6B3eEe1721e6821e9DA1293803C',
+      splitFactory: '0xa73dC3d63AAf72E70b1cb012e5f3A541360Bec59', lpFactory: '0x8ac85f150f87B536fb05eA163908b1077D95c0E4',
+      comboFactory: '0xcCeA388DbC0Edb206eC25C9715546d57029198Be',
+    },
     // 2026-10-27, pad block 130104322. router = the GangRouter proxy: BNB buys and every PancakeSwap trade of a graduated
     // token (V3, 打新 and V2 / Soft / U / S alike). GangBond 2026-10-29 with the re-review L-1 fix; it replaces 0xf26F…C817
     // (never used; CLI 0.15.1–0.16.1) (docs/MAINNET-GANG-BOND-2026-10-29.md). Buy-back factory v3 (one chunk per 4 minutes;

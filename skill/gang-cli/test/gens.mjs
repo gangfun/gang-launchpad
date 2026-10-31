@@ -20,9 +20,21 @@ const ENV = ['GANG_TESTNET_PAD', 'GANG_TESTNET_ROUTER', 'GANG_TESTNET_BOND', 'GA
 const clean = () => { for (const k of ENV) delete process.env[k] }
 clean()
 
-// ---- built in: testnet creates on 2.0 and keeps 1.0 for its tokens; mainnet has 1.0 only until 2.0 is deployed
+// ---- built in: both networks create on 2.0 and keep 1.0 for its tokens
 assert.deepEqual(gangGens(true).map((g) => g.gen), ['2.0', '2.0', '1.0'])
-assert.deepEqual(gangGens(false).map((g) => g.gen), ['1.0'])
+assert.deepEqual(gangGens(false).map((g) => g.gen), ['2.0', '1.0'])
+// mainnet: 2.0 (2026-10-31) is the create target, 1.0 keeps its tokens; each with its own contracts
+{
+  const [M2, M1] = GANG_GENS.mainnet
+  assert.deepEqual([M2.pad, M2.router, M2.bond], ['0x770331a9accdb53ACb4a45B6c5B7D151fADCe557', '0xa83209d6bfC2B220cD86410cCDDC71FEb354844a', '0x231339463d04A2127E6dD5756756Dd56853AE0D8'])
+  assert.deepEqual([M2.splitterFactory, M2.splitFactory, M2.lpFactory, M2.comboFactory], ['0x77e499c892e5E6B3eEe1721e6821e9DA1293803C', '0xa73dC3d63AAf72E70b1cb012e5f3A541360Bec59', '0x8ac85f150f87B536fb05eA163908b1077D95c0E4', '0xcCeA388DbC0Edb206eC25C9715546d57029198Be'])
+  assert.equal(M1.pad, '0x15CFD2dc8278Fb87a1783ef42111618E20874365')
+  for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory']) {
+    assert.equal(new Set([M2, M1].map((g) => g[k].toLowerCase())).size, 2, k)
+  }
+  const m = padNets('v3').mainnet
+  assert.deepEqual([m.gen, m.pad, m.router, m.bond], ['2.0', M2.pad, M2.router, M2.bond])
+}
 const net = padNets('v3').testnet
 assert.deepEqual([net.gen, net.pad, net.router, net.bond], ['2.0', V2.pad, V2.router, V2.bond])
 assert.equal(bondAddress(true), V2.bond)
@@ -33,7 +45,7 @@ for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lp
 
 // combined recipients: a factory per generation (bound to one pad), none on the first testnet 2.0
 assert.deepEqual([V2, V2a, V1].map((g) => g.comboFactory), ['0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD', null, '0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE'])
-assert.equal(GANG_GENS.mainnet[0].comboFactory, '0xd33C38BE3f8472b3013167830F0638C1704e1DBd')
+assert.deepEqual(GANG_GENS.mainnet.map((g) => g.comboFactory), ['0xcCeA388DbC0Edb206eC25C9715546d57029198Be', '0xd33C38BE3f8472b3013167830F0638C1704e1DBd'])
 assert.equal(net.comboFactory, V2.comboFactory)
 {
   const { comboFactoryAddress } = await import('../src/combo.js')

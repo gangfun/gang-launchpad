@@ -10,7 +10,7 @@ gang execute --request-id …
 gang tx --hash 0x…
 ```
 
-`gang create` makes a **V3** token on GangLaunchpad (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`); `gang create
+`gang create` makes a **V3** token on GangLaunchpad (2.0, pad `0x770331a9accdb53ACb4a45B6c5B7D151fADCe557`); `gang create
 --fair` makes a **打新** sale on the same pad ([fair.md](fair.md)). A setting of the other kind (`--raise` without
 `--fair`, `--buy-tax` with it) is refused, and so is `--taxed` (LaunchpadV2's old tax track).
 

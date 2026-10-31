@@ -38,8 +38,8 @@ Before graduation a token **can't be transferred**, only bought and sold on the 
 the 1% fee on every V3 curve buy and sell, 70% is kept for the token's creator, who claims it any time with
 `gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)), and a **graduation target the creator
 picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)). New tokens go to the newest generation the
-CLI knows on that network (`gang preflight` → `createPadGen`; 2.0 is on the BSC testnet first, mainnet stays on 1.0
-until 2.0 is deployed there). A token keeps trading on the generation it was created on; the CLI finds it.
+CLI knows on that network (`gang preflight` → `createPadGen`: 2.0 on BSC mainnet, since 2026-10-31, and on
+the testnet). A token keeps trading on the generation it was created on; the CLI finds it.
 
 **铸币飞轮 (Mint Flywheel, `fly`)** lives on its own pad, GangFlywheelPad: shares with a quota per wallet (invites
 add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
