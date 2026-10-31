@@ -2,7 +2,7 @@
  * Combined recipient (GangComboSplitter, combo-v1) without a chain: parsing a combined launch's --buyback / --lp / --split
  * (every combination and every refusal GangComboSplitter.initialize makes), the status shape (formatCombo) for a bound,
  * an unbound, a no-payee and a waiting module, previewWork's minOut decoding, the events gang tx decodes, and the launch /
- * command flags refused before any RPC (index.js, launch.js), including mainnet's "not on mainnet yet". The on-chain steps
+ * command flags refused before any RPC (index.js, launch.js), on testnet and mainnet. The on-chain steps
  * are covered by the testnet run in the CLI's release notes.
  *
  *   node skill/gang-cli/test/combo.mjs
@@ -83,17 +83,17 @@ assert.equal(comboLine(3000, 3000, [ME_C, A], [7000, 3000]),
 assert.equal(comboLine(5000, 5000, [], []), '50% buy-back and burn, 50% liquidity (LP to 0xdead)')
 assert.match(PERMANENT_NOTE, /^PERMANENT: .*nobody \(not you, not the platform\) can change them later, unlike a lone --buyback or --lp splitter/)
 
-// ---- factory addresses: testnet built in, mainnet not deployed yet (null), env overrides
-assert.equal(MAINNET_COMBO_FACTORY, null)
+// ---- factory addresses: built in, env overrides
+assert.equal(MAINNET_COMBO_FACTORY, '0xd33C38BE3f8472b3013167830F0638C1704e1DBd')
 assert.equal(comboFactoryAddress(true), TESTNET_COMBO_FACTORY)
-assert.equal(comboFactoryAddress(false), null)
+assert.equal(comboFactoryAddress(false), MAINNET_COMBO_FACTORY)
 process.env.GANG_COMBO_FACTORY = A
 assert.equal(comboFactoryAddress(false), A)
 delete process.env.GANG_COMBO_FACTORY
 process.env.GANG_TESTNET_COMBO_FACTORY = B
 assert.equal(comboFactoryAddress(true), B)
 delete process.env.GANG_TESTNET_COMBO_FACTORY
-assert.match(comboNotDeployed(false), /not on BSC mainnet yet/)
+assert.match(comboNotDeployed(false), /not deployed on BSC mainnet in this CLI version/)
 assert.match(comboNotDeployed(false), /GANG_COMBO_FACTORY/)
 assert.match(comboNotDeployed(true), /GANG_TESTNET_COMBO_FACTORY/)
 
@@ -262,12 +262,10 @@ const refused = (args, re) => {
 }
 const base = ['create', '--name', 'C', '--symbol', 'C', '--from', ME, '--testnet']
 const taxed = [...base, '--buy-tax', '2', '--sell-tax', '2']
-// mainnet: not deployed yet, refused first (before the wallet or any RPC)
+// mainnet: the built-in factory, the same checks before any RPC
 const main = ['create', '--name', 'C', '--symbol', 'C', '--from', ME, '--buy-tax', '2', '--sell-tax', '2']
-const mn = refused([...main, '--buyback', '30', '--lp', '30', '--split', `self:70,${A}:30`], /^the combined recipient .* is not on BSC mainnet yet: give one of --buyback \/ --lp \/ --split alone, or try it with --testnet/)
-assert.deepEqual(mn.flags, ['--buyback', '--split', '--lp'])
-refused([...main, '--buyback', '30', '--lp', '30'], /not on BSC mainnet yet/)
-refused([...main, '--lp', '30', '--split', `${A}:100`], /not on BSC mainnet yet/)
+refused([...main, '--buyback', '30', '--lp', '30', '--lp-to', A], /--lp-to does not apply to a combined recipient/)
+refused([...main, '--buyback', '50', '--lp', '50', '--split', `${A}:100`], /--split is refused/)
 refused([...base, '--buyback', '30', '--lp', '30'], /--buyback \+ --lp needs a taxed token/)
 refused([...base, '--buy-tax', '0', '--sell-tax', '0', '--buyback', '30', '--split', `${A}:100`], /--buyback \+ --split needs a taxed token/)
 refused([...taxed, '--buyback', '30', '--lp', '30', '--buyback-to', A], /--buyback-to does not apply to a combined recipient .*--split self:<pct>,<addr>:<pct>/)
@@ -291,7 +289,7 @@ refused(['combo', 'bind', '--module', B, '--testnet'], /needs --token/)
 // the help lists the commands and the flags
 const help = spawnSync(process.execPath, [cli, 'help'], { encoding: 'utf8', env: { ...process.env, GANG_UPDATE_CHECK: '0' } }).stdout
 for (const x of ['--buyback <0-100> --lp <0-100> [--split', 'combined recipient', 'PERMANENT: the ratios', 'gang combo status', 'gang combo distribute',
-  'gang combo release', 'gang combo set-payee', 'gang combo bind', 'gang combo chunk', 'GANG_COMBO_FACTORY', 'BSC testnet only for now']) {
+  'gang combo release', 'gang combo set-payee', 'gang combo bind', 'gang combo chunk', 'GANG_COMBO_FACTORY']) {
   assert.ok(help.includes(x), `help mentions ${x}`)
 }
 
