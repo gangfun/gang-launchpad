@@ -110,7 +110,11 @@ contract DeployGang is Script {
     error WiringCheck(string what);
     error PendingOwnerMismatch(address target);
 
-    function run() external returns (Stack memory s) {
+    /// @dev Set by a script that checks a pad the Safe opens later (DeployGangLaunchpad2 phase 2): `pad.migrator() == 0`
+    ///      then passes `_checkPad`. Off here: this script always opens the pad before checking it.
+    bool internal allowClosedPad;
+
+    function run() external virtual returns (Stack memory s) {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         Cfg memory c = _cfg(vm.addr(pk));
 
@@ -365,7 +369,10 @@ contract DeployGang is Script {
         if (pad.tokenDeployer() != s.tokenDeployer) revert WiringCheck("pad.tokenDeployer");
         if (pad.wbnb() != c.wbnb) revert WiringCheck("pad.wbnb");
         if (pad.pairFactory() != c.factory) revert WiringCheck("pad.pairFactory");
-        if (pad.migrator() != s.migrator || s.migrator == address(0)) revert WiringCheck("pad.migrator");
+        if (s.migrator == address(0)) revert WiringCheck("pad.migrator");
+        if (pad.migrator() != s.migrator && !(allowClosedPad && pad.migrator() == address(0))) {
+            revert WiringCheck("pad.migrator");
+        }
         if (pad.agentIdRegistry() != s.agentId || !pad.agentGateEnabled()) revert WiringCheck("agent gate");
         if (c.mainnet && s.agentId != M.AGENT_ID_REGISTRY) revert WiringCheck("mainnet Agent ID registry");
         if (!pad.walletCapEnabled()) revert WiringCheck("wallet cap");
@@ -459,13 +466,14 @@ contract DeployGang is Script {
     }
 
     /// @dev Both external libraries are linked and live: a delegatecall into an address without code returns nothing,
-    ///      so the pad's decode of these views reverts (WBNB needs no pool: 15 BNB → 15 WBNB, 10_000 shares).
+    ///      so the pad's decode of these views reverts (WBNB needs no pool: the default target in BNB → as much WBNB
+    ///      (1.0: 15, 2.0: 9), 15 BNB → 10_000 shares).
     function _checkLibs(Stack memory s, Cfg memory c) internal view {
         IGangPad pad = IGangPad(s.pad);
         try pad.graduationAmountOf(c.wbnb, address(0)) returns (uint256 g) {
-            if (g != 15 ether) revert WiringCheck("CurveLogic graduationAmountOf");
+            if (g == 0 || g != pad.TARGET_GRAD_BNB()) revert WiringCheck("CurveLogic graduationAmountOf");
         } catch {
-            revert WiringCheck("CurveLogic not linked");
+            revert WiringCheck("CurveLogic not linked (or not this pad's library)");
         }
         try pad.previewCreate(address(0), address(0), 15 ether) returns (uint256 raise, uint256 price) {
             if (raise != 15 ether || price != 15 ether / 10_000) revert WiringCheck("FairLogic previewCreate");

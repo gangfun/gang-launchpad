@@ -406,8 +406,8 @@ contract GangPadRegistryTest is GangFixture {
         for (uint256 i; i < pre; i++) {
             address w = _newAgent();
             vm.prank(w);
-            // ≤ 6 × 2 BNB stays under the ≈15 BNB line: the curve is still live for the buy under test
-            pad.buy(t, bound(uint256(keccak256(abi.encode(seed, i))), 1, capOn ? 0.2 ether : 2 ether), 0);
+            // ≤ 6 × 1.4 BNB stays under the 9 BNB line (2.0 default): the curve is still live for the buy under test
+            pad.buy(t, bound(uint256(keccak256(abi.encode(seed, i))), 1, capOn ? 0.2 ether : 1.4 ether), 0);
         }
         assertFalse(_graduated(t));
         quoteIn = bound(quoteIn, 1, capOn ? 2 ether : 30 ether);

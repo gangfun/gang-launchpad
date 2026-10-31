@@ -464,7 +464,9 @@ contract LaunchpadV3Test is Test {
         _assertNoHandlerLogs();
 
         assertEq(quoteTok.balanceOf(agent), 1_000 ether - gross, "pays exactly the gross");
-        assertEq(bucket.accruedQuote(address(quoteTok)), fee, "only the 1% protocol fee");
+        uint256 creatorFee = (fee * 7_000) / BPS;
+        assertEq(pad.creatorFeeOf(t), creatorFee, "70% of the 1% kept for the creator");
+        assertEq(bucket.accruedQuote(address(quoteTok)), fee - creatorFee, "30% of the 1% to the platform");
         assertEq(quoteTok.balanceOf(treasury), 0, "recipient gets nothing on the curve");
         assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders get nothing on the curve");
         assertEq(quoteTok.balanceOf(address(handler)), 0, "nothing reaches the handler");
@@ -484,6 +486,7 @@ contract LaunchpadV3Test is Test {
         assertGt(divVault.shares(t, agent), 0, "agent holds dividend shares");
         uint256 bal = IERC20(t).balanceOf(agent2);
         uint256 bucketBefore = bucket.accruedQuote(address(quoteTok));
+        uint256 creatorBefore = pad.creatorFeeOf(t);
         uint256 quoteBefore = quoteTok.balanceOf(agent2);
 
         vm.startPrank(agent2);
@@ -495,9 +498,12 @@ contract LaunchpadV3Test is Test {
         vm.stopPrank();
         _assertNoHandlerLogs();
 
-        uint256 fee = bucket.accruedQuote(address(quoteTok)) - bucketBefore;
+        uint256 toPlatform = bucket.accruedQuote(address(quoteTok)) - bucketBefore;
+        uint256 toCreator = pad.creatorFeeOf(t) - creatorBefore;
+        uint256 fee = toPlatform + toCreator;
         uint256 quoteOut = toUser + fee; // what the curve paid out
         assertEq(fee, (quoteOut * 100) / BPS, "only the 1% protocol fee");
+        assertEq(toCreator, (fee * 7_000) / BPS, "70% of it kept for the creator");
         assertEq(quoteTok.balanceOf(agent2) - quoteBefore, toUser);
         assertEq(quoteTok.balanceOf(treasury), 0, "recipient gets nothing on the curve");
         assertEq(quoteTok.balanceOf(address(divVault)), 0, "holders get nothing on the curve");
@@ -529,11 +535,14 @@ contract LaunchpadV3Test is Test {
         _graduate(t);
         address pair = TaxLaunchTokenV3(t).pair();
         uint256 spent = quoteTok.totalSupply() - supplyBefore - _quoteHeldByBuyers();
-        uint256 fees = bucket.accruedQuote(address(quoteTok));
-        uint256 dust = quoteTok.balanceOf(address(pad)); // graduation truncation leaves ≤ 1 wei on the pad
+        uint256 creatorFees = pad.creatorFeeOf(t);
+        uint256 fees = bucket.accruedQuote(address(quoteTok)) + creatorFees;
+        // the creator's part stays on the pad; graduation truncation leaves ≤ 1 wei more
+        uint256 dust = quoteTok.balanceOf(address(pad)) - creatorFees;
         assertLe(dust, 1, "pad dust");
         assertEq(quoteTok.balanceOf(pair) + fees + dust, spent, "spent = liquidity + 1% fee");
         assertApproxEqAbs(fees, quoteTok.balanceOf(pair) / 99, 400, "fee is 1% of the gross");
+        assertApproxEqAbs(creatorFees, (fees * 7_000) / BPS, 400, "70% of the fee kept for the creator");
         assertEq(quoteTok.balanceOf(treasury), 0, "no curve tax to the recipient");
         assertEq(quoteTok.balanceOf(address(divVault)), 0, "no curve tax to holders");
         assertEq(quoteTok.balanceOf(address(handler)), 0);
@@ -660,7 +669,9 @@ contract LaunchpadV3Test is Test {
         address t = _create(_tax(0, 0, 0, address(0)));
         vm.prank(agent);
         pad.buy(t, 0.01 ether, 0);
-        assertEq(bucket.accruedQuote(address(quoteTok)), (0.01 ether * 100) / BPS, "only the 1% protocol fee");
+        uint256 fee = (0.01 ether * 100) / BPS;
+        assertEq(pad.creatorFeeOf(t), (fee * 7_000) / BPS, "creator's 70% of the 1%");
+        assertEq(bucket.accruedQuote(address(quoteTok)), fee - (fee * 7_000) / BPS, "platform's 30% of the 1%");
         assertEq(quoteTok.balanceOf(treasury), 0);
     }
 
@@ -680,7 +691,7 @@ contract LaunchpadV3Test is Test {
         vm.prank(agent);
         vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
         pad.buy(t, 0.01 ether, 0);
-        assertEq(pad.TARGET_GRAD_BNB(), 15 ether);
+        assertEq(pad.TARGET_GRAD_BNB(), 9 ether, "2.0 default graduation target");
     }
 
     // ---------------------------------------------------------------- audit G-01 on the V3 handler

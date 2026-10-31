@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
+import {GangModulePadScript} from "./GangModulePadScript.sol";
 import {VmSafe} from "forge-std/Vm.sol";
-import {GangTestnetRefs as T} from "../config/GangDeployRefs.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {GangHandlerAdmin} from "../src/gang/GangHandlerAdmin.sol";
 import {GangComboSplitter} from "../src/gang/GangComboSplitter.sol";
@@ -19,12 +19,11 @@ interface IHandlerOwner {
 ///         `admin.setFactory(factory, true)`. On testnet, when the deployer owns the admin, the script sends it. The
 ///         code comparison is exact (metadata hash included): to re-check a deployed factory, run at the commit it
 ///         was deployed from.
-/// @dev Env: GANG_PAD (mainnet: must be the live pad); HANDLER_ADMIN; COMBO_FACTORY (optional, an existing one);
+/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or
+///      GANG_PAD); HANDLER_ADMIN; COMBO_FACTORY (optional, an existing one);
 ///      GANG_QUOTE (the GANG quote the keeper serves; mainnet: GANG, the default there; testnet: default none);
 ///      DEPLOYER_PRIVATE_KEY (unless the factory exists); mainnet broadcast needs GANG_MAINNET_OK=true.
-contract DeployGangComboSplitterFactory is Script {
-    /// @notice The live GangLaunchpad on BSC 56 (docs/MAINNET-GANG-2026-10-27.md).
-    address internal constant MAINNET_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
+contract DeployGangComboSplitterFactory is GangModulePadScript {
     /// @notice The Safe owning the mainnet GangHandlerAdmin (docs/MAINNET-GANG-2026-10-27.md).
     address internal constant MAINNET_SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
     /// @notice The platform token GANG on BSC 56, a quote the keeper serves.
@@ -41,8 +40,7 @@ contract DeployGangComboSplitterFactory is Script {
             vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
         if (mainnet && broadcasting && !vm.envOr("GANG_MAINNET_OK", false)) revert MainnetNotAllowed();
 
-        address pad = vm.envAddress("GANG_PAD");
-        if (mainnet ? pad != MAINNET_PAD : IGangPad(pad).wbnb() != T.WBNB) revert WiringCheck("pad");
+        address pad = _modulePad(mainnet);
         address admin = vm.envAddress("HANDLER_ADMIN");
 
         address gangQuote = vm.envOr("GANG_QUOTE", mainnet ? MAINNET_GANG : address(0));
