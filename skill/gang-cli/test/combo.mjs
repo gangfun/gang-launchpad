@@ -84,7 +84,7 @@ assert.equal(comboLine(5000, 5000, [], []), '50% buy-back and burn, 50% liquidit
 assert.match(PERMANENT_NOTE, /^PERMANENT: .*nobody \(not you, not the platform\) can change them later, unlike a lone --buyback or --lp splitter/)
 
 // ---- factory addresses: built in, env overrides
-assert.equal(MAINNET_COMBO_FACTORY, '0xd33C38BE3f8472b3013167830F0638C1704e1DBd')
+assert.equal(MAINNET_COMBO_FACTORY, '0xcCeA388DbC0Edb206eC25C9715546d57029198Be') // mainnet 2.0's
 assert.equal(comboFactoryAddress(true), TESTNET_COMBO_FACTORY)
 assert.equal(comboFactoryAddress(false), MAINNET_COMBO_FACTORY)
 process.env.GANG_COMBO_FACTORY = A
