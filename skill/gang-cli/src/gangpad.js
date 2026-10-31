@@ -37,6 +37,8 @@ export const GANG_GENS = {
       gen: '1.0', pad: '0x15CFD2dc8278Fb87a1783ef42111618E20874365', router: '0xE040445690Aa56C8b68B7f7038C7b2562B5079C4',
       bond: '0xe92dC940CB23Dc328639A7334e69F9CCdf3a14E4', splitterFactory: '0xf1d5CA816d72e6F130f42662d11b238312A7F1Cd',
       splitFactory: '0x27e08271E52B2D129c824CD245e69471a8d3067c', lpFactory: '0xE0436867dAFcf42Ee1418083251a9B8B61F0C248',
+      // combo-v1, 2026-10-31 (the Safe allowed it on GangHandlerAdmin at block 130811492)
+      comboFactory: '0xd33C38BE3f8472b3013167830F0638C1704e1DBd',
     },
   ],
   testnet: [
@@ -46,6 +48,7 @@ export const GANG_GENS = {
       gen: '2.0', pad: '0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E', router: '0x5a4FA2D91638a305EdF027894753c943f095dDAA',
       bond: '0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9', splitterFactory: '0xDC9EdA9a29F4Ff66E7dAb6E5A2142df5a7aC0f6e',
       splitFactory: '0xb9ab949C717a4F7f05c7B003C612C437280C3513', lpFactory: '0xAEec7e7948FfDb7a212E14c0b9cc1DA2922436E4',
+      comboFactory: '0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD',
     },
     // 2026-10-31, pad block 139866088: the first 2.0 (creator fee, no graduation pick), no longer creating; its tokens trade
     // and claim here. Its modules from the same scripts as 1.0's (docs/TESTNET-GANGLAUNCHPAD2-2026-10-31.md)
@@ -53,6 +56,7 @@ export const GANG_GENS = {
       gen: '2.0', pad: '0x6381707406eb7E8EF8EdaF2DedBfFcEFFC0b39be', router: '0xb21828C49A526FA293C48990070a518e9ab9FC08',
       bond: '0x913966122b9f8CC00C0d81000988A483c6B7F97f', splitterFactory: '0xBc26A6585B3Dc2Cbf1522475fB5b18df6C1033AE',
       splitFactory: '0x860D51808E9FBB4f887FC7d0Aa9e1F8E19E00879', lpFactory: '0x4f1544e4e8853fC62088f0A4eCbEF409D2e11619',
+      comboFactory: null, // none: its tokens can't have a combined recipient
     },
     // set 10 (2026-10-27: §23 aggregator entries). GangBond 2026-10-29, block 139463214 — the audited version (earlier:
     // 0x587f…5d7E, 0x5a99…d716, 0xB034…EBE3; docs/TESTNET-GANG-BOND-2026-10-28.md); split and LP factories
@@ -61,21 +65,23 @@ export const GANG_GENS = {
       gen: '1.0', pad: '0xFebF58ba418ab4a3B3f054827eb11E99369C5BB1', router: '0x6bB660f310a9644Dc173E7Cf2F73498716D9C9F6',
       bond: '0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086', splitterFactory: '0x7E63fF8A9FB9Ab1BE4e2128e9f6C8D1054292BBe',
       splitFactory: '0x5F7dC7502E945A860Cf49cca72dA8bD60Fb1567E', lpFactory: '0xA729C60FCa0Bd0D28a55E22126D3fE412AA41591',
+      comboFactory: '0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE',
     },
   ],
 }
 // what a generation brings to a ctx (gen: '1.0' | '2.0', null for a pad named by the env that this CLI does not know)
-const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory']
+const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory']
 // the env names of each field, per network (new name first; the old per-command names still work as aliases)
 const GEN_ENV = {
   mainnet: {
     pad: ['GANG_PAD', 'GANG_V3_PAD', 'GANG_FAIR_PAD'], router: ['GANG_ROUTER'], bond: ['GANG_BOND'],
     splitterFactory: ['GANG_SPLITTER_FACTORY'], splitFactory: ['GANG_SPLIT_FACTORY'], lpFactory: ['GANG_LP_FACTORY'],
+    comboFactory: ['GANG_COMBO_FACTORY'],
   },
   testnet: {
     pad: ['GANG_TESTNET_PAD', 'GANG_V3_TESTNET_PAD', 'GANG_FAIR_TESTNET_PAD'], router: ['GANG_TESTNET_ROUTER', 'GANG_ROUTER_TESTNET'],
     bond: ['GANG_TESTNET_BOND'], splitterFactory: ['GANG_TESTNET_SPLITTER_FACTORY'], splitFactory: ['GANG_TESTNET_SPLIT_FACTORY'],
-    lpFactory: ['GANG_TESTNET_LP_FACTORY'],
+    lpFactory: ['GANG_TESTNET_LP_FACTORY'], comboFactory: ['GANG_TESTNET_COMBO_FACTORY'],
   },
 }
 

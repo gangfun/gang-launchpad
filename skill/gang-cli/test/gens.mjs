@@ -16,7 +16,7 @@ import { _test } from '../src/portfolio.js'
 const t = (n) => `0x${String(n).padStart(40, '0')}`
 // testnet: 2.0 with the graduation pick (the create target), the first 2.0 (its tokens only), 1.0 (set 10)
 const [V2, V2a, V1] = GANG_GENS.testnet
-const ENV = ['GANG_TESTNET_PAD', 'GANG_TESTNET_ROUTER', 'GANG_TESTNET_BOND', 'GANG_TESTNET_LP_FACTORY']
+const ENV = ['GANG_TESTNET_PAD', 'GANG_TESTNET_ROUTER', 'GANG_TESTNET_BOND', 'GANG_TESTNET_LP_FACTORY', 'GANG_TESTNET_COMBO_FACTORY']
 const clean = () => { for (const k of ENV) delete process.env[k] }
 clean()
 
@@ -29,6 +29,24 @@ assert.equal(bondAddress(true), V2.bond)
 // each generation has its own contracts: never one generation's pad with another's router
 for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory']) {
   assert.equal(new Set([V2, V2a, V1].map((g) => g[k].toLowerCase())).size, 3, k)
+}
+
+// combined recipients: a factory per generation (bound to one pad), none on the first testnet 2.0
+assert.deepEqual([V2, V2a, V1].map((g) => g.comboFactory), ['0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD', null, '0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE'])
+assert.equal(GANG_GENS.mainnet[0].comboFactory, '0xd33C38BE3f8472b3013167830F0638C1704e1DBd')
+assert.equal(net.comboFactory, V2.comboFactory)
+{
+  const { comboFactoryAddress } = await import('../src/combo.js')
+  assert.equal(comboFactoryAddress(true), V2.comboFactory)
+  process.env.GANG_TESTNET_COMBO_FACTORY = t(0xdd)
+  assert.deepEqual(gangGens(true).map((g) => g.comboFactory), [t(0xdd), null, V1.comboFactory])
+  assert.equal(comboFactoryAddress(true), t(0xdd))
+  // GANG_TESTNET_PAD naming 1.0 makes it the create target: the factory override goes with it; without one, 1.0's own
+  process.env.GANG_TESTNET_PAD = V1.pad
+  assert.equal(comboFactoryAddress(true), t(0xdd))
+  delete process.env.GANG_TESTNET_COMBO_FACTORY
+  assert.equal(comboFactoryAddress(true), V1.comboFactory)
+  delete process.env.GANG_TESTNET_PAD
 }
 
 // ---- env: a known pad picks its generation with its own contracts; the other generation stays for its tokens
