@@ -59,8 +59,8 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         pad.create("E", "E", "", "", makeAddr("notAToken"), address(0), _tax(200, 200, 0, treasury));
     }
 
-    /// @dev An unlisted 18-decimal quote is priced like LaunchpadV2 from the creator's pool (300 Q : 150 WBNB → 15 BNB =
-    ///      30 Q); a QuoteRegistry fixed rate wins over the pool and needs none.
+    /// @dev An unlisted 18-decimal quote is priced like LaunchpadV2 from the creator's pool (300 Q : 150 WBNB → the 9 BNB
+    ///      default = 18 Q); a QuoteRegistry fixed rate ("15 BNB worth", scaled to 9) wins over the pool and needs none.
     function test_create_refPoolPricesUnlistedQuote() public {
         MockSPCXB q = new MockSPCXB();
         address ref = pairFactory.createPair(address(q), address(wbnb));
@@ -68,17 +68,17 @@ contract LaunchpadV3AuditTest is LaunchpadV3Test {
         wbnb.mintUnlimited(ref, 150 ether);
         MockPair(ref).mint(address(0xdead));
 
-        assertEq(pad.graduationAmountOf(address(q), ref), 30 ether);
+        assertEq(pad.graduationAmountOf(address(q), ref), 18 ether);
         vm.prank(agent);
         address t = pad.create("Q", "Q", "", "", address(q), ref, _tax(200, 200, 0, treasury));
-        assertEq(pad.gradAmtOf(t), 30 ether, "unlisted quote priced from its pool");
+        assertEq(pad.gradAmtOf(t), 18 ether, "unlisted quote priced from its pool");
 
         vm.prank(owner);
         quoteRegistry.setQuote(address(q), true, 60 ether);
-        assertEq(pad.graduationAmountOf(address(q), ref), 60 ether);
+        assertEq(pad.graduationAmountOf(address(q), ref), 36 ether);
         vm.prank(agent);
         t = pad.create("Q2", "Q2", "", "", address(q), address(0), _tax(200, 200, 0, treasury));
-        assertEq(pad.gradAmtOf(t), 60 ether, "fixed rate wins");
+        assertEq(pad.gradAmtOf(t), 36 ether, "fixed rate wins");
     }
 
     /// @dev Low: a migrator bound to another pad would make every graduation revert, and setMigrator is one-shot.

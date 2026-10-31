@@ -99,11 +99,12 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
     ///      the locked graduation amount (+ ≤ 1 wei); the pad keeps ≤ 1 wei beside the creator's part.
     function testFuzz_gradTruncation(uint256 pre, uint256 quoteIn, uint16 b) public {
         b = uint16(bound(b, 100, 500));
-        pre = bound(pre, 1 ether, 15.5 ether);
-        quoteIn = bound(quoteIn, 1, 30 ether);
         vm.prank(owner);
         pad.setWalletCapEnabled(false);
         address t = _create(_tax(b, 300, 0, treasury));
+        uint256 grad = pad.gradAmtOf(t);
+        pre = bound(pre, 1 ether, grad + 0.5 ether);
+        quoteIn = bound(quoteIn, 1, 2 * grad);
         quoteTok.mintUnlimited(agent2, 100 ether);
         vm.prank(agent2);
         pad.buy(t, pre, 0);
@@ -117,8 +118,8 @@ contract LaunchpadV3FuzzTest is LaunchpadV3Test {
         uint256 spent = uq - quoteTok.balanceOf(u);
         if (_graduated(t)) {
             uint256 toPair = quoteTok.balanceOf(_pairOf(t));
-            assertGe(toPair, 15 ether, "pair got >= gradAmt");
-            assertLe(toPair, 15 ether + 1, "pair got <= gradAmt + 1");
+            assertGe(toPair, grad, "pair got >= gradAmt");
+            assertLe(toPair, grad + 1, "pair got <= gradAmt + 1");
             assertLe(quoteTok.balanceOf(address(pad)) - pad.creatorFeeOf(t), 1, "pad dust (beside the creator part)");
         } else {
             assertEq(spent, quoteIn, "no refund unless truncated");

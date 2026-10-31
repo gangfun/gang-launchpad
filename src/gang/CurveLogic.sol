@@ -16,7 +16,9 @@ import {PadCommon} from "./PadCommon.sol";
 ///         feat/v3-no-curve-tax: no tax on the curve, every trade pays only the 1% protocol fee; `Buy` / `Sell` keep
 ///         their `tax` field, always 0 (spec §19). 70% of that fee is kept on the pad for the token's creator
 ///         (`creatorFeeOf`, claimed by the creator), 30% goes to the bucket (blocking). Dividend shares still follow
-///         the trader's balance (blocking write) so the pool tax after graduation finds them.
+///         the trader's balance (blocking write) so the pool tax after graduation finds them. The creator picks the
+///         graduation target from GRAD_BNB_TIERS (BNB raised; converted to the quote at create); `create` without one
+///         takes DEFAULT_GRAD_BNB.
 /// @dev Reentrancy guard, the caller check of `buyFor` / `sellFor` (listed router, trader == tx.origin, §23) and the
 ///      A-2 gate check of `buyFor` stay in the pad's wrappers. The gate here is the pad's current setting (V3),
 ///      unlike 打新's per-sale snapshot.
@@ -35,6 +37,9 @@ library CurveLogic {
     uint16 internal constant MIN_TAX_BPS = 100;
     uint16 internal constant MAX_TAX_BPS = 500;
     uint256 internal constant MIN_GRAD_AMT = 1e6;
+    /// @dev Graduation targets a creator may pick, in BNB raised: graduation market cap = 5x the raise (curve
+    ///      shape fixed, virtual quote = target / 3). 2.0 default 9 BNB (1.0: always 15).
+    uint256 internal constant DEFAULT_GRAD_BNB = 9 ether;
     uint8 internal constant KIND = 1;
 
     struct BuyVars {
@@ -57,16 +62,18 @@ library CurveLogic {
         string calldata metaURI,
         address quote,
         address refPool,
-        IGangLaunchpad.TaxConfig calldata tax
+        IGangLaunchpad.TaxConfig calldata tax,
+        uint256 gradBnb
     ) external returns (address token) {
         if (c.migrator == address(0)) revert IGangLaunchpad.MigratorNotSet();
+        if (!isGradTier(gradBnb)) revert IGangLaunchpad.BadGradTarget();
         _requireAgent(c, msg.sender);
         string memory reason = checkTax(d, msg.sender, tax);
         if (bytes(reason).length != 0) revert IGangLaunchpad.BadTaxConfig(reason);
 
         if (quote == address(0)) quote = d.wbnb;
         PadCommon.requireQuote(d, quote);
-        (uint256 lockedGrad, address refUsed) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, PadCommon.REF_BNB);
+        (uint256 lockedGrad, address refUsed) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, gradBnb);
         if (lockedGrad < MIN_GRAD_AMT) revert IGangLaunchpad.GradAmtTooSmall();
 
         if (tax.buyTaxBps == 0) {
@@ -79,6 +86,12 @@ library CurveLogic {
 
         emit IGangLaunchpad.Created(token, msg.sender, name, symbol, logoURI, quote, refUsed, lockedGrad);
         emit IGangLaunchpad.TaxConfigured(token, tax.buyTaxBps, tax.sellTaxBps, tax.dividendBps, tax.recipient);
+        emit IGangLaunchpad.GradTargetSet(token, gradBnb);
+    }
+
+    /// @dev 6 / 9 / 12 / 15 BNB (GRAD_BNB_TIERS).
+    function isGradTier(uint256 gradBnb) internal pure returns (bool) {
+        return gradBnb == 6 ether || gradBnb == 9 ether || gradBnb == 12 ether || gradBnb == 15 ether;
     }
 
     function _createTaxed(
@@ -332,16 +345,19 @@ library CurveLogic {
     }
 
     // ---------------------------------------------------------------- views
-    /// @notice What `create` would lock as the graduation amount for `quote` (0 = WBNB) and `refPool`.
+    /// @notice What `create` would lock as the graduation amount for `quote` (0 = WBNB), `refPool` and the target
+    ///         `gradBnb` (one of GRAD_BNB_TIERS).
     function graduationAmountOf(
         IGangLaunchpad.Config storage c,
         mapping(address => address) storage bridgePoolOf,
         IGangLaunchpad.Deps memory d,
         address quote,
-        address refPool
+        address refPool,
+        uint256 gradBnb
     ) external view returns (uint256 g) {
+        if (!isGradTier(gradBnb)) revert IGangLaunchpad.BadGradTarget();
         if (quote == address(0)) quote = d.wbnb;
-        (g,) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, PadCommon.REF_BNB);
+        (g,) = PadCommon.toQuote(c, bridgePoolOf, d, quote, refPool, gradBnb);
     }
 
     /// @dev Room left under the 1% wallet cap (max when the cap is off). Internal: also inlined into the pad's view.

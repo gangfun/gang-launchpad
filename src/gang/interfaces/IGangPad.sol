@@ -70,6 +70,19 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
     /// @dev Creator only, direct; pays everything in `creatorFeeOf(token)` to `to`.
     function claimCreatorFee(address token, address to) external returns (uint256 amount);
     function creatorFeeOf(address token) external view returns (uint256);
+    function createWithGradTarget(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPair,
+        TaxConfig calldata tax,
+        uint256 gradBnb
+    ) external returns (address token);
+    function gradTargetOf(address token) external view returns (uint256);
+    function graduationAmountFor(address quote, address refPool, uint256 gradBnb) external view returns (uint256);
+    function GRAD_BNB_TIERS() external pure returns (uint256[4] memory);
 
     /// @dev Same 12 fields, same order as LaunchpadV3.curves (GangRouter decodes field 2, the indexer all of them).
     function curves(address token)

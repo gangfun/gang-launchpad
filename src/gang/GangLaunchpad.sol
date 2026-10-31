@@ -55,7 +55,9 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     uint16 public constant MAX_TAX_BPS = CurveLogic.MAX_TAX_BPS;
     /// @dev Holders need balance strictly > 10_000 tokens for dividend shares (V2 parity). = MIN_SHARE_BALANCE.
     uint256 public constant TAXED_MIN_SHARE = PadCommon.MIN_SHARE;
-    uint256 public constant TARGET_GRAD_BNB = PadCommon.REF_BNB;
+    /// @dev The graduation target `create` takes when the creator picks none (BNB raised); `createWithGradTarget`
+    ///      picks one of GRAD_BNB_TIERS. Each token's own target: `gradTargetOf`, in its quote: `gradAmtOf`.
+    uint256 public constant TARGET_GRAD_BNB = CurveLogic.DEFAULT_GRAD_BNB;
     uint256 public constant MIN_GRAD_AMT = CurveLogic.MIN_GRAD_AMT;
 
     // ---------------------------------------------------------------- 打新 constants
@@ -112,6 +114,8 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     address[] public allTokens;
     /// @notice Curve tokens: the creator's part of the 1% fee, in the token's quote, not claimed yet.
     mapping(address token => uint256) public creatorFeeOf;
+    /// @notice The graduation target the creator picked, in BNB raised (0 = not a curve token of this pad).
+    mapping(address token => uint256) public gradTargetOf;
 
     constructor(
         address owner_,
@@ -210,9 +214,38 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         address refPool,
         TaxConfig calldata tax
     ) external nonReentrant returns (address token) {
+        token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, TARGET_GRAD_BNB);
+    }
+
+    /// @notice `create` with the graduation target picked by the creator: `gradBnb` one of GRAD_BNB_TIERS (BNB raised,
+    ///         converted to the quote as `create` does).
+    function createWithGradTarget(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPool,
+        TaxConfig calldata tax,
+        uint256 gradBnb
+    ) external nonReentrant returns (address token) {
+        token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
+    }
+
+    function _createCurve(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPool,
+        TaxConfig calldata tax,
+        uint256 gradBnb
+    ) private returns (address token) {
         token = CurveLogic.create(
-            _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax
+            _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb
         );
+        gradTargetOf[token] = gradBnb;
         _record(token, logoURI, KIND_CURVE);
     }
 
@@ -316,8 +349,19 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         return uint256(c.gradAmt) - uint256(c.realQuote);
     }
 
+    /// @notice What `create` would lock as the graduation amount (TARGET_GRAD_BNB in `quote`).
     function graduationAmountOf(address quote, address refPool) external view returns (uint256) {
-        return CurveLogic.graduationAmountOf(_config, bridgePoolOf, _deps(), quote, refPool);
+        return CurveLogic.graduationAmountOf(_config, bridgePoolOf, _deps(), quote, refPool, TARGET_GRAD_BNB);
+    }
+
+    /// @notice What `createWithGradTarget` would lock for `gradBnb`; reverts BadGradTarget off GRAD_BNB_TIERS.
+    function graduationAmountFor(address quote, address refPool, uint256 gradBnb) external view returns (uint256) {
+        return CurveLogic.graduationAmountOf(_config, bridgePoolOf, _deps(), quote, refPool, gradBnb);
+    }
+
+    /// @notice The graduation targets a creator may pick, in BNB raised.
+    function GRAD_BNB_TIERS() external pure returns (uint256[4] memory) {
+        return [uint256(6 ether), 9 ether, 12 ether, 15 ether];
     }
 
     // ---------------------------------------------------------------- 打新

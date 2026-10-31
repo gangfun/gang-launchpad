@@ -43,7 +43,10 @@ contract Audit4V3RegressionTest is LaunchpadV3Test {
         vm.prank(owner);
         quoteRegistry.setQuote(address(swf), true, 15 ether); // fixed rate: no reference pool needed in the fixture
         vm.prank(agent);
-        token = pad.create("S", "S", "", "", address(swf), address(0), _tax(300, 300, dividendBps, treasury));
+        // the 15 BNB target (1.0's): the pool these cases trade against is the depth they were written for
+        token = pad.createWithGradTarget(
+            "S", "S", "", "", address(swf), address(0), _tax(300, 300, dividendBps, treasury), 15 ether
+        );
     }
 
     function _fundSwf(address who) internal {

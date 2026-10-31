@@ -691,7 +691,7 @@ contract LaunchpadV3Test is Test {
         vm.prank(agent);
         vm.expectRevert(IGangLaunchpad.WalletCapReached.selector);
         pad.buy(t, 0.01 ether, 0);
-        assertEq(pad.TARGET_GRAD_BNB(), 15 ether);
+        assertEq(pad.TARGET_GRAD_BNB(), 9 ether, "2.0 default graduation target");
     }
 
     // ---------------------------------------------------------------- audit G-01 on the V3 handler

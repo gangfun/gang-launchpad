@@ -136,6 +136,8 @@ interface IGangLaunchpad {
     /// @notice The creator took everything kept for it on `token`, in the token's quote.
     event CreatorFeeClaimed(address indexed token, address indexed creator, address indexed to, uint256 amount);
     event VirtualQuoteLocked(address indexed token, uint256 virtualQuote);
+    /// @notice The graduation target the creator picked, in BNB raised (`gradAmt` in `Created` is it in the quote).
+    event GradTargetSet(address indexed token, uint256 gradBnb);
     event Graduated(
         address indexed token, address indexed pair, address quote, uint256 tokenAmount, uint256 quoteAmount
     );
@@ -217,6 +219,7 @@ interface IGangLaunchpad {
     // V3
     error AlreadyGraduated();
     error GradAmtTooSmall();
+    error BadGradTarget();
     error BadTaxConfig(string reason);
     error NotCreator();
     // 打新

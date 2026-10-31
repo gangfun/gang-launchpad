@@ -20,9 +20,9 @@ interface IMintableQuote {
 /// @title GangLaunchpad2TestnetAcceptance — the creator fee of GangLaunchpad 2.0 end to end on BSC testnet
 /// @notice With the deploy wallet (an Agent ID holder and the 2.0 owner), each step checked in the simulation forge runs
 ///         before it broadcasts (re-run the script, or read the chain, to confirm what landed):
-///         A. a WBNB curve token: buy 0.002 BNB through the 2.0 GangRouter (creator 70% / bucket 30% of the 1%), sell
+///         A. a WBNB curve token at the default target (9 BNB → 9 WBNB): buy 0.002 BNB through the 2.0 GangRouter (creator 70% / bucket 30% of the 1%), sell
 ///            half straight on the pad (70% of that fee kept too), claim to the wallet (paid in WBNB, counter 0).
-///         B. a taxed test-quote token (the creator its own recipient): with the wallet cap off for the run (one
+///         B. a taxed test-quote token at a picked 6 BNB target (the creator its own recipient): with the wallet cap off for the run (one
 ///            wallet can then graduate it; the cap is turned back on at the end), buy to graduation through the live
 ///            migrator, claim after graduation; the pad then holds no test quote beyond dust.
 /// @dev TESTNET ONLY. Env: DEPLOYER_PRIVATE_KEY, GANG_PAD2, GANG_ROUTER2, TEST_QUOTE (default the testnet one).
@@ -73,6 +73,7 @@ contract GangLaunchpad2TestnetAcceptance is Script {
         address t = pad.create("Creator Fee A", "CFA", "", "", address(0), address(0), _untaxed());
         vm.stopBroadcast();
         console.log("A token", t);
+        if (pad.gradTargetOf(t) != 9 ether || pad.gradAmtOf(t) != 9 ether) revert Check("A default target 9 BNB");
 
         uint256 acc0 = bucket.accruedQuote(address(wbnb));
         vm.startBroadcast(pk);
@@ -113,14 +114,18 @@ contract GangLaunchpad2TestnetAcceptance is Script {
             IGangLaunchpad.TaxConfig({buyTaxBps: 300, sellTaxBps: 300, dividendBps: 4_000, recipient: me});
         uint256 padQ0 = IERC20(testQuote).balanceOf(address(pad)); // other test-quote curves of the shared set
         vm.startBroadcast(pk);
-        address t = pad.create("Creator Fee B", "CFB", "", "", testQuote, address(0), tax);
-        IMintableQuote(testQuote).mintUnlimited(me, 20 ether);
+        address t = pad.createWithGradTarget("Creator Fee B", "CFB", "", "", testQuote, address(0), tax, 6 ether);
+        uint256 grad = pad.gradAmtOf(t);
+        IMintableQuote(testQuote).mintUnlimited(me, grad * 2);
         IERC20(testQuote).approve(address(pad), type(uint256).max);
         pad.setWalletCapEnabled(false);
-        pad.buy(t, 16 ether, 0); // past the 15-unit graduation amount: the cut comes back
+        pad.buy(t, (grad * 3) / 2, 0); // past the graduation amount: the cut comes back
         pad.setWalletCapEnabled(true);
         vm.stopBroadcast();
         console.log("B token", t);
+        if (pad.gradTargetOf(t) != 6 ether || grad != pad.graduationAmountFor(testQuote, address(0), 6 ether)) {
+            revert Check("B picked target 6 BNB");
+        }
         (,,,,,, bool graduated,,,, address pair,) = pad.curves(t);
         if (!graduated || pair == address(0)) revert Check("B graduated");
         if (!pad.walletCapEnabled()) revert Check("wallet cap back on");
