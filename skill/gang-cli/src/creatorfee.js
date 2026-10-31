@@ -20,6 +20,7 @@ const CURVES_ABI = parseAbi([
 ])
 const SYMBOL_ABI = parseAbi(['function symbol() view returns (string)'])
 const MODULE_TYPE_ABI = parseAbi(['function moduleType() view returns (bytes32)'])
+const QUOTE_ABI = parseAbi(['function quote() view returns (address)'])
 const ABIS = [CREATOR_FEE_ABI, CURVES_ABI]
 const HINTS = {
   NotCreator: 'only the token\'s creator (the wallet that created it) can claim its creator fee; pass that wallet with --from',
@@ -60,14 +61,38 @@ export async function createNote(ctx, net = '') {
  * when they split (the keeper's chunks do it after graduation), the split module and the combined recipient on
  * distribute. null: not one of these.
  */
-export function payOutCmd(moduleType, at, net = '') {
+export function payOutCmd(moduleType, at, net = '', { asset, assetSymbol } = {}) {
   const t = String(moduleType ?? '')
-  const cmd = t.startsWith('buyback-burn-') ? 'gang buyback split' : t === 'lp-burn-v1' ? 'gang lp split'
-    : t === 'split-v1' ? 'gang split distribute' : t === 'combo-v1' ? 'gang combo distribute' : null
-  if (!cmd) return null
-  const splitter = cmd.endsWith(' split')
-  return `${cmd} --module ${at ?? '<module>'}${net} (anyone) then pays ${splitter ? 'the payee its part and sets the rest aside' : 'the payees their shares'}`
+  const base = t.startsWith('buyback-burn-') ? 'gang buyback' : t === 'lp-burn-v1' ? 'gang lp'
+    : t === 'split-v1' ? 'gang split' : t === 'combo-v1' ? 'gang combo' : null
+  if (!base) return null
+  const splitter = base === 'gang buyback' || base === 'gang lp'
+  const m = `--module ${at ?? '<module>'}`
+  // a fee in another quote than the module's own: split / distribute of the bound quote never moves it
+  if (asset) {
+    return splitter
+      ? `${base} sweep ${m} --asset ${asset}${net} (anyone) sends all of it to the payee (${assetSymbol ?? 'this asset'} is not split: no ${base === 'gang lp' ? 'pool' : 'buy-back'} share)`
+      : `${base} distribute ${m} --asset ${asset}${net} (anyone) pays the payees their shares of it`
+  }
+  return `${base} ${splitter ? 'split' : 'distribute'} ${m}${net} (anyone) then pays ${splitter ? 'the payee its part and sets the rest aside' : 'the payees their shares'}`
     + (splitter ? '; after graduation each keeper chunk splits first, so it also goes out with the next chunk' : '')
+}
+
+/**
+ * The claim's --to note when --to is a module (pure: unit-tested): `bound` is its quote() (zero: not bound yet),
+ * `quote` the token's. { payOut, warning }: a fee in another quote is not moved by split / distribute.
+ */
+export function claimToModule({ moduleType, at, net = '', bound, quote, quoteSymbol, boundSymbol }) {
+  const other = !!bound && !!quote && bound.toLowerCase() !== quote.toLowerCase()
+  const unbound = !bound || /^0x0{40}$/.test(bound)
+  const payOut = payOutCmd(moduleType, at, net, other && !unbound ? { asset: quote, assetSymbol: quoteSymbol } : {})
+  if (!payOut) return { payOut: null, warning: null }
+  if (unbound) return { payOut, warning: 'the module is not bound to a token yet: it pays this out only once it is bound (its launch binds it)' }
+  if (!other) return { payOut, warning: null }
+  return {
+    payOut,
+    warning: `the module's own quote is ${boundSymbol ?? bound}, this fee is in ${quoteSymbol ?? quote}: split / distribute of the module's quote leave it where it is`,
+  }
 }
 const LAUNCH_TYPES = { buyback: 'buyback-burn-v4', lp: 'lp-burn-v1', split: 'split-v1', combo: 'combo-v1' }
 
@@ -216,12 +241,20 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
     return out({ success: false, step: 'claim-creator-fee', ...(r ? { reverted: true, ...r } : { reverted: false, error: e.shortMessage || e.message.split('\n')[0] }) })
   }
   const data = encodeFunctionData({ abi: CREATOR_FEE_ABI, functionName: 'claimCreatorFee', args })
-  // --to one of the platform's modules: say what pays it out from there
+  // --to one of the platform's modules: say what pays it out from there (and warn when its quote is another one)
   const toType = same(to, me) ? null : await ctx.read(to, MODULE_TYPE_ABI, 'moduleType').then((t) => hexToString(t, { size: 32 }).replace(/\0+$/, '')).catch(() => null)
-  const payOut = toType && payOutCmd(toType, to, testnet ? ' --testnet' : '')
+  let toModule = { payOut: null, warning: null }
+  if (toType && payOutCmd(toType, to)) {
+    const bound = await ctx.read(to, QUOTE_ABI, 'quote').catch(() => null)
+    const sym = (a) => (a && !/^0x0{40}$/.test(a) ? ctx.read(a, SYMBOL_ABI, 'symbol').catch(() => null) : null)
+    const [quoteSymbol, boundSymbol] = await Promise.all([sym(quote), sym(bound)])
+    toModule = claimToModule({ moduleType: toType, at: to, net, bound, quote, quoteSymbol, boundSymbol })
+  }
+  const { payOut, warning } = toModule
   return out(step(ctx, { from: me, to: ctx.pad, data }, {
     step: 'claim-creator-fee', chainId, token, symbol, padGen: view.padGen, amount: view.creatorFee.claimable,
-    to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${payOut}` : ''}` }),
+    to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${warning ? `${warning}. ` : ''}${payOut}` : ''}` }),
+    ...(warning && { warning }),
     note: 'claims all of it; the fee keeps growing with later curve trades and can be claimed again',
   }, rawOnly, summarize))
 }
