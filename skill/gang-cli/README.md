@@ -113,10 +113,12 @@ gang bond burn --token <addr> | gang bond tx --hash <0x..>       # push one buy-
 gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]  # V3: create → dev buy → bond
 gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--buyback-to 0x…] [--dev-buy …]  # V3: the recipient's part of the tax 50% bought back + burned, the rest to you (or --buyback-to)
 gang buyback status|set|set-payee|apply --token 0x… [--pct 0-100] [--to 0x…]  # the buy-back splitter: ratio (raise now, cut after 3 days), payee (at once), what waits
+gang buyback split --token 0x… (or --module 0x…)   # anyone: split what arrived (e.g. a creator fee claimed --to it before graduation): the payee's part now, the buy-back's set aside (0.23.0+)
 gang create … --buy-tax 3 --sell-tax 3 --split self:60,0x…:30,0x…:10 [--dev-buy …]  # V3: the recipient's part of the tax split among 1–10 payees at fixed shares (% summing to 100; self = you)
 gang split status|distribute|release|set-payee|bind --token 0x… [--asset 0x…] [--index <i>] [--to 0x…]  # the split module: payees (slot --index from 0), what waits / is owed; split by hand; a payee moves its own slot
 gang create … --buy-tax 3 --sell-tax 3 --lp 70 [--lp-to 0x…] [--dev-buy …]  # V3: the recipient's part of the tax 70% added to the pool as liquidity (LP to 0xdead), the rest to you (or --lp-to)
 gang lp status|set|set-payee|apply|bind|release|add --token 0x… [--pct 0-100] [--to 0x…] [--slippage 1]  # the LP splitter: ratio, payee, what is set aside, the next chunk; add = one chunk now (anyone)
+gang lp split --token 0x… (or --module 0x…)   # anyone: split what arrived: the payee's part now, the pool's set aside (0.23.0+)
 gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 [--split self:70,0x…:30] [--dev-buy …]  # V3, combined recipient: 30% bought back + burned, 30% added as liquidity, the rest to the payees (shares of the rest; default you). PERMANENT
 gang combo status|distribute|release|set-payee|bind|chunk --token 0x… [--asset 0x…] [--index <i>] [--to 0x…] [--slippage 1]  # the combined recipient: ratios, payees, set aside, owed, the next chunk and the keeper's plan; chunk = one chunk now (anyone)
 gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>                 # 打新: create (dev shares) → bond

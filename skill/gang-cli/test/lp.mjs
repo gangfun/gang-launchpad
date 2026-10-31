@@ -141,7 +141,7 @@ refused([...taxed, '--buyback', '50', '--lp-to', A], /--lp-to <addr> goes with -
 refused([...taxed, '--lp-to', A], /--lp-to only applies to a launch in one command/)
 refused(['create', '--fair', '--name', 'L', '--symbol', 'L', '--from', ME, '--lp', '50'], /--lp is for V3 tokens/)
 refused(['create', '--fly', '--name', 'L', '--symbol', 'L', '--lp', '50'], /LP splitter/)
-refused(['lp', 'nope'], /usage: gang lp <status\|set\|set-payee\|apply\|bind\|release\|add>/)
+refused(['lp', 'nope'], /usage: gang lp <status\|set\|set-payee\|apply\|bind\|release\|split\|add>/)
 refused(['lp'], /usage: gang lp/)
 refused(['lp', 'status', '--token', 'nope', '--testnet'], /--token must be a V3 token address/)
 

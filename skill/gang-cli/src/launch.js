@@ -522,7 +522,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
         return out({
           ...o,
           // 2.0: the creator fee is the dev's own, not the module's
-          ...(o.creatorFee && mod && { creatorFee: `${o.creatorFee} ${notThroughModule(MODULE_NAMES[mod], { at: plan?.splitter, net: testnet ? ' --testnet' : '' })}` }),
+          ...(o.creatorFee && mod && { creatorFee: `${o.creatorFee} ${notThroughModule(MODULE_NAMES[mod], { at: plan?.splitter, net: testnet ? ' --testnet' : '', kind: mod })}` }),
           ...tag('create', built ? { next: `${rerun}: it finds the new token and continues with ${after ?? 'nothing'}` } : o.success ? { next: `${rerun}: it then builds the create` } : {}),
         })
       },
@@ -582,7 +582,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     // 2.0: where the creator fee of a V3 token is claimed (and that a module does not get it)
     const share = kind === 'v3' ? await creatorFeeShareOf({ chainId: net.chainId, pad: net.pad, read }).catch(() => null) : null
     if (share != null) {
-      done.creatorFee = `${share / 100}% of the 1% curve fee is kept for you, the creator: ${claimCmd(token, testnet ? ' --testnet' : '')}${plan.splitter ? `. ${notThroughModule(MODULE_NAMES[planMod], { token, at: plan.splitter, net: testnet ? ' --testnet' : '' })}` : ''}`
+      done.creatorFee = `${share / 100}% of the 1% curve fee is kept for you, the creator: ${claimCmd(token, testnet ? ' --testnet' : '')}${plan.splitter ? `. ${notThroughModule(MODULE_NAMES[planMod], { token, at: plan.splitter, net: testnet ? ' --testnet' : '', kind: planMod })}` : ''}`
     }
     if (!bond) return out({ ...done, note: `launched: gang ${kind} info --token ${token}${testnet ? ' --testnet' : ''}` })
     return runBond('status', { ...stepIo({}), out: (o) => out({ ...done, bondStatus: o, note: `launched and bonded: gang bond status --token ${token}${testnet ? ' --testnet' : ''}` }) })
