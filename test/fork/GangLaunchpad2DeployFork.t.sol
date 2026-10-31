@@ -141,7 +141,9 @@ contract GangLaunchpad2DeployForkTest is Test {
         address lib = _curveLogicOf();
         bytes memory good = lib.code;
         vm.etch(lib, CURVE_LOGIC_1.code);
-        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "CurveLogic not linked"));
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployGang.WiringCheck.selector, "CurveLogic not linked (or not this pad's library)")
+        );
         d.run();
         vm.etch(lib, good);
 

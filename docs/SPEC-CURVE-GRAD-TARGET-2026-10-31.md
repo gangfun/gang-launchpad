@@ -66,8 +66,20 @@ Readers should take each token's `gradAmt` (or `gradTargetOf`) and must not assu
   - off-tier values revert in create and in the view;
   - create's other checks still apply;
   - each tier graduates at its target with the pool at about 5x the target.
-- `script/DeployGangLaunchpad2.s.sol` self-check: `TARGET_GRAD_BNB() == 9 BNB`, and `graduationAmountFor(WBNB, 0,
-  6 BNB) == 6 BNB` through the linked library (a 1.0 CurveLogic fails it).
+- `test/gang/GradTargetPricing.t.sol` (from the audit's PoCs):
+  - every tier needs 80+ wallets;
+  - `create` equals a picked 9 BNB;
+  - a taxed dividend token at 6 BNB graduates and its pool tax is processed;
+  - reference and bridge pools scale linearly, with the same 1 BNB depth floor at every tier;
+  - the `MIN_GRAD_AMT` edge of a registry rate;
+  - rounding of a registry amount.
+- `invariant_v3GradTargetFixed` (CoreInvariants; half the created curves pick a target): the target is a tier,
+  `gradAmt` is the view's price of it, and the virtual quote is `gradAmt / 3`.
+- `script/DeployGangLaunchpad2.s.sol` self-check, all through the linked library (a 1.0 CurveLogic fails before Safe
+  batch 1):
+  - `TARGET_GRAD_BNB() == 9 BNB`;
+  - `graduationAmountFor(WBNB, 0, 6 BNB) == 6 BNB`;
+  - `graduationAmountFor(WBNB, 0, 10 BNB)` reverts `BadGradTarget`.
 
 ## 6. Rollout
 
@@ -75,3 +87,18 @@ Readers should take each token's `gradAmt` (or `gradTargetOf`) and must not assu
 - CLI: a `--grad <6|9|12|15>` option on curve create (default 9), and the target in `gang info`.
 - Site: show each token's target and progress from `gradAmt`; never assume 15 BNB.
 - Indexer: `GradTargetSet` (or `gradTargetOf`) per 2.0 curve token.
+
+## 7. Audit record
+
+2026-10-31, independent audit of the first commit of this change: no finding above info. The info items were
+addressed:
+- the tier list now has one definition (`CurveLogic.MIN_GRAD_BNB` / `MAX_GRAD_BNB` / `GRAD_BNB_STEP`);
+- the deploy self-check gained the off-tier probe;
+- the library-check message names the 1.0-library case;
+- the event tests check the token topic;
+- the invariant checks the virtual quote;
+- the PoCs became `GradTargetPricing.t.sol`;
+- stale 15 BNB comments are fixed.
+
+Left for the CLI release: the skill / CLI docs still say 15 BNB. The CLI should preview with `graduationAmountFor`, so
+a creator sees a `GradAmtTooSmall` quote before sending.

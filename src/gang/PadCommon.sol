@@ -60,7 +60,7 @@ library PadCommon {
         ) revert IGangLaunchpad.QuoteNotAllowed();
     }
 
-    /// @dev `bnbAmount` in quote units. V3 asks for its 15 BNB graduation target, 打新 for the raise; one rule set
+    /// @dev `bnbAmount` in quote units. V3 asks for its graduation target, 打新 for the raise; one rule set
     ///      (LaunchpadV2._lockGradAmt): WBNB → as is; QuoteRegistry rate (quoted for 15 BNB) → scaled; else the
     ///      creator's reference pool, bridged through bridgePoolOf when its other side is not WBNB, with a ≥ 1 BNB
     ///      depth floor.

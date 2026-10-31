@@ -302,7 +302,8 @@ contract DeployGangLaunchpad2 is DeployGang {
     /// @dev Audit 2026-10-31 (B low): a 1.0 pad, or a 2.0 pad linked to a 1.0 CurveLogic, must not pass. The constant
     ///      proves the pad source; `buy` / `sell` / `claimCreatorFee` on an unknown token must reach the new library
     ///      and revert there with UnknownToken (a 1.0 library has no such selectors: the delegatecall reverts empty).
-    ///      The graduation targets: default 9 BNB, and a picked 6 BNB target priced by the library (WBNB: 6 WBNB).
+    ///      The graduation targets: default 9 BNB, a picked 6 BNB target priced by the library (WBNB: 6 WBNB), and an
+    ///      off-tier 10 BNB refused there with BadGradTarget.
     function _checkCreatorFee(address pad) internal {
         try IGangPad(pad).CREATOR_FEE_SHARE_BPS() returns (uint256 v) {
             if (v != CREATOR_FEE_SHARE_BPS) revert WiringCheck("pad.CREATOR_FEE_SHARE_BPS");
@@ -314,6 +315,11 @@ contract DeployGangLaunchpad2 is DeployGang {
             if (g != 6 ether) revert WiringCheck("CurveLogic graduationAmountFor");
         } catch {
             revert WiringCheck("CurveLogic is not the 2.0 library");
+        }
+        (bool okOff, bytes memory retOff) =
+            pad.staticcall(abi.encodeCall(IGangPad.graduationAmountFor, (IGangPad(pad).wbnb(), address(0), 10 ether)));
+        if (okOff || retOff.length < 4 || bytes4(retOff) != IGangLaunchpad.BadGradTarget.selector) {
+            revert WiringCheck("CurveLogic: off-tier target not refused");
         }
         address probe = address(uint160(uint256(keccak256("gang.deploy2.unknown-token"))));
         bytes[3] memory calls = [

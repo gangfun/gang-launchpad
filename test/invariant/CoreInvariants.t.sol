@@ -751,7 +751,8 @@ contract CoreInvariantsTest is Test {
             uint256 g = h.pad().gradTargetOf(t);
             assertTrue(g == 6 ether || g == 9 ether || g == 12 ether || g == 15 ether, "target is a tier");
             assertEq(h.pad().gradAmtOf(t), h.v3GradAtCreate(t), "gradAmt fixed");
-            (,,,, uint128 ga,,,,,,,) = h.pad().curves(t);
+            (,,,, uint128 ga, uint128 vq,,,,,,) = h.pad().curves(t);
+            assertEq(vq, ga / 3, "virtual quote = gradAmt / 3");
             assertEq(
                 ga, h.pad().graduationAmountFor(_curveQuoteOf(t), address(0), g), "gradAmt = the target in the quote"
             );
