@@ -76,7 +76,7 @@ interface IGangPad is IGangLaunchpad, IGangPadView {
         string calldata logoURI,
         string calldata metaURI,
         address quote,
-        address refPair,
+        address refPool,
         TaxConfig calldata tax,
         uint256 gradBnb
     ) external returns (address token);

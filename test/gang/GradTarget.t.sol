@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {Vm} from "forge-std/Vm.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {CurveLogic} from "../../src/gang/CurveLogic.sol";
 
 /// @notice The creator's graduation target on GangLaunchpad 2.0 (docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md): one of
 ///         6 / 9 / 12 / 15 BNB raised, default 9 BNB; converted to the quote as the fixed 15 BNB was; the curve shape
@@ -54,6 +55,8 @@ contract GradTargetTest is GangFixture {
         assertEq(tiers[1], 9 ether);
         assertEq(tiers[2], 12 ether);
         assertEq(tiers[3], 15 ether);
+        // GRAD_BNB_TIERS has 4 slots: the library's MIN / MAX / STEP must keep exactly 4 tiers
+        assertEq(CurveLogic.MAX_GRAD_BNB, CurveLogic.MIN_GRAD_BNB + 3 * CurveLogic.GRAD_BNB_STEP, "4 tiers");
         assertEq(pad.REGISTRY_REF_BNB(), 15 ether, "registry rates stay 15 BNB worth");
     }
 
