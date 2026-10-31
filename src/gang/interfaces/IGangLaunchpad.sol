@@ -219,6 +219,8 @@ interface IGangLaunchpad {
     // V3
     error AlreadyGraduated();
     error GradAmtTooSmall();
+    /// @dev Both kinds: the graduation amount / raise in the quote exceeds what a Pancake pair can hold.
+    error QuoteAmountTooLarge();
     error BadGradTarget();
     error BadTaxConfig(string reason);
     error NotCreator();

@@ -28,6 +28,10 @@ library PadCommon {
     /// @dev QuoteRegistry rates are "15 BNB worth of quote" (V2 graduation target, 打新's REGISTRY_REF_BNB); toQuote
     ///      scales them to any BNB amount (a V3 graduation target, a 打新 raise).
     uint256 internal constant REF_BNB = 15 ether;
+    /// @dev Largest graduation amount / 打新 raise in quote units (audit 2026-10-31 A L-1): the Pancake pair keeps its
+    ///      reserves in uint112, so a bigger amount could never be added (the curve would never graduate, the sale
+    ///      never launch); a quarter of it leaves room for what is donated to the pair before.
+    uint256 internal constant MAX_QUOTE_AMOUNT = type(uint112).max / 4;
     uint256 internal constant MIN_REF_DEPTH_BNB = 1 ether;
 
     function poolCfg(IGangLaunchpad.Config storage c, address wbnb) internal view returns (PoolCheck.Cfg memory) {

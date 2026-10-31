@@ -156,6 +156,35 @@ contract GradTargetPricingTest is GangFixture {
         _createT(address(q), address(0), _tax(0, 0, 0, address(0)), 15 ether);
     }
 
+    /// Audit 2026-10-31 A L-1: an amount a Pancake pair could never hold (uint112 reserves) is refused at create, for
+    /// both kinds, and by the views; the largest that fits a quarter of uint112 still creates.
+    function test_quoteAmountAboveCap_refused() public {
+        MockSPCXB q = new MockSPCXB();
+        uint256 cap = pad.MAX_QUOTE_AMOUNT();
+        assertEq(cap, uint256(type(uint112).max) / 4);
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(q), true, 1e34); // 15 BNB worth = 1e34 q: 6 BNB = 4e33 > cap
+        vm.expectRevert(IGangLaunchpad.QuoteAmountTooLarge.selector);
+        pad.graduationAmountFor(address(q), address(0), 6 ether);
+        vm.prank(creator);
+        vm.expectRevert(IGangLaunchpad.QuoteAmountTooLarge.selector);
+        pad.createWithGradTarget("C", "C", "", "", address(q), address(0), _tax(0, 0, 0, address(0)), 6 ether);
+        vm.expectRevert(IGangLaunchpad.QuoteAmountTooLarge.selector);
+        pad.previewCreate(address(q), address(0), 5 ether);
+        q.mintUnlimited(creator, 1e34);
+        vm.prank(creator);
+        q.approve(address(pad), type(uint256).max);
+        vm.prank(creator);
+        vm.expectRevert(IGangLaunchpad.QuoteAmountTooLarge.selector);
+        pad.create("F", "F", "", "", address(q), address(0), _mintCfg(5 ether, 50, 6_000, 100, 100), 1);
+
+        // exactly the cap at 15 BNB: created
+        vm.prank(owner);
+        quoteRegistry.setQuote(address(q), true, cap);
+        address t = _createT(address(q), address(0), _tax(0, 0, 0, address(0)), 15 ether);
+        assertEq(pad.gradAmtOf(t), cap);
+    }
+
     /// Registry gradAmt not divisible by 3 at a low tier: sold at graduation stays at 800M (wei-level drift only).
     function test_registryRounding_soldAtGrad() public {
         MockSPCXB q = new MockSPCXB();

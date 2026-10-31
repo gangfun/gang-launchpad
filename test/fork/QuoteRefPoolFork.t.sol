@@ -148,9 +148,9 @@ contract QuoteRefPoolForkTest is Test {
     function _v3Creates(address ref) internal {
         uint256 want = v2.graduationAmountOf(NVDAB, ref);
         assertGt(want, 0);
-        assertEq(v3.graduationAmountOf(NVDAB, ref), want, "V3 core prices like V2");
+        assertEq(v3.graduationAmountFor(NVDAB, ref, 15 ether), want, "V3 core prices like V2");
         vm.prank(dev);
-        address t = v3.create("NV Tax", "NVT", "", "", NVDAB, ref, _untaxed());
+        address t = v3.createWithGradTarget("NV Tax", "NVT", "", "", NVDAB, ref, _untaxed(), 15 ether);
         assertEq(v3.gradAmtOf(t), want, "locked at create");
         console.log("V3 gradAmt NVDAB (e15)", want / 1e15);
     }
@@ -190,7 +190,7 @@ contract QuoteRefPoolForkTest is Test {
     function test_fork_fixedRateWinsAndNoPoolRefused() public forkOnly {
         vm.startPrank(dev);
         vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
-        v3.create("X", "X", "", "", NVDAB, address(0), _untaxed());
+        v3.createWithGradTarget("X", "X", "", "", NVDAB, address(0), _untaxed(), 15 ether);
         vm.expectRevert(IGangLaunchpad.RefPoolRequired.selector);
         fair.previewCreate(NVDAB, address(0), 15 ether);
         vm.stopPrank();
@@ -198,7 +198,7 @@ contract QuoteRefPoolForkTest is Test {
         QuoteRegistry reg = QuoteRegistry(address(v3.quoteRegistry()));
         vm.prank(owner);
         reg.setQuote(NVDAB, true, 77 ether);
-        assertEq(v3.graduationAmountOf(NVDAB, NVDAB_WBNB_V2), 77 ether);
+        assertEq(v3.graduationAmountFor(NVDAB, NVDAB_WBNB_V2, 15 ether), 77 ether);
         (uint256 raiseQuote,) = fair.previewCreate(NVDAB, address(0), 15 ether);
         assertEq(raiseQuote, 77 ether);
     }
@@ -207,7 +207,9 @@ contract QuoteRefPoolForkTest is Test {
     ///      would; a fixed rate set later still wins.
     function test_fork_usdt_pricedFromRefPool() public forkOnly {
         uint256 want = v2.graduationAmountOf(USDT, USDT_REF_POOL);
-        assertEq(v3.graduationAmountOf(USDT, USDT_REF_POOL), want, "V3 core prices USDT like V2");
+        assertEq(v3.graduationAmountFor(USDT, USDT_REF_POOL, 15 ether), want, "V3 core prices USDT like V2");
+        // 2.0's default target (9 BNB) is the same pool price for 9 BNB
+        assertApproxEqAbs(v3.graduationAmountOf(USDT, USDT_REF_POOL), (want * 9) / 15, 1e6, "default 9 BNB");
         (uint256 raiseQuote,) = fair.previewCreate(USDT, USDT_REF_POOL, 15 ether);
         assertEq(raiseQuote, want, "fair core prices USDT like V2");
         (uint160 sqrtP,,,,,,) = IV3PoolSlot0(USDT_REF_POOL).slot0(); // token0 USDT, token1 WBNB
@@ -216,13 +218,13 @@ contract QuoteRefPoolForkTest is Test {
         console.log("15 BNB in USDT (e18)", want / 1e18);
 
         vm.prank(dev);
-        address t = v3.create("U Tax", "UT", "", "", USDT, USDT_REF_POOL, _untaxed());
+        address t = v3.createWithGradTarget("U Tax", "UT", "", "", USDT, USDT_REF_POOL, _untaxed(), 15 ether);
         assertEq(v3.gradAmtOf(t), want, "locked at create");
 
         QuoteRegistry reg = QuoteRegistry(address(v3.quoteRegistry()));
         vm.prank(owner);
         reg.setQuote(USDT, true, 9_000 ether);
-        assertEq(v3.graduationAmountOf(USDT, USDT_REF_POOL), 9_000 ether, "fixed rate wins over the pool");
+        assertEq(v3.graduationAmountFor(USDT, USDT_REF_POOL, 15 ether), 9_000 ether, "fixed rate wins over the pool");
         (raiseQuote,) = fair.previewCreate(USDT, USDT_REF_POOL, 15 ether);
         assertEq(raiseQuote, 9_000 ether);
     }
@@ -230,7 +232,7 @@ contract QuoteRefPoolForkTest is Test {
     /// @dev Matches what the live LaunchpadV2 (0x1B8F…966E) returns for the same V2 pair: reserves, no TWAP.
     function test_fork_matchesLiveV2_onV2Pair() public forkOnly {
         uint256 live = LaunchpadV2(0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E).graduationAmountOf(NVDAB, NVDAB_WBNB_V2);
-        assertEq(v3.graduationAmountOf(NVDAB, NVDAB_WBNB_V2), live);
+        assertEq(v3.graduationAmountFor(NVDAB, NVDAB_WBNB_V2, 15 ether), live);
         (uint256 raiseQuote,) = fair.previewCreate(NVDAB, NVDAB_WBNB_V2, 15 ether);
         assertEq(raiseQuote, live);
     }

@@ -102,3 +102,38 @@ addressed:
 
 Left for the CLI release: the skill / CLI docs still say 15 BNB. The CLI should preview with `graduationAmountFor`, so
 a creator sees a `GradAmtTooSmall` quote before sending.
+
+## 8. Full audit of 2.0 (both features together)
+
+2026-10-31. Three independent audits of all of GangLaunchpad 2.0 at `7e450b8` against the 1.0 source (`68c8312`):
+- **A, the curve core:** pad, CurveLogic, FairLogic, PadCommon, PoolCheck, migrator;
+- **B, after graduation:** token, tax handler, vault, bucket, modules, GangBond, registry, gateway, router;
+- **C, the mainnet deployment path:** scripts, Safe batches, self-checks.
+
+None found anything at medium or above. The lows are fixed:
+
+| Finding | Fix |
+|---|---|
+| A L-1: no upper bound on the graduation amount / 打新 raise in the quote. Above uint112 the Pancake pair can't take it, so the curve never graduates (the sale never launches). 1.0 has the same gap; 2.0 adds a motive, the 0.7% creator fee on a curve that never ends. | `MAX_QUOTE_AMOUNT = type(uint112).max / 4` (room for donations to the pair). Create (both kinds), `graduationAmountFor` / `graduationAmountOf` and `previewCreate` revert `QuoteAmountTooLarge()` above it. |
+| C L-1: in phase 2 before the listing, a pad the deploy key doesn't own could reach Safe batch 1. | Before batch 1, the pad and handler must have been deployed by this deployer (one of its CREATE addresses), still be owned by it, and have no hand-over started. |
+| C L-2: the buy-back script, run while the handler hand-over is half done, made the deployer the new admin's owner. | On mainnet the Safe must hold the handler with nothing pending, `ADMIN_OWNER` must be empty or the Safe, and the admin must be owned by the Safe. |
+| C L-3: the four module scripts pinned 1.0, and a leftover `GANG_PAD` = 1.0 in a 2.0 shell could bind a new GangBond to 1.0 for good. | `GangModulePadScript`: on mainnet the scripts read only `GANG_PAD2`. It must be a 2.0 pad (`CREATOR_FEE_SHARE_BPS` 7000), not 1.0, in the live pad registry, and owned by the Safe. |
+| C info-1: phase 2 refused once a GangHandlerAdmin held the handler. | A GangHandlerAdmin over the handler, owned by the Safe, is accepted as its holder. |
+| C info-5: a pending bucket keeper change was not checked. | Phase 1 refuses one. |
+
+Info items left as they are:
+- B: thin pools take proportionally more keeper rounds to sell a given absolute tax.
+- B: keepers should use a near-quote `minQuoteOut`.
+- B: the creator can claim the creator fee into its own module.
+- A: a creator-supplied quote makes the BNB target cosmetic. Show `gradAmt` and the quote, not only `gradTargetOf`.
+- C: `TWAP_WINDOW=0` fails closed.
+
+Tests added:
+- `GradTargetPricing.t.sol` `test_quoteAmountAboveCap_refused`;
+- `test/fork/GangLaunchpad2DeployGuardsFork.t.sol`, on a mainnet fork, covering:
+  - a foreign pad refused before batch 1;
+  - our own pad with a hand-over started, refused;
+  - phase 2 with an admin holding the handler;
+  - a pending bucket keeper;
+  - the buy-back guards;
+  - the module scripts binding only to 2.0.

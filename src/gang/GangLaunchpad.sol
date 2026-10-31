@@ -60,6 +60,8 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     ///      picks one of GRAD_BNB_TIERS. Each token's own target: `gradTargetOf`, in its quote: `gradAmtOf`.
     uint256 public constant TARGET_GRAD_BNB = CurveLogic.DEFAULT_GRAD_BNB;
     uint256 public constant MIN_GRAD_AMT = CurveLogic.MIN_GRAD_AMT;
+    /// @dev Largest graduation amount / 打新 raise in quote units (a Pancake pair's reserves are uint112).
+    uint256 public constant MAX_QUOTE_AMOUNT = PadCommon.MAX_QUOTE_AMOUNT;
 
     // ---------------------------------------------------------------- 打新 constants
     uint256 public constant MINT_SUPPLY = FairLogic.MINT_SUPPLY;
