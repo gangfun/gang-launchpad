@@ -64,6 +64,32 @@
 - A、B 的 `creatorFeeOf` 都已归零，钱包上限已重新打开；
 - 第二版持有的 WBNB 为 989,673,407,775,435 wei，正好等于 A 的 `realQuote`，没有零头。
 
+### 四档门槛（`script/GangLaunchpad2TierMatrixTestnet.s.sol`）
+
+每档（6 / 9 / 12 / 15 BNB）建三个币，给后端、网站、CLI 做显示核对的样本：
+- 一个 WBNB 币，经 2.0 Router 买 0.001 BNB；
+- 一个测试报价币（与 BNB 1:1，所以毕业额等于门槛），买到毕业额的一半，不毕业；
+- 一个带税的测试报价币（税 3%、分红 40%），买过毕业额，经共享 migrator 毕业，然后领取 creator 分成。
+
+运行期间临时关闭钱包上限，结束时重新打开（[关](https://testnet.bscscan.com/tx/0x3087595f8d895d397b6b9437dc87e8731faf94dc4e7f58a156ce41cd0fafe22c) / [开](https://testnet.bscscan.com/tx/0xd4ee2da8cc38c35ca2a66889f238b4c7073de7165dd35b5f20edaf4261cdc435)）。部署记录：`broadcast/GangLaunchpad2TierMatrixTestnet.s.sol/97/run-1793442276804.json`。
+
+| 门槛 | WBNB 币 | 一半（`realQuote` / 毕业额） | 已毕业（交易对） |
+|---|---|---|---|
+| 6 | [`0x70aaD0e5eF7ccE2b5512f01028D347FC6FcBe568`](https://testnet.bscscan.com/address/0x70aaD0e5eF7ccE2b5512f01028D347FC6FcBe568) | [`0x8f41028364F8825dCc3de3D8f0985C05738F952d`](https://testnet.bscscan.com/address/0x8f41028364F8825dCc3de3D8f0985C05738F952d)：2.97 / 6 | [`0x9dEBB83f07240Aec352577064F1bf87b54eb5737`](https://testnet.bscscan.com/address/0x9dEBB83f07240Aec352577064F1bf87b54eb5737)（[`0x1326…2892`](https://testnet.bscscan.com/address/0x1326772047087b794aABedefF16E947471FA2892)） |
+| 9 | [`0xf17B6BaE39F2681C66D4580FC41F2ED6f43f1111`](https://testnet.bscscan.com/address/0xf17B6BaE39F2681C66D4580FC41F2ED6f43f1111) | [`0x6b7De715FbB37F23b138C76751487631F1895f30`](https://testnet.bscscan.com/address/0x6b7De715FbB37F23b138C76751487631F1895f30)：4.455 / 9 | [`0xD6f00B30ab103BD816988D2C58d21bf8FB585522`](https://testnet.bscscan.com/address/0xD6f00B30ab103BD816988D2C58d21bf8FB585522)（[`0xe87D…526e`](https://testnet.bscscan.com/address/0xe87D197D52aB020CdCAB68eB348A4757Eda4526e)） |
+| 12 | [`0xfb9Cd64F6ea99755fb2F573EDA0B5b3590C84daC`](https://testnet.bscscan.com/address/0xfb9Cd64F6ea99755fb2F573EDA0B5b3590C84daC) | [`0x6a51cA4ab52c7A7e8c62f840E10a2D820ef83E1b`](https://testnet.bscscan.com/address/0x6a51cA4ab52c7A7e8c62f840E10a2D820ef83E1b)：5.94 / 12 | [`0x10174D125AeDfA0469cF5619d98346369b354E65`](https://testnet.bscscan.com/address/0x10174D125AeDfA0469cF5619d98346369b354E65)（[`0x278E…187C`](https://testnet.bscscan.com/address/0x278E3622A7E3CfB9b614d483b845e19C59Ca187C)） |
+| 15 | [`0x61dDDd669b97516Fe0F14d582e0fDd2D022cf633`](https://testnet.bscscan.com/address/0x61dDDd669b97516Fe0F14d582e0fDd2D022cf633) | [`0x2700Fcd3f335Ffa0084997Abb481f874898EacE8`](https://testnet.bscscan.com/address/0x2700Fcd3f335Ffa0084997Abb481f874898EacE8)：7.425 / 15 | [`0xFCA1120e0AB74BC37981b8801A208a777Ad04C00`](https://testnet.bscscan.com/address/0xFCA1120e0AB74BC37981b8801A208a777Ad04C00)（[`0x0ab0…Ce8f`](https://testnet.bscscan.com/address/0x0ab00757B34C713f230f2B220aef44e496BdCe8f)） |
+
+脚本在模拟里逐档检查：`gradTargetOf` 和 `gradAmtOf` 等于所选档位；买到一半的币没有毕业；毕业的币开池市值在门槛的 5 倍 ±3% 以内；毕业后领取到全部分成。
+
+广播后直接读链复核：
+- 12 个币的 `gradTargetOf`、`gradAmt`、`realQuote`、是否毕业都和上表一致；
+- 钱包上限已重新打开；
+- 第二版持有的 WBNB 为 6,971,673,407,775,435 wei，等于它所有 22 个曲线币的 WBNB `realQuote` 加上未领的 creator 分成，没有零头。
+- 毕业后在 6 档已毕业币的池子里，经 PancakeSwap V2 用 0.1 测试报价币买入（[`0x3f8daeab…a34f`](https://testnet.bscscan.com/tx/0x3f8daeab054864a4ca3f2ea68f79664283ba311c165fec8929739102c86aa34f)），再卖出一半（[`0xeec5409c…31a2`](https://testnet.bscscan.com/tx/0xeec5409c2e4ba3f9667218f3c01183e82cdbab0a39a9dd4ddda30bbaf79e31a2)），拿回 0.0487，扣除了买卖各 3% 的税。
+
+主网 fork 上（`test/fork/GangLaunchpad2DeployFork.t.sol`）用真实的共享合约把四档 WBNB 币（带税和不带税）、一个 6 BNB 的 USDT 币各走完一遍：买到毕业、开池约 5 倍、领取分成，WBNB 币毕业后还在 PancakeSwap 上买卖一次。
+
 部署和验收合计约花 0.0056 tBNB。
 
 ## 第一版（已停止创建）

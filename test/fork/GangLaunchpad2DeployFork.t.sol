@@ -45,6 +45,22 @@ interface IGangRouterA {
     function v3BuyBNB(address token, uint256 minTokensOut, uint256 deadline) external payable returns (uint256);
 }
 
+interface IPancakeV2RouterA {
+    function swapExactETHForTokensSupportingFeeOnTransferTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external payable;
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external;
+}
+
 /// @notice Runs the real DeployGangLaunchpad2 (both phases) on a BSC mainnet fork with a throwaway key, executes the
 ///         three Safe batches exactly as encoded, then a curve life on 2.0 through the live shared contracts: the
 ///         creator's 70% kept and claimed, the platform's 30% in the live bucket, graduation through the live
@@ -242,6 +258,102 @@ contract GangLaunchpad2DeployForkTest is Test {
         SharedDividendVault v = SharedDividendVault(p.dividendVault());
         assertEq(v.minimumShareBalanceOf(PAD_1), 10_000 ether);
         assertEq(v.minimumShareBalanceOf(s.pad), 10_000 ether);
+
+        // every tier, through the live migrator and PancakeSwap: WBNB (taxed and untaxed) and USDT. The wallet cap is
+        // off so one buyer per token can graduate it (fewer fresh accounts for the fork to fetch).
+        vm.prank(SAFE);
+        p.setWalletCapEnabled(false);
+        uint256[4] memory tiers = p.GRAD_BNB_TIERS();
+        for (uint256 i; i < 4; i++) {
+            _lifeAtTier(p, s.router, agents, creator, M.WBNB, address(0), tiers[i], i % 2 == 1, 1000 * (i + 1));
+        }
+        _lifeAtTier(p, s.router, agents, creator, M.USDT, M.USDT_REF_POOL, 6 ether, true, 9000);
+    }
+
+    /// @dev One token at `gradBnb`: the target and the graduation amount fixed from create to graduation, no
+    ///      graduation below it, the pool opened with the raise at ~5x the target in market cap, ~0.7% of the raise
+    ///      kept for the creator and claimed, then a buy and a sell on PancakeSwap (WBNB tokens).
+    function _lifeAtTier(
+        IGangPad p,
+        address router,
+        MockAgentId agents,
+        address creator,
+        address quote,
+        address refPool,
+        uint256 gradBnb,
+        bool taxed,
+        uint256 salt
+    ) internal {
+        IGangLaunchpad.TaxConfig memory tax = taxed
+            ? IGangLaunchpad.TaxConfig({buyTaxBps: 300, sellTaxBps: 300, dividendBps: 4_000, recipient: creator})
+            : IGangLaunchpad.TaxConfig({buyTaxBps: 0, sellTaxBps: 0, dividendBps: 0, recipient: address(0)});
+        vm.prank(creator);
+        address t = p.createWithGradTarget("Tier", "TIER", "", "", quote, refPool, tax, gradBnb);
+        uint256 grad = p.gradAmtOf(t);
+        assertEq(p.gradTargetOf(t), gradBnb, "target kept");
+        if (quote == M.WBNB) assertEq(grad, gradBnb, "WBNB: the amount is the target");
+        else assertApproxEqRel(grad, (p.graduationAmountFor(quote, refPool, 15 ether) * gradBnb) / 15 ether, 1e15);
+
+        uint256 step = quote == M.WBNB ? 0.5 ether : grad / 30;
+        address w = address(uint160(0xC0000 + salt));
+        agents.mint(w, 100_000 + salt);
+        uint256 i;
+        for (; i < 100; i++) {
+            (,, uint128 realQuote,,,, bool graduated,,,,,) = _curve(p, t);
+            if (graduated) break;
+            assertLt(realQuote, grad, "not graduated below the target");
+            assertEq(p.gradAmtOf(t), grad, "graduation amount fixed through the curve");
+            if (quote == M.WBNB) {
+                vm.deal(w, step);
+                vm.prank(w, w);
+                IGangRouterA(router).v3BuyBNB{value: step}(t, 0, block.timestamp);
+            } else {
+                deal(quote, w, step);
+                vm.startPrank(w, w);
+                IERC20(quote).approve(address(p), step);
+                p.buy(t, step, 0);
+                vm.stopPrank();
+            }
+        }
+        (,,,,,, bool done,,,, address pair,) = _curve(p, t);
+        assertTrue(done && pair != address(0), "graduated");
+        assertEq(p.gradTargetOf(t), gradBnb, "target kept after graduation");
+
+        uint256 rQ = IERC20(quote).balanceOf(pair);
+        uint256 rT = IERC20(t).balanceOf(pair);
+        assertGe(rQ, (grad * 99) / 100, "the raise went to the pool");
+        assertLe(rQ, grad + 1, "and no more");
+        assertApproxEqRel((rQ * 1_000_000_000 ether) / rT, 5 * grad, 0.03e18, "pool opens at ~5x the target");
+
+        uint256 owed = p.creatorFeeOf(t);
+        assertApproxEqRel(owed, (grad * 70) / 10_000, 0.05e18, "creator kept ~0.7% of the raise");
+        uint256 before = IERC20(quote).balanceOf(creator);
+        vm.prank(creator);
+        p.claimCreatorFee(t, creator);
+        assertEq(IERC20(quote).balanceOf(creator) - before, owed, "claimed");
+        assertEq(p.creatorFeeOf(t), 0);
+
+        if (quote != M.WBNB) return;
+        address trader = makeAddr(string.concat("pancake", vm.toString(salt)));
+        vm.deal(trader, 1 ether);
+        address[] memory path = new address[](2);
+        path[0] = M.WBNB;
+        path[1] = t;
+        vm.prank(trader, trader);
+        IPancakeV2RouterA(M.PANCAKE_V2_ROUTER).swapExactETHForTokensSupportingFeeOnTransferTokens{value: 0.1 ether}(
+            0, path, trader, block.timestamp
+        );
+        uint256 got = IERC20(t).balanceOf(trader);
+        assertGt(got, 0, "bought on PancakeSwap after graduation");
+        path[0] = t;
+        path[1] = M.WBNB;
+        vm.startPrank(trader, trader);
+        IERC20(t).approve(M.PANCAKE_V2_ROUTER, got);
+        uint256 bnb0 = trader.balance;
+        IPancakeV2RouterA(M.PANCAKE_V2_ROUTER)
+            .swapExactTokensForETHSupportingFeeOnTransferTokens(got / 2, 0, path, trader, block.timestamp);
+        vm.stopPrank();
+        assertGt(trader.balance, bnb0, "sold on PancakeSwap after graduation");
     }
 
     function _expectCheck(string memory what, string memory key, string memory bad, address restore) internal {
