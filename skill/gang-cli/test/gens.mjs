@@ -135,6 +135,18 @@ assert.deepEqual(rows.totals, [{ quote: 'WBNB', claimable: '0.0014' }])
 assert.deepEqual(_test.creatorFeeRows({ scanned: [], tokens: [], totals: [] }), {})
 assert.deepEqual(_test.creatorFeeRows({ error: 'rpc' }), {})
 
+// ---- 2.0 errors and notes: QuoteAmountTooLarge decodes with its hint; the module note says how to claim into the module
+{
+  const { MERGED_ERRORS_ABI, MERGED_HINTS } = await import('../src/gangpad.js')
+  const { decodeErrorResult, encodeErrorResult } = await import('viem')
+  const data = encodeErrorResult({ abi: MERGED_ERRORS_ABI, errorName: 'QuoteAmountTooLarge' })
+  assert.equal(decodeErrorResult({ abi: MERGED_ERRORS_ABI, data }).errorName, 'QuoteAmountTooLarge')
+  assert.match(MERGED_HINTS.QuoteAmountTooLarge, /PancakeSwap pair/)
+  const { notThroughModule } = await import('../src/creatorfee.js')
+  assert.doesNotMatch(notThroughModule('LP splitter'), /--to/)
+  assert.match(notThroughModule('LP splitter', { token: t(4), at: t(7), net: ' --testnet' }), new RegExp(`gang creator-fee --token ${t(4)} --testnet --claim --to ${t(7)}`))
+}
+
 // ---- refused before any RPC or wallet call
 const gang = (...args) => {
   const r = spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, ...args], {

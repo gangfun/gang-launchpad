@@ -55,8 +55,9 @@ export async function createNote(ctx, net = '') {
 }
 
 /** Added to the create's note when the tax recipient is one of the dev's modules (`module`: its name). */
-export const notThroughModule = (module) =>
+export const notThroughModule = (module, { token, at, net = '' } = {}) =>
   `This creator fee is yours, the creating wallet's: it does not go through the ${module}, which gets only the recipient's part of the pool tax after graduation.`
+  + (at ? ` To put it into the ${module} anyway, claim it there: gang creator-fee --token ${token ?? '<token>'}${net} --claim --to ${at}` : '')
 
 /**
  * The creator fee of a V3 curve `token` on ctx.pad (ctx already on the token's generation) for info / status:
