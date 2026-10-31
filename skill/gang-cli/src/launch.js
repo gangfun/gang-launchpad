@@ -257,9 +257,13 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     const old = net.gens.slice(1).map((g) => ({ g, p: readPlan([net.chainId, g.pad, me.toLowerCase(), kind, name, symbol].join('|')) })).find((x) => x.p && !x.p.done)
     if (old) {
       const tn = testnet ? ' --testnet' : ''
-      return fail(`this launch began on GangLaunchpad ${old.g.gen ?? old.g.pad} and is not done; new tokens now go to ${net.gen ?? net.pad}`, {
-        ...(old.p.token ? { token: old.p.token, hint: `the token is out on ${old.g.gen}: finish its steps one by one (gang buy --token ${old.p.token} --amount <quote>${tn}, gang bond post --token ${old.p.token} …${tn}), or add --restart to launch a new token on ${net.gen}` }
-          : { hint: `${old.p.splitter ? `its module ${old.p.splitter} was made for the ${old.g.gen} pad and does not work with ${net.gen}: ` : ''}add --restart to launch on ${net.gen}` }),
+      // two pads of one generation (testnet: 2.0 before and after the graduation pick) are told apart by address
+      const same = old.g.gen === net.gen
+      const lbl = (g) => (same ? `${g.gen ?? ''} pad ${g.pad}`.trim() : g.gen ?? g.pad)
+      const [was, now] = [lbl(old.g), lbl(net)]
+      return fail(`this launch began on GangLaunchpad ${was} and is not done; new tokens now go to ${now}`, {
+        ...(old.p.token ? { token: old.p.token, hint: `the token is out on ${was}: finish its steps one by one (gang buy --token ${old.p.token} --amount <quote>${tn}, gang bond post --token ${old.p.token} …${tn}), or add --restart to launch a new token on ${now}` }
+          : { hint: `${old.p.splitter ? `its module ${old.p.splitter} was made for the ${was} pad and does not work with ${now}: ` : ''}add --restart to launch on ${now}` }),
       })
     }
   }
