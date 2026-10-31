@@ -200,20 +200,25 @@ export async function curveOf(ctx, token) {
     graduationTargetBnb: targetBnb, toGraduation: await units(ctx, quote, remaining),
     progressPct: graduated ? 100 : gradAmt > 0n ? Number((realQuote * 10_000n) / gradAmt) / 100 : 0,
     priceQuote: await units(ctx, quote, price), priceFrom: graduated ? 'pool' : 'curve', priceRaw: price,
-    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed, reserveTokenRaw, curveRaw: { realQuote, sold, virtualQuote },
+    owedToRecipient: await units(ctx, quote, owed), owedRaw: owed, reserveTokenRaw, curveRaw: { realQuote, sold, virtualQuote, remaining },
   }
 }
 
 /**
- * What a curve buy of `quoteIn` that gets `tokensOut` spends, the fee included (CurveLogic _quoteInFor + _recomputeFee):
- * less than quoteIn when the wallet cap or the graduation cut trimmed it and the rest is refunded.
+ * What a curve buy of `quoteIn` that gets `tokensOut` spends, the fee included, as CurveLogic trims it: first to the
+ * token's own graduation amount (what is still to raise), then to the wallet cap (`room`, _quoteInFor), each followed by
+ * _recomputeFee. { spent, cut: null | 'graduation' | 'wallet cap' }: the rest of quoteIn is refunded.
  */
-async function spentFor(ctx, c, quoteIn, tokensOut) {
-  const { realQuote, sold, virtualQuote } = c.curveRaw
-  const net = ceilDiv(virtualQuote * VIRTUAL_TOKEN, VIRTUAL_TOKEN - sold - tokensOut) - (virtualQuote + realQuote)
+async function spentFor(ctx, c, quoteIn, tokensOut, room) {
+  const { realQuote, sold, virtualQuote, remaining } = c.curveRaw
   const feeBps = BigInt(Math.round((await feesOf(ctx)).curveFeePct * 100))
-  const gross = ceilDiv(net * 10_000n, 10_000n - feeBps)
-  return gross < quoteIn ? gross : quoteIn
+  const gross = (net) => { const g = ceilDiv(net * 10_000n, 10_000n - feeBps); return g < quoteIn ? g : quoteIn }
+  if (room !== undefined && tokensOut === room) {
+    const net = ceilDiv(virtualQuote * VIRTUAL_TOKEN, VIRTUAL_TOKEN - sold - tokensOut) - (virtualQuote + realQuote)
+    return { spent: gross(net), cut: 'wallet cap' }
+  }
+  if (quoteIn - (quoteIn * feeBps) / 10_000n > remaining) return { spent: gross(remaining), cut: 'graduation' }
+  return { spent: quoteIn, cut: null }
 }
 
 /** `token` funding for `need` toward the pad (wrap BNB, then approve): a step object, or null when ready. */
@@ -484,17 +489,28 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     }
     const me = walletFor(ctx, opt('from'))
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; curve trades are Agent-only', { wallet: me })
-    if ((await ctx.read(ctx.pad, PAD_ABI, 'walletRoom', [token, me])) === 0n) fail(HINTS.WalletCapReached)
+    const room = await ctx.read(ctx.pad, PAD_ABI, 'walletRoom', [token, me])
+    if (room === 0n) fail(HINTS.WalletCapReached)
     if (!flag('amount') && !flag('bnb')) fail('--amount <quote to spend> required (the 1% curve fee included; no tax on the curve)')
     const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
     const quoteIn = parseUnits(raw, await decimalsOf(ctx, c.quote))
     const slippage = parseSlippage(fail, opt('slippage', '1'))
     // asked from gang.fun before any wrap / approve round, so a follow that can't count fails first
     const follow = await notes.follow(token, me)
-    const priced = async (tokensOut) => follow && notes.priced(follow, token, await spentFor(ctx, c, quoteIn, tokensOut), await decimalsOf(ctx, c.quote))
-    const extra = (tokensOut, minOut) => ({
+    const priced = async (tokensOut) => follow && notes.priced(follow, token, (await spentFor(ctx, c, quoteIn, tokensOut, room)).spent, await decimalsOf(ctx, c.quote))
+    // the pad trims a buy past the token's own graduation amount or the wallet cap and refunds the rest: say what it spends
+    const cutOf = async (tokensOut, refundAs) => {
+      const { spent, cut } = await spentFor(ctx, c, quoteIn, tokensOut, room)
+      if (!cut) return {}
+      const [s, r] = await Promise.all([units(ctx, c.quote, spent), units(ctx, c.quote, quoteIn - spent)])
+      const why = cut === 'graduation'
+        ? `only ${c.toGraduation} ${c.quoteSymbol} is left to raise before this token graduates at ${c.graduationAt} ${c.quoteSymbol}`
+        : `the 1% wallet cap leaves this wallet room for ${formatUnits(tokensOut, 18)} more tokens only`
+      return { spent: s, refund: r, cutBy: cut, cutNote: `${why}: the buy spends ${s} ${c.quoteSymbol} (fee included) and refunds ${r} ${refundAs}` }
+    }
+    const extra = async (tokensOut, minOut, refundAs = c.quoteSymbol) => ({
       step: 'buy', chainId: Number(ctx.chainId), token, spend: raw, quote: c.quoteSymbol, expectTokens: formatUnits(tokensOut, 18),
-      minTokensOut: formatUnits(minOut, 18), curveTaxPct: 0, ...(c.buyTaxPct > 0 && { poolBuyTaxPct: c.buyTaxPct }),
+      minTokensOut: formatUnits(minOut, 18), ...(await cutOf(tokensOut, refundAs)), curveTaxPct: 0, ...(c.buyTaxPct > 0 && { poolBuyTaxPct: c.buyTaxPct }),
     })
     // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet; a cap / graduation
     // refund comes back from the pad to this wallet as WBNB, not BNB)
@@ -510,7 +526,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const minOut = minOf(sim.result, slippage)
       const data = encodeFunctionData({ abi: GANG_ROUTER_ABI, functionName: 'v3BuyBNB', args: [token, minOut, routerDeadline()] })
       return out(notes.step(ctx, { from: me, to: ctx.router, data, value: quoteIn }, {
-        ...extra(sim.result, minOut), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
+        ...(await extra(sim.result, minOut, 'WBNB (not BNB)')), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
         note: 'paid in BNB through GangRouter; spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap or the graduation cut the excess comes back to this wallet as WBNB (not BNB)',
       }, 'buy', await priced(sim.result)))
     }
@@ -520,7 +536,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (sim.failed) return out({ success: false, step: 'buy', ...sim.failed })
     const minOut = minOf(sim.result, slippage)
     return out(notes.step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'buy', args: [token, quoteIn, minOut] }) }, {
-      ...extra(sim.result, minOut), curveFeePct: (await feesOf(ctx)).curveFeePct,
+      ...(await extra(sim.result, minOut)), curveFeePct: (await feesOf(ctx)).curveFeePct,
       note: 'spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap the excess is refunded',
     }, 'buy', await priced(sim.result)))
   }
