@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Script, console} from "forge-std/Script.sol";
+import {console} from "forge-std/Script.sol";
+import {GangModulePadScript} from "./GangModulePadScript.sol";
 import {VmSafe} from "forge-std/Vm.sol";
 import {GangMainnetRefs as M, GangTestnetRefs as T} from "../config/GangDeployRefs.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
@@ -11,12 +12,9 @@ import {GangBond} from "../src/gang/GangBond.sol";
 /// @notice One contract, no owner, nothing to wire: GangBond only reads the pad and the tokens and trades with their
 ///         pairs, so the pad, vault and tax handler are left as they are. Checks the pad's WBNB and prints the address
 ///         for the CLI (GANG_BOND / GANG_TESTNET_BOND) and the server's indexer.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, GANG_PAD (mainnet: must be the live pad); GANG_BOND (re-run: deploy nothing, only check that one); mainnet broadcast
+/// @dev Env: DEPLOYER_PRIVATE_KEY, the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or GANG_PAD); GANG_BOND (re-run: deploy nothing, only check that one); mainnet broadcast
 ///      needs GANG_MAINNET_OK=true.
-contract DeployGangBond is Script {
-    /// @notice The live GangLaunchpad on BSC 56 (docs/MAINNET-GANG-2026-10-27.md): GangBond binds to one pad for good.
-    address internal constant MAINNET_PAD = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
-
+contract DeployGangBond is GangModulePadScript {
     error WrongChain(uint256 chainId);
     error MainnetNotAllowed();
     error WiringCheck(string what);
@@ -28,8 +26,7 @@ contract DeployGangBond is Script {
             vm.isContext(VmSafe.ForgeContext.ScriptBroadcast) || vm.isContext(VmSafe.ForgeContext.ScriptResume);
         if (mainnet && broadcasting && !vm.envOr("GANG_MAINNET_OK", false)) revert MainnetNotAllowed();
 
-        address pad = vm.envAddress("GANG_PAD");
-        if (mainnet && pad != MAINNET_PAD) revert WiringCheck("pad");
+        address pad = _modulePad(mainnet); // GangBond binds to one pad for good
         address wbnb = mainnet ? M.WBNB : T.WBNB;
         if (IGangPad(pad).wbnb() != wbnb) revert WiringCheck("pad.wbnb");
 

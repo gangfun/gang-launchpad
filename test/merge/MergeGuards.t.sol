@@ -50,7 +50,7 @@ contract MergeGuardsTest is GangFixture {
     /// @dev gangfun-server indexer/src/v3.js V3_PAD_EVENTS + fairMint.js FAIR_PAD_EVENTS, and the CLI's
     ///      skill/gang-cli/src/v3.js / fair.js PAD_ABI events. All emitted by the one pad.
     function _downstreamPadEvents() internal pure returns (string[] memory s) {
-        s = new string[](13);
+        s = new string[](16);
         // v3.js V3_PAD_EVENTS (CLI v3.js:53-57 has the same strings)
         s[0] =
             "event Created(address indexed token, address indexed creator, string name, string symbol, string logoURI, address indexed quote, address refPair, uint256 gradAmt)";
@@ -75,6 +75,12 @@ contract MergeGuardsTest is GangFixture {
         s[10] = "event ShareWriteFailed(address indexed token, address indexed user, uint256 share)";
         s[11] = "event FeeOwed(address indexed quote, uint256 amount)";
         s[12] = "event FeesFlushed(address indexed quote, uint256 amount)";
+        // creator fee (70% of the curve's 1%, SPEC-CURVE-CREATOR-FEE-2026-10-31): new; the indexer and CLI add them
+        s[13] = "event CreatorFeeAccrued(address indexed token, address indexed creator, uint256 amount)";
+        s[14] =
+            "event CreatorFeeClaimed(address indexed token, address indexed creator, address indexed to, uint256 amount)";
+        // graduation target the creator picked (SPEC-CURVE-GRAD-TARGET-2026-10-31): new
+        s[15] = "event GradTargetSet(address indexed token, uint256 gradBnb)";
     }
 
     /// @dev Events the indexer / CLI read from the one tax handler: v3.js V3_ROUTER_EVENTS, V3_REGISTRY_EVENTS,
@@ -756,7 +762,9 @@ contract MergeGuardsTest is GangFixture {
         assertEq(ret.length, 12 * 32, "curves: 12 words");
         assertEq(address(uint160(_word(ret, 0))), alice, "creator");
         assertEq(address(uint160(_word(ret, 1))), address(wbnb), "quote");
-        assertEq(_word(ret, 2), wbnb.balanceOf(address(pad)), "realQuote (only curve on the pad)");
+        assertEq(
+            _word(ret, 2), wbnb.balanceOf(address(pad)) - pad.creatorFeeOf(tV), "realQuote (only curve on the pad)"
+        );
         assertEq(_word(ret, 3), got, "sold");
         (bool ok2, bytes memory g) = address(pad).staticcall(abi.encodeWithSignature("gradAmtOf(address)", tV));
         assertTrue(ok2);
@@ -1147,11 +1155,12 @@ contract MergeGuardsTest is GangFixture {
             accounted += sum * price;
         }
         for (uint256 i = 0; i < curvesL.length; i++) {
-            if (_curveQuote(curvesL[i]) != q || _graduated(curvesL[i])) continue;
-            accounted += _curveRealQuote(curvesL[i]);
+            if (_curveQuote(curvesL[i]) != q) continue;
+            accounted += pad.creatorFeeOf(curvesL[i]); // kept for the creator, live or graduated
+            if (!_graduated(curvesL[i])) accounted += _curveRealQuote(curvesL[i]);
         }
         uint256 bal = IERC20(q).balanceOf(address(pad));
-        assertGe(bal, accounted, "pad quote >= escrow + owed fees + live realQuote");
+        assertGe(bal, accounted, "pad quote >= escrow + owed fees + live realQuote + creator fees");
         dust = bal - accounted;
         assertGe(dust, dust0, "dust never shrinks");
     }
@@ -1220,7 +1229,11 @@ contract MergeGuardsTest is GangFixture {
         d = _checkPadBalance(address(wbnb), cs, ss, d);
         _fill(ss[1]);
         d = _checkPadBalance(address(wbnb), cs, ss, d);
-        assertEq(wbnb.balanceOf(address(pad)), pad.owedFee(address(wbnb)) + d, "all done: owed fees + dust only");
+        assertEq(
+            wbnb.balanceOf(address(pad)),
+            pad.owedFee(address(wbnb)) + pad.creatorFeeOf(cs[0]) + pad.creatorFeeOf(cs[1]) + d,
+            "all done: owed fees + creator fees + dust only"
+        );
         assertLt(d, 1e9, "dust is rounding only");
     }
 

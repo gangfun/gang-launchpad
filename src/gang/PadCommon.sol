@@ -25,9 +25,13 @@ library PadCommon {
     /// @dev The one vault floor of the pad (V3 `TAXED_MIN_SHARE` = 打新 `MIN_SHARE_BALANCE`): holders need a balance
     ///      strictly above it for dividend shares.
     uint256 internal constant MIN_SHARE = 10_000 ether;
-    /// @dev QuoteRegistry rates are "15 BNB worth of quote" (V2 graduation target): V3's TARGET_GRAD_BNB and 打新's
-    ///      REGISTRY_REF_BNB.
+    /// @dev QuoteRegistry rates are "15 BNB worth of quote" (V2 graduation target, 打新's REGISTRY_REF_BNB); toQuote
+    ///      scales them to any BNB amount (a V3 graduation target, a 打新 raise).
     uint256 internal constant REF_BNB = 15 ether;
+    /// @dev Largest graduation amount / 打新 raise in quote units (audit 2026-10-31 A L-1): the Pancake pair keeps its
+    ///      reserves in uint112, so a bigger amount could never be added (the curve would never graduate, the sale
+    ///      never launch); a quarter of it leaves room for what is donated to the pair before.
+    uint256 internal constant MAX_QUOTE_AMOUNT = type(uint112).max / 4;
     uint256 internal constant MIN_REF_DEPTH_BNB = 1 ether;
 
     function poolCfg(IGangLaunchpad.Config storage c, address wbnb) internal view returns (PoolCheck.Cfg memory) {
@@ -60,7 +64,7 @@ library PadCommon {
         ) revert IGangLaunchpad.QuoteNotAllowed();
     }
 
-    /// @dev `bnbAmount` in quote units. V3 asks for its 15 BNB graduation target, 打新 for the raise; one rule set
+    /// @dev `bnbAmount` in quote units. V3 asks for its graduation target, 打新 for the raise; one rule set
     ///      (LaunchpadV2._lockGradAmt): WBNB → as is; QuoteRegistry rate (quoted for 15 BNB) → scaled; else the
     ///      creator's reference pool, bridged through bridgePoolOf when its other side is not WBNB, with a ≥ 1 BNB
     ///      depth floor.

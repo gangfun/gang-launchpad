@@ -141,7 +141,11 @@ contract GangGatewayPhishingTest is GangFixture {
         LooseEntry entry = new LooseEntry(IGangGateway(address(gw)));
         vm.prank(owner);
         gw.setCaller(address(entry), true);
-        address t = _createV3(creator, address(0), _tax(0, 0, 0, address(0)));
+        // the 15 BNB target (1.0's): `progress` up to 10 BNB keeps the curve live
+        vm.prank(creator);
+        address t = pad.createWithGradTarget(
+            "Curve", "CRV", "logo", "meta", address(0), address(0), _tax(0, 0, 0, address(0)), 15 ether
+        );
         _push(t, progress);
         // victim at the 1% cap, unlimited approval to the gateway
         vm.prank(alice, alice);

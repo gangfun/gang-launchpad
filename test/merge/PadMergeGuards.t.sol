@@ -167,8 +167,8 @@ contract PadMergeGuardsTest is GangRouterTest {
         );
         assertEq(creator, agent);
         assertEq(quote, address(wbnb));
-        assertEq(gradAmt, 15 ether);
-        assertEq(vq, uint128(15 ether) / 3);
+        assertEq(gradAmt, 9 ether, "2.0 default target");
+        assertEq(vq, uint128(9 ether) / 3);
         assertEq(buyBps, 200);
         assertEq(divBps, 5000);
 
@@ -291,6 +291,7 @@ contract PadMergeGuardsTest is GangRouterTest {
         for (uint256 i; i < curvesL.length; i++) {
             (,, uint128 realQuote,,,, bool graduated,,,,,) = v3.curves(curvesL[i]);
             if (!graduated) owed += realQuote;
+            owed += v3.creatorFeeOf(curvesL[i]); // kept for the creator, live or graduated
         }
         for (uint256 i; i < salesL.length; i++) {
             (,,,,, uint16 sold, bool launched,,,, uint128 price,,,) = v3.sales(salesL[i]);
@@ -402,7 +403,8 @@ contract PadMergeGuardsTest is GangRouterTest {
     function test_merge_floorConstantsEqual() public view {
         assertEq(v3.TAXED_MIN_SHARE(), v3.MIN_SHARE_BALANCE(), "one vault floor");
         assertEq(v3.TAXED_MIN_SHARE(), 10_000 ether);
-        assertEq(v3.TARGET_GRAD_BNB(), v3.REGISTRY_REF_BNB(), "one 15 BNB reference");
+        assertEq(v3.REGISTRY_REF_BNB(), 15 ether, "registry rates: 15 BNB worth");
+        assertEq(v3.TARGET_GRAD_BNB(), 9 ether, "2.0 default target, scaled from the registry rate");
         assertEq(v3.TOTAL_SUPPLY(), 1_000_000_000 ether);
         assertEq(v3.LP_SUPPLY() + v3.MINT_SUPPLY(), v3.TOTAL_SUPPLY());
     }
