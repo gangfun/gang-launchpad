@@ -25,7 +25,7 @@
 
 这个工厂只服务 1.0 的 pad。GangLaunchpad 2.0 有自己的 handler 和 GangHandlerAdmin，上主网时要用同一个脚本（`GANG_PAD` 指向 2.0，`HANDLER_ADMIN` 指向 2.0 的 admin）再部署一个组合工厂，和回购、分账、加池工厂一起由多签在 2.0 的 admin 上允许。
 
-## 多签批量（待执行）
+## 多签批量（已执行）
 
 导入 Safe Transaction Builder：`docs/MAINNET-COMBO-MODULE-SAFE-BATCH-2026-10-31.json`。一笔：
 
@@ -33,9 +33,9 @@
 |---|---|---|
 | GangHandlerAdmin `0xF56A…E985` | `setFactory(0xd33C…1DBd, true)` | `0x71013c10…d33c38be…01`，与部署脚本打印的一致 |
 
-已有的回购、分账、加池工厂不受影响。顺序同分账和加池：服务端（indexer、keeper）和网站认 `combo-v1` 并上线之后，再由多签执行。
+已有的回购、分账、加池工厂不受影响。2026-10-31 在服务端（gangfun-server v1.2.62：indexer、keeper）和网站（gang-web-legacy v1.2.99）认 `combo-v1` 并上线之后，由多签执行：[`0xa0276851…f7f8`](https://bscscan.com/tx/0xa0276851dcf82aaefc296289b4419b53a105b81ff3d78f809108eddb436cf7f8)，区块 130811492。
 
-执行后核对：
+执行后核对（2026-10-31 已跑）：新工厂已允许；分账工厂 `0x27e0…067c`、加池工厂 `0xE043…C248` 仍允许；handler 的 owner 仍是管理合约、没有待接收的 owner；管理合约 owner 仍是多签；脚本检查模式打印「nothing to do」；真实 Agent `0xf7A8…14aA` 静态调用 `factory.create(3000, 3000, [自己, 另一个地址], [7000, 3000], salt)` 返回 `predict` 的地址（估算 gas 432,087）。命令：
 
 ```sh
 GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004B9bB3515480A1409BC1DAD8FE985 \
@@ -60,7 +60,8 @@ GANG_PAD=0x15CFD2dc8278Fb87a1783ef42111618E20874365 HANDLER_ADMIN=0xF56AF7a7a004
 
 ## 还要做的
 
-1. 服务端（indexer、keeper：drain 类型加 `combo-v1`，`ChunkTooSoon` 当「不是现在」）和网站认 `combo-v1` 并上线。
-2. 多签执行上面的批量。
-3. CLI 发版：`gang create … --buyback <pct> --lp <pct> [--split <addr>:<pct>,…]`（两个及以上）、`gang combo …`，主网工厂地址指向 `0xd33C…1DBd`。
-4. 网站文档改为主网已开放。
+1. ~~服务端（indexer、keeper：drain 类型加 `combo-v1`，`ChunkTooSoon` 当「不是现在」）和网站认 `combo-v1` 并上线~~（2026-10-31 已上线：gangfun-server v1.2.62、gang-web-legacy v1.2.99）。
+2. ~~多签执行上面的批量~~（已执行，见上）。
+3. ~~CLI 发版：`gang create … --buyback <pct> --lp <pct> [--split <addr>:<pct>,…]`（两个及以上）、`gang combo …`，主网工厂地址指向 `0xd33C…1DBd`~~（2026-10-31：PR #96 合并，`@gangfun/cli` 0.22.0 已在 npm）。
+4. ~~网站文档改为主网已开放~~（2026-10-31：gang-web-legacy v1.2.100）。
+5. GangLaunchpad 2.0 上主网时：用同一个脚本给 2.0 部署组合工厂，多签在 2.0 的 admin 上 `setFactory`；CLI 按 pad 版本选工厂（PR #98）。测试网 2.0 已部署并验收，见测试网记录。
