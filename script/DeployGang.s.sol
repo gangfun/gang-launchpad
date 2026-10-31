@@ -473,7 +473,7 @@ contract DeployGang is Script {
         try pad.graduationAmountOf(c.wbnb, address(0)) returns (uint256 g) {
             if (g == 0 || g != pad.TARGET_GRAD_BNB()) revert WiringCheck("CurveLogic graduationAmountOf");
         } catch {
-            revert WiringCheck("CurveLogic not linked");
+            revert WiringCheck("CurveLogic not linked (or not this pad's library)");
         }
         try pad.previewCreate(address(0), address(0), 15 ether) returns (uint256 raise, uint256 price) {
             if (raise != 15 ether || price != 15 ether / 10_000) revert WiringCheck("FairLogic previewCreate");

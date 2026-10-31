@@ -37,8 +37,12 @@ library CurveLogic {
     uint16 internal constant MIN_TAX_BPS = 100;
     uint16 internal constant MAX_TAX_BPS = 500;
     uint256 internal constant MIN_GRAD_AMT = 1e6;
-    /// @dev Graduation targets a creator may pick, in BNB raised: graduation market cap = 5x the raise (curve
-    ///      shape fixed, virtual quote = target / 3). 2.0 default 9 BNB (1.0: always 15).
+    /// @dev Graduation targets a creator may pick, in BNB raised: 6 / 9 / 12 / 15 (MIN to MAX in STEPs; graduation
+    ///      market cap = 5x the raise: curve shape fixed, virtual quote = target / 3). 2.0 default 9 BNB (1.0: always
+    ///      15). The one definition: `isGradTier` and the pad's GRAD_BNB_TIERS both read it.
+    uint256 internal constant MIN_GRAD_BNB = 6 ether;
+    uint256 internal constant MAX_GRAD_BNB = 15 ether;
+    uint256 internal constant GRAD_BNB_STEP = 3 ether;
     uint256 internal constant DEFAULT_GRAD_BNB = 9 ether;
     uint8 internal constant KIND = 1;
 
@@ -91,7 +95,7 @@ library CurveLogic {
 
     /// @dev 6 / 9 / 12 / 15 BNB (GRAD_BNB_TIERS).
     function isGradTier(uint256 gradBnb) internal pure returns (bool) {
-        return gradBnb == 6 ether || gradBnb == 9 ether || gradBnb == 12 ether || gradBnb == 15 ether;
+        return gradBnb >= MIN_GRAD_BNB && gradBnb <= MAX_GRAD_BNB && (gradBnb - MIN_GRAD_BNB) % GRAD_BNB_STEP == 0;
     }
 
     function _createTaxed(

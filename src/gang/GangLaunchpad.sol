@@ -25,7 +25,8 @@ import {FairLogic} from "./FairLogic.sol";
 ///         storage, balance and events are the only ones anyone sees. Every external function, getter, constant,
 ///         event and error of the two old cores keeps its name, selector and layout: the two `create`s are overloads,
 ///         `curves` / `sales` / `positions` are the same public mappings.
-///         - V3 (kindOf 1): V2 curve / Agent gate (current setting) / 1% wallet cap / ≈15 BNB graduation; no tax on the
+///         - V3 (kindOf 1): V2 curve / Agent gate (current setting) / 1% wallet cap / graduation at the creator's
+///           target (6 / 9 / 12 / 15 BNB raised, default 9; 1.0: 15); no tax on the
 ///           curve, only the 1% protocol fee, 70% of it kept for the token's creator (`claimCreatorFee`); buy / sell
 ///           tax on the Pancake pool after graduation (GangToken → handler).
 ///         - 打新 (kindOf 2): 10,000 equal shares at one fixed price both ways; the last share launches the pair; each
@@ -360,8 +361,10 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     }
 
     /// @notice The graduation targets a creator may pick, in BNB raised.
-    function GRAD_BNB_TIERS() external pure returns (uint256[4] memory) {
-        return [uint256(6 ether), 9 ether, 12 ether, 15 ether];
+    function GRAD_BNB_TIERS() external pure returns (uint256[4] memory t) {
+        for (uint256 i; i < 4; i++) {
+            t[i] = CurveLogic.MIN_GRAD_BNB + i * CurveLogic.GRAD_BNB_STEP;
+        }
     }
 
     // ---------------------------------------------------------------- 打新

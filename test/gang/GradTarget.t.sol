@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Vm} from "forge-std/Vm.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 
@@ -24,6 +25,20 @@ contract GradTargetTest is GangFixture {
         );
     }
 
+    /// @dev The one GradTargetSet the pad emitted since `vm.recordLogs()`: its token topic and target.
+    function _gradTargetLog() internal returns (address token, uint256 gradBnb) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 n;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].emitter == address(pad) && logs[i].topics[0] == GradTargetSet.selector) {
+                token = address(uint160(uint256(logs[i].topics[1])));
+                gradBnb = abi.decode(logs[i].data, (uint256));
+                n++;
+            }
+        }
+        assertEq(n, 1, "one GradTargetSet");
+    }
+
     function _gradAmt(address t) internal view returns (uint256 g) {
         (,,,, g,,,,,,,) = pad.curves(t);
     }
@@ -44,9 +59,11 @@ contract GradTargetTest is GangFixture {
 
     /// @notice `create` (no target) locks the default: 9 BNB → 9 WBNB, 3 WBNB virtual.
     function test_create_defaultsTo9Bnb() public {
-        vm.expectEmit(false, false, false, true, address(pad));
-        emit GradTargetSet(address(0), 9 ether);
+        vm.recordLogs();
         address t = _createV3(creator, address(0), _tax(0, 0, 0, address(0)));
+        (address logged, uint256 g) = _gradTargetLog();
+        assertEq(logged, t, "event names the token");
+        assertEq(g, 9 ether, "event carries the default");
         assertEq(pad.gradTargetOf(t), 9 ether);
         assertEq(_gradAmt(t), 9 ether);
         assertEq(_virtualQuote(t), 3 ether);
@@ -56,9 +73,11 @@ contract GradTargetTest is GangFixture {
     function test_eachTier_locksItsTarget_WBNB() public {
         uint256[4] memory tiers = pad.GRAD_BNB_TIERS();
         for (uint256 i; i < 4; i++) {
-            vm.expectEmit(false, false, false, true, address(pad));
-            emit GradTargetSet(address(0), tiers[i]);
+            vm.recordLogs();
             address t = _create(address(0), tiers[i]);
+            (address logged, uint256 g) = _gradTargetLog();
+            assertEq(logged, t, "event names the token");
+            assertEq(g, tiers[i], "event carries the pick");
             assertEq(pad.gradTargetOf(t), tiers[i], "target kept");
             assertEq(_gradAmt(t), tiers[i], "WBNB: target = amount");
             assertEq(_virtualQuote(t), tiers[i] / 3, "virtual quote = target / 3");
