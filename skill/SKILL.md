@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.22.0'
+  version: '0.23.0'
   requires:
     bins: [baw, gang]
   install:
@@ -29,9 +29,17 @@ ID**. Each wallet may hold at most **1% of a token's supply** from the curve; cu
 Before graduation a token **can't be transferred**, only bought and sold on the curve.
 
 **Every new token launches on GangLaunchpad** (BSC mainnet; `--testnet` = BSC testnet, whose tokens have no value), as one of two kinds:
-- **V3**: a bonding curve that graduates at ≈ **15 BNB** of its quote into PancakeSwap V2 (LP burned). Untaxed unless
-  created with a buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
+- **V3**: a bonding curve that graduates into PancakeSwap V2 (LP burned) once its target is raised in its quote: on 1.0
+  always 15 BNB; on 2.0 the creator picks 6 / 9 / 12 / 15 BNB with `--grad` (default 9). Untaxed unless created with a
+  buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
 - **打新 (fair mint)**: shares at one fixed price; the sale launches its pool when it fills ([fair.md](references/fair.md)).
+
+**GangLaunchpad 2.0** is a new generation of the same pad: the same V3 curves and 打新 sales, plus a **creator fee**: of
+the 1% fee on every V3 curve buy and sell, 70% is kept for the token's creator, who claims it any time with
+`gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)), and a **graduation target the creator
+picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)). New tokens go to the newest generation the
+CLI knows on that network (`gang preflight` → `createPadGen`: 2.0 on BSC mainnet, since 2026-10-31, and on
+the testnet). A token keeps trading on the generation it was created on; the CLI finds it.
 
 **铸币飞轮 (Mint Flywheel, `fly`)** lives on its own pad, GangFlywheelPad: shares with a quota per wallet (invites
 add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
@@ -69,6 +77,7 @@ continue with the new rules.
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |
 | Launch in one command (create + dev buy + bond + buy-back, split, auto-liquidity, or several at once) | V3: `gang create … --dev-buy <quote> [--bond …] [--buyback <pct>] [--split self:<pct>,<addr>:<pct>,…] [--lp <pct>]` (two or three of these = one combined recipient, fixed for good) · 打新: `gang create --fair … --shares <n> --bond …`; re-run until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond---buyback---split---lp) |
 | Tax token: tax, recipient, dividend, claim, buy-back, split, auto-liquidity, combined | `gang create --buy-tax … --sell-tax …` · `gang claim` · `gang release` · `gang buyback …` · `gang split …` · `gang lp …` · `gang combo …` | [v3.md](references/v3.md) |
+| Creator fee (GangLaunchpad 2.0) | `gang creator-fee` · `gang creator-fee --token <addr> --claim [--to <addr>]` | [v3.md](references/v3.md#creator-fee-ganglaunchpad-20) |
 | 打新 fair mint | `gang create --fair …` · `gang mint` / `gang withdraw` before it fills | [fair.md](references/fair.md) |
 | 铸币飞轮 (Mint Flywheel), invites | `gang create --fly [--preset j] …` · `gang mint [--ref <inviter>]` · `gang withdraw` · `gang fly open-early\|launch\|invite` | [fly.md](references/fly.md) |
 | Creator bond (押金承诺) | `gang bond post\|topup\|raise-hold\|extend\|status\|start\|report\|settle\|refund\|burn` | [bond.md](references/bond.md) |

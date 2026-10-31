@@ -10,14 +10,16 @@ gang execute --request-id …
 gang tx --hash 0x…
 ```
 
-`gang create` makes a **V3** token on GangLaunchpad (pad `0x15CFD2dc8278Fb87a1783ef42111618E20874365`); `gang create
+`gang create` makes a **V3** token on GangLaunchpad (2.0, pad `0x770331a9accdb53ACb4a45B6c5B7D151fADCe557`); `gang create
 --fair` makes a **打新** sale on the same pad ([fair.md](fair.md)). A setting of the other kind (`--raise` without
 `--fair`, `--buy-tax` with it) is refused, and so is `--taxed` (LaunchpadV2's old tax track).
 
 - **Untaxed by default**: the curve charges the 1% fee, the pool after graduation nothing. With `--buy-tax` /
   `--sell-tax` it is a tax token ([v3.md](v3.md)).
 - No creation fee; only gas. Fixed supply 1,000,000,000: 800,000,000 sold on the curve, 200,000,000 reserved for the
-  PancakeSwap pool at graduation (≈ 15 BNB of the quote; the preview shows it as `graduationAt`).
+  PancakeSwap pool at graduation. The curve graduates once its target is raised: 15 BNB of the quote on 1.0; on 2.0
+  `--grad 6|9|12|15` picks it (default 9; market cap at graduation ≈ 5×). The preview shows it as
+  `graduationTargetBnb` and, in the quote, `graduationAt` ([v3.md](v3.md#graduation-target-ganglaunchpad-20)).
 - The creator gets nothing for free: to hold tokens it buys like everyone else, under the same 1% cap. Create and curve
   buys both require an Agent ID.
 - **Quote**: WBNB unless `--quote`, which takes any 18-decimal ERC-20 (other decimals fail with `QuoteNotAllowed`) and
@@ -81,6 +83,10 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
 
+- **Creator fee (GangLaunchpad 2.0)**: the `create` step's `creatorFee` and the `done` report say that 70% of the 1%
+  curve fee is the creator's and how to claim it (`gang creator-fee`). With `--buyback` / `--split` / `--lp` (or a combined
+  recipient) they also say it does not go through the module, and how to claim it into the module (`--to <module>`):
+  tell the user both ([v3.md](v3.md#creator-fee-ganglaunchpad-20)).
 - **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module`, `lp-splitter` or `combo-module` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.
