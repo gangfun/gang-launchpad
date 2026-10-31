@@ -1,5 +1,5 @@
 import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, hexToString, isAddress, zeroAddress } from 'viem'
-import { atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { atPad, atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, listedBy, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { walletFor } from './fair.js'
 import { parseNum, revertOf as revertIn, step } from './steps.js'
 
@@ -48,6 +48,8 @@ export const SPLITTER_ABI = parseAbi([
   'function setBuybackBps(uint16 newBps)',
   'function applyBuybackBps()',
   'function releaseDev() returns (uint256)',
+  'function split()',
+  'function pad() view returns (address)',
   'function payee() view returns (address)',
   'function setPayee(address newPayee)',
   'error NotDev()',
@@ -91,6 +93,32 @@ export const notDeployed = (testnet) =>
 export const buybackBpsOf = (fail, raw) => Math.round(parseNum(fail, 'buyback', raw, 0, 100) * 100)
 
 const pct = (bps) => Number(bps) / 100
+const SYMBOL_ABI = parseAbi(['function symbol() view returns (string)'])
+
+/** A module named by --module that no GangLaunchpad pad of this network owns, or that its GangHandlerAdmin never listed. */
+export const notListed = (what, net) =>
+  `not one of the platform's ${what}s: no GangLaunchpad pad${net ? ' on the BSC testnet' : ''} lists it (GangHandlerAdmin moduleOf), so the CLI will not call it`
+
+/**
+ * `split` of a buy-back / LP splitter, from the raw reads (pure: unit-tested): what arrived since the last split
+ * (`unsplit`), the share set aside (`bps`, for `part`: the buy-back or the liquidity) and the payee's part, pushed now.
+ * { error } when nothing waits to be split.
+ */
+export function splitPlan({ unsplit, bps, left, payee, part, leftField, symbol, unbound }) {
+  const waiting = BigInt(unsplit)
+  if (waiting === 0n) {
+    return {
+      error: unbound ? 'nothing to split: the splitter is not bound to a token yet, so it has no quote'
+        : `nothing waits to be split: no quote arrived since the last split${BigInt(left) > 0n ? ` (${leftField} ${formatUnits(BigInt(left), 18)} is already set aside)` : ''}`,
+    }
+  }
+  const setAside = (waiting * BigInt(bps)) / 10_000n
+  const toPayee = waiting - setAside
+  return {
+    quote: symbol, splitting: formatUnits(waiting, 18), toPayee: formatUnits(toPayee, 18), payee,
+    setAside: formatUnits(setAside, 18), setAsideFor: part, [`${leftField}After`]: formatUnits(BigInt(left) + setAside, 18),
+  }
+}
 const iso = (s) => new Date(Number(s) * 1000).toISOString()
 
 /** The splitter's state when `addr` is a GangBuybackSplitter; null when it is not (an EOA, a partner, another module). */
@@ -135,8 +163,8 @@ export async function simulateCall(client, from, address, abi, functionName, arg
   }
 }
 
-const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release']
-const USAGE = 'usage: gang buyback <status|set|set-payee|apply|bind|release> --token <addr> [--pct <0-100>] [--to <addr>] [--testnet] — see gang help'
+const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release', 'split']
+const USAGE = 'usage: gang buyback <status|set|set-payee|apply|bind|release|split> --token <addr> (split: or --module <addr>) [--pct <0-100>] [--to <addr>] [--testnet] — see gang help'
 
 /** `gang buyback <sub>`: the splitter of a V3 token (its tax recipient), found from --token. */
 export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
@@ -145,15 +173,29 @@ export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
   const rawOnly = flag('calldata')
   let ctx
   try { ctx = buybackCtx(testnet) } catch (e) { return fail(e.message) }
-  const token = opt('token')
-  if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
-  if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
+  // split may name the splitter itself (--module), e.g. the --to of a creator-fee claim
+  const named = sub === 'split' && flag('module')
+  if (named && flag('token')) fail('give --token (its tax recipient is the splitter) or --module, not both')
+  let token = opt('token')
   let recipient
-  try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {
-    return fail('not a V3 token on this pad', { token, chainId: Number(ctx.chainId) })
+  if (named) {
+    recipient = opt('module')
+    if (!isAddress(recipient ?? '')) fail('--module must be a buy-back splitter address (0x…)', { got: recipient ?? null })
+    const pad = await ctx.read(recipient, SPLITTER_ABI, 'pad').catch(() => null)
+    if (!pad || !atPad(ctx, pad, testnet)) return fail(notListed('buy-back splitter', testnet), { module: recipient })
+  } else {
+    if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
+    if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
+    try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {
+      return fail('not a V3 token on this pad', { token, chainId: Number(ctx.chainId) })
+    }
   }
   const s = await splitterOf(ctx.read, recipient)
-  if (!s) return fail('this token\'s tax recipient is not a buy-back splitter', { token, recipient: recipient === zeroAddress ? null : recipient })
+  if (!s) {
+    return fail(named ? 'not a buy-back splitter (buyback-burn-v1 … v4)' : 'this token\'s tax recipient is not a buy-back splitter',
+      named ? { module: recipient } : { token, recipient: recipient === zeroAddress ? null : recipient })
+  }
+  if (named) token = s.token
   const chainId = Number(ctx.chainId)
   const me = () => walletFor(ctx, opt('from'))
   const send = async (functionName, args, extra) => {
@@ -198,6 +240,19 @@ export async function runBuyback(sub, { opt, flag, out, fail, summarize }) {
     if (!s.pendingCut) return fail(HINTS.NoProposal, { buybackPct: s.buybackPct })
     if (Date.parse(s.pendingCut.appliesFrom) > Date.now()) return fail(HINTS.NotDue, { appliesFrom: s.pendingCut.appliesFrom })
     return send('applyBuybackBps', [], { step: 'apply-cut', fromPct: s.buybackPct, toPct: s.pendingCut.toPct, note: 'anyone may apply a cut once its notice ran' })
+  }
+
+  if (sub === 'split') {
+    if (!(await listedBy(ctx, s.splitter))) return fail(notListed('buy-back splitter', testnet), { module: s.splitter })
+    const [waiting, left, quote] = await Promise.all(['unsplit', 'buybackLeft', 'quote'].map((f) => ctx.read(s.splitter, SPLITTER_ABI, f)))
+    const symbol = quote === zeroAddress ? null : await ctx.read(quote, SYMBOL_ABI, 'symbol').catch(() => null)
+    const plan = splitPlan({ unsplit: waiting, bps: s.buybackBps, left, payee: s.payee, part: 'buy-back', leftField: 'buybackLeft', symbol, unbound: !s.token })
+    if (plan.error) return fail(plan.error, { splitter: s.splitter, buybackLeft: s.buybackLeft, devOwed: s.devOwed })
+    const ref = `--token ${s.token}${testnet ? ' --testnet' : ''}`
+    return send('split', [], {
+      step: 'split', ...plan,
+      note: `anyone may: splits what arrived since the last split. ${plan.toPayee} goes to the payee now (should that push fail, it is owed: gang buyback release ${ref}); ${plan.setAside} (${s.buybackPct}%) is set aside for the buy-back, which the keeper spends in chunks once the token trades in its pool (each chunk splits first too, so after graduation this runs by itself)`,
+    })
   }
 
   // release

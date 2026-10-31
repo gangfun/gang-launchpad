@@ -258,6 +258,37 @@ export async function atTokenPad(ctx, token) {
   return kind
 }
 
+/**
+ * Point ctx at the generation whose pad is `pad` (a module's own pad()), as atTokenPad does for a token; false when `pad`
+ * is none of this network's GangLaunchpad pads.
+ */
+export function atPad(ctx, pad, testnet) {
+  const g = gangGens(testnet).find((x) => sameAddr(x.pad, pad))
+  if (!g) return false
+  if (!sameAddr(g.pad, ctx.pad)) {
+    Object.assign(ctx, genFields(g))
+    delete ctx._tax
+    delete ctx.fees
+  }
+  return true
+}
+
+const LISTING_ABI = parseAbi([
+  'function taxHandler() view returns (address)',
+  'function owner() view returns (address)',
+  'function moduleOf(address module) view returns (address)',
+])
+/**
+ * The factory that listed `module` on ctx.pad's tax handler (GangHandlerAdmin, the handler's owner: moduleOf), or null
+ * when it never listed it: not one of the platform's modules, whatever its moduleType() says.
+ */
+export async function listedBy(ctx, module) {
+  const handler = await ctx.read(ctx.pad, LISTING_ABI, 'taxHandler')
+  const admin = await ctx.read(handler, LISTING_ABI, 'owner')
+  const factory = await ctx.read(admin, LISTING_ABI, 'moduleOf', [module])
+  return /^0x0{40}$/.test(factory) ? null : factory
+}
+
 /** What a command says when atTokenPad could not read every pad (null): retry rather than a wrong "not this kind". */
 export const KIND_UNREAD = { error: 'could not read which GangLaunchpad has this token (kindOf; RPC error)', retry: 'same command again' }
 

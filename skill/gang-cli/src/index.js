@@ -467,7 +467,13 @@ BUYBACK (a V3 token whose recipient is a buy-back splitter; GANG_SPLITTER_FACTOR
   gang buyback apply --token <addr>      anyone: apply a cut whose notice ran (within 7 days, or it lapses)
   gang buyback bind --token <addr> | gang buyback release --token <addr>
                                          anyone: bind the splitter to its token (the launch does it) / push the payee what a
-                                         failed payment left owed. --testnet, --calldata, --from as in gang v3
+                                         failed payment left owed
+  gang buyback split (--token <addr> | --module <splitter>)
+                                         anyone: split what arrived since the last split: the payee's part is pushed now, the
+                                         buy-back part set aside (the preview shows both). The keeper's chunks split first, so
+                                         after graduation it runs by itself; before it (a creator fee claimed --to the
+                                         splitter) only this pays the payee. Only a splitter a GangLaunchpad pad listed.
+                                         --testnet, --calldata, --from as in gang v3
 SPLIT (a V3 token whose recipient is a split module, split-v1; GANG_SPLIT_FACTORY / GANG_TESTNET_SPLIT_FACTORY):
   gang split status --token <addr>       payees and shares (fixed), the dev, the bound token / quote, what waits to be split
                                          and what each slot is owed (bound quote, WBNB, GANG, the token's quote), whether the
@@ -500,6 +506,9 @@ LP (a V3 token whose recipient is an LP splitter, lp-burn-v1; GANG_LP_FACTORY / 
   gang lp bind --token <addr> | gang lp release --token <addr>
                                          anyone: bind the splitter to its token (the launch does it) / push the payee what a
                                          failed payment left owed
+  gang lp split (--token <addr> | --module <splitter>)
+                                         anyone: split what arrived since the last split: the payee's part is pushed now, the
+                                         pool's part set aside (the preview shows both); as gang buyback split
   gang lp add --token <addr> [--slippage 1]
                                          anyone: one chunk now, as the keeper does (graduated tokens; one per 4 minutes; ≤ 0.5%
                                          of the pair's quote reserve; waits for a 10-minute average and skips when the price is

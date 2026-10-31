@@ -92,10 +92,12 @@ gang bond burn --token <addr> | gang bond tx --hash <0x..>       # 推进一块�
 gang create … --dev-buy <报价币数量> [--bond <数量> [--bond-hold <枚数|N%|all>] --bond-days <7-90>]  # V3：发币 → dev 内盘买入 → 押金
 gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--buyback-to 0x…] [--dev-buy …]  # V3：接收地址那份税 50% 回购销毁，其余给你（或 --buyback-to 指定的地址）
 gang buyback status|set|set-payee|apply --token 0x… [--pct 0-100] [--to 0x…]  # 回购合约：比例（提高立即生效，下调 3 天后）、收款地址（立即生效）、待回购金额
+gang buyback split --token 0x…（或 --module 0x…）   # 任何人：把新到的钱分掉（比如毕业前领进来的创作者费）：收款人那份立即转出，回购那份留着（0.23.0+）
 gang create … --buy-tax 3 --sell-tax 3 --split self:60,0x…:30,0x…:10 [--dev-buy …]  # V3：接收地址那份税按固定比例分给 1–10 个地址（百分比合计 100；self = 你自己）
 gang split status|distribute|release|set-payee|bind --token 0x… [--asset 0x…] [--index <i>] [--to 0x…]  # 分账模块：名单（--index 从 0 开始）、待分和欠款；手动分账；收款人换自己的地址
 gang create … --buy-tax 3 --sell-tax 3 --lp 70 [--lp-to 0x…] [--dev-buy …]  # V3：接收地址那份税 70% 加进池子做流动性（LP 打进 0xdead），其余给你（或 --lp-to 指定的地址）
 gang lp status|set|set-payee|apply|bind|release|add --token 0x… [--pct 0-100] [--to 0x…] [--slippage 1]  # 加池合约：比例、收款地址、待加池金额、下一块；add = 现在手动加一块（任何人）
+gang lp split --token 0x…（或 --module 0x…）   # 任何人：把新到的钱分掉：收款人那份立即转出，加池那份留着（0.23.0+）
 gang create … --buy-tax 3 --sell-tax 3 --buyback 30 --lp 30 [--split self:70,0x…:30] [--dev-buy …]  # V3 组合收款：30% 回购销毁，30% 加池，其余给收款人（比例按剩下那部分算；默认给你）。永久不可改
 gang combo status|distribute|release|set-payee|bind|chunk --token 0x… [--asset 0x…] [--index <i>] [--to 0x…] [--slippage 1]  # 组合合约：比例、收款人、待回购 / 待加池、欠款、下一块和 keeper 的计划；chunk = 现在手动做一块（任何人）
 gang create --fair … [--shares <n>] --bond <数量> [--bond-hold …] --bond-days <7-90>                    # 打新：发币（含 dev 份额）→ 押金

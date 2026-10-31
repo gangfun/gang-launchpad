@@ -1,4 +1,4 @@
-import { createPublicClient, encodeFunctionData, isAddress, parseAbi, zeroAddress } from 'viem'
+import { createPublicClient, encodeFunctionData, hexToString, isAddress, parseAbi, zeroAddress } from 'viem'
 import { revertOf as revertIn, step, units } from './steps.js'
 import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, NOT_ON_MAINNET, padNets, rpcTransport } from './gangpad.js'
 import { walletFor } from './fair.js'
@@ -19,6 +19,7 @@ const CURVES_ABI = parseAbi([
   'error ZeroAmount()', 'error ZeroAddress()', 'error UnknownToken()',
 ])
 const SYMBOL_ABI = parseAbi(['function symbol() view returns (string)'])
+const MODULE_TYPE_ABI = parseAbi(['function moduleType() view returns (bytes32)'])
 const ABIS = [CREATOR_FEE_ABI, CURVES_ABI]
 const HINTS = {
   NotCreator: 'only the token\'s creator (the wallet that created it) can claim its creator fee; pass that wallet with --from',
@@ -54,10 +55,27 @@ export async function createNote(ctx, net = '') {
   return `${pctOf(share)}% of the 1% curve fee on every curve buy and sell (until graduation) is kept on the pad for you, the creator. Claim it any time, before or after graduation: gang creator-fee${net} lists it, gang creator-fee --token <token>${net} --claim [--to <addr>] claims it.`
 }
 
-/** Added to the create's note when the tax recipient is one of the dev's modules (`module`: its name). */
-export const notThroughModule = (module, { token, at, net = '' } = {}) =>
+/**
+ * What pays out a fee claimed into a module, by its moduleType(): the buy-back and LP splitters pay their payee only
+ * when they split (the keeper's chunks do it after graduation), the split module and the combined recipient on
+ * distribute. null: not one of these.
+ */
+export function payOutCmd(moduleType, at, net = '') {
+  const t = String(moduleType ?? '')
+  const cmd = t.startsWith('buyback-burn-') ? 'gang buyback split' : t === 'lp-burn-v1' ? 'gang lp split'
+    : t === 'split-v1' ? 'gang split distribute' : t === 'combo-v1' ? 'gang combo distribute' : null
+  if (!cmd) return null
+  const splitter = cmd.endsWith(' split')
+  return `${cmd} --module ${at ?? '<module>'}${net} (anyone) then pays ${splitter ? 'the payee its part and sets the rest aside' : 'the payees their shares'}`
+    + (splitter ? '; after graduation each keeper chunk splits first, so it also goes out with the next chunk' : '')
+}
+const LAUNCH_TYPES = { buyback: 'buyback-burn-v4', lp: 'lp-burn-v1', split: 'split-v1', combo: 'combo-v1' }
+
+/** Added to the create's note when the tax recipient is one of the dev's modules (`module`: its name; `kind`: buyback | lp | split | combo). */
+export const notThroughModule = (module, { token, at, net = '', kind } = {}) =>
   `This creator fee is yours, the creating wallet's: it does not go through the ${module}, which gets only the recipient's part of the pool tax after graduation.`
   + (at ? ` To put it into the ${module} anyway, claim it there: gang creator-fee --token ${token ?? '<token>'}${net} --claim --to ${at}` : '')
+  + (at && kind && LAUNCH_TYPES[kind] ? `; ${payOutCmd(LAUNCH_TYPES[kind], at, net)}` : '')
 
 /**
  * The creator fee of a V3 curve `token` on ctx.pad (ctx already on the token's generation) for info / status:
@@ -198,9 +216,12 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
     return out({ success: false, step: 'claim-creator-fee', ...(r ? { reverted: true, ...r } : { reverted: false, error: e.shortMessage || e.message.split('\n')[0] }) })
   }
   const data = encodeFunctionData({ abi: CREATOR_FEE_ABI, functionName: 'claimCreatorFee', args })
+  // --to one of the platform's modules: say what pays it out from there
+  const toType = same(to, me) ? null : await ctx.read(to, MODULE_TYPE_ABI, 'moduleType').then((t) => hexToString(t, { size: 32 }).replace(/\0+$/, '')).catch(() => null)
+  const payOut = toType && payOutCmd(toType, to, testnet ? ' --testnet' : '')
   return out(step(ctx, { from: me, to: ctx.pad, data }, {
     step: 'claim-creator-fee', chainId, token, symbol, padGen: view.padGen, amount: view.creatorFee.claimable,
-    to, ...(!same(to, me) && { toNote: 'the fee goes to --to, not to this wallet' }),
+    to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${payOut}` : ''}` }),
     note: 'claims all of it; the fee keeps growing with later curve trades and can be claimed again',
   }, rawOnly, summarize))
 }

@@ -1,5 +1,6 @@
 import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, hexToString, isAddress, maxUint128, zeroAddress } from 'viem'
-import { atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { atPad, atTokenPad, GANG_GENS, KIND_UNREAD, gangGens, listedBy, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
+import { notListed, splitPlan } from './buyback.js'
 import { walletFor } from './fair.js'
 import { parseNum, revertOf as revertIn, step } from './steps.js'
 
@@ -64,6 +65,7 @@ export const LP_ABI = parseAbi([
   'function applyLpBps()',
   'function setPayee(address newPayee)',
   'function split()',
+  'function pad() view returns (address)',
   'function releaseDev() returns (uint256)',
   'function addChunk(uint256 minTokensOut) returns (uint256 quoteIn, uint256 tokensIn, uint256 liquidity)',
   'function work(uint256 minOut)',
@@ -205,8 +207,8 @@ function lpCtx(testnet) {
   return { ...net, client, read: (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args }) }
 }
 
-const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release', 'add']
-const USAGE = 'usage: gang lp <status|set|set-payee|apply|bind|release|add> --token <addr> [--pct <0-100>] [--to <addr>] [--slippage 1] [--testnet] — see gang help'
+const SUBS = ['status', 'set', 'set-payee', 'apply', 'bind', 'release', 'split', 'add']
+const USAGE = 'usage: gang lp <status|set|set-payee|apply|bind|release|split|add> --token <addr> (split: or --module <addr>) [--pct <0-100>] [--to <addr>] [--slippage 1] [--testnet] — see gang help'
 
 /** `gang lp <sub>`: the LP splitter of a V3 token (its tax recipient), found from --token. */
 export async function runLp(sub, { opt, flag, out, fail, summarize }) {
@@ -215,16 +217,30 @@ export async function runLp(sub, { opt, flag, out, fail, summarize }) {
   const rawOnly = flag('calldata')
   let ctx
   try { ctx = lpCtx(testnet) } catch (e) { return fail(e.message) }
-  const token = opt('token')
-  if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
-  if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
+  // split may name the splitter itself (--module), e.g. the --to of a creator-fee claim
+  const named = sub === 'split' && flag('module')
+  if (named && flag('token')) fail('give --token (its tax recipient is the splitter) or --module, not both')
+  let token = opt('token')
   const chainId = Number(ctx.chainId)
   let recipient
-  try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {
-    return fail(`not a V3 token on this pad (${testnet ? 'BSC testnet' : 'BSC mainnet; add --testnet for a testnet token'})`, { token, chainId })
+  if (named) {
+    recipient = opt('module')
+    if (!isAddress(recipient ?? '')) fail('--module must be an LP splitter address (0x…)', { got: recipient ?? null })
+    const pad = await ctx.read(recipient, LP_ABI, 'pad').catch(() => null)
+    if (!pad || !atPad(ctx, pad, testnet)) return fail(notListed('LP splitter', testnet), { module: recipient })
+  } else {
+    if (!isAddress(token ?? '')) fail('--token must be a V3 token address (0x…)', { got: token ?? null })
+    if ((await atTokenPad(ctx, token)) === null) return fail(KIND_UNREAD.error, { token: token, retry: KIND_UNREAD.retry }) // else on the pad of the token's generation
+    try { recipient = (await ctx.read(ctx.pad, PAD_ABI, 'taxConfigOf', [token]))[3] } catch {
+      return fail(`not a V3 token on this pad (${testnet ? 'BSC testnet' : 'BSC mainnet; add --testnet for a testnet token'})`, { token, chainId })
+    }
   }
   const s = await lpOf(ctx.read, recipient, { pad: ctx.pad })
-  if (!s) return fail('this token\'s tax recipient is not an LP splitter (lp-burn-v1)', { token, recipient: recipient === zeroAddress ? null : recipient })
+  if (!s) {
+    return fail(named ? 'not an LP splitter (lp-burn-v1)' : 'this token\'s tax recipient is not an LP splitter (lp-burn-v1)',
+      named ? { module: recipient } : { token, recipient: recipient === zeroAddress ? null : recipient })
+  }
+  if (named) token = s.token
   const tn = testnet ? ' --testnet' : ''
   // the token pays this splitter, which is bound to another token: it adds liquidity only to that one's pair
   const warning = s.token && s.token.toLowerCase() !== token.toLowerCase()
@@ -273,6 +289,17 @@ export async function runLp(sub, { opt, flag, out, fail, summarize }) {
     if (!s.pendingCut) return fail(HINTS.NoProposal, { lpPct: s.lpPct })
     if (Date.parse(s.pendingCut.appliesFrom) > Date.now()) return fail(HINTS.NotDue, { appliesFrom: s.pendingCut.appliesFrom })
     return send('applyLpBps', [], { step: 'apply-cut', fromPct: s.lpPct, toPct: s.pendingCut.toPct, note: 'anyone may apply a cut once its notice ran' })
+  }
+
+  if (sub === 'split') {
+    if (!(await listedBy(ctx, s.splitter))) return fail(notListed('LP splitter', testnet), { module: s.splitter })
+    const [waiting, left] = await Promise.all(['unsplit', 'lpLeft'].map((f) => ctx.read(s.splitter, LP_ABI, f)))
+    const plan = splitPlan({ unsplit: waiting, bps: s.lpBps, left, payee: s.payee, part: 'liquidity', leftField: 'lpLeft', symbol: s.quoteSymbol ?? null, unbound: !s.token })
+    if (plan.error) return fail(plan.error, { splitter: s.splitter, lpLeft: s.lpLeft, devOwed: s.devOwed })
+    return send('split', [], {
+      step: 'split', ...plan,
+      note: `anyone may: splits what arrived since the last split. ${plan.toPayee} goes to the payee now (should that push fail, it is owed: gang lp release --token ${s.token}${tn}); ${plan.setAside} (${s.lpPct}%) is set aside for the pool, which the keeper adds in chunks once the token trades in its pair (each chunk splits first too, so after graduation this runs by itself)`,
+    })
   }
 
   if (sub === 'release') {
