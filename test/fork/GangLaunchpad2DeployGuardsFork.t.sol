@@ -106,6 +106,9 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         _foreignPad_refusedBeforeBatch1();
         vm.revertToState(snap);
         _resetEnv();
+        _lookalikeOwnedByMe_refusedBeforeBatch1();
+        vm.revertToState(snap);
+        _resetEnv();
         _ownPadHandoverStarted_refusedBeforeBatch1();
         vm.revertToState(snap);
         _resetEnv();
@@ -121,6 +124,7 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         _moduleScripts_bindOnlyTo20();
         vm.revertToState(snap);
         _resetEnv();
+        _adminHandoverPending_refused();
     }
 
     // ---------------------------------------------------------------- L-1
@@ -134,6 +138,26 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "2.0 not the deployer's own"));
         d.run();
         assertFalse(GangPadRegistry(M.PAD_REGISTRY).isPad(f.pad), "nothing listed");
+    }
+
+    /// @dev A look-alike handed to us: same code, now owned by our key, but deployed by another: refused.
+    function _lookalikeOwnedByMe_refusedBeforeBatch1() internal {
+        uint256 other = uint256(keccak256("deploy guards look-alike"));
+        vm.deal(vm.addr(other), 10 ether);
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(other));
+        DeployGang.Stack memory f = d.run();
+        vm.startPrank(vm.addr(other));
+        Ownable2Step(f.pad).transferOwnership(me);
+        Ownable2Step(f.handler).transferOwnership(me);
+        vm.stopPrank();
+        vm.startPrank(me);
+        Ownable2Step(f.pad).acceptOwnership();
+        Ownable2Step(f.handler).acceptOwnership();
+        vm.stopPrank();
+        vm.setEnv("DEPLOYER_PRIVATE_KEY", vm.toString(pk));
+        _phase2Env(f);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "2.0 not deployed by this deployer"));
+        d.run();
     }
 
     /// @dev Our own pad, but its hand-over already started before batch 1: refused too.
@@ -162,6 +186,21 @@ contract GangLaunchpad2DeployGuardsForkTest is Test {
         vm.prank(address(0xBEEF));
         foreign.exec(abi.encodeWithSignature("acceptOwnership()"));
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "owner / pendingOwner"));
+        d.run();
+    }
+
+    /// @dev The Safe's admin starts handing the handler on: no longer settled, refused (the hand-over step of phase 2
+    ///      stops it before the self-check). Last case: the refused run leaves its broadcast open.
+    function _adminHandoverPending_refused() internal {
+        DeployGang.Stack memory s = _fullDeploy();
+        GangHandlerAdmin admin = new GangHandlerAdmin(SAFE, s.handler);
+        vm.prank(SAFE);
+        Ownable2Step(s.handler).transferOwnership(address(admin));
+        vm.prank(SAFE);
+        admin.exec(abi.encodeWithSignature("acceptOwnership()"));
+        vm.prank(SAFE);
+        admin.exec(abi.encodeWithSignature("transferOwnership(address)", address(0xCAFE)));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.PendingOwnerMismatch.selector, s.handler));
         d.run();
     }
 
