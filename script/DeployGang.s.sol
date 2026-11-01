@@ -548,8 +548,9 @@ contract DeployGang is Script {
         if (!TokenDeployer(s.tokenDeployer).launchpads(s.pad)) revert WiringCheck("deployer launchpad");
         QuoteRegistry reg = QuoteRegistry(s.quoteRegistry);
         if (c.mainnet) {
-            // mainnet lists nothing: USDT is priced from USDT_REF_POOL at create
-            if (reg.isQuoted(M.USDT)) revert WiringCheck("mainnet USDT listed");
+            // USDT is priced from USDT_REF_POOL at create: no graduation override. Listing it is fine (2026-11-01 the
+            // Safe listed USDT / USDC / USD1 with a 0 override, for the payout modules' quote check)
+            if (reg.graduationAmount(M.USDT) != 0) revert WiringCheck("mainnet USDT graduation override");
         } else {
             if (!_listed(reg, s.testQuote)) revert WiringCheck("test quote listed");
             if (s.blacklistQuote != address(0) && !_listed(reg, s.blacklistQuote)) {

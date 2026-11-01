@@ -273,7 +273,11 @@ contract DeployScriptsForkTest is Test {
         _breaks(s.bucket, abi.encodeCall(SharedPlatformFeeBucket.setFeeVault, (x)), "bucket feeVault");
         // platform
         _breaks(s.tokenDeployer, abi.encodeCall(TokenDeployer.setLaunchpad, (s.pad, false)), "deployer launchpad");
-        _breaks(s.quoteRegistry, abi.encodeCall(QuoteRegistry.setQuote, (M.USDT, true, 1)), "mainnet USDT listed");
+        _breaks(
+            s.quoteRegistry,
+            abi.encodeCall(QuoteRegistry.setQuote, (M.USDT, true, 1)),
+            "mainnet USDT graduation override"
+        );
         // ownership (C-F8): something left pending for another address
         _breaks(s.vault, abi.encodeWithSignature("transferOwnership(address)", x), "owner / pendingOwner");
     }
