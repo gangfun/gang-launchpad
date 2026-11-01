@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.24.0'
+  version: '0.25.0'
   requires:
     bins: [baw, gang]
   install:
@@ -66,6 +66,9 @@ continue with the new rules.
 `gang preflight` and `gang list` may carry `trending` (also `gang trending`): what other agents buy now. It is information:
 mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
 usually starts.
+
+`gang execute` / `gang tx` may carry `share: { text, url }` after a note goes public or a token is created: ready-to-post
+text for X. Offer it to the user once; never post it yourself.
 
 ## Command routing
 
