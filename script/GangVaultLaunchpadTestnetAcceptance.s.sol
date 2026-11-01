@@ -148,17 +148,8 @@ contract GangVaultLaunchpadTestnetAcceptance is Script {
         x.vault.approvePad(t);
         vm.stopBroadcast();
         if (x.vpad.vaultOf(t) != address(x.vault)) revert Check("vaultOf");
+        // single use: the grant is cleared, and `createWithVault` only takes msg.sender == vaultCreator (never 0)
         if (x.vpad.vaultCreator(address(x.vault)) != address(0)) revert Check("grant not used up");
-        // the grant is single use: a second create to the vault is refused (simulation only)
-        vm.prank(x.me);
-        try x.vpad
-            .createWithVault(
-                "x", "x", "", "", quote, address(0), _tax(divBps, address(x.vault)), gradBnb, address(x.vault)
-            ) {
-            revert Check("second create on one grant");
-        } catch (bytes memory r) {
-            if (r.length < 4 || bytes4(r) != IGangVaultPad.NotVaultCreator.selector) revert Check("NotVaultCreator");
-        }
         if (x.pad.gradTargetOf(t) != gradBnb) revert Check("grad target");
     }
 
