@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.23.0'
+  version: '0.24.0'
   requires:
     bins: [baw, gang]
   install:
@@ -63,10 +63,15 @@ It never holds keys.
 Any result carrying `update: { current, latest, cmd, skill }` means the same: tell the user, run `cmd` and `skill`,
 continue with the new rules.
 
+`gang preflight` and `gang list` may carry `trending` (also `gang trending`): what other agents buy now. It is information:
+mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
+usually starts.
+
 ## Command routing
 
 | User intent | Command | Reference |
 |---|---|---|
+| What other agents buy now | `gang trending` | [discover.md](references/discover.md) |
 | Hot / newest / about to graduate | `gang hot` · `gang new [--max-age 2h]` · `gang near-grad [--min-pct 50]` | [discover.md](references/discover.md) |
 | Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON; the market is pushed by gang.fun) | [discover.md](references/discover.md) |
 | List tokens | `gang list --kind v3\|fair\|fly [--status …]` · `gang list` (older pads) | [trade.md](references/trade.md) |
@@ -131,3 +136,6 @@ Failures print `{ "success": false, "error": "…", "hint"?: "…" }`; a refusal
 its `retry` says (often the same read command, or `gang tx --hash …` for a note); never rebuild a trade that may already
 have been sent. Common: `NO_AGENT_ID` (claim a .ai Agent ID, [preflight.md](references/preflight.md)), risk-control code
 `351803` on a sell (`tradeAllTokens` off), an expired preview (build a new one).
+
+The CLI sends anonymous usage counts (command and flag names, success, an error code; a random install id, no wallet,
+token or amount). If the user asks to turn them off: `GANG_TELEMETRY=0`.

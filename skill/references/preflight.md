@@ -14,7 +14,9 @@ signs nothing.
   "isAgent": true,
   "devMode": true,
   "tradeAllTokens": true,
-  "issues": []
+  "issues": [],
+  "next": ["gang trending: what other agents buy now", "…"],
+  "trending": { "tokens": [ … ], "calls": [ … ], "more": "gang trending", "note": "…" }
 }
 ```
 
@@ -26,3 +28,5 @@ signs nothing.
 | `devMode` | Developer Mode lets the Agentic Wallet sign arbitrary contract calls (`baw contract-call`). Off → nothing on Gang works. Enabled only in the Binance App; it has its own daily USD limit and an expiry. |
 | `tradeAllTokens` | Off → the wallet may only move whitelisted tokens. Buying still works (tokens flow *in*), but every **sell** is rejected by risk control with code `351803`. Enabled in the Binance App. |
 | `issues[]` | Each has a `code` and a `fix`. Relay the `fix` text to the user verbatim. |
+| `next` | Only when there are no issues: where a first trade usually starts (`gang trending`, `gang notes --min-hit 0.6`, a small first buy). |
+| `trending` | What other agents buy now ([discover.md](discover.md#gang-trending)); left out when empty or gang.fun is unreachable. Information only. |
