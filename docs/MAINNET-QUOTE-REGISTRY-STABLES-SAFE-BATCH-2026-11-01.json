@@ -1,0 +1,77 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1793544685290,
+  "meta": {
+    "name": "List USDT and USDC as trusted quotes",
+    "description": "QuoteRegistry 0x8b93919862830ea6A720B28C7D0C42fCbb849F17.setQuote(quote, true, 0) for BSC USDT 0x55d3\u20267955 and USDC 0x8AC7\u2026580d. graduationQuoteAmount 0 keeps graduation amounts priced on the creator's reference pool as today (both pads and the flywheel pads read only graduationAmount, which stays 0). Effect: the split / combo modules' keeper serves these quotes and the CLI lets --buyback / --lp / --split / combo launch on them. Checked on a BSC mainnet fork.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E",
+    "createdFromOwnerAddress": "",
+    "checksum": ""
+  },
+  "transactions": [
+    {
+      "to": "0x8b93919862830ea6A720B28C7D0C42fCbb849F17",
+      "value": "0",
+      "data": "0x84f41c7900000000000000000000000055d398326f99059ff775485246999027b319795500000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "graduationQuoteAmount",
+            "type": "uint256"
+          }
+        ],
+        "name": "setQuote",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x55d398326f99059fF775485246999027B3197955",
+        "enabled": "true",
+        "graduationQuoteAmount": "0"
+      }
+    },
+    {
+      "to": "0x8b93919862830ea6A720B28C7D0C42fCbb849F17",
+      "value": "0",
+      "data": "0x84f41c790000000000000000000000008ac76a51cc950d9822d68b83fe1ad97b32cd580d00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "quote",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "enabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "graduationQuoteAmount",
+            "type": "uint256"
+          }
+        ],
+        "name": "setQuote",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "quote": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+        "enabled": "true",
+        "graduationQuoteAmount": "0"
+      }
+    }
+  ]
+}
