@@ -102,16 +102,7 @@ abstract contract GangFixture is Test {
         migrator = new SharedMigrator(owner, address(pairFactory));
         tokenDeployer = new TokenDeployer(owner);
         handler = new GangTaxHandler(owner, address(divVault), address(bucket), address(0));
-        pad = new GangLaunchpad(
-            owner,
-            address(quoteRegistry),
-            address(divVault),
-            address(bucket),
-            address(handler),
-            address(tokenDeployer),
-            address(wbnb),
-            address(pairFactory)
-        );
+        pad = _newPad();
         routerStack = GangRouterDeployLib.deploy(
             address(pad), address(wbnb), pancakeRouter, owner, GangRouterDeployLib.MAINNET_MIN_DELAY
         );
@@ -138,6 +129,20 @@ abstract contract GangFixture is Test {
         pad.setRouter(address(router), true);
         pad.setMigrator(address(migrator)); // last (A-1)
         vm.stopPrank();
+    }
+
+    /// @dev The pad under test; the vault pad suite deploys GangVaultLaunchpad here (same constructor).
+    function _newPad() internal virtual returns (GangLaunchpad) {
+        return new GangLaunchpad(
+            owner,
+            address(quoteRegistry),
+            address(divVault),
+            address(bucket),
+            address(handler),
+            address(tokenDeployer),
+            address(wbnb),
+            address(pairFactory)
+        );
     }
 
     /// @dev The Pancake V2 factory the migrator seeds pairs on; a suite that needs the pair's oracle passes one whose
