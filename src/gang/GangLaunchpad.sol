@@ -165,7 +165,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         emit PairFactorySet(factory_);
     }
 
-    function setRouter(address router_, bool enabled) external onlyOwner {
+    function setRouter(address router_, bool enabled) external virtual onlyOwner {
         if (router_ == address(0)) revert ZeroAddress();
         routers[router_] = enabled;
         emit RouterSet(router_, enabled);
@@ -216,7 +216,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         address quote,
         address refPool,
         TaxConfig calldata tax
-    ) external nonReentrant returns (address token) {
+    ) external virtual nonReentrant returns (address token) {
         token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, TARGET_GRAD_BNB);
     }
 
@@ -231,7 +231,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         address refPool,
         TaxConfig calldata tax,
         uint256 gradBnb
-    ) external nonReentrant returns (address token) {
+    ) external virtual nonReentrant returns (address token) {
         token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
     }
 
@@ -244,7 +244,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         address refPool,
         TaxConfig calldata tax,
         uint256 gradBnb
-    ) private returns (address token) {
+    ) internal returns (address token) {
         token = CurveLogic.create(
             _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb
         );
@@ -257,7 +257,18 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         nonReentrant
         returns (uint256 tokensOut)
     {
-        tokensOut = CurveLogic.buy(_config, curves, creatorFeeOf, _deps(), msg.sender, token, quoteIn, minTokensOut);
+        _checkCurveTrader(token, msg.sender);
+        tokensOut = CurveLogic.buy(
+            _config,
+            curves,
+            creatorFeeOf,
+            _deps(),
+            msg.sender,
+            token,
+            quoteIn,
+            minTokensOut,
+            _lockedOf(token, msg.sender)
+        );
     }
 
     /// @notice A listed router (GangRouter, a listed aggregator) buys for `trader`, who must be the wallet that sent
@@ -274,7 +285,10 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         // A-2 (V3): the pad's gate must be on now — ungated, a router could name any trader (e.g. the future pair,
         // seeding it before graduation). Kept as is; the origin binding (§23) now also rules that case out.
         if (!_config.agentGateEnabled) revert RouterNeedsGate();
-        tokensOut = CurveLogic.buy(_config, curves, creatorFeeOf, _deps(), trader, token, quoteIn, minTokensOut);
+        _checkCurveTrader(token, trader);
+        tokensOut = CurveLogic.buy(
+            _config, curves, creatorFeeOf, _deps(), trader, token, quoteIn, minTokensOut, _lockedOf(token, trader)
+        );
     }
 
     function sell(address token, uint256 tokensIn, uint256 minQuoteOut)
@@ -282,9 +296,9 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         nonReentrant
         returns (uint256 quoteToUser)
     {
-        quoteToUser = CurveLogic.sell(
-            _config, curves, creatorFeeOf, _deps(), msg.sender, false, token, tokensIn, minQuoteOut
-        );
+        _checkCurveTrader(token, msg.sender);
+        quoteToUser =
+            CurveLogic.sell(_config, curves, creatorFeeOf, _deps(), msg.sender, false, token, tokensIn, minQuoteOut);
     }
 
     /// @notice A listed router sells `trader`'s tokens, `trader` being the wallet that sent the tx (§23). The tokens
@@ -298,6 +312,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         returns (uint256 quoteOut)
     {
         _forTrader(trader);
+        _checkCurveTrader(token, trader);
         quoteOut = CurveLogic.sell(_config, curves, creatorFeeOf, _deps(), trader, true, token, tokensIn, minQuoteOut);
     }
 
@@ -338,7 +353,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
     }
 
     function walletRoom(address token, address buyer) external view returns (uint256) {
-        return CurveLogic.walletRoom(_config.walletCapEnabled, token, buyer);
+        return CurveLogic.walletRoom(_config.walletCapEnabled, token, buyer, _lockedOf(token, buyer));
     }
 
     function gradAmtOf(address token) external view returns (uint256) {
@@ -385,7 +400,7 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
         address refPool,
         MintConfig calldata cfg,
         uint256 devShares
-    ) external nonReentrant returns (address token) {
+    ) external virtual nonReentrant returns (address token) {
         token = FairLogic.create(
             _config,
             sales,
@@ -571,6 +586,17 @@ contract GangLaunchpad is IGangLaunchpad, IGangPadView, Ownable2Step, Reentrancy
             tokenDeployer: tokenDeployer,
             wbnb: wbnb
         });
+    }
+
+    /// @dev Who may trade `token` on the curve beyond the usual checks. Anyone on this pad; the vault pad refuses the
+    ///      token's own vault (SPEC-VAULT-LOCK §3.4a: it could buy, release uncapped and buy again, or sell what was
+    ///      locked).
+    function _checkCurveTrader(address token, address trader) internal view virtual {}
+
+    /// @dev What `user` holds in `token`'s vault, counted against the 1% wallet cap with the wallet balance. None on
+    ///      this pad; the vault pad (GangVaultLaunchpad, SPEC-VAULT-LOCK §3.5) books it.
+    function _lockedOf(address, address) internal view virtual returns (uint256) {
+        return 0;
     }
 
     /// @dev Both kinds: the kind is written once, here, and never changes.

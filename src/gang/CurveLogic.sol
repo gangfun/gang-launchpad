@@ -175,7 +175,8 @@ library CurveLogic {
 
     // ---------------------------------------------------------------- buy
     /// @dev msg.sender pays (the trader itself, or a router the pad checked); `trader` receives the tokens and any
-    ///      refund of the cut (in the quote ERC-20, §23).
+    ///      refund of the cut (in the quote ERC-20, §23). `locked`: what `trader` holds in the token's vault (vault
+    ///      pad, SPEC-VAULT-LOCK §3.5), counted against the 1% cap like the wallet balance; 0 on a plain pad.
     function buy(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
@@ -184,13 +185,14 @@ library CurveLogic {
         address trader,
         address token,
         uint256 quoteIn,
-        uint256 minTokensOut
+        uint256 minTokensOut,
+        uint256 locked
     ) external returns (uint256 tokensOut) {
         IGangLaunchpad.Curve storage cv = _live(curves, token);
         if (quoteIn == 0) revert IGangLaunchpad.ZeroAmount();
         _requireAgent(c, trader);
 
-        BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn);
+        BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn, locked);
         if (v.tokensOut < minTokensOut) revert IGangLaunchpad.Slippage();
 
         tokensOut = _execBuy(c, cv, creatorFeeOf, d, token, trader, quoteIn, v);
@@ -201,10 +203,11 @@ library CurveLogic {
         IGangLaunchpad.Curve storage cv,
         address token,
         address trader,
-        uint256 quoteIn
+        uint256 quoteIn,
+        uint256 locked
     ) private view returns (BuyVars memory v) {
         bool capped = c.walletCapEnabled;
-        uint256 room = walletRoom(capped, token, trader);
+        uint256 room = walletRoom(capped, token, trader, locked);
         if (capped && room == 0) revert IGangLaunchpad.WalletCapReached();
 
         _applyFee(quoteIn, v);
@@ -366,11 +369,12 @@ library CurveLogic {
         if (g > PadCommon.MAX_QUOTE_AMOUNT) revert IGangLaunchpad.QuoteAmountTooLarge();
     }
 
-    /// @dev Room left under the 1% wallet cap (max when the cap is off). Internal: also inlined into the pad's view.
-    function walletRoom(bool capped, address token, address buyer) internal view returns (uint256) {
+    /// @dev Room left under the 1% wallet cap (max when the cap is off): the wallet balance plus `locked` (what the
+    ///      buyer holds in the token's vault on a vault pad; 0 elsewhere). Internal: also inlined into the pad's view.
+    function walletRoom(bool capped, address token, address buyer, uint256 locked) internal view returns (uint256) {
         if (!capped) return type(uint256).max;
-        uint256 bal = IERC20(token).balanceOf(buyer);
-        return bal >= MAX_PER_WALLET ? 0 : MAX_PER_WALLET - bal;
+        uint256 held = IERC20(token).balanceOf(buyer) + locked;
+        return held >= MAX_PER_WALLET ? 0 : MAX_PER_WALLET - held;
     }
 
     // ---------------------------------------------------------------- internal

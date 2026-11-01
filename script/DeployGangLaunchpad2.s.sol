@@ -82,7 +82,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         console.log("keeper", c.keeper);
         console.log("GangLaunchpad 1.0", x.pad1);
 
-        address existing = _envAddr("GANG_PAD2", address(0));
+        address existing = _envAddr(_padEnv(), address(0));
         vm.startBroadcast(pk);
         if (existing == address(0)) {
             s = _shared(x.pad1, c);
@@ -106,20 +106,44 @@ contract DeployGangLaunchpad2 is DeployGang {
             // check that needs no shared listing runs first; a failure here fails the simulation: nothing broadcast
             _checkPre(s, c, x, true);
             _checkMine(s, me);
-            console.log("\n=== Safe batch 1: list GangLaunchpad 2.0 on the shared contracts, then run phase 2 ===");
+            console.log(
+                string.concat("\n=== Safe batch 1: list ", _padName(), " on the shared contracts, then run phase 2 ===")
+            );
             console.log(_wiringJson(s, x, c.mainnet, Ownable(s.vault).owner()));
             return s;
         }
         _check2(s, c, x);
         if (c.owner != me) _printAccept(s, c);
-        if (IGangPad(s.pad).migrator() != address(0)) {
-            console.log("\n=== Safe batch 3 (cut-over, only once backend / site / CLI use 2.0): 1.0 stops creating ===");
-            console.log(_cutoverJson(s, x, c.mainnet, Ownable(s.tokenDeployer).owner()));
-        }
+        if (IGangPad(s.pad).migrator() != address(0)) _printCutover(s, x, c);
+    }
+
+    /// @dev Once the pad is open: the batch that stops 1.0 creating. A pad that runs next to 2.0 (and 1.0) overrides it.
+    /// @dev Not view: an override may simulate the batch it prints (snapshot, prank, roll back).
+    function _printCutover(Stack memory s, Ctx memory x, Cfg memory c) internal virtual {
+        console.log("\n=== Safe batch 3 (cut-over, only once backend / site / CLI use 2.0): 1.0 stops creating ===");
+        console.log(_cutoverJson(s, x, c.mainnet, Ownable(s.tokenDeployer).owner()));
     }
 
     // ---------------------------------------------------------------- config
-    function _ctx(bool mainnet) internal view returns (Ctx memory x) {
+    /// @dev The pad's name in the Safe batches and logs, and the env names phase 2 reads it from. A pad generation
+    ///      deployed with this flow overrides them, so its run never picks up 2.0's addresses.
+    function _padName() internal pure virtual returns (string memory) {
+        return "GangLaunchpad 2.0";
+    }
+
+    function _padEnv() internal pure virtual returns (string memory) {
+        return "GANG_PAD2";
+    }
+
+    function _routerEnv() internal pure virtual returns (string memory) {
+        return "GANG_ROUTER2";
+    }
+
+    function _blockEnv() internal pure virtual returns (string memory) {
+        return "GANG_PAD2_BLOCK";
+    }
+
+    function _ctx(bool mainnet) internal view virtual returns (Ctx memory x) {
         x.pad1 = vm.envAddress("GANG_PAD");
         x.padRegistry = _envAddr("GANG_PAD_REGISTRY", mainnet ? M.PAD_REGISTRY : TESTNET_PAD_REGISTRY);
         x.gateway = _envAddr("GANG_GATEWAY", mainnet ? MAINNET_GATEWAY : address(0));
@@ -187,7 +211,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         }
     }
 
-    function _deploy2(Stack memory s, Cfg memory c) internal {
+    function _deploy2(Stack memory s, Cfg memory c) internal virtual {
         s.handler = address(new GangTaxHandler(c.deployer, s.vault, s.bucket, c.dexRouter));
         s.pad = address(
             new GangLaunchpad(
@@ -199,7 +223,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     }
 
     /// @dev What the deployer owns: the handler (one-shot launchpad and keeper) and the pad's settings.
-    function _wireOwn(Stack memory s, Cfg memory c, Ctx memory x) internal {
+    function _wireOwn(Stack memory s, Cfg memory c, Ctx memory x) internal virtual {
         IGangTaxHandlerOps h = IGangTaxHandlerOps(s.handler);
         h.setLaunchpad(s.pad);
         h.setKeeper(c.keeper);
@@ -236,7 +260,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     // ---------------------------------------------------------------- phase 2
     /// @dev The stack from 2.0 itself (its immutables are the shared contracts); the migrator from 1.0, since 2.0's is
     ///      still 0 until the Safe opens it; the router from GANG_ROUTER2.
-    function _load2(address pad2, address pad1, Cfg memory c) internal view returns (Stack memory s) {
+    function _load2(address pad2, address pad1, Cfg memory c) internal view virtual returns (Stack memory s) {
         IGangPad pad = IGangPad(pad2);
         s.pad = pad2;
         s.quoteRegistry = pad.quoteRegistry();
@@ -246,10 +270,10 @@ contract DeployGangLaunchpad2 is DeployGang {
         s.handler = pad.taxHandler();
         s.migrator = IGangPad(pad1).migrator();
         s.agentId = pad.agentIdRegistry();
-        address proxy = _envAddr("GANG_ROUTER2", address(0));
-        if (proxy == address(0)) revert WiringCheck("GANG_ROUTER2");
+        address proxy = _envAddr(_routerEnv(), address(0));
+        if (proxy == address(0)) revert WiringCheck(_routerEnv());
         _setRouter(s, R.load(proxy));
-        s.padBlock = vm.envOr("GANG_PAD2_BLOCK", uint256(0));
+        s.padBlock = vm.envOr(_blockEnv(), uint256(0));
         _testnetExtras(s, c);
         // the shared contracts must be 1.0's
         IGangPad p1 = IGangPad(pad1);
@@ -323,7 +347,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     ///      the handler (its keeper the shared bucket's), the router, the gateway listing, the 2.0 probes. Runs before
     ///      Safe batch 1 is printed (review M-1) and again in phase 2. `closedOk`: the pad may still be closed —
     ///      always before the listing (it opens only after it), and after it when the Safe opens it.
-    function _checkPre(Stack memory s, Cfg memory c, Ctx memory x, bool closedOk) internal {
+    function _checkPre(Stack memory s, Cfg memory c, Ctx memory x, bool closedOk) internal virtual {
         allowClosedPad = closedOk;
         _checkPad(s, c);
         _checkLibs(s, c);
@@ -374,7 +398,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     }
 
     // ---------------------------------------------------------------- output
-    function _log2(Stack memory s, Cfg memory c) internal pure {
+    function _log2(Stack memory s, Cfg memory c) internal view virtual {
         console.log("--- GANGLAUNCHPAD 2.0 ---");
         console.log("GANG_PAD2", s.pad);
         console.log("GANG_PAD2_BLOCK", s.padBlock);
@@ -405,11 +429,17 @@ contract DeployGangLaunchpad2 is DeployGang {
         bool open = IGangPad(s.pad).migrator() != address(0);
         if (!acceptH && !acceptP && open) {
             console.log(
-                "\nnothing left for the Safe: it owns the pad and the handler (itself or through its GangHandlerAdmin), and 2.0 is open"
+                string.concat(
+                    "\nnothing left for the Safe: it owns the pad and the handler (itself or through its GangHandlerAdmin), and ",
+                    _padName(),
+                    " is open"
+                )
             );
             return;
         }
-        console.log("\n=== Safe batch 2: accept the handler and the pad, open 2.0 (setMigrator) ===");
+        console.log(
+            string.concat("\n=== Safe batch 2: accept the handler and the pad, open ", _padName(), " (setMigrator) ===")
+        );
         console.log(_acceptJson(s, c.mainnet, c.owner, acceptH, acceptP, !open));
     }
 
@@ -418,7 +448,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         pure
         returns (string memory j)
     {
-        j = _head(mainnet, safe, "gang: list GangLaunchpad 2.0 on the shared contracts");
+        j = _head(mainnet, safe, string.concat("gang: list ", _padName(), " on the shared contracts"));
         j = string.concat(
             j,
             _tx(s.vault, abi.encodeCall(SharedDividendVault.setLaunchpad, (s.pad, true)), false),
@@ -444,7 +474,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         pure
         returns (string memory j)
     {
-        j = _head(mainnet, safe, "gang: accept GangLaunchpad 2.0 (handler, pad) and open it");
+        j = _head(mainnet, safe, string.concat("gang: accept ", _padName(), " (handler, pad) and open it"));
         bool comma;
         if (acceptH) {
             j = string.concat(j, _tx(s.handler, abi.encodeWithSignature("acceptOwnership()"), comma));
