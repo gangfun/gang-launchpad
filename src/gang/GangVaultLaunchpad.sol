@@ -15,6 +15,8 @@ import {PadCommon} from "./PadCommon.sol";
 ///         good), and while the token is locked (before graduation) that vault can
 ///         - `vaultLock`: move `user`'s tokens into the vault (the allowance `user` gave the vault), and
 ///         - `vaultRelease`: move tokens from the vault back to `user` (the allowance the vault gave this pad).
+///         Only the wallet the owner names for a vault (`setVaultCreator`) can create a token bound to it, once per
+///         grant, so nobody else can attach a token to someone's vault.
 ///         `user` is always the wallet that sent the tx and holds an Agent ID. What `user` locked counts against their
 ///         1% wallet cap (`lockedOf`, `walletRoom`); a release is not capped (a wallet past 1% just cannot buy).
 ///         GangToken is unchanged: both moves are transfers the pad makes (`pullFor`, from the pad, or
@@ -35,6 +37,9 @@ contract GangVaultLaunchpad is GangLaunchpad, IGangVaultPad {
     /// @notice Ever listed as a vault (never cleared): such an address can never become a router, since tokens stay
     ///         bound to it and users' lock allowances to it stay live after a delisting (re-review 2026-11-01 L-1).
     mapping(address vault => bool) public everVault;
+    /// @inheritdoc IGangVaultPad
+    /// @dev Single use: `createWithVault` clears it, so each grant binds one token (the owner can grant again).
+    mapping(address vault => address) public vaultCreator;
 
     constructor(
         address owner_,
@@ -56,14 +61,26 @@ contract GangVaultLaunchpad is GangLaunchpad, IGangVaultPad {
     ///         stay open, so tokens are never stuck in it.
     ///         A vault must be a contract when listed (not checked on delisting, so it can always be delisted) and never a
     ///         router (one allowance would then serve both: `sellFor` could spend what a user approved for a lock).
+    ///         Delisting also drops the vault's creator grant, so a later re-listing never revives a forgotten one.
     function setVault(address vault, bool enabled) external onlyOwner {
         if (enabled) {
             if (vault.code.length == 0) revert VaultNotContract();
             if (routers[vault]) revert VaultIsRouter();
             everVault[vault] = true;
+        } else if (vaultCreator[vault] != address(0)) {
+            delete vaultCreator[vault];
+            emit VaultCreatorSet(vault, address(0));
         }
         isVault[vault] = enabled;
         emit VaultSet(vault, enabled);
+    }
+
+    /// @notice Name the wallet that may create the next token bound to `vault` (a listed vault; 0 revokes), so a vault
+    ///         binds only the token its own project creates: without this, any Agent could attach a new token to it.
+    function setVaultCreator(address vault, address creator) external onlyOwner {
+        if (creator != address(0) && !isVault[vault]) revert NotVault();
+        vaultCreator[vault] = creator;
+        emit VaultCreatorSet(vault, creator);
     }
 
     /// @notice As GangLaunchpad's, but an address ever listed as a vault can't become a router, even once delisted
@@ -76,7 +93,8 @@ contract GangVaultLaunchpad is GangLaunchpad, IGangVaultPad {
     }
 
     // ---------------------------------------------------------------- create
-    /// @notice `createWithGradTarget` with the token bound to `vault` (listed) for good.
+    /// @notice `createWithGradTarget` with the token bound to `vault` (listed) for good. Only by
+    ///         `vaultCreator[vault]`, which this clears (one token per grant).
     function createWithVault(
         string calldata name,
         string calldata symbol,
@@ -89,6 +107,9 @@ contract GangVaultLaunchpad is GangLaunchpad, IGangVaultPad {
         address vault
     ) external nonReentrant returns (address token) {
         if (!isVault[vault]) revert NotVault();
+        if (msg.sender != vaultCreator[vault]) revert NotVaultCreator();
+        delete vaultCreator[vault];
+        emit VaultCreatorSet(vault, address(0));
         token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
         vaultOf[token] = vault;
         emit VaultBound(token, vault);

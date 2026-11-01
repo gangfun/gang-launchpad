@@ -23,6 +23,9 @@ import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
 ///         - VAULT (optional): a vault to list on the pad (`setVault`) and as a tax recipient on the handler (`list`,
 ///           label VAULT_LABEL). Testnet phase 1: the deployer lists it. Mainnet: refused in phase 1; phase 2 prints it
 ///           as its own Safe batch, once the Safe owns the pad and the handler, after a simulated run of it;
+///         - VAULT_CREATOR (optional, with VAULT): the wallet named to create the vault's token (`setVaultCreator`,
+///           single use). Testnet phase 1: set by the deployer. Mainnet: in VAULT's batch, or (VAULT already listed)
+///           its own batch;
 ///         - no cut-over batch: 1.0 and 2.0 keep creating, this pad runs next to them;
 ///         - no modules: GangBond, buyback / split / LP / combo factories are not wired for this pad (a vault token's
 ///           tax goes to its vault; GangBond reads `balanceOf(creator)`, which a lock lowers).
@@ -30,6 +33,8 @@ import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
 contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
     /// @dev VAULT, not listed on the pad yet: its Safe batch is printed at the end of phase 2.
     address internal pendingVault;
+    /// @dev VAULT_CREATOR, not yet named for VAULT: in VAULT's batch (or a batch of its own once VAULT is listed).
+    address internal pendingCreator;
 
     function _padName() internal pure override returns (string memory) {
         return "GangVaultLaunchpad";
@@ -54,6 +59,7 @@ contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
         if (mainnet && _envAddr(_padEnv(), address(0)) == address(0)) {
             if (!vm.envOr("VAULT_PAD_NEW", false)) revert WiringCheck("phase 1 on mainnet needs VAULT_PAD_NEW=true");
             if (_vault() != address(0)) revert WiringCheck("VAULT must be empty in mainnet phase 1 (Safe batch)");
+            if (_vaultCreator() != address(0)) revert WiringCheck("VAULT_CREATOR must be empty in mainnet phase 1");
         }
     }
 
@@ -84,6 +90,8 @@ contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
         if (c.mainnet) revert WiringCheck("VAULT on mainnet: Safe batch only");
         IGangVaultPad(s.pad).setVault(v, true);
         IGangTaxHandlerOps(s.handler).list(v, _vaultLabel());
+        address vc = _vaultCreator();
+        if (vc != address(0)) IGangVaultPad(s.pad).setVaultCreator(v, vc);
     }
 
     /// @dev 2.0's checks (which also prove the new CurveLogic is linked: `buy` reaches it), then the vault pad's own.
@@ -98,12 +106,13 @@ contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
     ///      Not view: `vaultLock` is nonReentrant (it writes); the probe reverts, outside the broadcast.
     function _checkVaultPad(Stack memory s) internal {
         bytes memory code = s.pad.code;
-        bytes4[3] memory sels = [
+        bytes4[4] memory sels = [
             IGangVaultPad.createWithVault.selector,
             IGangVaultPad.vaultLock.selector,
-            IGangVaultPad.vaultRelease.selector
+            IGangVaultPad.vaultRelease.selector,
+            IGangVaultPad.setVaultCreator.selector
         ];
-        for (uint256 i; i < 3; i++) {
+        for (uint256 i; i < 4; i++) {
             if (!_hasSelector(code, sels[i])) revert WiringCheck("not a GangVaultLaunchpad");
         }
         IGangLaunchpad.TaxConfig memory tax;
@@ -140,7 +149,12 @@ contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
             s.pad, abi.encodeCall(IGangVaultPad.vaultLock, (probe, probe, 1)), IGangVaultPad.NotVault.selector, "lock"
         );
         address v = _vault();
-        if (v == address(0)) return;
+        address vc = _vaultCreator();
+        if (v == address(0)) {
+            if (vc != address(0)) revert WiringCheck("VAULT_CREATOR without VAULT");
+            return;
+        }
+        if (vc != address(0) && IGangVaultPad(s.pad).vaultCreator(v) != vc) pendingCreator = vc;
         if (IGangPad(s.pad).routers(v)) revert WiringCheck("VAULT is a router");
         if (IGangVaultPad(s.pad).isVault(v)) {
             if (!GangTaxHandler(s.handler).isListed(v)) revert WiringCheck("VAULT not listed on the handler");
@@ -159,42 +173,82 @@ contract DeployGangVaultLaunchpad is DeployGangLaunchpad2 {
         return _envAddr("VAULT", address(0));
     }
 
+    function _vaultCreator() internal view returns (address) {
+        return _envAddr("VAULT_CREATOR", address(0));
+    }
+
     function _vaultLabel() internal view returns (string memory) {
         return vm.envOr("VAULT_LABEL", string("vault"));
     }
 
-    /// @dev No cut-over (this pad runs next to 1.0 and 2.0). Instead, once the pad is open: VAULT's listing batch.
+    /// @dev No cut-over (this pad runs next to 1.0 and 2.0). Instead, once the pad is open: VAULT's listing batch
+    ///      (with VAULT_CREATOR named), or, VAULT listed already, the batch naming VAULT_CREATOR.
     function _printCutover(Stack memory s, Ctx memory, Cfg memory c) internal override {
         address v = pendingVault;
-        if (v == address(0)) return;
+        address vc = pendingCreator;
+        if (v == address(0) && vc == address(0)) return;
+        if (v == address(0)) v = _vault();
+        bool listing = pendingVault != address(0);
+        // a re-listed vault is usually still on the handler (delisting the vault leaves the handler alone)
+        bool handlerList = listing && !GangTaxHandler(s.handler).isListed(v);
         address padOwner = Ownable(s.pad).owner();
         address handlerOwner = Ownable(s.handler).owner();
         if (
-            padOwner != handlerOwner || Ownable2Step(s.pad).pendingOwner() != address(0)
-                || Ownable2Step(s.handler).pendingOwner() != address(0)
+            Ownable2Step(s.pad).pendingOwner() != address(0)
+                || (handlerList && (padOwner != handlerOwner || Ownable2Step(s.handler).pendingOwner() != address(0)))
         ) {
             console.log("\nVAULT pending: run batch 2 (the owner accepts the pad and the handler), then re-run phase 2");
             return;
         }
+        address current = IGangVaultPad(s.pad).vaultCreator(v);
         // the batch runs in the simulation first (rolled back): it must go through as the owner sends it
         uint256 snap = vm.snapshotState();
-        vm.prank(padOwner);
-        IGangVaultPad(s.pad).setVault(v, true);
-        vm.prank(handlerOwner);
-        IGangTaxHandlerOps(s.handler).list(v, _vaultLabel());
-        bool listed = IGangVaultPad(s.pad).isVault(v) && GangTaxHandler(s.handler).isListed(v);
+        if (listing) {
+            vm.prank(padOwner);
+            IGangVaultPad(s.pad).setVault(v, true);
+        }
+        if (handlerList) {
+            vm.prank(handlerOwner);
+            IGangTaxHandlerOps(s.handler).list(v, _vaultLabel());
+        }
+        if (vc != address(0)) {
+            vm.prank(padOwner);
+            IGangVaultPad(s.pad).setVaultCreator(v, vc);
+        }
+        bool ok = IGangVaultPad(s.pad).isVault(v) && GangTaxHandler(s.handler).isListed(v)
+            && (vc == address(0) || IGangVaultPad(s.pad).vaultCreator(v) == vc);
         vm.revertToState(snap);
-        if (!listed) revert WiringCheck("VAULT batch");
-        console.log("\n=== Safe batch: list VAULT on GangVaultLaunchpad (pad.setVault + handler.list) ===");
+        if (!ok) revert WiringCheck("VAULT batch");
+        string memory j;
+        if (listing) {
+            console.log(
+                handlerList
+                    ? "\n=== Safe batch: list VAULT on GangVaultLaunchpad (pad.setVault + handler.list) ==="
+                    : "\n=== Safe batch: re-list VAULT on GangVaultLaunchpad (pad.setVault; handler: listed already) ==="
+            );
+            j = string.concat(
+                _head(c.mainnet, padOwner, "gang: list a vault on GangVaultLaunchpad"),
+                _tx(s.pad, abi.encodeCall(IGangVaultPad.setVault, (v, true)), false)
+            );
+            if (handlerList) {
+                j = string.concat(j, _tx(s.handler, abi.encodeCall(IGangTaxHandlerOps.list, (v, _vaultLabel())), true));
+            }
+        } else {
+            console.log(
+                "\n=== Safe batch: name VAULT_CREATOR for VAULT on GangVaultLaunchpad (pad.setVaultCreator) ==="
+            );
+            j = _head(c.mainnet, padOwner, "gang: name a vault's creator on GangVaultLaunchpad");
+        }
+        if (vc != address(0)) {
+            j = string.concat(j, _tx(s.pad, abi.encodeCall(IGangVaultPad.setVaultCreator, (v, vc)), listing));
+        }
         console.log("VAULT", v);
-        string memory j = _head(c.mainnet, padOwner, "gang: list a vault on GangVaultLaunchpad");
-        j = string.concat(
-            j,
-            _tx(s.pad, abi.encodeCall(IGangVaultPad.setVault, (v, true)), false),
-            _tx(s.handler, abi.encodeCall(IGangTaxHandlerOps.list, (v, _vaultLabel())), true),
-            "]}"
-        );
-        console.log(j);
+        if (vc != address(0)) {
+            console.log("VAULT_CREATOR (single use: this grant binds ONE more token to VAULT)", vc);
+            if (current != address(0)) console.log("  replaces the unused grant to", current);
+            else console.log("  no grant open now: any earlier grant was used up (or never given)");
+        }
+        console.log(string.concat(j, "]}"));
     }
 
     function _log2(Stack memory s, Cfg memory c) internal view override {

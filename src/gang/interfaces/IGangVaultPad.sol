@@ -6,6 +6,8 @@ import {IGangLaunchpad} from "./IGangLaunchpad.sol";
 /// @notice The vault entries of GangVaultLaunchpad (GangLaunchpad 2.0 + a vault per curve token, SPEC-VAULT-LOCK).
 interface IGangVaultPad {
     event VaultSet(address indexed vault, bool enabled);
+    /// @notice `creator` may create the next token bound to `vault` (0 = nobody); cleared by that create.
+    event VaultCreatorSet(address indexed vault, address indexed creator);
     event VaultBound(address indexed token, address indexed vault);
     event VaultLocked(address indexed token, address indexed vault, address indexed user, uint256 amount);
     event VaultReleased(address indexed token, address indexed vault, address indexed user, uint256 amount);
@@ -22,12 +24,16 @@ interface IGangVaultPad {
     error VaultCannotTrade();
     /// @notice This pad only creates through `createWithVault`.
     error UseVaultCreate();
+    /// @notice `createWithVault` by a wallet the owner did not name for this vault (`setVaultCreator`).
+    error NotVaultCreator();
 
     function isVault(address vault) external view returns (bool);
     function vaultOf(address token) external view returns (address);
     function lockedOf(address token, address user) external view returns (uint256);
+    function vaultCreator(address vault) external view returns (address);
 
     /// @notice `createWithGradTarget` with the token bound to `vault` (listed) for good; the only create of this pad.
+    ///         Only by `vaultCreator(vault)`, once per grant.
     function createWithVault(
         string calldata name,
         string calldata symbol,
@@ -41,6 +47,7 @@ interface IGangVaultPad {
     ) external returns (address token);
 
     function setVault(address vault, bool enabled) external;
+    function setVaultCreator(address vault, address creator) external;
     function vaultLock(address token, address user, uint256 amount) external;
     function vaultRelease(address token, address user, uint256 amount) external;
 }

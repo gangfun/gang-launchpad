@@ -67,6 +67,7 @@ contract VaultLaunchpadTest is GangFixture {
     uint256 internal constant LOCK_AMT = 4_000_000 ether;
 
     event VaultSet(address indexed vault, bool enabled);
+    event VaultCreatorSet(address indexed vault, address indexed creator);
     event VaultBound(address indexed token, address indexed vault);
     event VaultLocked(address indexed token, address indexed vault, address indexed user, uint256 amount);
     event VaultReleased(address indexed token, address indexed vault, address indexed user, uint256 amount);
@@ -107,7 +108,14 @@ contract VaultLaunchpadTest is GangFixture {
     }
 
     // ---------------------------------------------------------------- helpers
+    /// @dev The owner names `who` as the next creator for `v`.
+    function _grant(address v, address who) internal {
+        vm.prank(owner);
+        vpad.setVaultCreator(v, who);
+    }
+
     function _createVault(IGangLaunchpad.TaxConfig memory tax) internal returns (address t) {
+        _grant(address(vault), creator);
         vm.prank(creator);
         t = vpad.createWithVault(
             "Vault", "VLT", "logo", "meta", address(wbnb), address(0), tax, 9 ether, address(vault)
@@ -172,6 +180,7 @@ contract VaultLaunchpadTest is GangFixture {
         vm.expectRevert(IGangVaultPad.NotVault.selector);
         vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, alice);
 
+        _grant(address(vault), creator);
         vm.prank(creator);
         address t = vpad.createWithVault(
             "V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 6 ether, address(vault)
@@ -181,11 +190,13 @@ contract VaultLaunchpadTest is GangFixture {
         assertEq(pad.gradTargetOf(t), 6 ether);
 
         // the 2.0 checks still apply (tier, Agent creator)
+        _grant(address(vault), creator);
         vm.prank(creator);
         vm.expectRevert(IGangLaunchpad.BadGradTarget.selector);
         vpad.createWithVault(
             "V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 7 ether, address(vault)
         );
+        _grant(address(vault), makeAddr("notAgent"));
         vm.prank(makeAddr("notAgent"));
         vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         vpad.createWithVault(
@@ -411,6 +422,7 @@ contract VaultLaunchpadTest is GangFixture {
         vault.curveBuy(t, address(wbnb), 1 ether);
 
         // another vault-pad token's vault may trade this one like anyone (it is not this token's vault)
+        _grant(address(otherVault), creator);
         vm.prank(creator);
         address t2 = vpad.createWithVault(
             "B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(otherVault)
@@ -471,8 +483,116 @@ contract VaultLaunchpadTest is GangFixture {
         vpad.vaultRelease(t, address(vault), 1 ether);
     }
 
+    // ---------------------------------------------------------------- the vault's creator
+    /// @dev Only the wallet the owner named for a vault can bind a token to it, one token per grant.
+    function test_vaultCreator_onlyNamedWallet_oncePerGrant() public {
+        IGangLaunchpad.TaxConfig memory tax = _tax(0, 0, 0, address(0));
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector); // nobody named yet
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        vm.expectEmit(true, true, false, false, address(pad));
+        emit VaultCreatorSet(address(vault), creator);
+        _grant(address(vault), creator);
+        assertEq(vpad.vaultCreator(address(vault)), creator);
+
+        vm.prank(alice); // another Agent
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        vm.expectEmit(true, true, false, false, address(pad));
+        emit VaultCreatorSet(address(vault), address(0));
+        vm.prank(creator);
+        address t = vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+        assertEq(vpad.vaultOf(t), address(vault));
+        assertEq(vpad.vaultCreator(address(vault)), address(0), "the grant is used up");
+
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        // a grant for one vault is not one for another
+        _grant(address(otherVault), alice);
+        vm.prank(alice);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        // the owner can grant again
+        _grant(address(vault), creator);
+        vm.prank(creator);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+    }
+
+    /// @dev A create that reverts (bad tier) keeps the grant; the same grant then works.
+    function test_vaultCreator_failedCreateKeepsGrant() public {
+        _grant(address(vault), creator);
+        vm.prank(creator);
+        vm.expectRevert(IGangLaunchpad.BadGradTarget.selector);
+        vpad.createWithVault(
+            "V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 7 ether, address(vault)
+        );
+        assertEq(vpad.vaultCreator(address(vault)), creator);
+        vm.prank(creator);
+        vpad.createWithVault(
+            "V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(vault)
+        );
+    }
+
+    /// @dev Re-granting replaces the open grant; delisting drops it, and re-listing does not revive it.
+    function test_vaultCreator_replacedAndDroppedOnDelist() public {
+        IGangLaunchpad.TaxConfig memory tax = _tax(0, 0, 0, address(0));
+        _grant(address(vault), alice);
+        _grant(address(vault), creator);
+        vm.prank(alice);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+        vm.prank(creator);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        _grant(address(vault), creator);
+        vm.expectEmit(true, true, false, false, address(pad));
+        emit VaultCreatorSet(address(vault), address(0));
+        vm.prank(owner);
+        vpad.setVault(address(vault), false);
+        assertEq(vpad.vaultCreator(address(vault)), address(0));
+        vm.prank(owner);
+        vpad.setVault(address(vault), true);
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+    }
+
+    function test_setVaultCreator_onlyOwner_listedOnly_revocable() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vpad.setVaultCreator(address(vault), alice);
+
+        address unlisted = address(new MockLockVault(vpad));
+        vm.prank(owner);
+        vm.expectRevert(IGangVaultPad.NotVault.selector);
+        vpad.setVaultCreator(unlisted, creator);
+        vm.prank(owner);
+        vpad.setVaultCreator(unlisted, address(0)); // revoking needs no listing
+
+        IGangLaunchpad.TaxConfig memory tax = _tax(0, 0, 0, address(0));
+        _grant(address(vault), creator);
+        _grant(address(vault), address(0)); // revoked
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+
+        // named, then the vault delisted: no create
+        _grant(address(vault), creator);
+        vm.prank(owner);
+        vpad.setVault(address(vault), false);
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVault.selector);
+        vpad.createWithVault("V", "V", "l", "m", address(wbnb), address(0), tax, 9 ether, address(vault));
+    }
+
     // ---------------------------------------------------------------- review 2026-11-01 test gaps
     function test_createWithVault_emitsBound_viaInterface() public {
+        _grant(address(vault), creator);
         vm.recordLogs();
         vm.prank(creator);
         address t = IGangVaultPad(address(pad))
@@ -489,6 +609,7 @@ contract VaultLaunchpadTest is GangFixture {
     }
 
     function test_erc20Quote_lockRelease() public {
+        _grant(address(vault), creator);
         vm.prank(creator);
         address t = vpad.createWithVault(
             "Q", "Q", "l", "m", address(quoteTok), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(vault)
@@ -503,6 +624,7 @@ contract VaultLaunchpadTest is GangFixture {
     }
 
     function test_release_needsVaultAllowanceToPad() public {
+        _grant(address(vault), creator);
         vm.prank(creator);
         address t = vpad.createWithVault(
             "N", "N", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(vault)
@@ -516,6 +638,7 @@ contract VaultLaunchpadTest is GangFixture {
 
     function test_vaultOfOtherToken_refused() public {
         address t = _untaxed();
+        _grant(address(otherVault), creator);
         vm.prank(creator);
         address t2 = vpad.createWithVault(
             "B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(otherVault)
