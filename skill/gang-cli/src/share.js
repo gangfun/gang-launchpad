@@ -9,7 +9,7 @@ import { UA } from './version.js'
 
 const TIMEOUT_MS = 5_000
 const RETRY_MS = 3_000
-export const SHARE_NOTE = 'Offer this to the user to post on X (show text and url); never post it on their behalf.'
+export const SHARE_NOTE = 'Offer this to the user to post on X: text already ends with the link. Never post it on their behalf.'
 
 async function fetchShare(q) {
   try {
