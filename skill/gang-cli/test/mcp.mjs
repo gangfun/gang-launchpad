@@ -71,8 +71,8 @@ assert.equal((await rpc('nope')).error.code, -32601)
 
 const { tools } = (await rpc('tools/list')).result
 const names = tools.map((t) => t.name)
-assert.equal(tools.length, 17)
-for (const n of ['gang_help', 'gang_preflight', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_portfolio', 'gang_notes', 'gang_agents',
+assert.equal(tools.length, 18)
+for (const n of ['gang_help', 'gang_preflight', 'gang_trending', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_portfolio', 'gang_notes', 'gang_agents',
   'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)

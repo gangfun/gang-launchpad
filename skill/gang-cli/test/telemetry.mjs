@@ -1,0 +1,200 @@
+/**
+ * Anonymous telemetry (telemetry.js) and the trending list (trending.js) against a local fake gang.fun: what an event
+ * holds (never flag values, addresses or messages), the queue + detached flush to POST /api/t, GANG_TELEMETRY=0, and
+ * `gang trending` / its cache. No chain, no wallet.
+ *
+ *   node skill/gang-cli/test/telemetry.mjs
+ */
+import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { createServer } from 'node:http'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const dir = mkdtempSync(join(tmpdir(), 'gang-telemetry-'))
+const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
+const tok = (n) => `0x${String(n).repeat(40).slice(0, 40)}`
+const posts = []
+let trendingBody = null
+let trendingHits = 0
+const server = createServer((req, res) => {
+  let body = ''
+  req.on('data', (c) => { body += c })
+  req.on('end', () => {
+    if (req.method === 'POST' && req.url === '/api/t') {
+      posts.push({ ua: req.headers['user-agent'], body: JSON.parse(body) })
+      res.writeHead(204).end()
+    } else if (req.url === '/api/trending') {
+      trendingHits++
+      if (!trendingBody) res.writeHead(404).end()
+      else res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(trendingBody))
+    } else res.writeHead(404).end()
+  })
+})
+await new Promise((r) => server.listen(0, '127.0.0.1', r))
+const API = `http://127.0.0.1:${server.address().port}/api`
+process.env.GANG_API = API
+process.env.GANG_TELEMETRY_DIR = join(dir, 'gang')
+process.env.GANG_TRENDING_CACHE = join(dir, 'gang', 'trending.json')
+delete process.env.GANG_TELEMETRY
+delete process.env.DO_NOT_TRACK
+const { codeOf, eventOf, installId } = await import('../src/telemetry.js')
+
+const env = (extra = {}) => ({ ...process.env, GANG_UPDATE_CHECK: '0', ...extra })
+// async, so this process's fake server can answer the CLI while it runs
+const run = async (args, extra) => {
+  try {
+    return JSON.parse((await promisify(execFile)(process.execPath, [CLI, ...args], { env: env(extra), encoding: 'utf8' })).stdout)
+  } catch (e) { return JSON.parse(e.stdout) }
+}
+const waitFor = async (pred, ms = 8000) => {
+  const end = Date.now() + ms
+  while (!pred()) {
+    if (Date.now() > end) return false
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  return true
+}
+
+try {
+  // --- what an event holds ---
+  {
+    const e = eventOf(['buy', '--token', tok(1), '--amount', '0.5', '--note', 'my secret reason', '--amount', '1'], { success: true })
+    assert.equal(e.c, 'buy')
+    assert.equal(e.s, '')
+    assert.deepEqual(e.f, ['token', 'amount', 'note']) // names once each, never values
+    assert.equal(e.ok, true)
+    assert.equal(e.code, '')
+    assert.equal(e.pf, null)
+    assert.ok(!JSON.stringify(e).includes(tok(1)) && !JSON.stringify(e).includes('secret') && !JSON.stringify(e).includes('0.5'))
+    assert.ok(Math.abs(e.t - Date.now() / 1000) < 5)
+
+    assert.deepEqual([eventOf(['fly', 'mint', '--token', tok(2)]).c, eventOf(['fly', 'mint']).s], ['fly', 'mint'])
+    assert.equal(eventOf(['buy', 'mint']).s, '') // only commands with subcommands keep the second word
+    assert.equal(eventOf([tok(3)]).c, 'other') // an address typed as the command never goes out
+    assert.equal(eventOf(['fly', tok(3)]).s, '')
+    assert.equal(eventOf([]).c, 'other')
+    assert.deepEqual(eventOf(['list', '--Weird_Flag', '--ok-flag']).f, ['ok-flag'])
+    assert.equal(eventOf(['buy', ...Array.from({ length: 30 }, (_, i) => `--f${i}`)]).f.length, 16)
+
+    const pf = eventOf(['preflight'], { success: false, status: 'CONNECTED', isAgent: true, devMode: false, tradeAllTokens: null, issues: [{ code: 'DEV_MODE_OFF' }] })
+    assert.deepEqual(pf.pf, { signedIn: true, agent: true, dev: false, all: null })
+    assert.equal(pf.code, 'DEV_MODE_OFF')
+    assert.deepEqual(eventOf(['preflight'], { success: false, status: 'NOT_CONNECTED', issues: [{ code: 'NOT_SIGNED_IN' }] }).pf,
+      { signedIn: false, agent: null, dev: null, all: null })
+  }
+
+  // --- error codes: the result's own code, else a class; never the message, an address or an amount ---
+  {
+    assert.equal(codeOf({ error: 'x', code: 351803 }), '351803')
+    assert.equal(codeOf({ error: 'NotAgent', reason: tok(4) }), 'NotAgent') // steps.js revert: name, first arg in reason
+    assert.equal(codeOf({ error: 'execution reverted', reason: '123456789000000000000' }), 'REVERT')
+    assert.equal(codeOf({ error: "can't follow this note: expired", reason: 'expired' }), 'expired')
+    assert.equal(codeOf({ error: 'x', code: tok(5) }), 'ERROR')
+    assert.equal(codeOf({ error: 'baw wallet settings failed: risk (code 351803)' }), '351803')
+    assert.equal(codeOf({ error: 'this wallet holds no Agent ID; curve trades are Agent-only', wallet: tok(6) }), 'NO_AGENT_ID')
+    assert.equal(codeOf({ error: 'gang API unreachable (https://gang.fun/api/x): timed out after 15s' }), 'NETWORK')
+    assert.equal(codeOf({ error: '--slippage must be a number between 0 and 50', got: '99' }), 'USAGE')
+    assert.equal(codeOf({ error: 'something odd happened with 0xabc' }), 'ERROR')
+    assert.equal(codeOf({ error: 'x', issues: [{ code: 'NO_AGENT_ID' }] }), 'NO_AGENT_ID')
+  }
+
+  // --- install id: random v4, created once, kept ---
+  {
+    const a = installId(), b = installId()
+    assert.match(a, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    assert.equal(a, b)
+  }
+
+  // --- a CLI run queues its event and a detached child posts it ---
+  {
+    const v = await run(['version', '--json-ish'])
+    assert.equal(v.success, true)
+    assert.ok(await waitFor(() => posts.length === 1), 'flush posted')
+    const p = posts[0]
+    assert.match(p.ua, /^gang-cli\//)
+    assert.equal(p.body.i, installId())
+    assert.equal(p.body.v, v.version)
+    assert.equal(p.body.e.length, 1)
+    assert.deepEqual({ ...p.body.e[0], t: 0 }, { t: 0, c: 'version', s: '', f: ['json-ish'], ok: true, code: '', pf: null })
+    assert.ok(await waitFor(() => !existsSync(join(dir, 'gang', 'events.ndjson')) || readFileSync(join(dir, 'gang', 'events.ndjson'), 'utf8') === ''))
+
+    // within a minute of the last flush: queued, not posted; the next flush takes both
+    await run(['version'])
+    await run(['list', '--kind', 'nope'])
+    await new Promise((r) => setTimeout(r, 400))
+    assert.equal(posts.length, 1)
+    const queued = readFileSync(join(dir, 'gang', 'events.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l))
+    assert.deepEqual(queued.map((e) => [e.c, e.ok, e.code]), [['version', true, ''], ['list', false, 'USAGE']])
+    rmSync(join(dir, 'gang', 'events.flush'))
+    await run(['version'])
+    assert.ok(await waitFor(() => posts.length === 2), 'second flush posted')
+    assert.deepEqual(posts[1].body.e.map((e) => e.c), ['version', 'list', 'version'])
+  }
+
+  // --- GANG_TELEMETRY=0 / DO_NOT_TRACK=1: nothing queued, nothing posted ---
+  {
+    rmSync(join(dir, 'gang', 'events.flush'), { force: true })
+    await run(['version'], { GANG_TELEMETRY: '0' })
+    await run(['version'], { DO_NOT_TRACK: '1' })
+    await new Promise((r) => setTimeout(r, 600))
+    assert.equal(posts.length, 2)
+    assert.ok(!existsSync(join(dir, 'gang', 'events.ndjson')) || readFileSync(join(dir, 'gang', 'events.ndjson'), 'utf8') === '')
+  }
+
+  // --- trending: a down server is cached as a miss; a list renders and is cached for 5 minutes ---
+  {
+    const cache = join(dir, 'gang', 'trending.json')
+    const miss = await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.equal(miss.success, false)
+    assert.equal(miss.retry, true)
+    assert.equal(trendingHits, 1)
+    await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.equal(trendingHits, 1) // the miss is cached
+    rmSync(cache)
+
+    trendingBody = {
+      at: 1793500000,
+      tokens: [
+        { address: tok(7), symbol: 'AAA', name: 'Aaa', track: 'v3', progressPct: 42.1, buyers6h: 37, change24h: 0.12, volume24hUsd: 5123.4, graduated: false },
+        { address: 'not-an-address', symbol: 'BAD' },
+      ],
+      calls: [{
+        tx: `0x${'ab'.repeat(32)}`, kind: 'buy', ts: 1793499000, status: 'ok', text: 'strong community', conf: 80,
+        agent: { address: tok(8), handle: 'lazy.ai' }, author: { count: 12, scored: 9, hitRate: 0.7777, score: 81.2, revealRate: 1 },
+        token: { address: tok(7), symbol: 'AAA', track: 'v3' }, market: { progressPct: 42.1 }, perf: { changeNow: 0.3 },
+        follow: { open: true, until: 1793585400, n: 1, usd: 10 },
+      }],
+    }
+    const t = await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.equal(t.success, true)
+    assert.equal(t.tokens.length, 1)
+    assert.deepEqual(t.tokens[0], {
+      symbol: 'AAA', name: 'Aaa', address: tok(7), track: 'v3', progressPct: 42.1, buyers6h: 37, change24h: 0.12,
+      volume24hUsd: 5123.4, link: `https://gang.fun/token/${tok(7)}`, next: `gang info --token ${tok(7)}`,
+    })
+    assert.equal(t.calls.length, 1)
+    assert.equal(t.calls[0].author.handle, 'lazy.ai')
+    assert.equal(t.calls[0].author.record.hitRate, 0.7777)
+    assert.deepEqual(t.calls[0].note, { status: 'shown', text: 'strong community', conf: 80 })
+    assert.match(t.calls[0].next, /^gang follow 0x/)
+    assert.match(t.note, /not a recommendation/)
+    const hits = trendingHits
+    await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.equal(trendingHits, hits) // served from the cache
+
+    rmSync(cache)
+    trendingBody = { at: 1793500000, tokens: [], calls: [] }
+    const empty = await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.equal(empty.success, true)
+    assert.match(empty.empty, /Nothing qualifies/)
+  }
+
+  console.log('telemetry: ok')
+} finally {
+  server.close()
+  rmSync(dir, { recursive: true, force: true })
+}
