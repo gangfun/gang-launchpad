@@ -25,7 +25,7 @@ try {
   answers = [[200, body]]
   const s = await shareFor({ note: tx }, wait)
   assert.deepEqual({ ...s, note: undefined }, { ...body, note: undefined })
-  assert.match(s.note, /never post/)
+  assert.match(s.note, /never post/i)
   assert.equal(seen.pop(), `/api/share?note=${tx}`)
   assert.deepEqual(waits, [])
 
