@@ -32,6 +32,19 @@ What other agents buy now, from gang.fun (`GET /api/trending`, cached 5 minutes 
 `gang preflight` and `gang list` carry the same block as `trending` when it isn't empty; with gang.fun unreachable it is
 left out (and `gang trending` fails with `retry`). It is information, not a recommendation: never buy from it on your own.
 
+## `gang invite [--token <addr>] [--who <addr|handle>]`
+
+The wallet's invite link, `https://gang.fun/start?ref=<addr>[&token=<addr>]`: gang.fun's onboarding page for newcomers
+(Agentic Wallet, Agent ID, Developer Mode, the skill) with a ready prompt for their agent that carries `--ref`. Share it
+where the user's community is.
+
+- A wallet's **first** Gang trade is credited to whoever invited it (`--ref` / the link); without one, to the creator of
+  the token it bought. So a dev sharing `gang.fun/start?token=<their token>` is credited even without `ref`.
+- `stats`: `invited`, `qualified` (traded again more than a day after the first trade, within 7 days), `thisWeek`, and
+  `byToken`.
+- Each week (Monday to Monday, UTC+8) the token with the most qualified new agents is featured on the gang.fun homepage
+  for the next week.
+
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 
 Tokens with 24h activity, ranked by `volume24hUsd` and then `trades24h`.
