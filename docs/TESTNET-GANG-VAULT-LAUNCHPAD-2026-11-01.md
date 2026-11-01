@@ -84,8 +84,24 @@ GANG_VAULT_PAD=0xf7447D9ee5041eB3Ec3e8eF01ad652a48B956086 GANG_VAULT_ROUTER=0x29
 
 两次部署加验收合计约花 0.008 tBNB。
 
+## 之后的改动：指定发币钱包（尚未部署）
+
+上面这套 pad 上，任何持有 Agent ID 的钱包都能用 `createWithVault` 把新币绑到任意一个已登记的金库。源码随后改为：
+- owner 用 `setVaultCreator(vault, creator)` 为每个金库指定发币钱包（传 0 表示撤销）；
+- `createWithVault` 只接受这个钱包，绑定成功后授权即清空，每次授权只能绑一个币，owner 可以再次授权；
+- 金库下架时授权一并清除，重新上架不会恢复。
+
+部署脚本新增 `VAULT_CREATOR`：测试网在阶段 1 直接设置；主网把它和金库登记放进同一个 Safe 批次，如果金库已经登记过，就单独打印一个批次。验收脚本每次发币前先授权，并检查授权只能用一次。
+
+本地测试网分叉上的演练：
+- 阶段 1 带 `VAULT` 和 `VAULT_CREATOR`：`self-check ok`；
+- 阶段 2 的各种组合都打印出了正确的 Safe 批次，其中一个批次实际执行后再跑阶段 2：`self-check ok`；
+- 验收脚本在模拟中全部通过。
+
+测试网上的 pad 还是上面那一版，没有这项检查。正式联调结束后、主网之前，再部署一套新的。
+
 ## 待办
 
-- 合作方把自己的金库部署到测试网后，由 pad owner 执行 `setVault(金库, true)`，并在 handler 上 `list(金库, label)`，然后一起联调。
+- 每个要接入的金库：由 pad owner 执行 `setVault(金库, true)`，新版 pad 上还要执行 `setVaultCreator(金库, 发币钱包)`；只有金库要收税时，才在 handler 上执行 `list(金库, label)`。
 - 后端索引、网站显示、CLI `gang create --vault`。
 - 主网：等用户明确同意。

@@ -132,6 +132,7 @@ contract GangVaultLaunchpadTestnetAcceptance is Script {
         returns (address t)
     {
         vm.startBroadcast(x.pk);
+        x.vpad.setVaultCreator(address(x.vault), x.me); // only the named wallet binds a token to the vault, once
         t = x.vpad
             .createWithVault(
                 string.concat("Vault ", sym),
@@ -147,6 +148,17 @@ contract GangVaultLaunchpadTestnetAcceptance is Script {
         x.vault.approvePad(t);
         vm.stopBroadcast();
         if (x.vpad.vaultOf(t) != address(x.vault)) revert Check("vaultOf");
+        if (x.vpad.vaultCreator(address(x.vault)) != address(0)) revert Check("grant not used up");
+        // the grant is single use: a second create to the vault is refused (simulation only)
+        vm.prank(x.me);
+        try x.vpad
+            .createWithVault(
+                "x", "x", "", "", quote, address(0), _tax(divBps, address(x.vault)), gradBnb, address(x.vault)
+            ) {
+            revert Check("second create on one grant");
+        } catch (bytes memory r) {
+            if (r.length < 4 || bytes4(r) != IGangVaultPad.NotVaultCreator.selector) revert Check("NotVaultCreator");
+        }
         if (x.pad.gradTargetOf(t) != gradBnb) revert Check("grad target");
     }
 
