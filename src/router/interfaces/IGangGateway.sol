@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-/// @notice What an aggregator calls to trade a Gang token on its bonding curve, laid out like four.meme's inner pool
-///         (TokenManager2 + Helper3): the user approves this gateway once, the aggregator's contract calls it with no
-///         signature, and the seller (`from`) must be the wallet that sent the tx. Sells take a whitelisted caller
-///         (or the seller itself); buys are open. The address never changes (a proxy); every Gang pad generation the
-///         GangPadRegistry knows and that lists this gateway is served.
+/// @notice What an aggregator calls to trade a Gang token on its bonding curve or in its 铸币飞轮 sale, laid out like
+///         four.meme's inner pool (TokenManager2 + Helper3): the user approves this gateway once, the aggregator's
+///         contract calls it with no signature, and the seller (`from`) must be the wallet that sent the tx. Sells take
+///         a whitelisted caller (or the seller itself); buys are open. The address never changes (a proxy); every Gang
+///         pad generation the GangPadRegistry knows and that lists this gateway is served.
+///         铸币飞轮 (GangFlywheelPad) tokens: before launch a buy mints whole shares at the sale's share price plus its
+///         mint fee, a sell sells whole shares back at the share price less the exit fee; after launch a buy mints at
+///         the post-launch price (sales with post-launch minting only), and sells go to the PancakeSwap pair.
 interface IGangGateway {
     /// @param caller msg.sender of the gateway call (the aggregator, or the user itself)
     event GatewayBuy(
@@ -33,8 +36,13 @@ interface IGangGateway {
     error NotAContract();
     error OnlyOwner();
     error NotPendingOwner();
-    /// @notice `token` is not on a live Gang curve (not a Gang token, a 打新 token, or already graduated).
+    /// @notice `token` is not on a live Gang curve or in a 铸币飞轮 sale this gateway trades (not a Gang token, a 打新
+    ///         token, graduated; a launched 铸币飞轮 token: any sell, or a buy without post-launch minting).
     error NotCurveToken();
+    /// @notice 铸币飞轮 buy: `funds` does not pay for one share (price plus mint fee).
+    error FundsTooLow();
+    /// @notice 铸币飞轮 sell: `amount` is 0 or not whole shares (TOKENS_PER_SHARE = 100,000 tokens).
+    error NotWholeShares();
     /// @notice `feeRate` above MAX_FEE_RATE (500 = 5%).
     error FeeRateTooHigh();
     /// @notice A router fee is due but `feeRecipient` is address(0).
@@ -50,15 +58,18 @@ interface IGangGateway {
     error NotDeployed();
 
     /// @notice Where `token` trades now, by its pad's state (the pad GangPadRegistry trusts for it).
-    /// @return status 0 = not a Gang token; 1 = on its curve; 2 = graduated / launched (trade on the PancakeSwap V2
-    ///         `pair`); 3 = a 打新 sale still minting (not tradable here). Status 1 says where the token is, not that
-    ///         this gateway can trade it now (its pad may not list the gateway, or have its gate off): a non-zero
-    ///         tryBuy / trySell does
+    /// @return status 0 = not a Gang token; 1 = on its curve, or a 铸币飞轮 sale before launch; 2 = graduated /
+    ///         launched (trade on the PancakeSwap V2 `pair`; a 铸币飞轮 token with post-launch minting can also be
+    ///         bought here: tryBuy); 3 = a 打新 sale still minting (not tradable here). Status 1 says where the token is,
+    ///         not that this gateway can trade it now (its pad may not list the gateway, or have its gate off; a filled
+    ///         铸币飞轮 sale waits for launch): a non-zero tryBuy / trySell does
     /// @return quote address(0) for WBNB (this gateway takes and pays native BNB), else the quote ERC-20
     /// @return pair the PancakeSwap V2 pair once status == 2, else address(0)
-    /// @return protocolFeeBps the pad's fee on every curve trade (100 = 1%) while on the curve (status 1), else 0
-    /// @return graduationLeft quote the curve still needs to graduate (status 1), else 0: net of the 1% fee (paying it
-    ///         takes about graduationLeft * 10000 / 9900)
+    /// @return protocolFeeBps status 1: the pad's fee on every curve trade (100 = 1%); 铸币飞轮: the mint fee, on top of
+    ///         a mint's price (a sell-back pays the sale's exit fee instead: trySell). Else 0
+    /// @return graduationLeft status 1: quote the curve still needs to graduate, net of the 1% fee (paying it takes
+    ///         about graduationLeft * 10000 / 9900); 铸币飞轮: the price of the shares left before the sale fills, before
+    ///         the mint fee. Else 0
     function getTokenInfo(address token)
         external
         view
@@ -68,12 +79,17 @@ interface IGangGateway {
     ///         selector differs); buys by funds only (`amount` must be 0). What
     ///         `buyTokenAMAP(token, trader, funds, 0)` would do now; all estimates 0 when it would revert (not a curve
     ///         token, the pad does not list this gateway or has its gate off, `trader` fails the gate, wallet cap
-    ///         reached, funds 0). `trader` = address(0): a fresh wallet, no gate check.
+    ///         reached, funds 0). `trader` = address(0): a fresh wallet, no gate check — curve tokens only (a 铸币飞轮
+    ///         quote depends on the wallet's quota: always 0 for address(0)).
+    ///         铸币飞轮: whole shares only (`funds` beyond them is refunded); before launch up to the wallet's quota, the
+    ///         per-mint cap and the shares left; after launch the largest mint within the per-mint cap that `funds`
+    ///         pays for and the pad accepts now (price guard, pace, supply cap).
     /// @return tokenManager this gateway (the address to approve / call)
     /// @return quote address(0) for BNB
-    /// @return estimatedAmount tokens `trader` gets (after the 1% wallet cap / graduation cut)
+    /// @return estimatedAmount tokens `trader` gets (after the 1% wallet cap / graduation cut; 铸币飞轮: shares ×
+    ///         100,000 before launch, the pad's tokensOut after)
     /// @return estimatedCost quote the pad keeps (fee included); funds - estimatedCost is refunded to `trader`
-    /// @return estimatedFee the pad's 1% fee
+    /// @return estimatedFee the pad's fee (curve: 1%; 铸币飞轮: the mint fee)
     /// @return amountMsgValue msg.value to send with these funds (BNB-quoted), else 0
     /// @return amountApproval quote allowance the caller must give this gateway (ERC-20-quoted), else 0
     /// @return amountFunds = estimatedCost: passing it as `funds` buys the same amount with nothing refunded
@@ -96,6 +112,8 @@ interface IGangGateway {
     ///         not list this gateway, amount 0 or above what the curve sold) — and 0 for dust that sells for nothing
     ///         (sellToken would take the tokens and pay 0: treat funds == 0 as "do not sell"). The seller's balance,
     ///         allowance and gate are not checked.
+    ///         铸币飞轮: before launch only (while the sale takes sell-backs), `amount` in whole shares (else 0): the
+    ///         share price less the exit fee; `fee` is that exit fee. The seller's shares are not checked.
     function trySell(address token, uint256 amount)
         external
         view
@@ -106,6 +124,8 @@ interface IGangGateway {
     ///         and `funds` is pulled from msg.sender (approve this gateway). When the 1% wallet cap or graduation cuts
     ///         the buy, the pad refunds the unused part straight to `to` in the quote ERC-20 (WBNB for a BNB-quoted
     ///         token), never to msg.sender. The Agent gate and the wallet cap are `to`'s.
+    ///         铸币飞轮 (see tryBuy): whole shares; what the pad does not spend goes to `to` the same way. FundsTooLow
+    ///         when `funds` does not pay for one share; the pad's own errors otherwise (NotAgent, quota, price guard).
     /// @return amountOut tokens `to` received (its balance change), at least `minAmount`
     /// @return fundsUsed funds the pad kept (funds minus that refund)
     function buyTokenAMAP(address token, address to, uint256 funds, uint256 minAmount)
@@ -119,6 +139,8 @@ interface IGangGateway {
     ///         otherwise), with the allowance `from` gave THIS gateway on the token. The tokens go from `from` straight
     ///         into the pad. Of what the pad pays, `feeRate` / 10000 goes to `feeRecipient` and the rest to `from`,
     ///         as native BNB for a BNB-quoted token, else in the quote ERC-20.
+    ///         铸币飞轮: before launch only (NotCurveToken after), `amount` in whole shares (NotWholeShares), sold back
+    ///         to the pad (`withdrawFor`) from the shares `from` minted.
     /// @param origin ignored (four.meme's reserved field; pass 0)
     /// @param minFunds the least `from` must end up with: after the pad's 1% fee AND the router fee
     /// @param feeRate router fee in basis points, at most 500 (5%)

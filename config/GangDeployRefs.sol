@@ -22,6 +22,11 @@ library GangMainnetRefs {
     address internal constant KEEPER = 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7;
     /// @notice GangPadRegistry proxy (owner = OWNER_SAFE; docs/MAINNET-PAD-REGISTRY-2026-10-28.md). GangGateway reads it.
     address internal constant PAD_REGISTRY = 0x4fF77D4d9ac080939a24E1B805206bA094C44e5C;
+    /// @notice GangGateway proxy (owner and 48 h timelock = OWNER_SAFE; docs/MAINNET-GANG-GATEWAY-2026-10-30.md).
+    address internal constant GANG_GATEWAY = 0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8;
+    /// @notice GangFlywheelPad V1 (new sales stopped 2026-10-31; its sales still run) and V2.
+    address internal constant FLYWHEEL_PAD_V1 = 0x631e66560F4FAE4e486B65349edE48189E48B029;
+    address internal constant FLYWHEEL_PAD_V2 = 0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a;
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address internal constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     /// @dev USDT → WBNB bridge pool (Pancake V3), set on the pad with setBridgePool.

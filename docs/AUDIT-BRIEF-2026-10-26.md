@@ -1443,3 +1443,69 @@ M-1 在开放模型里修不掉：任何合约都能调、卖家是参数、最�
 部署时在区块 130610192；部署后重跑自检通过。
 
 Safe 已执行 `setRouter`，网关已列入 pad，报价和买入在主网上可用。聚合器合约要按 25.10 的清单审核后，再由 Safe `setCaller` 加白。calldata 和步骤见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`。
+
+## 26. GangGateway V2：铸币飞轮（2026-11-02）
+
+> 网关升级（同一个代理地址，经 48 小时时间锁）：`src/router/GangGateway.sol`、`src/router/interfaces/IGangGateway.sol`；新的升级脚本 `script/UpgradeGangGateway.s.sol`、测试网验收脚本 `script/GatewayFlywheelTestnetAcceptance.s.sol`；测试 `test/router/GangGatewayFlywheel.t.sol`、`test/fork/GatewayFlywheelMainnetFork.t.sol`；`config/GangDeployRefs.sol` 加了 `GANG_GATEWAY`、`FLYWHEEL_PAD_V1`、`FLYWHEEL_PAD_V2`。pad、代币、registry 的代码都不改。
+
+### 26.1 需求
+
+聚合器以后只接网关，不再直接接 pad（用户决定）。铸币飞轮 V1、V2 两个 pad（registry kind 3，§24 的 `lookup` 已能找到它们的币）也要经网关交易，接口沿用 four.meme 的五个函数（用户选择：复用接口；开盘后也接 `mintPostFor`）。
+
+### 26.2 合约
+
+- **没有新增存储**，只加了常量；布局仍是 slot 0–5 加 `__gap[44]`（`GangGatewayLayout` 测试不变）。不需要 `reinitializer`。runtime 约 11.6 KB。
+- **找 pad**：`registry.lookup(token)` 返回 kind 3 时按飞轮处理；kind 1 走原来的曲线路径（只是拆成了 `_curveBuy`，行为不变）。
+- **飞轮 pad 的接口**：只用 V1、V2 都有的选择器和结构（`sales` 的 `Sale` 布局两版相同，`TOTAL_SHARES`、`TOKENS_PER_SHARE`、`exitFeeBpsOf`、`previewMint`、`previewMintPost`、`mintFor`、`withdrawFor`、`mintPostFor`、`routers`）。`LAUNCH_GRACE` 两版都是 7 天，网关里写成常量。
+- **开盘前买**：按 `funds` 算最多能买的整份数（价格加铸币费，费向下取整，和 FlywheelLogic 一致），调 `mintFor(to, token, 份数, ceil(minAmount / 每份代币), 0)`；pad 再按额度、单笔上限、剩余份数截断。
+- **开盘后买**（只限开了 postMint 的 sale）：从 `min(maxPerTx, 开盘前同样资金能买的份数)` 往下找，取 `funds` 付得起、`previewMintPost` 判为可铸的最大份数（开盘后每份不比开盘前便宜：阶梯倍数 ≥ 1、费率相同；audit L-2），调 `mintPostFor(to, token, 份数, minAmount, funds, 0)`。付得起但 pad 现在都拒绝时，发 1 份，让 pad 报出原因（价格护栏、节奏、供应上限、额度）。
+- **资金**：pad 从网关精确拉走它花的钱；网关对 pad 授权 `funds`，调用后清 0；没花掉的部分以计价 ERC-20（BNB 计价退 WBNB）转给 `to`，和曲线截断退款一致。`fundsUsed` 取 pad 返回的花费，`amountOut` 取 `to` 的余额变化。
+- **卖**（只在开盘前、sale 可卖回时）：`amount` 必须是整份（每份 100,000 枚），否则 `NotWholeShares`；白名单检查在前；调 `withdrawFor(from, token, 份数, 0)`，pad 用 `from` 给网关的授权 `pullFor` 拉回代币，回款付给网关，再按原来的方式分手续费、付给 `from`。开盘后卖出回滚 `NotCurveToken`（走交易对）。
+- **报价**：
+  - `getTokenInfo`：开盘前 status 1（`protocolFeeBps` = 铸币费，`graduationLeft` = 剩余份数的价格，不含铸币费），开盘后 status 2 + pair。
+  - `tryBuy`：飞轮必须传 `trader`（报价取决于钱包额度），传 0 地址返回全 0；pad 没列入网关、sale 无门槛（`withdrawFor` / `mintFor` 会 `RouterNeedsGate`）、已满额、开盘后没开 postMint、钱包不满足门槛或没额度、价格护栏拒绝、资金不够一份时都返回全 0。
+  - `trySell`：开盘前可卖回、整份、不超过 `sold` 时返回份数价格减退出费；否则 0。
+- **新错误**：`FundsTooLow`（资金不够一份）、`NotWholeShares`。
+
+### 26.3 威胁模型（新增部分）
+
+| 威胁 | 处理 / 结论 |
+|---|---|
+| 强卖加压价（§25 M-1）在飞轮上 | 开盘前卖回是固定价格，压价不成立。误加白的调用方能造成的损失上限约为退出费（1–2%）加路由费（≤ 5%），再加上被迫让出临近满额时的份额（审计 I-4）。开盘后 `pullFor` 一律 `NotLocked`，残留授权用不上 |
+| 用户调用的任意合约用自己的钱替 `tx.origin` 买入 | 会占掉用户在这个 sale 的额度和开盘后节奏窗口，并把 `minted` 置为 true（之后不能再被邀请）。用户拿到了代币，属于「开放买入 + tx.origin」设计固有的骚扰（审计 I-3），接受 |
+| 误登记的 kind 3 pad | 和 §25 一样：网关只从 `msg.sender` 拉资金，假 pad 最多拿走调用者那笔 `funds`，碰不到用户对网关的授权。kind 3 的 `fundsUsed` 用 pad 的返回值（审计 I-7），所以 `addPad` 审核时要确认「kind 3 pad 实际拉走的等于它返回的花费」 |
+| 同一笔交易里报价和执行分叉 | pad 在定价前调用 `observe`。V2：只写本区块价格和一条时间为 now 的观测，TWAP 只用 ≤ now − window 的点，不变；V1：可能抬高近期高点，但新高点 ≤ 现价，不影响判断。审计 fuzz 在开着护栏、同区块和前几区块有买卖时逐 wei 一致 |
+| V1 pad 的供应上限预估偏保守 | V1 的 `previewMintPost` 高估新增铸造量，临近供应上限时 `tryBuy` 可能偏少或为 0，而 1 份的兜底在 V1 上可能真的成交（审计 I-1）；V2 的预估是精确的。只在临近上限时出现，接受 |
+| 极大的 `funds` | `_sharesFor` 把 `funds` 截到 2^128 再算，不溢出（审计 I-2）；`test_quotes_hugeFunds` |
+
+### 26.4 审计
+
+独立审计：没有 Critical / High / Medium；3 个 Low、8 个 Info。
+
+- **L-1** fork 测试里 V2 开盘后的路径实际没跑（主网 V2 上没有已开盘的 sale，直接 return）。改为：找不到时 `vm.skip(true, 原因)`；`test_fork_v2_postLaunch` 在 fork 上把 V2 已售最多的 sale 推到 30%、提前开盘、开盘，再按三档金额买入。这个用例要用保留近期状态的 RPC（publicnode），bsc-dataseed 会在跑的过程中报 missing trie node。
+- **L-2** 开盘后找份数从 `maxPerTx` 逐个往下试，钱少时 gas 偏高（线上 V1 1 份买入约 1.35M）。改为从 `min(maxPerTx, 开盘前份数)` 开始（26.2）。
+- **L-3** 升级脚本：只模拟时，新实现只存在于模拟里，不再打印 Safe 要签的数据；`isOperationDone` 但代理不在这个版本上时回滚；文档写明重复广播第 1 步会部署第二个实现，之后要带 `GATEWAY_IMPL`。
+- **I-1、I-3、I-4、I-7** 见 26.3；**I-2** 已修；**I-5** four.meme 语义差异写进规格；**I-6** 变量遮蔽已改名；**I-8** 见 26.5 的 `GatewayUpgradeScriptFork`。
+
+### 26.5 修复后的复审
+
+独立复审逐项核对，全部确认，没有新的 Critical / High / Medium：
+
+- L-2 的起点：三种阶梯（固定、标准表、线性）在两版 pad 上倍数都 ≥ 1，加上取整和单调性，开盘后 n 份的花费不小于开盘前 n 份，从开盘前份数开始找不会漏掉旧搜索能找到的结果。差分 fuzz 20,000 轮（四种阶梯公式、随机额度 / 已用量 / 手续费 / 价格 / 随机拒绝）：新旧搜索的报价逐 wei 相同，三条买入分支（成交、FundsTooLow、发 1 份让 pad 报原因）都对。
+- I-2：截断只在 `funds` ≥ 2^128 时生效，不改变任何真实报价；其他飞轮路径没有溢出。
+- L-3：在主网 fork 上实际运行升级脚本，逐步核对（只模拟、第 1 步打印、排队中、第 2 步打印、第 3 步自检并打印飞轮 pad 的 `setRouter`、操作已执行但代理又被升级回去时回滚）。这个测试并入了正式测试 `test/fork/GatewayUpgradeScriptFork.t.sol`（审计 I-8）。
+- 复审的小建议已采纳：`minAmount` 换算份数改用 `Math.ceilDiv`（极端输入不再 panic）；fork 测试里自己推到开盘的 V2 sale 没有报价时直接失败，并断言退款和授权归 0；脚本在测试网模拟时的提示文案。
+- 只记录、不改代码的 I-1、I-3、I-4、I-5、I-7、I-8：复审同意。
+
+### 26.6 测试
+
+- `test/router/GangGatewayFlywheel.t.sol`：25 个（含两个 1000 轮 fuzz：开盘前、开盘后的报价和成交逐 wei 一致）。覆盖整份取整、额度截断和退款、资金不够一份、滑点、没有 Agent ID、替别人买、未列入 / 0 地址的报价、`msg.value` 不符、卖回（自己、经白名单 adapter 收 1%）、非整份、钓鱼合约、`minFunds` 按净额、已满额待开盘（宽限期后可卖回）、开盘后买入、开盘后卖出回滚、没开 postMint、无门槛 sale、事件、极大金额。
+- `test/fork/GatewayFlywheelMainnetFork.t.sol`：6 个。主网 fork 上按 Safe 的方式经时间锁升级线上代理，自检通过；列入两个飞轮 pad；V1、V2 开盘前买入和卖回、V1 开盘后买入、V2 开盘后（把一个 sale 推到开盘）买入，都和报价一致；pad 1.0 的曲线币照常交易。要用保留近期状态的 RPC（如 publicnode）。
+- `test/fork/GatewayUpgradeScriptFork.t.sol`：1 个，见 26.5。
+- 原有网关测试 44 个、原有网关 fork 测试 4 个不变，全部通过。
+
+### 26.7 测试网
+
+- 新部署的验收网关 `0x10C0…132a`（只列入测试网 V2 飞轮 pad `0x7069…E3d6`）上跑完 `GatewayFlywheelTestnetAcceptance`：BNB 计价和测试币计价两个新 sale 的开盘前买入（多出的资金退回）、经 adapter 卖回（1% 路由费）、直接卖回，以及已开盘 A 币的开盘后买入，24 笔全部成功，每笔都和报价一致，网关始终没有余额。
+- 聚合器联调用的 `0xb325…e091`：新实现 `0x4FBD…C6f` 已部署，升级在时间锁排队，2026-11-04 19:43 +08:00 之后可以执行。
+- 详见 `docs/TESTNET-GANG-GATEWAY-V2-FLYWHEEL-2026-11-02.md`。

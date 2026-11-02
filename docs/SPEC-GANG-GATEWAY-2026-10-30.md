@@ -2,7 +2,7 @@
 
 - 日期：2026-10-30 Asia/Shanghai
 - 作者：Claude（按和聚合器沟通后的「GangGateway 接口草案」实现，接入方式对齐 four.meme 内盘；卖出调用方白名单是 2026-10-30 用户决定加的）
-- 性质：**测试网已部署带卖出调用方白名单的版本 `0xb325dde51129C592E443ecbEE1E219D14C66e091`（列入第 10 套 pad，验收通过；没有白名单的第一版 `0x5020…635c` 已下架），见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`**；**主网已部署 `0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8`（owner、时间锁 = Safe），Safe 已在 pad 上 `setRouter` 列入，见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。
+- 性质：**测试网已部署带卖出调用方白名单的版本 `0xb325dde51129C592E443ecbEE1E219D14C66e091`（列入第 10 套 pad，验收通过；没有白名单的第一版 `0x5020…635c` 已下架），见 `docs/TESTNET-GANG-GATEWAY-2026-10-30.md`**；**主网已部署 `0x9dD16b73f624bdd8a210CBB2602FdF70f1B450B8`（owner、时间锁 = Safe），Safe 已在 pad 上 `setRouter` 列入，见 `docs/MAINNET-GANG-GATEWAY-2026-10-30.md`**。合约 `src/router/GangGateway.sol`，接口 `src/router/interfaces/IGangGateway.sol`，测试 `test/router/GangGateway.t.sol`、`test/router/GangGatewayLayout.t.sol`、`test/fork/GatewayMainnetFork.t.sol`，部署脚本 `script/DeployGangGateway.s.sol`（自检 `script/GangGatewayDeployLib.sol`）。审计说明见 `docs/AUDIT-BRIEF-2026-10-26.md` §25。**V2（铸币飞轮，§26）**：测试网验收通过（`docs/TESTNET-GANG-GATEWAY-V2-FLYWHEEL-2026-11-02.md`），主网升级待用户同意后由 Safe 经时间锁执行。
 
 ## 一句话
 
@@ -30,6 +30,23 @@
 | `setCaller(caller, allowed)` / `isCaller(caller)` | 无 | 卖出调用方白名单，只有 owner（主网：Safe）能改，即时生效。`transferOwnership` / `acceptOwnership` 两步转移 owner |
 
 报价通过 GangPadRegistry 的 `previewBuy` / `previewSell` 计算，和成交逐 wei 一致（fuzz 测试核对）。
+
+## 铸币飞轮（V2，2026-11-02）
+
+网关 V2（同一个地址，经 48 小时时间锁升级）也能交易铸币飞轮 V1、V2 两个 pad 的币（registry kind 3），接口不变：
+
+| 阶段 | 买（`buyTokenAMAP`） | 卖（`sellToken`） |
+|---|---|---|
+| 开盘前（铸币中） | `mintFor`：按 `funds` 买最多的整份（每份价格加铸币费），受钱包额度、单笔上限（≤ 10 份）、剩余份数限制 | `withdrawFor`：按整份（100,000 枚一份）以份价减退出费卖回；`amount` 不是整份回滚 `NotWholeShares` |
+| 已满额、等待开盘 | 不能买 | 不能卖；开盘时间过后 7 天还没开盘，可以卖回 |
+| 开盘后 | `mintPostFor`（只限开了开盘后铸币的币）：在单笔上限内买 `funds` 付得起、pad 现在接受的最多份数，价格按阶梯价，受价格护栏、节奏、供应上限限制 | 回滚 `NotCurveToken`，走 PancakeSwap 交易对 |
+
+- 没花完的 `funds` 以计价 ERC-20 退给 `to`（BNB 计价退 WBNB），和曲线的截断退款一样。用 `tryBuy` 的 `amountFunds` 作为 `funds` 就没有退款。因为按整份取整、受额度限制，退款可能占 `funds` 的大部分。
+- `getTokenInfo`：开盘前 status 1，`protocolFeeBps` 是铸币费（加在价格上），`graduationLeft` 是剩余份数的价格（不含铸币费）；开盘后 status 2 + pair，但开了开盘后铸币的币仍可经 `tryBuy` / `buyTokenAMAP` 买。
+- `tryBuy` 必须传 `trader`（飞轮的报价取决于钱包的额度），传 0 地址返回全 0。已满额待开盘、无门槛的 sale 也是 status 1，但 `tryBuy` / `trySell` 为 0。
+- `trySell` 不检查卖家持有的份数；超过卖家自己铸的份数时 pad 回滚 `BadAmount`。
+- 资金不够一份：`FundsTooLow`。
+- 任何被用户调用的合约都能用自己的钱替用户买入，占掉用户在这个币上的额度（开放买入的固有性质）。
 
 ## 与 four.meme 的差异
 
