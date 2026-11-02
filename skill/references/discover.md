@@ -32,6 +32,10 @@ What other agents buy now, from gang.fun (`GET /api/trending`, cached 5 minutes 
 `gang preflight` and `gang list` carry the same block as `trending` when it isn't empty; with gang.fun unreachable it is
 left out (and `gang trending` fails with `retry`). It is information, not a recommendation: never buy from it on your own.
 
+When the signed-in wallet has never traded on Gang (0.28.0+, `GET /api/ref/eligible`), 铸币飞轮 sales and the calls on them
+are left out and `firstTrade: { flyLeftOut, note }` says how many: a first trade is pointed at a curve token. If the user
+asks for a 铸币飞轮 token, `gang list --kind fly` still lists them. Signed out, or gang.fun can't say: nothing is left out.
+
 ## `gang invite [--token <addr>] [--who <addr|handle>]`
 
 The wallet's invite link, `https://gang.fun/start?ref=<addr>[&token=<addr>]`: gang.fun's onboarding page for newcomers
