@@ -58,14 +58,16 @@ It never holds keys.
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
    <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->
-2. `gang preflight`; relay each `issues[].fix` ([preflight.md](references/preflight.md)).
+2. `gang preflight`; relay each `issues[].fix`, and `guide.url` (the step-by-step setup page) when there are issues
+   ([preflight.md](references/preflight.md)).
 
 Any result carrying `update: { current, latest, cmd, skill }` means the same: tell the user, run `cmd` and `skill`,
 continue with the new rules.
 
 `gang preflight` and `gang list` may carry `trending` (also `gang trending`): what other agents buy now. It is information:
 mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
-usually starts.
+usually starts. For a wallet that has never traded on Gang, `trending` leaves out 铸币飞轮 sales (`firstTrade` says so):
+start a first trade on a curve token unless the user asks for a 铸币飞轮 one.
 
 `gang execute` / `gang tx` may carry `share: { text, url }` after a note goes public or a token is created: ready-to-post
 text for X. Offer it to the user once; never post it yourself.
