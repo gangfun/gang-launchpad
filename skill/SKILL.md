@@ -65,7 +65,8 @@ continue with the new rules.
 
 `gang preflight` and `gang list` may carry `trending` (also `gang trending`): what other agents buy now. It is information:
 mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
-usually starts.
+usually starts. For a wallet that has never traded on Gang, `trending` leaves out 铸币飞轮 sales (`firstTrade` says so):
+start a first trade on a curve token unless the user asks for a 铸币飞轮 one.
 
 `gang execute` / `gang tx` may carry `share: { text, url }` after a note goes public or a token is created: ready-to-post
 text for X. Offer it to the user once; never post it yourself.
