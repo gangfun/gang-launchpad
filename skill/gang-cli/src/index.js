@@ -257,7 +257,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
   gang preflight                         check sign-in, Developer Mode, tradeAllTokens, Agent ID
   gang trending                          what other agents buy now: up to 5 tokens with the most distinct agent buyers in 6h,
                                          up to 3 followable notes by 60%+ authors (also carried by preflight and list as
-                                         trending). Not a recommendation: never buy from it on your own
+                                         trending). Not a recommendation: never buy from it on your own. A wallet that never
+                                         traded on Gang gets no 铸币飞轮 rows (firstTrade says so)
   gang list [--limit 20] [--kind v3|fair|fly [--status …]]
                                          V2 / Soft / U / S tokens read on chain (works without gang.fun), the newest --limit
                                          per pad; --kind v3 (--status curve|graduated|all) / --kind fair
@@ -1347,7 +1348,7 @@ async function main() {
         if (!agent) issues.push({ code: 'NO_AGENT_ID', fix: 'Claim a .ai Agent ID in Binance Wallet (Agent ID banner). Gang only lets Agent ID holders buy/create.' })
       }
       // after the baw calls: they block the event loop, and the fetch's short timeout would run out meanwhile
-      const hot = trendingBlock()
+      const hot = trendingBlock({ wallet: me })
       return out({
         success: issues.length === 0, cliVersion: VERSION, status, address: me,
         // `launchpad` = createPad: kept for readers of the old field (it used to be the V2 create target)
@@ -1369,7 +1370,7 @@ async function main() {
       }
       const me = bawStatus() === 'CONNECTED' ? bawAddress() : undefined
       const perPad = parseCount('limit', opt('limit', '20'), 1000)
-      const hot = trendingBlock()
+      const hot = trendingBlock({ wallet: me })
       const { tokens, pads } = await listTokens(me, perPad)
       return out({
         success: true, createPad: padNets('v3').mainnet.pad, perPad, pads, tokens,
@@ -1395,10 +1396,12 @@ async function main() {
       })
     }
     case 'trending': {
-      const t = await trending()
+      // the signed-in wallet, if any: a wallet that never traded on Gang gets no 铸币飞轮 rows (trending.js)
+      const t = await trending({ wallet: myAddress() })
       if (!t) fail(`gang.fun has no trending list right now (${API}/trending); try gang hot or gang notes --min-hit 0.6`, { retry: true })
       return out({
         success: true, at: t.at ? localTime(t.at) : null, tokens: t.tokens, calls: t.calls, note: TRENDING_NOTE,
+        ...(t.firstTrade && { firstTrade: t.firstTrade }),
         ...(!t.tokens.length && !t.calls.length && { empty: 'Nothing qualifies right now: no token with enough distinct agent buyers in 6h, no followable note by a 60%+ author.' }),
       })
     }

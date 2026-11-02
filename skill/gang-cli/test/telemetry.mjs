@@ -1,7 +1,8 @@
 /**
  * Anonymous telemetry (telemetry.js) and the trending list (trending.js) against a local fake gang.fun: what an event
  * holds (never flag values, addresses or messages), the queue + detached flush to POST /api/t, GANG_TELEMETRY=0, and
- * `gang trending` / its cache. No chain, no wallet.
+ * `gang trending` / its cache, and its first-trade view (no 铸币飞轮 rows for a wallet that never traded on Gang). No chain;
+ * a fake baw answers the wallet address only when FAKE_WALLET is set.
  *
  *   node skill/gang-cli/test/telemetry.mjs
  */
@@ -9,7 +10,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createServer } from 'node:http'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -20,6 +21,10 @@ const tok = (n) => `0x${String(n).repeat(40).slice(0, 40)}`
 const posts = []
 let trendingBody = null
 let trendingHits = 0
+// GET /api/ref/eligible: these wallets never traded on Gang; refDown answers 500
+const newWallets = new Set()
+let refDown = false
+let refHits = 0
 const server = createServer((req, res) => {
   let body = ''
   req.on('data', (c) => { body += c })
@@ -27,6 +32,14 @@ const server = createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/api/t') {
       posts.push({ ua: req.headers['user-agent'], body: JSON.parse(body) })
       res.writeHead(204).end()
+    } else if (req.url.startsWith('/api/ref/eligible?')) {
+      refHits++
+      const w = new URL(req.url, 'http://x').searchParams.get('wallet').toLowerCase()
+      if (refDown) res.writeHead(500).end()
+      else {
+        res.writeHead(200, { 'content-type': 'application/json' })
+          .end(JSON.stringify(newWallets.has(w) ? { eligible: true, referrer: null } : { eligible: false, referrer: null, reason: 'already_traded' }))
+      }
     } else if (req.url === '/api/trending') {
       trendingHits++
       if (!trendingBody) res.writeHead(404).end()
@@ -42,8 +55,19 @@ process.env.GANG_TRENDING_CACHE = join(dir, 'gang', 'trending.json')
 delete process.env.GANG_TELEMETRY
 delete process.env.DO_NOT_TRACK
 const { codeOf, eventOf, installId } = await import('../src/telemetry.js')
+const { trendingBlock } = await import('../src/trending.js')
 
-const env = (extra = {}) => ({ ...process.env, GANG_UPDATE_CHECK: '0', ...extra })
+// a fake baw: `wallet address` answers $FAKE_WALLET, everything else (and an unset FAKE_WALLET) fails like a signed-out baw
+const bin = join(dir, 'bin')
+mkdirSync(bin, { recursive: true })
+writeFileSync(join(bin, 'baw'), `#!/bin/sh
+if [ "$1 $2" = "wallet address" ] && [ -n "$FAKE_WALLET" ]; then
+  echo '{"success":true,"data":{"addresses":[{"binanceChainId":"56","address":"'"$FAKE_WALLET"'"}]}}'
+else echo '{"success":false,"error":{"code":1,"message":"not signed in"}}'; exit 1; fi
+`)
+chmodSync(join(bin, 'baw'), 0o755)
+
+const env = (extra = {}) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_WALLET: '', GANG_UPDATE_CHECK: '0', ...extra })
 // async, so this process's fake server can answer the CLI while it runs
 const run = async (args, extra) => {
   try {
@@ -191,6 +215,71 @@ try {
     const empty = await run(['trending'], { GANG_TELEMETRY: '0' })
     assert.equal(empty.success, true)
     assert.match(empty.empty, /Nothing qualifies/)
+  }
+
+  // --- trending for a wallet's first Gang trade: 铸币飞轮 sales and the calls on them left out ---
+  {
+    const cache = join(dir, 'gang', 'trending.json')
+    rmSync(cache, { force: true })
+    const fly = tok(9)
+    const call = (token, track, b) => ({
+      tx: `0x${b.repeat(32)}`, kind: 'buy', ts: 1793499000, status: 'ok', text: 'x', conf: 50,
+      agent: { address: tok(8), handle: 'lazy.ai' }, author: { count: 6, scored: 5, hitRate: 0.8, score: null, revealRate: 1 },
+      token: { address: token, symbol: track.toUpperCase(), track }, market: { progressPct: 10 }, perf: { changeNow: 0 },
+      follow: { open: true, until: 1793585400, n: 0, usd: 0 },
+    })
+    trendingBody = {
+      at: 1793500000,
+      tokens: [
+        { address: fly, symbol: 'FFF', name: 'Fff', track: 'fly', progressPct: 30, buyers6h: 50, change24h: 0, volume24hUsd: 900, graduated: false },
+        { address: tok(7), symbol: 'AAA', name: 'Aaa', track: 'v3', progressPct: 42.1, buyers6h: 37, change24h: 0.12, volume24hUsd: 5123.4, graduated: false },
+      ],
+      calls: [call(fly, 'fly', 'cd'), call(tok(7), 'v3', 'ef')],
+    }
+    const NEW = tok('a'), OLD = tok('b')
+    newWallets.add(NEW.toLowerCase())
+    const syms = (t) => t.tokens.map((x) => x.symbol)
+
+    // signed out: no wallet to ask about, so nothing is left out and gang.fun is not asked
+    const out = await run(['trending'], { GANG_TELEMETRY: '0' })
+    assert.deepEqual(syms(out), ['FFF', 'AAA'])
+    assert.equal(out.calls.length, 2)
+    assert.equal(out.firstTrade, undefined)
+    assert.equal(refHits, 0)
+
+    // a wallet that has traded: everything, as before
+    const old = await run(['trending'], { GANG_TELEMETRY: '0', FAKE_WALLET: OLD })
+    assert.deepEqual(syms(old), ['FFF', 'AAA'])
+    assert.equal(old.firstTrade, undefined)
+    assert.equal(refHits, 1)
+
+    // a wallet that never traded on Gang (checksum case in, as baw gives it): the 铸币飞轮 token and its call are gone
+    const fresh = await run(['trending'], { GANG_TELEMETRY: '0', FAKE_WALLET: NEW.toUpperCase().replace('0X', '0x') })
+    assert.deepEqual(syms(fresh), ['AAA'])
+    assert.deepEqual(fresh.calls.map((c) => c.token.address), [tok(7)])
+    assert.deepEqual(Object.keys(fresh.firstTrade), ['flyLeftOut', 'note'])
+    assert.equal(fresh.firstTrade.flyLeftOut, 2)
+    assert.match(fresh.firstTrade.note, /has not traded on Gang yet/)
+    assert.match(fresh.firstTrade.note, /gang list --kind fly/)
+
+    // gang.fun can't say: nothing is left out
+    refDown = true
+    const down = await run(['trending'], { GANG_TELEMETRY: '0', FAKE_WALLET: NEW })
+    assert.deepEqual(syms(down), ['FFF', 'AAA'])
+    assert.equal(down.firstTrade, undefined)
+    refDown = false
+
+    // the block preflight / list carry: same view; a new wallet with no 铸币飞轮 row gets no firstTrade
+    const block = await trendingBlock({ wallet: NEW })
+    assert.deepEqual(block.tokens.map((x) => x.symbol), ['AAA'])
+    assert.equal(block.firstTrade.flyLeftOut, 2)
+    assert.equal((await trendingBlock({ wallet: OLD })).firstTrade, undefined)
+    assert.equal((await trendingBlock()).tokens.length, 2)
+    rmSync(cache)
+    trendingBody = { ...trendingBody, tokens: trendingBody.tokens.slice(1), calls: trendingBody.calls.slice(1) }
+    const none = await trendingBlock({ wallet: NEW })
+    assert.deepEqual(none.tokens.map((x) => x.symbol), ['AAA'])
+    assert.equal(none.firstTrade, undefined)
   }
 
   console.log('telemetry: ok')
