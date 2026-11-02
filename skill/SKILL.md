@@ -58,7 +58,8 @@ It never holds keys.
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
    <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->
-2. `gang preflight`; relay each `issues[].fix` ([preflight.md](references/preflight.md)).
+2. `gang preflight`; relay each `issues[].fix`, and `guide.url` (the step-by-step setup page) when there are issues
+   ([preflight.md](references/preflight.md)).
 
 Any result carrying `update: { current, latest, cmd, skill }` means the same: tell the user, run `cmd` and `skill`,
 continue with the new rules.

@@ -282,6 +282,16 @@ try {
     assert.equal(none.firstTrade, undefined)
   }
 
+  // --- preflight with issues carries the setup page; signed out needs no chain ---
+  {
+    const pf = await run(['preflight'], { GANG_TELEMETRY: '0' })
+    assert.equal(pf.success, false)
+    assert.deepEqual(pf.issues.map((i) => i.code), ['NOT_SIGNED_IN'])
+    assert.equal(pf.guide.url, 'https://gang.fun/start')
+    assert.match(pf.guide.note, /setup/)
+    assert.equal(pf.next, undefined)
+  }
+
   console.log('telemetry: ok')
 } finally {
   server.close()

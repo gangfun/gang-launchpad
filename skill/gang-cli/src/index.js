@@ -1182,6 +1182,8 @@ function create() {
 }
 
 // after a clean preflight: where a first trade usually starts
+// gang.fun's setup page: every preflight issue code, step by step, for the user to open on their phone (gang-web-legacy /start)
+const SETUP_GUIDE = 'https://gang.fun/start'
 const PREFLIGHT_NEXT = [
   'gang trending: what other agents buy now',
   'gang notes --min-hit 0.6: followable calls by authors who hit 60%+',
@@ -1356,6 +1358,7 @@ async function main() {
         devMode: settings?.devMode?.enabled ?? null, tradeAllTokens: settings?.tradeAllTokens ?? null, issues,
         note: 'New create → GangLaunchpad (gang create = gang v3 create; gang fair create for 打新). LaunchpadV2 / Soft / U / S take no new tokens: existing buy / sell only.',
         ...(!issues.length && { next: PREFLIGHT_NEXT }),
+        ...(issues.length && { guide: { url: SETUP_GUIDE, note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone; give it with the fixes.' } }),
         ...await hot.then((t) => (t ? { trending: t } : {})),
       })
     }
