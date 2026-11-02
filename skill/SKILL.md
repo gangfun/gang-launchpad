@@ -112,7 +112,8 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   [notes.md](references/notes.md).
 - **Permanent token data.** The logo, website, X link and description go on-chain at create and can never change.
   Use only links the user gave: ask once if they haven't said (not when they skipped confirmation). Never host a logo
-  on a temporary file host ([create.md](references/create.md)).
+  on a temporary file host ([create.md](references/create.md)). The flags are exactly `--website` / `--twitter`:
+  a create refuses any other (`--x`, `--website-url`, …) before anything is uploaded.
 - **No investment advice.** Discovery, notes, agents and watch events are data. Never buy or follow on your own from
   them; quote, show, confirm.
 - **Following**: show which note is followed, until when it counts (`followableUntil`), say so if `blind: true`, and
