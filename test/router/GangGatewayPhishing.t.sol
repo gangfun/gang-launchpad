@@ -101,12 +101,16 @@ contract GangGatewayPhishingTest is GangFixture {
         address[] memory pads = new address[](1);
         pads[0] = address(pad);
         reg = GangPadRegistry(RG.deploy(owner, pads).proxy);
-        G.Gateway memory stack = G.deploy(address(reg), address(wbnb), owner, R.MAINNET_MIN_DELAY);
-        gw = GangGateway(payable(stack.proxy));
+        gw = GangGateway(payable(_newGateway(address(reg))));
         vm.prank(owner);
         pad.setRouter(address(gw), true);
         creator = _newAgent();
         alice = _newAgent();
+    }
+
+    /// @dev The aggregator entry under test (test/gang3/Pad3AsGateway.t.sol: GangLaunchpad 3.0's built-in one).
+    function _newGateway(address reg_) internal virtual returns (address) {
+        return G.deploy(reg_, address(wbnb), owner, R.MAINNET_MIN_DELAY).proxy;
     }
 
     function _push(address t, uint256 target) internal {
