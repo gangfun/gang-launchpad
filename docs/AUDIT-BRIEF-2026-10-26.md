@@ -1509,3 +1509,7 @@ Safe 已执行 `setRouter`，网关已列入 pad，报价和买入在主网上�
 - 新部署的验收网关 `0x10C0…132a`（只列入测试网 V2 飞轮 pad `0x7069…E3d6`）上跑完 `GatewayFlywheelTestnetAcceptance`：BNB 计价和测试币计价两个新 sale 的开盘前买入（多出的资金退回）、经 adapter 卖回（1% 路由费）、直接卖回，以及已开盘 A 币的开盘后买入，24 笔全部成功，每笔都和报价一致，网关始终没有余额。
 - 聚合器联调用的 `0xb325…e091`：新实现 `0x4FBD…C6f` 已部署，升级在时间锁排队，2026-11-04 19:43 +08:00 之后可以执行。
 - 详见 `docs/TESTNET-GANG-GATEWAY-V2-FLYWHEEL-2026-11-02.md`。
+
+### 26.8 主网
+
+2026-11-02 用户同意上主网。新实现 `0x0250…B060`（合并 PR #108 后的 `b19e0a8`，和测试网验收的实现逐字节相同，BscScan 已验证）已部署；升级要 Safe 先在时间锁上 `schedule`，48 小时后 `execute`，同一批里把网关列入两个飞轮 pad。两批 Safe 交易都在主网 fork 上逐笔重放过。详见 `docs/MAINNET-GANG-GATEWAY-V2-2026-11-02.md`。
