@@ -1,5 +1,5 @@
 /**
- * GangLaunchpad generations (1.0 / 2.0) without a chain: which generation a create goes to, how the env overrides it,
+ * GangLaunchpad generations (1.0 / 2.0 / 2.0 金库版) without a chain: which generation a create goes to, how the env overrides it,
  * how a token is moved to its own generation's pad / router / GangBond, how a 1.0 pad is told from a 2.0 one, the 2.0
  * creator fee in gang portfolio, the graduation target a 2.0 creator picks, and the creator-fee / --grad flags refused
  * before any RPC. The on-chain paths are covered by the
@@ -9,20 +9,40 @@
  */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { atTokenPad, creatorFeeShareOf, GANG_GENS, gangGens, genOf, gradTargetBnbOf, gradTiersOf, padNets } from '../src/gangpad.js'
+import { atTokenPad, creatorFeeShareOf, GANG_GENS, gangGens, genOf, gradTargetBnbOf, gradTiersOf, padNets, VAULT_GEN, vaultGenOf } from '../src/gangpad.js'
 import { bondAddress } from '../src/bond.js'
 import { _test } from '../src/portfolio.js'
 
 const t = (n) => `0x${String(n).padStart(40, '0')}`
-// testnet: 2.0 with the graduation pick (the create target), the first 2.0 (its tokens only), 1.0 (set 10)
-const [V2, V2a, V1] = GANG_GENS.testnet
+// testnet: 2.0 with the graduation pick (the create target), the first 2.0 (its tokens only), 1.0 (set 10), 2.0 金库版
+const [V2, V2a, V1, VT] = GANG_GENS.testnet
 const ENV = ['GANG_TESTNET_PAD', 'GANG_TESTNET_ROUTER', 'GANG_TESTNET_BOND', 'GANG_TESTNET_LP_FACTORY', 'GANG_TESTNET_COMBO_FACTORY']
 const clean = () => { for (const k of ENV) delete process.env[k] }
 clean()
 
 // ---- built in: both networks create on 2.0 and keep 1.0 for its tokens
-assert.deepEqual(gangGens(true).map((g) => g.gen), ['2.0', '2.0', '1.0'])
-assert.deepEqual(gangGens(false).map((g) => g.gen), ['2.0', '1.0'])
+assert.deepEqual(gangGens(true).map((g) => g.gen), ['2.0', '2.0', '1.0', VAULT_GEN])
+assert.deepEqual(gangGens(false).map((g) => g.gen), ['2.0', '1.0', VAULT_GEN])
+
+// ---- 2.0 金库版: last on each network (never a plain create's target), its own pad and router, no GangBond or factory
+{
+  const MV = GANG_GENS.mainnet[2]
+  assert.deepEqual([MV.gen, MV.pad, MV.router], [VAULT_GEN, '0xE90851A90C6278E3d6e4C24320101f8B13D90A11', '0xAcd4944A4090c13d9DACAe60f3019cef9d9bB1Ad'])
+  assert.deepEqual([VT.gen, VT.pad, VT.router], [VAULT_GEN, '0x9108e7b85e69060A5E626A04Ce6DEf323071C8a9', '0x9bF3E197a6719Af856a7c82d23CABFdBcc184f69'])
+  for (const g of [MV, VT]) {
+    assert.deepEqual([g.bond, g.splitterFactory, g.splitFactory, g.lpFactory, g.comboFactory], [null, null, null, null, null])
+  }
+  assert.equal(vaultGenOf(gangGens(false)).pad, MV.pad)
+  assert.equal(vaultGenOf(gangGens(true)).pad, VT.pad)
+  assert.equal(vaultGenOf(padNets('v3').mainnet.gens).router, MV.router)
+  assert.equal(vaultGenOf([V2, V1]), null)
+  assert.notEqual(padNets('v3').mainnet.pad, MV.pad)
+  // no other generation shares its pad or router
+  for (const k of ['pad', 'router']) {
+    assert.equal(new Set(GANG_GENS.mainnet.map((g) => g[k].toLowerCase())).size, 3, k)
+    assert.equal(new Set(GANG_GENS.testnet.map((g) => g[k].toLowerCase())).size, 4, k)
+  }
+}
 // mainnet: 2.0 (2026-10-31) is the create target, 1.0 keeps its tokens; each with its own contracts
 {
   const [M2, M1] = GANG_GENS.mainnet
@@ -45,13 +65,13 @@ for (const k of ['pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lp
 
 // combined recipients: a factory per generation (bound to one pad), none on the first testnet 2.0
 assert.deepEqual([V2, V2a, V1].map((g) => g.comboFactory), ['0x312c86F7139b3e3a75ee66b4D5Bfdbe5077584BD', null, '0x52a8f90a92E5C1828b4436a0B99C6b293f7F4CFE'])
-assert.deepEqual(GANG_GENS.mainnet.map((g) => g.comboFactory), ['0xcCeA388DbC0Edb206eC25C9715546d57029198Be', '0xd33C38BE3f8472b3013167830F0638C1704e1DBd'])
+assert.deepEqual(GANG_GENS.mainnet.map((g) => g.comboFactory), ['0xcCeA388DbC0Edb206eC25C9715546d57029198Be', '0xd33C38BE3f8472b3013167830F0638C1704e1DBd', null])
 assert.equal(net.comboFactory, V2.comboFactory)
 {
   const { comboFactoryAddress } = await import('../src/combo.js')
   assert.equal(comboFactoryAddress(true), V2.comboFactory)
   process.env.GANG_TESTNET_COMBO_FACTORY = t(0xdd)
-  assert.deepEqual(gangGens(true).map((g) => g.comboFactory), [t(0xdd), null, V1.comboFactory])
+  assert.deepEqual(gangGens(true).map((g) => g.comboFactory), [t(0xdd), null, V1.comboFactory, null])
   assert.equal(comboFactoryAddress(true), t(0xdd))
   // GANG_TESTNET_PAD naming 1.0 makes it the create target: the factory override goes with it; without one, 1.0's own
   process.env.GANG_TESTNET_PAD = V1.pad
@@ -63,26 +83,26 @@ assert.equal(net.comboFactory, V2.comboFactory)
 
 // ---- env: a known pad picks its generation with its own contracts; the other generation stays for its tokens
 process.env.GANG_TESTNET_PAD = V1.pad.toLowerCase()
-assert.deepEqual(gangGens(true).map((g) => [g.gen, g.router, g.bond]), [['1.0', V1.router, V1.bond], ['2.0', V2.router, V2.bond], ['2.0', V2a.router, V2a.bond]])
+assert.deepEqual(gangGens(true).map((g) => [g.gen, g.router, g.bond]), [['1.0', V1.router, V1.bond], ['2.0', V2.router, V2.bond], ['2.0', V2a.router, V2a.bond], [VAULT_GEN, VT.router, null]])
 // the first 2.0 named by the env: its own router, not the newer 2.0's
 process.env.GANG_TESTNET_PAD = V2a.pad
-assert.deepEqual(gangGens(true).map((g) => g.router), [V2a.router, V2.router, V1.router])
+assert.deepEqual(gangGens(true).map((g) => g.router), [V2a.router, V2.router, V1.router, VT.router])
 // an unknown pad gets only what the env names: no built-in router or bond of another pad
 process.env.GANG_TESTNET_PAD = t(0xaa)
 const [own] = gangGens(true)
 assert.deepEqual([own.gen, own.pad, own.router, own.bond, own.lpFactory], [null, t(0xaa), null, null, null])
-assert.deepEqual(gangGens(true).slice(1).map((g) => g.gen), ['2.0', '2.0', '1.0'])
+assert.deepEqual(gangGens(true).slice(1).map((g) => g.gen), ['2.0', '2.0', '1.0', VAULT_GEN])
 process.env.GANG_TESTNET_ROUTER = t(0xbb)
 assert.equal(gangGens(true)[0].router, t(0xbb))
 clean()
 // a contract override applies to the create target only
 process.env.GANG_TESTNET_BOND = t(0xcc)
-assert.deepEqual(gangGens(true).map((g) => g.bond), [t(0xcc), V2a.bond, V1.bond])
+assert.deepEqual(gangGens(true).map((g) => g.bond), [t(0xcc), V2a.bond, V1.bond, null])
 assert.equal(bondAddress(true), t(0xcc))
 clean()
 // one naming another generation's contract (an old GANG_TESTNET_ROUTER for set 10) is left out: 2.0 keeps its own router
 process.env.GANG_TESTNET_ROUTER = V1.router
-assert.deepEqual(gangGens(true).map((g) => g.router), [V2.router, V2a.router, V1.router])
+assert.deepEqual(gangGens(true).map((g) => g.router), [V2.router, V2a.router, V1.router, VT.router])
 clean()
 
 // ---- a token's generation: kindOf asked of every pad
@@ -111,6 +131,17 @@ assert.equal(c2.pad, V2.pad)
 assert.equal(await atTokenPad(c2, 'nope'), undefined)
 // a pad unreadable: null (the caller says retry), ctx unchanged
 assert.equal(await atTokenPad(ctxOf(kinds({}, [V1.pad])), t(1)), null)
+const noDataEarly = Object.assign(new Error('x'), { walk: (fn) => [{ name: 'ContractFunctionRevertedError', data: undefined, raw: '0x' }].find(fn) })
+// a 2.0 金库版 token: that pad and its router, no GangBond / factories; the vault pad unreadable alone is unknown too
+{
+  const cv = { ...ctxOf(kinds({ [VT.pad]: 1 })), _tax: 'old', fees: 'old' }
+  assert.equal(await atTokenPad(cv, t(1)), 'v3')
+  assert.deepEqual([cv.gen, cv.pad, cv.router, cv.bond, cv.comboFactory, cv._tax], [VAULT_GEN, VT.pad, VT.router, null, null, undefined])
+  assert.equal(await atTokenPad(ctxOf(kinds({}, [VT.pad])), t(1)), null)
+  // a known 2.0 金库版 pad has the creator fee and the graduation pick: asked of the pad, never taken for 1.0
+  assert.equal(await creatorFeeShareOf({ chainId: 'v1', pad: VT.pad, read: async () => 7000n }), 7000)
+  await assert.rejects(creatorFeeShareOf({ chainId: 'v2', pad: VT.pad, read: async () => { throw noDataEarly } }), /x/)
+}
 
 // ---- 1.0 vs 2.0: a built-in generation is known without a call; a pad from the env is asked, and only a revert
 // without data (no such function) means no creator fee. An RPC error, even one viem reports as a revert, is thrown
@@ -199,5 +230,28 @@ refused(['fair', 'create', '--name', 'A', '--symbol', 'A', '--grad', '9', '--tes
 refused(['create', '--name', 'A', '--symbol', 'A', '--grad', 'nine', '--testnet'], /--grad must be the graduation target in BNB raised/)
 assert.match(spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'help'], { encoding: 'utf8' }).stdout, /gang creator-fee --token <addr> --claim \[--to <addr>\]/)
 assert.match(spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'help'], { encoding: 'utf8' }).stdout, /\[--grad 6\|9\|12\|15\]/)
+// --vault: a V3 create alone, with a 0x vault
+refused(['create', '--fair', '--name', 'A', '--symbol', 'A', '--vault', t(7), '--testnet'], /--vault binds a V3 curve token.*leave --fair out/)
+refused(['create', '--fly', '--name', 'A', '--symbol', 'A', '--vault', t(7), '--testnet'], /--vault binds a V3 curve token.*leave --fly out/)
+refused(['fair', 'create', '--name', 'A', '--symbol', 'A', '--vault', t(7), '--testnet'], /--vault only applies to a V3 create/)
+refused(['buy', '--token', t(4), '--vault', t(7), '--testnet'], /--vault only applies to a V3 create/)
+for (const [f, v] of [['--dev-buy', '0.1'], ['--bond', '0.1'], ['--buyback', '50'], ['--lp', '50'], ['--split', `${t(8)}:100`]]) {
+  refused(['create', '--name', 'A', '--symbol', 'A', '--vault', t(7), f, v, '--testnet'], /a --vault create stands alone/)
+}
+refused(['create', '--name', 'A', '--symbol', 'A', '--vault', 'nope', '--testnet'], /--vault/)
+assert.match(spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'help'], { encoding: 'utf8' }).stdout, /\[--vault <0x…>\]/)
+
+// ---- 2.0 金库版 ABI: createWithVault's selector, its errors decode with their hints
+{
+  const { _vaultTest } = await import('../src/v3.js')
+  const { decodeErrorResult, encodeErrorResult, encodeFunctionData, zeroAddress } = await import('viem')
+  const data = encodeFunctionData({ abi: _vaultTest.PAD_ABI, functionName: 'createWithVault', args: ['A', 'A', '', '', t(1), zeroAddress, { buyTaxBps: 0, sellTaxBps: 0, dividendBps: 0, recipient: zeroAddress }, 9n * E, t(7)] })
+  assert.equal(data.slice(0, 10), '0xcb57955e')
+  for (const name of ['NotVault', 'NotVaultCreator', 'UseVaultCreate', 'VaultCannotTrade', 'VaultDelisted']) {
+    const err = encodeErrorResult({ abi: _vaultTest.PAD_ABI, errorName: name })
+    assert.equal(decodeErrorResult({ abi: _vaultTest.PAD_ABI, data: err }).errorName, name)
+    assert.ok(_vaultTest.HINTS[name], name)
+  }
+}
 
 console.log('gens: ok')
