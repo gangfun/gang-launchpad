@@ -21,14 +21,7 @@ contract GangLaunchpad3V2Mock is GangLaunchpad3 {
         address module_
     )
         GangLaunchpad3(
-            quoteRegistry_,
-            dividendVault_,
-            platformBucket_,
-            taxHandler_,
-            tokenDeployer_,
-            wbnb_,
-            padRegistry_,
-            module_
+            quoteRegistry_, dividendVault_, platformBucket_, taxHandler_, tokenDeployer_, wbnb_, padRegistry_, module_
         )
     {}
 
