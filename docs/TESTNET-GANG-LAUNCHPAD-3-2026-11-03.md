@@ -112,3 +112,21 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 升级前后比对了 3 个币的记录，结果一致。
 - 升级后只读重跑阶段 2，`self-check ok`。实现合约的代码与参照合约逐字节一致，库也对得上。
 - 升级后跑了验收（3.0 的币和 2.0 的币，包括多跳卖出），20 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793693488007.json`。
+
+## 模块套装（2026-11-03）
+
+和主网一样，3.0 有自己的一套模块（`docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md`）。测试网上部署钱包同时持有 handler 和 admin，脚本自己发了 Safe 那部分交易。脚本都带 `GANG_PAD3=0x0508232833aE6849c03b28F7aA248BBd5cFCceE2`，后四个再带 `HANDLER_ADMIN`。
+
+| 合约 | 地址 |
+|---|---|
+| GangHandlerAdmin | [`0x0fb8280B88a4DF00e8654cfE9cBd544D104a9D23`](https://testnet.bscscan.com/address/0x0fb8280B88a4DF00e8654cfE9cBd544D104a9D23)（已持有 handler `0x4C57…d228`） |
+| GangBuybackSplitterFactory | [`0x3533E63EF0386adfBC96227C50f1b82EEA18d110`](https://testnet.bscscan.com/address/0x3533E63EF0386adfBC96227C50f1b82EEA18d110) |
+| GangSplitModuleFactory | [`0xf8d4FA57FD65Bf16427Eef653518811fFa2606dc`](https://testnet.bscscan.com/address/0xf8d4FA57FD65Bf16427Eef653518811fFa2606dc) |
+| GangLiquiditySplitterFactory | [`0x4A3aC160eAF4A2747046b119631988D5D8056B07`](https://testnet.bscscan.com/address/0x4A3aC160eAF4A2747046b119631988D5D8056B07) |
+| GangComboSplitterFactory | [`0xdc1687961c8aAf5A0340c1A73b604cf3a2be543C`](https://testnet.bscscan.com/address/0xdc1687961c8aAf5A0340c1A73b604cf3a2be543C) |
+| GangBond | [`0xa87727dc3CC28a44709649A22aDbD77287B99fc1`](https://testnet.bscscan.com/address/0xa87727dc3CC28a44709649A22aDbD77287B99fc1) |
+
+测试网没有 GANG，Split 和 Combo 的 `gangQuote` 为 0。读链核对：四个工厂和 bond 的 `pad()` 都是 3.0，`isFactory` 都为真。
+
+组合模块验收（`script/ComboTestnetAcceptance.s.sol`，`COMBO_FACTORY` 为上面的组合工厂）：克隆模块 `0x3a7d…8Fbe`，在 3.0 上创建测试报价币计价的税币 `0xc945…0318` 并绑定，毕业进入 Pancake 池，池子买卖收税，卖出的 swap-back 付给模块。326 笔交易里，最后一笔 forge 发出的 `split()` 因为 gas 上限偏低报 `PushStarved`（已知情况），改用节点估算 gas 重发后成功：30% 回购、30% 加池留出，其余 70 / 30 付给部署钱包和 B，金额与报价一致。之后用 `sweep()` 收回了临时钱包剩下的 gas。记录在 `broadcast/ComboTestnetAcceptance.s.sol/97/`。
+
