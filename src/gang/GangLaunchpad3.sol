@@ -637,8 +637,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///         LegacyRoute). The user approves THIS address once; the aggregator's contract calls it with no
     ///         signature; buys are open to any caller, sells take the seller itself or a listed caller (`isCaller`,
     ///         Gateway audit M-1); the buyer / seller is always the wallet that sent the tx.
-    /// @notice Owner: whitelist (or delist) a contract that may call `sellToken` for a seller other than itself (the
-    ///         Gateway's listing review, AUDIT-BRIEF §25.10). Contracts only (NotAContract).
+    /// @notice Owner: whitelist (or delist) a contract that may call `sellToken` for a seller other than itself, and
+    ///         that may receive a pay-to `sellToken`'s proceeds (the Gateway's listing review, AUDIT-BRIEF §25.10: a
+    ///         listed contract must take the seller from its own msg.sender and pass the proceeds on to that seller's
+    ///         route only). Contracts only (NotAContract).
     function setCaller(address caller, bool allowed) external onlyOwner {
         // contracts only (Gateway audit L-2): a listed EOA could later delegate to any code with EIP-7702
         if (allowed && !_isPlainContract(caller)) revert NotAContract();
@@ -792,28 +794,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         address feeRecipient
     ) external nonReentrant returns (uint256 fundsToSeller) {
         origin; // four.meme's reserved field
-        if (from != msg.sender && !isCaller[msg.sender]) revert NotWhitelisted();
-        if (from != tx.origin) revert TraderNotOrigin();
+        _entryCaller(from);
         if (feeRate > MAX_FEE_RATE) revert FeeRateTooHigh();
-        uint8 kind = kindOf[token];
-        IERC20 quote;
-        uint256 funds;
-        uint256 base;
-        bool forwarded;
-        if (kind == KIND_CURVE) {
-            Curve storage cv = curves[token];
-            if (cv.graduated) revert NotCurveToken();
-            _checkCurveTrader(token, from);
-            quote = IERC20(cv.quote);
-            funds = CurveLogic.sell(
-                _config, curves, creatorFeeOf, _deps(), from, CurveLogic.PULL_PAD, token, amount, 0, address(this)
-            );
-        } else if (kind != 0) {
-            revert NotCurveToken();
-        } else {
-            (quote, funds, base) = LegacyRoute.sell(padRegistry, token, from, amount);
-            forwarded = true;
-        }
+        (IERC20 quote, uint256 funds, uint256 base, bool forwarded) = _entrySell(token, from, amount);
         uint256 fee = (funds * feeRate) / BPS;
         fundsToSeller = funds - fee;
         if (fundsToSeller < minFunds) revert Slippage();
@@ -832,6 +815,71 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         }
         if (forwarded && quote.balanceOf(address(this)) != base) revert EscrowMoved();
         emit GatewaySell(token, from, msg.sender, amount, funds, fundsToSeller, fee, feeRecipient);
+    }
+
+    /// @notice four.meme's pay-to sell (TokenManager2.sellToken(origin, token, from, to, amount, minFunds), same
+    ///         selector) for multi-hop routes: sells `amount` of `from`'s tokens — with the allowance `from` gave THIS
+    ///         address, the tokens never pass through `to` (before graduation they move only by the pad) — and pays
+    ///         everything the curve (or the older pad) pays after its 1% fee to `to`, a listed aggregator contract
+    ///         (`isCaller`, else RecipientNotListed), which goes on with the next hop. Native BNB for a BNB-quoted
+    ///         token, else the quote ERC-20. No router fee here (four.meme's has none either): the aggregator takes
+    ///         its own on a later hop. Caller and seller as `sellToken` with a router fee: the seller itself or a listed
+    ///         caller (NotWhitelisted), the seller being the wallet that sent the tx (TraderNotOrigin). Only a listed
+    ///         contract can receive, so a contract the user is lured into calling cannot route the proceeds to itself.
+    /// @param origin ignored (four.meme's reserved field; pass 0)
+    /// @param minFunds the least `to` must receive, after the pad's fee (net, as the other `sellToken`)
+    /// @return funds what `to` received
+    function sellToken(uint256 origin, address token, address from, address to, uint256 amount, uint256 minFunds)
+        external
+        nonReentrant
+        returns (uint256 funds)
+    {
+        origin; // four.meme's reserved field
+        _entryCaller(from);
+        if (!isCaller[to] || to == address(this) || to == wbnb) revert RecipientNotListed();
+        IERC20 quote;
+        uint256 base;
+        bool forwarded;
+        (quote, funds, base, forwarded) = _entrySell(token, from, amount);
+        if (funds < minFunds) revert Slippage();
+        if (address(quote) == wbnb) {
+            IWBNB3(wbnb).withdraw(funds);
+            _sendBnb(to, funds);
+        } else {
+            quote.safeTransfer(to, funds);
+        }
+        if (forwarded && quote.balanceOf(address(this)) != base) revert EscrowMoved();
+        emit GatewaySellTo(token, from, msg.sender, to, amount, funds);
+    }
+
+    /// @dev Both entry sells: the seller itself or a listed caller (Gateway audit M-1), the seller = tx.origin (§23).
+    function _entryCaller(address from) internal view {
+        if (from != msg.sender && !isCaller[msg.sender]) revert NotWhitelisted();
+        if (from != tx.origin) revert TraderNotOrigin();
+    }
+
+    /// @dev Both entry sells: `amount` of `from`'s tokens sold into the pad (own curve, PULL_PAD) or forwarded to their
+    ///      older pad (LegacyRoute); the proceeds after the curve's 1% fee are on the pad, to be paid out by the caller.
+    ///      `base`: the pad's own balance of `quote` before a forwarded sell (escrow check).
+    function _entrySell(address token, address from, uint256 amount)
+        internal
+        returns (IERC20 quote, uint256 funds, uint256 base, bool forwarded)
+    {
+        uint8 kind = kindOf[token];
+        if (kind == KIND_CURVE) {
+            Curve storage cv = curves[token];
+            if (cv.graduated) revert NotCurveToken();
+            _checkCurveTrader(token, from);
+            quote = IERC20(cv.quote);
+            funds = CurveLogic.sell(
+                _config, curves, creatorFeeOf, _deps(), from, CurveLogic.PULL_PAD, token, amount, 0, address(this)
+            );
+        } else if (kind != 0) {
+            revert NotCurveToken();
+        } else {
+            (quote, funds, base) = LegacyRoute.sell(padRegistry, token, from, amount);
+            forwarded = true;
+        }
     }
 
     // ---------------------------------------------------------------- shared views

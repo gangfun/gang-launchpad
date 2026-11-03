@@ -9,6 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangGatewayTest, LyingPad, PointingToken} from "../router/GangGateway.t.sol";
 import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
+import {MultiHopRouter} from "./Pad3SellTo.t.sol";
 import {GangGatewayFlywheelTest} from "../router/GangGatewayFlywheel.t.sol";
 import {GangGatewayPhishingTest} from "../router/GangGatewayPhishing.t.sol";
 
@@ -60,11 +61,65 @@ contract Pad3AsGatewayTest is GangGatewayTest {
         gw.sellToken(0, t, alice, est, 0, 0, address(0));
         vm.stopPrank();
     }
+
+    /// @dev The pay-to sell (multi-hop) on an older pad's token: the older pad pays 3.0 (its router), 3.0 pays all of
+    ///      it to the listed router `to`; 3.0 keeps nothing, the seller gets nothing directly; BNB and ERC-20 quotes.
+    function test_forward_sellTo_proceedsToTheRouter() public {
+        GangLaunchpad3 p3 = GangLaunchpad3(payable(address(gw)));
+        MultiHopRouter hop = new MultiHopRouter(p3);
+        vm.prank(owner);
+        p3.setCaller(address(hop), true);
+
+        address t = _v3();
+        uint256 got = _buy(alice, t, 0.02 ether);
+        _approveGw(alice, t);
+        (,, uint256 funds,) = gw.trySell(t, got);
+        uint256 a0 = alice.balance;
+        vm.expectEmit(address(gw));
+        emit IGangLaunchpad3.Routed(t, address(pad), alice, false, funds, got);
+        vm.prank(alice, alice);
+        assertEq(hop.gangHop(t, got, funds), funds, "= trySell");
+        assertEq(address(hop).balance, funds, "native BNB on the router");
+        assertEq(alice.balance, a0);
+        _assertGatewayEmpty(t);
+
+        address e = _v3Erc20();
+        vm.prank(alice);
+        quoteTok.approve(address(gw), type(uint256).max);
+        vm.prank(alice, alice);
+        (uint256 got2,) = gw.buyTokenAMAP(e, alice, 0.02 ether, 0);
+        _approveGw(alice, e);
+        (,, uint256 funds2,) = gw.trySell(e, got2);
+        vm.prank(alice, alice);
+        hop.gangHop(e, got2, funds2);
+        assertEq(quoteTok.balanceOf(address(hop)), funds2, "quote ERC-20 on the router");
+        _assertGatewayEmpty(e);
+    }
 }
 
 contract Pad3AsGatewayFlywheelTest is GangGatewayFlywheelTest {
     function _newGateway(address reg_) internal override returns (address) {
         return Pad3Entry.deploy(address(wbnb), reg_, owner);
+    }
+
+    /// @dev The pay-to sell (multi-hop) of 铸币飞轮 shares before launch: withdrawn through the pad, paid to the router.
+    function test_beforeLaunch_sellTo_proceedsToTheRouter() public {
+        GangLaunchpad3 p3 = GangLaunchpad3(payable(address(gw)));
+        MultiHopRouter hop = new MultiHopRouter(p3);
+        vm.prank(owner);
+        p3.setCaller(address(hop), true);
+        address t = _create(_wide(), 1);
+        address w = _newAgent();
+        _buy(t, w, _shareCost(t, 5), 0);
+        _approveGw(w, t);
+        (uint256 funds,) = _trySell(t, 3 * TPS);
+        uint256 w0 = w.balance;
+        vm.prank(w, w);
+        assertEq(hop.gangHop(t, 3 * TPS, funds), funds);
+        assertEq(address(hop).balance, funds, "BNB on the router");
+        assertEq(w.balance, w0);
+        assertEq(IERC20(t).balanceOf(w), 2 * TPS);
+        _assertGatewayEmpty(t);
     }
 }
 

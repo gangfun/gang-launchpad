@@ -32,12 +32,32 @@ contract Pad3AcceptanceAdapter {
     }
 }
 
+/// @dev An aggregator router's multi-hop: the Gang hop with four.meme's pay-to sell (proceeds to this contract), then
+///      the next hop — here, the proceeds handed to its caller.
+contract Pad3AcceptanceHop {
+    GangLaunchpad3 public immutable entry;
+
+    constructor(GangLaunchpad3 entry_) {
+        entry = entry_;
+    }
+
+    receive() external payable {}
+
+    function sellThenForward(address token, uint256 amount, uint256 minFunds) external returns (uint256 got) {
+        got = entry.sellToken(0, token, msg.sender, address(this), amount, minFunds);
+        (bool ok,) = msg.sender.call{value: got}("");
+        require(ok, "bnb");
+    }
+}
+
 /// @title GangLaunchpad3TestnetAcceptance — GangLaunchpad 3.0's entry end to end on BSC testnet, as an aggregator
 /// @notice With the deploy wallet (an Agent ID holder, owner of 3.0 and its ProxyAdmin on testnet):
 ///         1. a WBNB-quoted curve token created on 3.0 (rule version 1, found by the registry);
 ///         2. an aggregator-style adapter listed as a sell caller;
 ///         3. for 3.0's token and for a token created on each older pad in OLD_PADS (each must list 3.0 as a router):
-///            a buy through the adapter with native BNB (= tryBuy), half sold back through it with a 1% router fee
+///            a buy through the adapter with native BNB (= tryBuy), a quarter sold with the pay-to sell to a listed
+///            multi-hop router (proceeds on the router, then handed on), half of the rest sold back through the adapter
+///            with a 1% router fee
 ///            (= trySell, BNB out), the rest sold straight on the entry with no fee. After each step: no BNB left in
 ///            3.0, no allowance left to the older pad, and, for an older pad's token, 3.0's WBNB (its reserves)
 ///            unchanged and none of the token held;
@@ -52,6 +72,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
 
     GangLaunchpad3 p;
     Pad3AcceptanceAdapter adapter;
+    Pad3AcceptanceHop hop;
     uint256 pk;
     address me;
 
@@ -70,6 +91,8 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         address t = _create(address(p), "Pad3 Test", "P3T");
         adapter = new Pad3AcceptanceAdapter(IGangGateway(address(p)), T.DEMO_TREASURY);
         p.setCaller(address(adapter), true);
+        hop = new Pad3AcceptanceHop(p);
+        p.setCaller(address(hop), true);
         vm.stopBroadcast();
         if (p.tokenVersionOf(t) != 1) revert Check("tokenVersionOf");
         if (p.padRegistry().padOf(t) != address(p)) revert Check("registry padOf");
@@ -111,6 +134,17 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         if (out != est || used != cost || IERC20(t).balanceOf(me) != m0 + out) revert Check("buy");
         _after(t, pad, local, w0, t0, out);
 
+        // a quarter through the pay-to sell (multi-hop): proceeds to the router, which hands them on
+        uint256 quarter = out / 4;
+        (,, uint256 qf,) = p.trySell(t, quarter);
+        vm.startBroadcast(pk);
+        IERC20(t).approve(address(p), quarter);
+        uint256 viaHop = hop.sellThenForward(t, quarter, qf);
+        vm.stopBroadcast();
+        if (viaHop != qf || address(hop).balance != 0) revert Check("pay-to sell");
+        out -= quarter;
+        _after(t, pad, local, w0, t0, out);
+
         uint256 half = out / 2;
         (,, uint256 funds,) = p.trySell(t, half);
         uint256 fee = (funds * 100) / 10_000;
@@ -134,7 +168,8 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         if (toSeller2 != funds2 || IERC20(t).balanceOf(me) != m0) revert Check("direct sell");
         if (IERC20(t).allowance(me, address(p)) != 0) revert Check("direct sell allowance");
         _after(t, pad, local, w0, t0, 0);
-        console.log("  bought / for wei", out, used);
+        console.log("  bought / for wei (after the pay-to quarter)", out, used);
+        console.log("  pay-to sell (multi-hop) via the router", viaHop);
         console.log("  adapter sell: to seller / router fee", toSeller, fee);
         console.log("  direct sell: to seller", toSeller2);
     }

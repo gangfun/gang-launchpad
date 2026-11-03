@@ -49,7 +49,13 @@ interface IGangLaunchpad3 {
         uint256 routerFee,
         address feeRecipient
     );
-    /// @notice A contract allowed (or no longer allowed) to call `sellToken` for a seller other than itself.
+    /// @notice A pay-to `sellToken` (multi-hop): `funds` (after the pad's fee) went to `to`, a listed aggregator
+    ///         contract, for `trader`'s `amount` tokens.
+    event GatewaySellTo(
+        address indexed token, address indexed trader, address indexed to, address caller, uint256 amount, uint256 funds
+    );
+    /// @notice A contract allowed (or no longer allowed) to call `sellToken` for a seller other than itself, and to
+    ///         receive a pay-to `sellToken`'s proceeds.
     event CallerSet(address indexed caller, bool allowed);
     /// @notice An entry trade of an older pad's token, forwarded to `pad` (after GatewayBuy / GatewaySell's data):
     ///         `quoteAmount` = funds the older pad kept (buy) / paid after its fee (sell), `tokenAmount` = tokens
@@ -80,6 +86,8 @@ interface IGangLaunchpad3 {
     /// @notice A router fee is due but `feeRecipient` is address(0), the pad itself or WBNB (the fee would sit in the
     ///         pad outside every book).
     error ZeroFeeRecipient();
+    /// @notice Pay-to `sellToken`: `to` is not a listed aggregator contract (`isCaller`).
+    error RecipientNotListed();
     /// @notice `renounceOwnership` is disabled: an ownerless pad could never delist a router or a caller.
     error RenounceDisabled();
     /// @notice BNB-quoted: msg.value != funds; ERC-20-quoted: msg.value != 0.
