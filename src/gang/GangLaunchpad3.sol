@@ -23,6 +23,8 @@ import {IGangPadRegistry} from "./interfaces/IGangPadRegistry.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {FairLogic} from "./FairLogic.sol";
+import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
+import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 
 /// @title GangLaunchpad 3.0 — the upgradeable Gang pad: one permanent address for both launch kinds
 /// @notice GangLaunchpad 2.0 (bonding curve V3 with the creator's 70% of the 1% fee and graduation tiers, and 打新)
@@ -134,6 +136,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     address public immutable wbnb;
     /// @notice GangPadRegistry (proxy): where the aggregator entry finds the pad of a token that is not this pad's.
     IGangPadRegistry public immutable padRegistry;
+    /// @notice Pad3Module: the vault mode (createWithVault, setVault, setVaultCreator, vaultLock, vaultRelease
+    ///         and their views), reached through `fallback`. Fixed per implementation: a new module ships as an upgrade.
+    address public immutable module;
 
     // ---------------------------------------------------------------- storage
     Config internal _config;
@@ -173,13 +178,15 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         address taxHandler_,
         address tokenDeployer_,
         address wbnb_,
-        address padRegistry_
+        address padRegistry_,
+        address module_
     ) Ownable(address(0xdEaD)) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
                 || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
-                || padRegistry_ == address(0)
+                || padRegistry_ == address(0) || module_ == address(0)
         ) revert ZeroAddress();
+        module = module_;
         padRegistry = IGangPadRegistry(padRegistry_);
         quoteRegistry = QuoteRegistry(quoteRegistry_);
         dividendVault = SharedDividendVault(dividendVault_);
@@ -237,6 +244,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (router_ == address(0)) revert ZeroAddress();
         // contracts only, as `setCaller` (final audit L-1): a listed EOA could later delegate to any code (EIP-7702)
         if (enabled && !_isPlainContract(router_)) revert NotAContract();
+        // vault mode: an address ever listed as a vault never becomes a router (one allowance would serve a lock and a
+        // `sellFor`), even once delisted (GangVaultLaunchpad re-review 2026-11-01 L-1)
+        if (enabled && Pad3VaultStore.layout().everVault[router_]) revert IGangVaultPad.VaultIsRouter();
         routers[router_] = enabled;
         emit RouterSet(router_, enabled);
     }
@@ -424,65 +434,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         amount = CurveLogic.claimCreatorFee(curves, creatorFeeOf, token, to);
     }
 
-    /// @notice CLI preflight: every TaxConfig check `create` would revert on, without reverting. The creator is not
-    ///         known here, so the recipient must be whitelisted; use `checkTaxConfigFor` when the creator itself is the
-    ///         recipient.
-    function checkTaxConfig(TaxConfig calldata tax) external view returns (bool ok, string memory reason) {
-        reason = CurveLogic.checkTax(_deps(), address(0), tax);
-        ok = bytes(reason).length == 0;
-    }
-
-    /// @notice `checkTaxConfig` as `create` by `creator` sees it: the recipient may be `creator` itself (no listing
-    ///         needed) or a whitelisted address.
-    function checkTaxConfigFor(address creator, TaxConfig calldata tax)
-        external
-        view
-        returns (bool ok, string memory reason)
-    {
-        reason = CurveLogic.checkTax(_deps(), creator, tax);
-        ok = bytes(reason).length == 0;
-    }
-
-    function taxConfigOf(address token)
-        external
-        view
-        returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)
-    {
-        Curve storage c = curves[token];
-        (, recipient) = IGangPadHandler(taxHandler).routeOf(token);
-        return (c.buyTaxBps, c.sellTaxBps, c.dividendBps, recipient);
-    }
-
     function walletRoom(address token, address buyer) external view returns (uint256) {
         return CurveLogic.walletRoom(_config.walletCapEnabled, token, buyer, _lockedOf(token, buyer));
-    }
-
-    function gradAmtOf(address token) external view returns (uint256) {
-        return curves[token].gradAmt;
-    }
-
-    function graduationRemaining(address token) external view returns (uint256) {
-        Curve storage c = curves[token];
-        if (c.creator == address(0) || c.graduated) return 0;
-        if (c.realQuote >= c.gradAmt) return 0;
-        return uint256(c.gradAmt) - uint256(c.realQuote);
-    }
-
-    /// @notice What `create` would lock as the graduation amount (TARGET_GRAD_BNB in `quote`).
-    function graduationAmountOf(address quote, address refPool) external view returns (uint256) {
-        return CurveLogic.graduationAmountOf(_config, bridgePoolOf, _deps(), quote, refPool, TARGET_GRAD_BNB);
-    }
-
-    /// @notice What `createWithGradTarget` would lock for `gradBnb`; reverts BadGradTarget off GRAD_BNB_TIERS.
-    function graduationAmountFor(address quote, address refPool, uint256 gradBnb) external view returns (uint256) {
-        return CurveLogic.graduationAmountOf(_config, bridgePoolOf, _deps(), quote, refPool, gradBnb);
-    }
-
-    /// @notice The graduation targets a creator may pick, in BNB raised.
-    function GRAD_BNB_TIERS() external pure returns (uint256[4] memory t) {
-        for (uint256 i; i < 4; i++) {
-            t[i] = CurveLogic.MIN_GRAD_BNB + i * CurveLogic.GRAD_BNB_STEP;
-        }
     }
 
     // ---------------------------------------------------------------- 打新
@@ -567,53 +520,6 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         amount = FairLogic.flushFees(owedFee, _deps(), quote);
     }
 
-    function checkConfig(MintConfig calldata cfg, uint256 devShares)
-        external
-        pure
-        returns (bool ok, string memory reason)
-    {
-        return FairLogic.checkConfig(cfg, devShares);
-    }
-
-    /// @notice Raise in quote units and the per-share price `create` would lock. Reverts like `create`.
-    function previewCreate(address quote, address refPool, uint256 raiseBnb)
-        external
-        view
-        returns (uint256 raiseQuote, uint256 sharePrice)
-    {
-        return FairLogic.previewCreate(_config, bridgePoolOf, _deps(), quote, refPool, raiseBnb);
-    }
-
-    /// @notice What `mint(token, shares, 0)` by `user` would accept and cost right now (cost excludes fee).
-    function previewMint(address token, address user, uint256 shares)
-        external
-        view
-        returns (uint256 accepted, uint256 cost, uint256 fee)
-    {
-        Sale storage s = sales[token];
-        if (status(token) != Status.Minting) return (0, 0, 0);
-        accepted = FairLogic.acceptable(s, positions[token][user].shares, shares);
-        cost = accepted * s.sharePrice;
-        fee = (cost * s.mintFeeBps) / BPS;
-    }
-
-    /// @notice What `withdraw(token, shares)` by `user` would pay out and charge right now (0, 0 if it would revert).
-    function previewWithdraw(address token, address user, uint256 shares)
-        external
-        view
-        returns (uint256 payout, uint256 fee)
-    {
-        if (status(token) != Status.Minting || shares == 0 || shares > positions[token][user].shares) {
-            return (0, 0);
-        }
-        return FairLogic.withdrawQuote(sales[token], shares);
-    }
-
-    /// @notice The exit fee a withdraw pays now: the sale's own, or 0 once it has made no progress for STALE_AFTER.
-    function exitFeeBpsOf(address token) external view returns (uint256) {
-        return FairLogic.exitFeeBps(sales[token]);
-    }
-
     function status(address token) public view returns (Status) {
         Sale storage s = sales[token];
         if (s.creator == address(0)) return Status.None;
@@ -655,6 +561,21 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///         (2300 gas): the proxy's delegatecall and this check read no cold storage (`wbnb` is an immutable).
     receive() external payable {
         if (msg.sender != wbnb) revert OnlyWbnb();
+    }
+
+    /// @notice Every selector this implementation does not define (the vault mode, the off-chain views) runs in Pad3Module,
+    ///         delegatecalled: the proxy's storage, balance and msg.sender. An unknown selector reverts there; a value
+    ///         sent to a non-payable module function reverts there too.
+    fallback() external payable {
+        address m = module;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), m, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
     }
 
     /// @notice GangGateway's getTokenInfo: status 0 = not a Gang token; 1 = on its curve (or a 铸币飞轮 sale before
@@ -706,7 +627,11 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (kind != 0) {
             (, quote,,,) = getTokenInfo(token);
             // as GangGateway on a pad with the gate off (A-2): no buy quote, no buy (sells still work)
-            if (kind == KIND_CURVE && _config.agentGateEnabled) {
+            // a vault-bound token's own vault never buys it (`_checkCurveTrader`): no quote either
+            if (
+                kind == KIND_CURVE && _config.agentGateEnabled
+                    && (trader == address(0) || trader != Pad3VaultStore.layout().vaultOf[token])
+            ) {
                 (estimatedAmount, estimatedCost, estimatedFee,) =
                     CurveLogic.quoteBuy(_config, curves, token, trader, funds, _lockedOf(token, trader));
             }
@@ -976,14 +901,17 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         });
     }
 
-    /// @dev Who may trade `token` on the curve beyond the usual checks. Anyone on this pad; kept as 2.0's hook point for a
-    ///      later rule set. A version that makes it refuse someone must make `tryBuy` quote 0 for them too (review 3).
-    function _checkCurveTrader(address, address) internal pure {}
+    /// @dev Who may trade `token` on the curve beyond the usual checks: anyone but a vault-bound token's own vault
+    ///      (vault mode, GangVaultLaunchpad audit 2026-11-01 H-1 / M-1: its tokens only come from `vaultLock`, each one
+    ///      booked against the locker's 1%, and only leave through `vaultRelease`). `tryBuy` quotes 0 for it too.
+    function _checkCurveTrader(address token, address trader) internal view {
+        if (trader == Pad3VaultStore.layout().vaultOf[token]) revert IGangVaultPad.VaultCannotTrade();
+    }
 
-    /// @dev What `user` holds in `token`'s vault, counted against the 1% wallet cap with the wallet balance. None on
-    ///      this pad; the vault pad (GangVaultLaunchpad, SPEC-VAULT-LOCK §3.5) books it.
-    function _lockedOf(address, address) internal pure returns (uint256) {
-        return 0;
+    /// @dev What `user` holds in `token`'s vault, counted against the 1% wallet cap with the wallet balance (vault mode,
+    ///      booked by Pad3Module; 0 for a token without a vault).
+    function _lockedOf(address token, address user) internal view returns (uint256) {
+        return Pad3VaultStore.layout().lockedOf[token][user];
     }
 
     /// @dev Both kinds: the kind is written once, here, and never changes.

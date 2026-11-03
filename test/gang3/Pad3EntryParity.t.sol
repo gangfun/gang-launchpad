@@ -5,6 +5,7 @@ import {Vm} from "forge-std/Vm.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
+import {Pad3Module} from "../../src/gang/Pad3Module.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 
@@ -35,7 +36,7 @@ contract CurveLogic3ParityTest is GangFixture {
 
     /// @dev Moves the curve to `level` of its graduation amount (capped below it) with the wallet cap off.
     function _prime(address t, uint256 level) internal {
-        uint256 g = pad.gradAmtOf(t);
+        uint256 g = Pad3Module(address(pad)).gradAmtOf(t);
         uint256 target = level % g;
         if (target < 1e9) return;
         vm.prank(owner);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {Initializable} from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
@@ -86,8 +87,10 @@ contract GangLaunchpad3Test is GangFixture {
     function test_constructor_and_initialize_refuseZero() public {
         (address q, address d, address b, address h, address t, address w, address r) = _deps();
         vm.expectRevert(IGangLaunchpad.ZeroAddress.selector);
-        new GangLaunchpad3(q, d, b, h, t, w, address(0));
-        GangLaunchpad3 impl = new GangLaunchpad3(q, d, b, h, t, w, r);
+        new GangLaunchpad3(q, d, b, h, t, w, address(0), address(1));
+        vm.expectRevert(IGangLaunchpad.ZeroAddress.selector);
+        new GangLaunchpad3(q, d, b, h, t, w, r, address(0));
+        GangLaunchpad3 impl = GangLaunchpad3(payable(Pad3Impl.deploy(q, d, b, h, t, w, r)));
         vm.expectRevert(IGangLaunchpad.ZeroAddress.selector);
         new TransparentUpgradeableProxy(
             address(impl), upgrader, abi.encodeCall(GangLaunchpad3.initialize, (address(0), address(pairFactory)))
@@ -135,7 +138,7 @@ contract GangLaunchpad3Test is GangFixture {
     // ---------------------------------------------------------------- upgrades
     function _v2Impl() internal returns (GangLaunchpad3V2Mock) {
         (address q, address d, address b, address h, address t, address w, address r) = _deps();
-        return new GangLaunchpad3V2Mock(q, d, b, h, t, w, r);
+        return new GangLaunchpad3V2Mock(q, d, b, h, t, w, r, Pad3Impl.module(Pad3Impl.Deps(q, d, b, h, t, w, r)));
     }
 
     function test_upgrade_onlyProxyAdminOwner() public {
