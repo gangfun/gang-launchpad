@@ -15,6 +15,8 @@ import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "../src/gang/interfaces/IGangLaunchpad3.sol";
 import {Pad3CodeCheck as CC} from "./Pad3CodeCheck.sol";
+import {Pad3Impl} from "./Pad3Impl.sol";
+import {Pad3Module} from "../src/gang/Pad3Module.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangTaxHandler} from "./GangContracts.sol";
 import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
@@ -89,8 +91,9 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     ///      could initialize it; ProxyAdmin owned by OWNER), then the router on the proxy.
     function _deploy2(Stack memory s, Cfg memory c) internal override {
         s.handler = address(new GangTaxHandler(c.deployer, s.vault, s.bucket, c.dexRouter));
-        address impl = address(
-            new GangLaunchpad3(
+        // the vault mode module, then the implementation over it (Pad3Impl: the one way both are made)
+        address impl = Pad3Impl.deploy(
+            Pad3Impl.Deps(
                 s.quoteRegistry, s.vault, s.bucket, s.handler, s.tokenDeployer, c.wbnb, _ctx(c.mainnet).padRegistry
             )
         );
@@ -213,41 +216,73 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     ///         libraries, fails. On mainnet the live PoolCheck must be the one linked.
     function _checkImplCode(address impl, bool mainnet) internal {
         _checkNotPreLinked();
-        address ref = _refImpl(GangLaunchpad3(payable(impl)));
+        GangLaunchpad3 cur = GangLaunchpad3(payable(impl));
+        address ref = _refImpl(cur);
         if (!R.sameCode(impl.code, ref.code)) revert WiringCheck("pad implementation code");
         if (mainnet && !_hasPush20(impl.code, M.POOL_CHECK)) revert WiringCheck("pad PoolCheck");
+        // the module it delegates to (Pad3Module): this build's module with the same dependencies (they are its
+        // immutables, so equal code means equal dependencies), on the same rule version. It reaches PoolCheck only
+        // through CurveLogic3, deployed by this run with the libraries the pad check above pins to the live PoolCheck.
+        address m = cur.module();
+        if (m.code.length == 0 || !R.sameCode(m.code, _refModule(cur).code)) {
+            revert WiringCheck("pad module code");
+        }
+        if (Pad3Module(m).TOKEN_VERSION() != cur.TOKEN_VERSION()) {
+            revert WiringCheck("module TOKEN_VERSION");
+        }
     }
 
     /// @dev Delta review of the deploy fixes (L-1): the reference links the same libraries this run links, so an
     ///      address given for CurveLogic3 / FairLogic / LegacyRoute (--libraries, FOUNDRY_LIBRARIES) would pass with
-    ///      it. Those three must be left for forge to deploy from this build (they are then link references of this
-    ///      build's artifact); only PoolCheck may be given (the live one, checked above).
+    ///      it. Those must be left for forge to deploy from this build (they are then link references of this build's
+    ///      artifacts); only PoolCheck may be given (the live one, checked above). Both the pad's artifact and its
+    ///      module's are read, and each must link exactly the listed libraries: a library added to either later fails
+    ///      here until it is listed (vault-mode review L-2: a module library given at build time would be
+    ///      delegatecalled in the proxy).
     function _checkNotPreLinked() internal view {
-        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/out/GangLaunchpad3.sol/GangLaunchpad3.json"));
-        string[3] memory names = ["CurveLogic3", "FairLogic", "LegacyRoute"];
-        for (uint256 i; i < 3; i++) {
+        string[] memory pad = new string[](3);
+        (pad[0], pad[1], pad[2]) = ("CurveLogic3", "FairLogic", "LegacyRoute");
+        _checkLinks("GangLaunchpad3.sol/GangLaunchpad3.json", pad);
+        string[] memory module = new string[](2);
+        (module[0], module[1]) = ("CurveLogic3", "FairLogic");
+        _checkLinks("Pad3Module.sol/Pad3Module.json", module);
+    }
+
+    function _checkLinks(string memory artifact, string[] memory names) internal view {
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/out/", artifact));
+        for (uint256 i; i < names.length; i++) {
             string memory k =
                 string.concat(".deployedBytecode.linkReferences['src/gang/", names[i], ".sol'].", names[i]);
             if (!vm.keyExistsJson(json, k)) {
                 revert WiringCheck(string.concat("library given at build time (link PoolCheck only): ", names[i]));
             }
         }
+        // every library of every source file (two libraries in one file count as two)
+        string[] memory files = vm.parseJsonKeys(json, ".deployedBytecode.linkReferences");
+        uint256 n;
+        for (uint256 i; i < files.length; i++) {
+            string memory f = string.concat(".deployedBytecode.linkReferences['", files[i], "']");
+            n += vm.parseJsonKeys(json, f).length;
+        }
+        // PoolCheck: a link reference unless given (mainnet: given, the live one)
+        if (vm.keyExistsJson(json, ".deployedBytecode.linkReferences['src/launchpad-v2/PoolCheck.sol']")) n--;
+        if (n != names.length) {
+            revert WiringCheck(string.concat("libraries not listed in _checkNotPreLinked: ", artifact));
+        }
     }
 
     /// @dev This build's implementation with `cur`'s dependencies, deployed in the simulation only (every caller runs
     ///      outside the broadcast). A later version deploys its own contract here.
+    ///      The reference runs over `cur`'s own module (its address is an immutable of the implementation); the module
+    ///      itself is compared with `_refModule`.
     function _refImpl(GangLaunchpad3 cur) internal virtual returns (address) {
-        return address(
-            new GangLaunchpad3(
-                address(cur.quoteRegistry()),
-                address(cur.dividendVault()),
-                address(cur.platformBucket()),
-                cur.taxHandler(),
-                cur.tokenDeployer(),
-                cur.wbnb(),
-                address(cur.padRegistry())
-            )
-        );
+        return Pad3Impl.implWith(Pad3Impl.depsOf(cur), cur.module());
+    }
+
+    /// @dev This build's vault mode module with `cur`'s dependencies, in the simulation only. A later version deploys
+    ///      its own module here.
+    function _refModule(GangLaunchpad3 cur) internal virtual returns (address) {
+        return Pad3Impl.module(Pad3Impl.depsOf(cur));
     }
 
     /// @dev `code` holds PUSH20 `a` (0x73 ‖ a), as a library call does.

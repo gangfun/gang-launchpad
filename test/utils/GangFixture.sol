@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -170,14 +171,16 @@ abstract contract GangFixture is Test {
                 )
             );
         }
-        GangLaunchpad3 impl = new GangLaunchpad3(
-            address(quoteRegistry),
-            address(divVault),
-            address(bucket),
-            address(handler),
-            address(tokenDeployer),
-            address(wbnb),
-            address(padRegistry3)
+        GangLaunchpad3 impl = GangLaunchpad3(
+            payable(Pad3Impl.deploy(
+                    address(quoteRegistry),
+                    address(divVault),
+                    address(bucket),
+                    address(handler),
+                    address(tokenDeployer),
+                    address(wbnb),
+                    address(padRegistry3)
+                ))
         );
         pad3Impl = address(impl);
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(

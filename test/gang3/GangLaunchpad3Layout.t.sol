@@ -7,7 +7,8 @@ import {Test} from "forge-std/Test.sol";
 ///         (foundry.toml `extra_output`). Locks 0 = Ownable._owner, 1 = Ownable2Step._pendingOwner,
 ///         2 = ReentrancyGuard._status, then 3.0's variables from slot 3 (`_config` takes 3–6), and checks that the
 ///         well-formed next version (GangLaunchpad3V2Mock) appended its one new variable after the last one. Changing
-///         the pad's layout must change this test on purpose.
+///         the pad's layout must change this test on purpose. Pad3Module (delegatecalled from the pad's fallback) must
+///         mirror the layout exactly.
 contract GangLaunchpad3LayoutTest is Test {
     struct Entry {
         string label;
@@ -72,6 +73,22 @@ contract GangLaunchpad3LayoutTest is Test {
         _v1(e);
         _structs(a, e);
         _is(e[17], "v2Value", 20, "t_uint256");
+    }
+
+    /// @dev Pad3Module runs by delegatecall in the proxy's storage: it must declare exactly the pad's variables, in the
+    ///      pad's order and types (struct members included), and nothing else (its own state is in ERC-7201 namespaces).
+    function test_layout_moduleMirrorsPad() public view {
+        Entry[] memory p = _layout("GangLaunchpad3.sol/GangLaunchpad3.json");
+        Entry[] memory m = _layout("Pad3Module.sol/Pad3Module.json");
+        assertEq(m.length, p.length, "same number of variables");
+        for (uint256 i; i < p.length; i++) {
+            assertEq(m[i].label, p[i].label, "label");
+            assertEq(m[i].slot, p[i].slot, p[i].label);
+            assertEq(m[i].offset, p[i].offset, p[i].label);
+            assertEq(m[i].typ, p[i].typ, p[i].label);
+        }
+        _v1(m);
+        _structs("Pad3Module.sol/Pad3Module.json", m);
     }
 
     /// @dev A next version with two struct members swapped (Curve: creator / quote; Config: pairFactory / migrator)

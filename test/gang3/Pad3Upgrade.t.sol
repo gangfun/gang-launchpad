@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
+import {Pad3Module} from "../../src/gang/Pad3Module.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {DeployGang} from "../../script/DeployGang.s.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
@@ -35,17 +37,19 @@ contract UpgradeHarness is UpgradeGangLaunchpad3 {
         v2 = on;
     }
 
-    function _newImpl(GangLaunchpad3 cur) internal override returns (address) {
-        if (!v2) return super._newImpl(cur);
+    function _newImplWith(GangLaunchpad3 cur, address m) internal override returns (address) {
+        if (!v2) return super._newImplWith(cur, m);
+        Pad3Impl.Deps memory d = Pad3Impl.depsOf(cur);
         return address(
             new GangLaunchpad3V2Mock(
-                address(cur.quoteRegistry()),
-                address(cur.dividendVault()),
-                address(cur.platformBucket()),
-                cur.taxHandler(),
-                cur.tokenDeployer(),
-                cur.wbnb(),
-                address(cur.padRegistry())
+                d.quoteRegistry,
+                d.dividendVault,
+                d.platformBucket,
+                d.taxHandler,
+                d.tokenDeployer,
+                d.wbnb,
+                d.padRegistry,
+                m
             )
         );
     }
@@ -60,12 +64,21 @@ contract UpgradeHarness is UpgradeGangLaunchpad3 {
         return callers;
     }
 
+    /// @dev As the script: the vault flag is read before an upgrade and kept for the read after it.
     function snap(GangLaunchpad3 p, DeployGang.Stack memory s) external view returns (Snapshot memory) {
-        return _snapshot(p, s);
+        return _snapshot(p, s, _servesVaultMode(address(p)));
+    }
+
+    function snapAs(GangLaunchpad3 p, DeployGang.Stack memory s, bool vault) external view returns (Snapshot memory) {
+        return _snapshot(p, s, vault);
     }
 
     function checkImpl(address current, address impl) external {
         _checkImpl(current, impl);
+    }
+
+    function vaultState(GangLaunchpad3 p, address t) external view returns (bytes memory) {
+        return _vaultState(p, t);
     }
 
     function derivedCalls(address t) external pure returns (bytes[] memory) {
@@ -120,15 +133,25 @@ contract Pad3UpgradeTest is GangFixture {
     }
 
     function _v2() internal returns (address) {
+        Pad3Impl.Deps memory d = Pad3Impl.Deps(
+            address(quoteRegistry),
+            address(divVault),
+            address(bucket),
+            address(handler),
+            address(tokenDeployer),
+            address(wbnb),
+            address(padRegistry3)
+        );
         return address(
             new GangLaunchpad3V2Mock(
-                address(quoteRegistry),
-                address(divVault),
-                address(bucket),
-                address(handler),
-                address(tokenDeployer),
-                address(wbnb),
-                address(padRegistry3)
+                d.quoteRegistry,
+                d.dividendVault,
+                d.platformBucket,
+                d.taxHandler,
+                d.tokenDeployer,
+                d.wbnb,
+                d.padRegistry,
+                GangLaunchpad3(payable(pad3Impl)).module()
             )
         );
     }
@@ -139,20 +162,10 @@ contract Pad3UpgradeTest is GangFixture {
         vm.prank(alice, alice);
         pad.buy(t, 1 ether, 0);
         UpgradeGangLaunchpad3.Snapshot memory before = h.snap(pad3, _stack());
-        address next = address(
-            new GangLaunchpad3(
-                address(quoteRegistry),
-                address(divVault),
-                address(bucket),
-                address(handler),
-                address(tokenDeployer),
-                address(wbnb),
-                address(padRegistry3)
-            )
-        );
+        address next = Pad3Impl.deploy(Pad3Impl.depsOf(GangLaunchpad3(payable(pad3Impl))));
         vm.prank(upgrader);
         _admin().upgradeAndCall(ITransparentUpgradeableProxy(address(pad)), next, "");
-        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snap(pad3, _stack());
+        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snapAs(pad3, _stack(), before.vault);
         assertEq(afterUp.settings, before.settings);
         assertEq(afterUp.tokens.length, before.tokens.length);
         for (uint256 i; i < before.tokens.length; i++) {
@@ -168,7 +181,7 @@ contract Pad3UpgradeTest is GangFixture {
         vm.prank(alice, alice);
         pad.buy(t, 1 ether, 0);
         bytes memory call = h.derivedCalls(t)[3];
-        assertEq(bytes4(call), GangLaunchpad3.graduationRemaining.selector, "index 3 is graduationRemaining");
+        assertEq(bytes4(call), Pad3Module.graduationRemaining.selector, "index 3 is graduationRemaining");
         (, bytes memory before) = address(pad).staticcall(call);
         Pad3CurveSwapMock next = new Pad3CurveSwapMock();
         vm.prank(upgrader);
