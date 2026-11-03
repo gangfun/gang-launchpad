@@ -13,6 +13,9 @@ import {SharedPlatformFeeBucket} from "../../src/common/SharedPlatformFeeBucket.
 import {SharedMigrator} from "../../src/common/SharedMigrator.sol";
 import {TokenDeployer} from "../../src/common/TokenDeployer.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
+import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
+import {GangPadRegistry} from "../../src/gang/GangPadRegistry.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
 import {GangToken} from "../../src/gang/GangToken.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
@@ -75,6 +78,11 @@ abstract contract GangFixture is Test {
     GangRouterDeployLib.Router internal routerStack;
 
     address public owner = makeAddr("owner");
+    /// @dev 3.0 only: owner of the pad proxy's ProxyAdmin (the upgrade multisig on mainnet)
+    address public upgrader = makeAddr("upgrader");
+    address internal pad3Impl;
+    /// @dev 3.0 only: the GangPadRegistry proxy its aggregator entry reads (built by `_newPad3`)
+    GangPadRegistry internal padRegistry3;
     address public treasury = makeAddr("treasury");
     address public feeVault = makeAddr("feeVault");
     /// @dev the router's Pancake V2 router: a 1:1 stand-in answering factory() / WETH() (the real pool entries are
@@ -143,6 +151,39 @@ abstract contract GangFixture is Test {
             address(wbnb),
             address(pairFactory)
         );
+    }
+
+    /// @dev GangLaunchpad 3.0 as deployed: the implementation (the six dependencies as immutables) behind a
+    ///      TransparentUpgradeableProxy whose ProxyAdmin is owned by `upgrader`, initialized in the proxy's constructor.
+    ///      Returned typed as GangLaunchpad: 3.0 keeps every 2.0 selector, so the 2.0 suites run against it unchanged
+    ///      (test/gang3/Pad3Parity.t.sol).
+    function _newPad3() internal returns (GangLaunchpad) {
+        // the registry 3.0's aggregator entry looks other pads up in (empty here; suites that forward add pads)
+        if (address(padRegistry3) == address(0)) {
+            padRegistry3 = GangPadRegistry(
+                address(
+                    new TransparentUpgradeableProxy(
+                        address(new GangPadRegistry()),
+                        owner,
+                        abi.encodeCall(GangPadRegistry.initialize, (owner, new address[](0)))
+                    )
+                )
+            );
+        }
+        GangLaunchpad3 impl = new GangLaunchpad3(
+            address(quoteRegistry),
+            address(divVault),
+            address(bucket),
+            address(handler),
+            address(tokenDeployer),
+            address(wbnb),
+            address(padRegistry3)
+        );
+        pad3Impl = address(impl);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(impl), upgrader, abi.encodeCall(GangLaunchpad3.initialize, (owner, address(pairFactory)))
+        );
+        return GangLaunchpad(address(proxy));
     }
 
     /// @dev The Pancake V2 factory the migrator seeds pairs on; a suite that needs the pair's oracle passes one whose

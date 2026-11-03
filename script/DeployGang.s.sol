@@ -443,7 +443,7 @@ contract DeployGang is Script {
     ///      hashes masked (R.sameCode, §24.4: a re-run from another build still matches). The pad has immutables and
     ///      linked libraries, so its code is probed instead: its dispatcher must hold `sellFor` / `withdrawFor`
     ///      (PUSH4 <selector>). A state-changing probe call can't run here (view; `nonReentrant` writes).
-    function _checkOriginTrader(Stack memory s) internal view {
+    function _checkOriginTrader(Stack memory s) internal view virtual {
         if (!R.sameCode(s.tokenDeployer, type(TokenDeployer).runtimeCode)) revert WiringCheck("tokenDeployer code");
         bytes memory code = s.pad.code;
         if (!_hasSelector(code, IGangPad.sellFor.selector) || !_hasSelector(code, IGangPad.withdrawFor.selector)) {

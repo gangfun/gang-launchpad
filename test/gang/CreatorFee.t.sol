@@ -73,6 +73,7 @@ contract CreatorFeeTest is GangFixture {
     function test_routerEntries_splitTheSame() public {
         address t = _createV3(creator, address(quoteTok), _tax(0, 0, 0, address(0)));
         address r = makeAddr("listedRouter");
+        vm.etch(r, hex"00"); // a contract: 3.0 lists contracts only
         vm.prank(owner);
         pad.setRouter(r, true);
         quoteTok.mintUnlimited(r, 1 ether);

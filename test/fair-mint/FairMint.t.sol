@@ -67,16 +67,7 @@ contract FairMintTest is Test {
         bucket = new PlatformFeeBucket(owner, feeVault);
         handler = new HolderRewardHandler(owner, address(vault), address(bucket), address(0));
         tokenDeployer = new TokenDeployer(owner);
-        pad = new FairMintPad(
-            owner,
-            address(registry),
-            address(vault),
-            address(bucket),
-            address(handler),
-            address(tokenDeployer),
-            address(wbnb),
-            address(factory)
-        );
+        pad = _newFairPad();
         migrator = new SharedMigrator(owner, address(factory));
 
         vm.startPrank(owner);
@@ -94,6 +85,20 @@ contract FairMintTest is Test {
 
         _fund(dev);
         _fund(buyer);
+    }
+
+    /// @dev The pad under test (GangLaunchpad 2.0 here; test/gang3/Pad3FairParity.t.sol re-runs this suite on 3.0).
+    function _newFairPad() internal virtual returns (FairMintPad) {
+        return new FairMintPad(
+            owner,
+            address(registry),
+            address(vault),
+            address(bucket),
+            address(handler),
+            address(tokenDeployer),
+            address(wbnb),
+            address(factory)
+        );
     }
 
     // ---------------------------------------------------------------- helpers
