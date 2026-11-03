@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
@@ -17,8 +18,10 @@ import {GangGatewayPhishingTest} from "../router/GangGatewayPhishing.t.sol";
 ///      own curve dependencies are placeholders): the implementation behind its proxy, owned by `owner_`.
 library Pad3Entry {
     function deploy(address wbnb, address registry, address owner_) internal returns (address) {
-        GangLaunchpad3 impl = new GangLaunchpad3(
-            address(0xA001), address(0xA002), address(0xA003), address(0xA004), address(0xA005), wbnb, registry
+        GangLaunchpad3 impl = GangLaunchpad3(
+            payable(Pad3Impl.deploy(
+                    address(0xA001), address(0xA002), address(0xA003), address(0xA004), address(0xA005), wbnb, registry
+                ))
         );
         return address(
             new TransparentUpgradeableProxy(

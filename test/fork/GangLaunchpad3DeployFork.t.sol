@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -29,20 +30,27 @@ import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
 /// @dev A partner vault stand-in (the vault pad lists contracts only).
 contract VaultStub {}
 
-/// @dev The upgrade script of a build whose next version is GangLaunchpad3V2Mock (its `_newImpl`).
+/// @dev GangLaunchpad3V2Mock with `cur`'s dependencies over `m` (a vault mode module).
+function _v2Over(GangLaunchpad3 cur, address m) returns (address) {
+    Pad3Impl.Deps memory d = Pad3Impl.depsOf(cur);
+    return address(
+        new GangLaunchpad3V2Mock(
+            d.quoteRegistry, d.dividendVault, d.platformBucket, d.taxHandler, d.tokenDeployer, d.wbnb, d.padRegistry, m
+        )
+    );
+}
+
+/// @dev This build's implementation with `p`'s dependencies but another registry, over `p`'s module.
+function _otherRegistry(GangLaunchpad3 p) returns (address) {
+    Pad3Impl.Deps memory d = Pad3Impl.depsOf(p);
+    d.padRegistry = address(0xBEEF);
+    return Pad3Impl.implWith(d, p.module());
+}
+
+/// @dev The upgrade script of a build whose next version is GangLaunchpad3V2Mock (its `_newImplWith`).
 contract UpgradeToV2Mock is UpgradeGangLaunchpad3 {
-    function _newImpl(GangLaunchpad3 cur) internal override returns (address) {
-        return address(
-            new GangLaunchpad3V2Mock(
-                address(cur.quoteRegistry()),
-                address(cur.dividendVault()),
-                address(cur.platformBucket()),
-                cur.taxHandler(),
-                cur.tokenDeployer(),
-                cur.wbnb(),
-                address(cur.padRegistry())
-            )
-        );
+    function _newImplWith(GangLaunchpad3 cur, address m) internal override returns (address) {
+        return _v2Over(cur, m);
     }
 }
 
@@ -57,17 +65,7 @@ contract DeployGangLaunchpad3Harness is DeployGangLaunchpad3 {
 
     function _refImpl(GangLaunchpad3 cur) internal override returns (address) {
         if (!v2) return super._refImpl(cur);
-        return address(
-            new GangLaunchpad3V2Mock(
-                address(cur.quoteRegistry()),
-                address(cur.dividendVault()),
-                address(cur.platformBucket()),
-                cur.taxHandler(),
-                cur.tokenDeployer(),
-                cur.wbnb(),
-                address(cur.padRegistry())
-            )
-        );
+        return _v2Over(cur, cur.module());
     }
 
     function wiringJson(DeployGang.Stack memory s) external pure returns (string memory) {
@@ -252,17 +250,7 @@ contract GangLaunchpad3DeployForkTest is Test {
         vm.revertToState(snap);
 
         GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
-        address other = address(
-            new GangLaunchpad3(
-                address(p.quoteRegistry()),
-                address(p.dividendVault()),
-                address(p.platformBucket()),
-                p.taxHandler(),
-                p.tokenDeployer(),
-                p.wbnb(),
-                address(0xBEEF)
-            )
-        );
+        address other = _otherRegistry(p);
         vm.prank(SAFE);
         ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(s.pad), other, "");
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad.padRegistry"));
@@ -392,32 +380,12 @@ contract GangLaunchpad3DeployForkTest is Test {
         u.run();
         assertEq(R.implementationOf(address(p)), cur, "printed for the Safe, not sent");
 
-        address wrong = address(
-            new GangLaunchpad3(
-                address(p.quoteRegistry()),
-                address(p.dividendVault()),
-                address(p.platformBucket()),
-                p.taxHandler(),
-                p.tokenDeployer(),
-                p.wbnb(),
-                address(0xBEEF)
-            )
-        );
+        address wrong = _otherRegistry(p);
         vm.setEnv("PAD3_IMPL", vm.toString(wrong));
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "PAD3_IMPL dependencies differ"));
         u.run();
 
-        address next = address(
-            new GangLaunchpad3V2Mock(
-                address(p.quoteRegistry()),
-                address(p.dividendVault()),
-                address(p.platformBucket()),
-                p.taxHandler(),
-                p.tokenDeployer(),
-                p.wbnb(),
-                address(p.padRegistry())
-            )
-        );
+        address next = _v2Over(p, Pad3Impl.module(Pad3Impl.depsOf(p)));
         vm.setEnv("PAD3_IMPL", vm.toString(next));
         // not this build's GangLaunchpad3 code (final audit M-1); then with the script of the build that ships it
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad implementation code"));
@@ -437,17 +405,7 @@ contract GangLaunchpad3DeployForkTest is Test {
     function _upgrade(DeployGang.Stack memory s, GangLaunchpad3 p, address admin, address t) internal {
         (,, uint128 rq,, uint128 gradAmt,,,,,,,) = p.curves(t);
         uint256 count = p.tokenCount();
-        address next = address(
-            new GangLaunchpad3V2Mock(
-                address(p.quoteRegistry()),
-                address(p.dividendVault()),
-                address(p.platformBucket()),
-                p.taxHandler(),
-                p.tokenDeployer(),
-                p.wbnb(),
-                address(p.padRegistry())
-            )
-        );
+        address next = _v2Over(p, Pad3Impl.module(Pad3Impl.depsOf(p)));
         vm.prank(SAFE);
         ProxyAdmin(admin)
             .upgradeAndCall(

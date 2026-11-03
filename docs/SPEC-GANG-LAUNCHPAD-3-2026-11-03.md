@@ -1,7 +1,7 @@
 # 规格 · GangLaunchpad 3.0：固定地址的可升级 pad，内置聚合器入口
 
 - 日期：2026-11-03
-- 源码：`src/gang/GangLaunchpad3.sol`、`src/gang/CurveLogic3.sol`、`src/gang/LegacyRoute.sol`、`src/gang/interfaces/IGangLaunchpad3.sol`
+- 源码：`src/gang/GangLaunchpad3.sol`、`src/gang/Pad3Module.sol`、`src/gang/Pad3VaultStore.sol`、`src/gang/CurveLogic3.sol`、`src/gang/LegacyRoute.sol`、`src/gang/interfaces/IGangLaunchpad3.sol`
 - 部署：`script/DeployGangLaunchpad3.s.sol`；升级：`script/UpgradeGangLaunchpad3.s.sol`；测试网验收：`script/GangLaunchpad3TestnetAcceptance.s.sol`
 
 ## 0. 为什么做
@@ -22,7 +22,8 @@
 - **存储**：只能在最后追加新变量，不能重排、改类型或删除，继承列表也不能改。`test/gang3/GangLaunchpad3Layout.t.sol` 锁定了每个槽位，以及 `Config`、`Curve`、`Sale`、`Position` 每个结构体成员的位置。`Config` 内联在槽位 3–6，布局测试不允许再给它加成员，新设置要放进新变量。以后新增的状态建议放进 ERC-7201 命名空间结构体。
 - **事件只增不改**：2.0 的事件照发，签名不变；新信息用新事件（§4）。
 - **需要初始化的新版本**：把常量 `INIT_VERSION` 改为 n，`reinitializer(INIT_VERSION)` 和 `initVersion()` 都用这个常量；初始化调用必须和升级放在同一笔 `ProxyAdmin.upgradeAndCall` 里，否则中间可能被抢先调用。升级脚本会强制执行这一条。
-- **交易者检查**：`_checkCurveTrader` / `_lockedOf` 这两个钩子，本地买卖和入口都会走（这一版里都是空的）。以后的版本如果让钩子拒绝某些交易者，`tryBuy` 也必须对这些交易者报 0。
+- **交易者检查**：`_checkCurveTrader` / `_lockedOf` 这两个钩子，本地买卖和入口都会走。金库模式（§9）用它们拒绝币自己的金库交易、把锁仓量算进 1% 上限；对 3.0 自己的币，`tryBuy` 对被拒绝的交易者报 0（老 pad 的币按老 pad 的规则成交，报价不看老 pad 的金库）。以后的版本再加拒绝规则，`tryBuy` 也必须同步。
+- **模块**：实现合约超过 24 KB 限制之前，把一部分函数放进模块 `Pad3Module`。实现合约里没有的选择器，由 `fallback` 用 delegatecall 转给模块，模块地址是实现合约的 immutable（构造函数第 8 个参数）。所以模块运行在代理的存储、余额和 `msg.sender` 下，对外仍是同一个地址、同样的选择器。模块必须逐个声明和实现合约相同的存储变量（顺序、类型、结构体成员都相同，布局测试逐项比对），自己的新状态放在 ERC-7201 命名空间里。模块单独调用时，它自己的存储是空的，owner 是 `0xdEaD`，什么也改不了。升级时模块和实现合约一起换：新实现带新模块的地址。不允许再串一层：模块自己不设 fallback 转给第二个模块（脚本和布局测试只检查一层）。实现合约的 ABI 里没有模块的函数、事件和 error，BscScan「Read as Proxy」和按 ABI 生成接口的链下代码要用两者合并后的 ABI；金库事件由 3.0 代理地址发出。
 
 ## 2. 交易接口
 
@@ -119,7 +120,8 @@
 - 实现合约已锁定，代理已初始化；
 - 实现合约的代码，和脚本在模拟里用本次构建、相同依赖现场部署的参照合约逐字节一致（只有 metadata 不比）。链接的库地址也必须相同：forge 用 CREATE2 部署库，地址由代码决定，所以库也是本次构建的。主网上，PoolCheck 还必须是线上那一个；
 - 7 个依赖地址；
-- handler 如果归一个 GangHandlerAdmin 管，这个 admin 的代码也必须是本次构建的，而且没有待接收的 owner。
+- handler 如果归一个 GangHandlerAdmin 管，这个 admin 的代码也必须是本次构建的，而且没有待接收的 owner；
+- 实现合约指向的模块，代码和本次构建、相同依赖现场部署的参照模块逐字节一致（依赖是模块的 immutable，代码相同即依赖相同），`TOKEN_VERSION` 和实现合约相同。模块只经 CurveLogic3 用到 PoolCheck，而 CurveLogic3 由本次运行部署，链接的库已由实现合约那一项钉在线上的 PoolCheck 上。
 
 ## 6. 升级流程
 
@@ -128,7 +130,7 @@
 1. 新实现由 `PAD3_IMPL` 指定，或者由脚本按当前实现的依赖地址现场部署。脚本先确认：
    - 新实现的 7 个依赖和当前实现完全一致；
    - 新实现已锁定，不是当前实现，带有入口函数；
-   - 新实现的代码，和脚本在模拟里用本次构建现场部署的一份参照合约（`_newImpl`，依赖地址相同）逐字节一致，链接的库地址也必须相同。所以把 `PAD3_IMPL` 换成一个外观相同但另有代码的合约，或者链接了别的库，检查都不会通过。以后的版本改写 `_newImpl` 即可；
+   - 新实现的代码，和脚本在模拟里用本次构建现场部署的一份参照合约（`_newImplWith`，依赖地址相同，指向新实现自己的模块）逐字节一致，链接的库地址也必须相同；它的模块也按 §5 比对。所以把 `PAD3_IMPL` 换成一个外观相同但另有代码的合约，或者链接了别的库、指向别的模块，检查都不会通过。以后的版本改写 `_newImplWith` 即可；
    - 它的 `TOKEN_VERSION` 不低于当前实现；
    - 它的 `initVersion()` 不低于代理当前的初始化版本。如果更高（新版本带 reinitializer），必须提供 `PAD3_INIT_CALL`，和升级放在同一笔交易里；如果相等，不允许带初始化调用。
 2. 以 ProxyAdmin owner 的身份在模拟里执行 `upgradeAndCall(proxy, impl, PAD3_INIT_CALL)`，然后检查：
@@ -160,6 +162,9 @@
 
 ## 8. 测试
 
+- `test/gang3/Pad3Vault.t.sol`：金库版 pad（GangVaultLaunchpad）的整套测试在 3.0 代理上重跑（3.0 的其他创建入口保持开放，这一条单独改写）；另有入口买卖、金库经入口交易被拒、创建记录和 `createWithGradTarget` 逐项一致、fallback 和模块直接调用的测试。`GangLaunchpad3Layout.t.sol` 比对模块和实现合约的存储布局。
+- `test/fork/Pad3VaultUpgradeFork.t.sol`：在 BSC 主网 fork 上用 `UpgradeGangLaunchpad3` 检查并升级线上 3.0 代理，执行打印出的 Safe 交易，然后在同一地址上跑金库币的创建、入口买入、锁仓（计入上限、金库不能交易）、释放、卖出，并确认线上已有的 3.0 币仍可交易。
+
 - `test/gang3/`：
   - 2.0 的曲线、模块和打新测试在 3.0 代理上重跑；
   - 3.0 自己的初始化、升级、权限、存储布局（包括结构体成员）测试；
@@ -171,3 +176,23 @@
   - 经 3.0 交易 1.0、2.0、金库版、飞轮 V2 的币，以及 3.0 自己的币，并经线上 Gateway 交易 3.0 的币；
   - 演练升级脚本和一次 Safe 升级；
   - 触发部署脚本的各项拦截检查。
+
+## 9. 金库模式（模块）
+
+规则和金库版 pad（GangVaultLaunchpad）相同，放在 3.0 的同一个地址上，代码在 `Pad3Module`，状态在 ERC-7201 命名空间 `gang.pad3.vault`（`Pad3VaultStore`）。
+
+- **管理**（owner）：`setVault(vault, enabled)` 登记或下架金库：只接受合约，不能是 router；下架时清掉它的指定创建人。曾经登记过的地址（`everVault`）永远不能再被设为 router。`setVaultCreator(vault, creator)` 指定下一个可以用这个金库创建代币的钱包，一次有效。
+- **创建**：`createWithVault(..., gradBnb, vault)` 只有被指定的钱包能调，创建后指定作废（创建失败则保留）。代币的曲线、毕业门槛、规则版本、记录和事件与 `createWithGradTarget` 完全一致，另外把这个币和金库永久绑定（`vaultOf`），发 `VaultBound`。3.0 的其他创建入口保持开放，那些币没有金库。
+- **锁仓 / 释放**：只能由这个币自己的金库调用，毕业前，`user` 必须是 `tx.origin` 且是 Agent。
+  - `vaultLock(token, user, amount)`：金库仍在登记中才能锁。币从用户经 pad 进入金库，记入 `lockedOf`。
+  - `vaultRelease(token, user, amount)`：金库下架后也能释放，币不会被困住。币从金库到用户，不受 1% 上限限制；`lockedOf` 最多减到 0。
+  - 分红币：两边的分红份额都按余额同步。
+- **对交易的影响**（本地买卖和聚合器入口相同）：
+  - 用户的锁仓量和钱包余额一起计入 1% 上限，`tryBuy` 的报价也按这个算；
+  - 币自己的金库不能买卖这个币（`VaultCannotTrade`），`tryBuy` 对它报 0。
+- **查询**：`isVault`、`vaultOf`、`lockedOf`、`everVault`、`vaultCreator`。
+
+同一个模块里还放着几个只给链下用的查询函数（税配置检查、毕业金额、打新的预览和配置检查、退出费等），从实现合约挪过来是为了大小。选择器不变，经 fallback 调用，结果与原来相同；链上只有 GangRouter 的打新 `mintFor` 会调 `previewMint`，经 fallback 照常可用，多一次 delegatecall。升级脚本的前后对比覆盖其中的毕业金额 / 剩余、税配置、退出费和铸币预览，其余几个靠模块代码逐字节比对。
+
+**金库状态的升级规则**：`Pad3VaultStore.Layout` 只能在末尾追加成员，`SLOT` 永远不变。编译器的存储布局不包含命名空间，所以 `test/gang3/Pad3Vault.t.sol` 用 `vm.load` 钉住 `SLOT` 和每个成员的位置；升级脚本在当前实现已有金库模式时，对抽样的币比对金库状态（`vaultOf`、金库的登记 / 历史 / 指定创建人、创建人的 `lockedOf`）。部署和升级脚本要求实现合约和模块各自只链接列出的库（PoolCheck 除外），以后给任一方新增库，要先加进 `_checkNotPreLinked` 的名单。
+
