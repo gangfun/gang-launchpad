@@ -235,6 +235,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     function setRouter(address router_, bool enabled) external onlyOwner {
         if (router_ == address(0)) revert ZeroAddress();
+        // contracts only, as `setCaller` (final audit L-1): a listed EOA could later delegate to any code (EIP-7702)
+        if (enabled && !_isPlainContract(router_)) revert NotAContract();
         routers[router_] = enabled;
         emit RouterSet(router_, enabled);
     }

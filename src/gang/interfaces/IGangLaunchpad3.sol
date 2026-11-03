@@ -58,7 +58,8 @@ interface IGangLaunchpad3 {
     /// @notice A contract allowed (or no longer allowed) to call `sellToken` for a seller other than itself, and to
     ///         receive a pay-to `sellToken`'s proceeds.
     event CallerSet(address indexed caller, bool allowed);
-    /// @notice An entry trade of an older pad's token, forwarded to `pad` (after GatewayBuy / GatewaySell's data):
+    /// @notice An entry trade of an older pad's token, forwarded to `pad` (in the log it comes BEFORE the trade's
+    ///         GatewayBuy / GatewaySell; pair them by transaction and token, not by log order):
     ///         `quoteAmount` = funds the older pad kept (buy) / paid after its fee (sell), `tokenAmount` = tokens
     ///         `trader` received (buy) / sold (sell). Market data stays the older pad's own Buy / Sell (trades also reach
     ///         it directly); this one attributes the entry's share.

@@ -2,6 +2,8 @@
 pragma solidity 0.8.28;
 
 import {console} from "forge-std/Script.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -10,6 +12,9 @@ import {TokenDeployer} from "../src/common/TokenDeployer.sol";
 import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
 import {GangLaunchpad3} from "../src/gang/GangLaunchpad3.sol";
 import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
+import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
+import {IGangLaunchpad3} from "../src/gang/interfaces/IGangLaunchpad3.sol";
+import {Pad3CodeCheck as CC} from "./Pad3CodeCheck.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangTaxHandler} from "./GangContracts.sol";
 import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
@@ -35,7 +40,9 @@ import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
 ///           vault pad and the 铸币飞轮 keep creating (3.0 has neither mode).
 /// @dev Link as DeployGangLaunchpad2 (mainnet: PoolCheck only; never CurveLogic3 / FairLogic / LegacyRoute, forge
 ///      deploys them fresh). Env as DeployGangLaunchpad2 (GANG_PAD = 1.0: the shared contracts are read from it),
-///      plus: PAD3_NEW (mainnet phase 1), CUTOVER (print batch 5), CALLERS (comma-separated contracts, optional; testnet phase 1 lists them
+///      plus: PAD3_NEW (mainnet phase 1), GANG_PAD3_DEPLOYER_NONCE (phase 2, from phase 1's log; mainnet required),
+///      PAD3_LOG_SCAN (optional), CALLER_CODEHASHES (mainnet, with CALLERS), CALLERS_PROXY_OK,
+///      CUTOVER (print batch 5), CALLERS (comma-separated contracts, optional; testnet phase 1 lists them
 ///      itself), LEGACY_PADS (testnet only, comma-separated; default: the registry's pads that have a router list),
 ///      GANG_PAD2 (testnet only: the 2.0 to stop in the cut-over).
 contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
@@ -60,10 +67,20 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         return "GANG_PAD3_BLOCK";
     }
 
+    uint256 internal constant LOG_CHUNK = 5_000;
+
     function _ctx(bool mainnet) internal view override returns (Ctx memory x) {
         x = super._ctx(mainnet);
-        if (mainnet && _envAddr(_padEnv(), address(0)) == address(0) && !vm.envOr("PAD3_NEW", false)) {
-            revert WiringCheck("phase 1 on mainnet needs PAD3_NEW=true");
+        if (mainnet && _envAddr(_padEnv(), address(0)) == address(0)) {
+            if (!vm.envOr("PAD3_NEW", false)) revert WiringCheck("phase 1 on mainnet needs PAD3_NEW=true");
+            // final audit (deploy) info: a leftover PAD3_NEW with GANG_PAD3 forgotten must not deploy a second 3.0
+            address[] memory pads = GangPadRegistry(x.padRegistry).pads();
+            for (uint256 i; i < pads.length; i++) {
+                address impl = R.implementationOf(pads[i]);
+                if (impl.code.length != 0 && _hasSelector(impl.code, GangLaunchpad3.buyTokenAMAP.selector)) {
+                    revert WiringCheck("a GangLaunchpad 3.0 is already registered: set GANG_PAD3");
+                }
+            }
         }
     }
 
@@ -132,7 +149,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     ///      mainnet the platform Safe), the implementation (locked; a 3.0: its version, fee cap, registry), the proxy
     ///      initialized once, and the entry's libraries live: an unknown token goes through LegacyRoute (a missing
     ///      library returns nothing, and the decode reverts) and comes back as "not a Gang token".
-    function _checkPad3(Stack memory s, Cfg memory c, Ctx memory x) internal view {
+    function _checkPad3(Stack memory s, Cfg memory c, Ctx memory x) internal {
         address admin = R.adminOf(s.pad);
         address impl = R.implementationOf(s.pad);
         if (admin != vm.computeCreateAddress(s.pad, 1) || !R.isProxyCode(s.pad, admin)) {
@@ -142,6 +159,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         address upgrader = ProxyAdmin(admin).owner();
         if (upgrader != c.owner || (c.mainnet && upgrader != M.OWNER_SAFE)) revert WiringCheck("pad ProxyAdmin owner");
         if (impl.code.length == 0) revert WiringCheck("pad implementation");
+        _checkImplCode(impl, c.mainnet);
         (uint64 implVersion,) = R.initState(impl);
         if (implVersion != type(uint64).max) revert WiringCheck("pad implementation locked");
         // initialized (1 at deploy; a later upgrade's reinitializer raises it), not mid-initialization
@@ -174,12 +192,161 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         for (uint256 i; i < callers.length; i++) {
             if (!_isContract(callers[i])) revert WiringCheck("CALLERS: not a contract");
         }
+        // final audit (deploy) M-3: while the deploy wallet still owns 3.0 (between phase 1 and batch 2), nothing it
+        // could have listed on the side may reach the Safe: routers / callers from the pad's own events, recipients
+        // from the handler's list
+        if (c.owner != c.deployer && Ownable(s.pad).owner() == c.deployer) {
+            if (_envAddr(_padEnv(), address(0)) != address(0)) {
+                _checkDeployerNonce(s, c);
+                if (vm.envOr("PAD3_LOG_SCAN", false)) _scanPadLists(s, x, c);
+            }
+            if (GangTaxHandler(s.handler).recipients().length != (s.recipient == address(0) ? 0 : 1)) {
+                revert WiringCheck("handler recipients listed by the deploy wallet");
+            }
+        }
+    }
+
+    /// @notice The implementation is exactly this build's code (final audit (deploy) M-1 / L-1): byte for byte the
+    ///         reference `_refImpl` deploys from this build with the same seven dependencies — immutables, linked
+    ///         libraries and all, metadata aside. The libraries forge links here are this build's (CREATE2: an address
+    ///         holds only the code it was derived from), so a look-alike implementation, or one linked to other
+    ///         libraries, fails. On mainnet the live PoolCheck must be the one linked.
+    function _checkImplCode(address impl, bool mainnet) internal {
+        _checkNotPreLinked();
+        address ref = _refImpl(GangLaunchpad3(payable(impl)));
+        if (!R.sameCode(impl.code, ref.code)) revert WiringCheck("pad implementation code");
+        if (mainnet && !_hasPush20(impl.code, M.POOL_CHECK)) revert WiringCheck("pad PoolCheck");
+    }
+
+    /// @dev Delta review of the deploy fixes (L-1): the reference links the same libraries this run links, so an
+    ///      address given for CurveLogic3 / FairLogic / LegacyRoute (--libraries, FOUNDRY_LIBRARIES) would pass with
+    ///      it. Those three must be left for forge to deploy from this build (they are then link references of this
+    ///      build's artifact); only PoolCheck may be given (the live one, checked above).
+    function _checkNotPreLinked() internal view {
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/out/GangLaunchpad3.sol/GangLaunchpad3.json"));
+        string[3] memory names = ["CurveLogic3", "FairLogic", "LegacyRoute"];
+        for (uint256 i; i < 3; i++) {
+            string memory k =
+                string.concat(".deployedBytecode.linkReferences['src/gang/", names[i], ".sol'].", names[i]);
+            if (!vm.keyExistsJson(json, k)) {
+                revert WiringCheck(string.concat("library given at build time (link PoolCheck only): ", names[i]));
+            }
+        }
+    }
+
+    /// @dev This build's implementation with `cur`'s dependencies, deployed in the simulation only (every caller runs
+    ///      outside the broadcast). A later version deploys its own contract here.
+    function _refImpl(GangLaunchpad3 cur) internal virtual returns (address) {
+        return address(
+            new GangLaunchpad3(
+                address(cur.quoteRegistry()),
+                address(cur.dividendVault()),
+                address(cur.platformBucket()),
+                cur.taxHandler(),
+                cur.tokenDeployer(),
+                cur.wbnb(),
+                address(cur.padRegistry())
+            )
+        );
+    }
+
+    /// @dev `code` holds PUSH20 `a` (0x73 ‖ a), as a library call does.
+    function _hasPush20(bytes memory code, address a) internal pure returns (bool) {
+        bytes21 want = bytes21(abi.encodePacked(bytes1(0x73), a));
+        for (uint256 i; i + 21 <= code.length; i++) {
+            bytes21 w;
+            assembly ("memory-safe") {
+                w := mload(add(add(code, 32), i))
+            }
+            if (w == want) return true;
+        }
+        return false;
+    }
+
+    /// @dev Only the deploy wallet can list anything on 3.0 or its handler before the Safe accepts them, and each
+    ///      such call is a transaction of its own: its nonce must be phase 1's (GANG_PAD3_DEPLOYER_NONCE, printed at
+    ///      the end of phase 1; required on mainnet) plus the hand-over calls phase 2 itself sent (one per pending
+    ///      owner). Any other transaction from it in between refuses. Needs no log reads.
+    function _checkDeployerNonce(Stack memory s, Cfg memory c) internal view {
+        uint256 n0 = vm.envOr("GANG_PAD3_DEPLOYER_NONCE", uint256(0));
+        if (n0 == 0) {
+            if (c.mainnet) revert WiringCheck("GANG_PAD3_DEPLOYER_NONCE required on mainnet");
+            return;
+        }
+        uint256 handOvers = (Ownable2Step(s.pad).pendingOwner() == c.owner ? 1 : 0)
+            + (Ownable2Step(s.handler).pendingOwner() == c.owner ? 1 : 0);
+        if (vm.getNonce(c.deployer) != n0 + handOvers) {
+            revert WiringCheck("deploy wallet sent other transactions after phase 1");
+        }
+    }
+
+    /// @dev Optional (PAD3_LOG_SCAN=true, with an RPC that serves eth_getLogs completely): every address that ever got
+    ///      a RouterSet / CallerSet on the pad since GANG_PAD3_BLOCK: listed now only if
+    ///      it is the router or the gateway (routers), or in CALLERS (callers). Needs an RPC that serves eth_getLogs
+    ///      completely (public BSC endpoints may drop logs silently).
+    function _scanPadLists(Stack memory s, Ctx memory x, Cfg memory c) internal view {
+        if (!c.mainnet && vm.envOr("PAD3_SKIP_LOG_SCAN", false)) return;
+        if (s.padBlock == 0) revert WiringCheck("GANG_PAD3_BLOCK required (log scan)");
+        bytes32[2] memory sigs = [IGangLaunchpad.RouterSet.selector, IGangLaunchpad3.CallerSet.selector];
+        bytes32[] memory topics = new bytes32[](1);
+        for (uint256 k; k < 2; k++) {
+            topics[0] = sigs[k];
+            for (uint256 from = s.padBlock; from <= block.number; from += LOG_CHUNK) {
+                uint256 to = from + LOG_CHUNK - 1;
+                if (to > block.number) to = block.number;
+                Vm.EthGetLogs[] memory logs;
+                try vm.eth_getLogs(from, to, s.pad, topics) returns (Vm.EthGetLogs[] memory l) {
+                    logs = l;
+                } catch {
+                    revert WiringCheck("pad logs unreadable: phase 2 needs an RPC that serves eth_getLogs");
+                }
+                address[] memory seen = new address[](logs.length);
+                for (uint256 i; i < logs.length; i++) {
+                    seen[i] = address(uint160(uint256(logs[i].topics[1])));
+                }
+                _checkSeen(s, x, k == 0, seen);
+            }
+        }
+    }
+
+    /// @dev `seen` addresses (from RouterSet if `routers`, else CallerSet) listed now beyond the expected ones refuse.
+    function _checkSeen(Stack memory s, Ctx memory x, bool routers, address[] memory seen) internal view {
+        GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
+        address[] memory callers = _callers();
+        for (uint256 i; i < seen.length; i++) {
+            address a = seen[i];
+            if (routers) {
+                if (p.routers(a) && a != s.router && a != x.gateway) {
+                    revert WiringCheck("pad.routers: unexpected router");
+                }
+            } else if (p.isCaller(a)) {
+                bool ok;
+                for (uint256 j; j < callers.length && !ok; j++) {
+                    ok = callers[j] == a;
+                }
+                if (!ok) revert WiringCheck("pad.isCaller: unexpected caller");
+            }
+        }
+    }
+
+    /// @dev Final audit (deploy) M-2: the owner's GangHandlerAdmin only if it is this build's GangHandlerAdmin code
+    ///      (its `handler` immutable aside) with no hand-over pending — a look-alike returning the right `handler()` /
+    ///      `owner()` must not pass for it.
+    function _isOwnersAdmin(address who, address handler, address owner) internal view override returns (bool) {
+        if (!super._isOwnersAdmin(who, handler, owner)) return false;
+        (bool ok,) = CC.check(who, "GangHandlerAdmin.sol/GangHandlerAdmin.json", false);
+        return ok && Ownable2Step(who).pendingOwner() == address(0);
     }
 
     // ---------------------------------------------------------------- batches 3–5
     /// @dev Once 3.0 is open: forward (batch 3), callers (batch 4), cut-over (batch 5). Each runs in the simulation
     ///      first, as its owner sends it, and must leave what it is for; then it is rolled back and printed.
     function _printCutover(Stack memory s, Ctx memory x, Cfg memory c) internal override {
+        // final audit (deploy) L-3: open is not enough — only once OWNER holds the pad and the handler
+        if (!_ownerHolds(s, c)) {
+            console.log("\nbatches 3-5 wait until OWNER owns 3.0 and its handler (run batch 2, then phase 2 again)");
+            return;
+        }
         string memory j = _forwardJson(s, x, c);
         if (bytes(j).length == 0) {
             console.log("\nforward: every older pad lists 3.0 as a router");
@@ -207,6 +374,14 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
             console.log("\n=== Safe batch 5 (cut-over, only once backend / site / CLI / modules use 3.0) ===");
             console.log(j);
         }
+    }
+
+    function _ownerHolds(Stack memory s, Cfg memory c) internal view returns (bool) {
+        address ho = Ownable(s.handler).owner();
+        return Ownable(s.pad).owner() == c.owner && Ownable2Step(s.pad).pendingOwner() == address(0)
+            && (c.mainnet ? c.owner == M.OWNER_SAFE : true)
+            && ((ho == c.owner && Ownable2Step(s.handler).pendingOwner() == address(0))
+                || _isOwnersAdmin(ho, s.handler, c.owner));
     }
 
     /// @dev Batch 3: `setRouter(3.0, true)` on each older pad that does not list 3.0 yet ("" when none). One owner for
@@ -254,7 +429,8 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
             if (!p.isCaller(callers[i])) todo[n++] = callers[i];
         }
         if (n == 0) return "";
-        address owner = Ownable(s.pad).owner();
+        _checkCallerCode(todo, n, c.mainnet);
+        address owner = c.mainnet ? M.OWNER_SAFE : Ownable(s.pad).owner();
         uint256 snap = vm.snapshotState();
         for (uint256 i; i < n; i++) {
             vm.prank(owner);
@@ -340,8 +516,34 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         }
     }
 
-    function _callers() internal view returns (address[] memory) {
+    function _callers() internal view virtual returns (address[] memory) {
         return vm.envOr("CALLERS", ",", new address[](0));
+    }
+
+    /// @dev Final audit (deploy) L-4: each caller to list has the codehash it was reviewed with (CALLER_CODEHASHES,
+    ///      same order as CALLERS; required on mainnet), and is not an upgradeable proxy unless CALLERS_PROXY_OK=true
+    ///      (a proxy's codehash says nothing of the logic behind it).
+    function _checkCallerCode(address[] memory todo, uint256 n, bool mainnet) internal view {
+        address[] memory callers = _callers();
+        bytes32[] memory hashes = vm.envOr("CALLER_CODEHASHES", ",", new bytes32[](0));
+        if (hashes.length == 0 && mainnet) revert WiringCheck("CALLER_CODEHASHES required on mainnet");
+        if (hashes.length != 0 && hashes.length != callers.length) revert WiringCheck("CALLER_CODEHASHES length");
+        for (uint256 i; i < n; i++) {
+            if (hashes.length != 0) {
+                bool found;
+                for (uint256 j; j < callers.length && !found; j++) {
+                    found = callers[j] == todo[i] && hashes[j] == todo[i].codehash;
+                }
+                if (!found) revert WiringCheck("CALLERS: codehash differs from the reviewed one");
+            }
+            if (
+                R.implementationOf(todo[i]) != address(0)
+                    || vm.load(todo[i], 0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50) != 0
+            ) {
+                if (!vm.envOr("CALLERS_PROXY_OK", false)) revert WiringCheck("CALLERS: an upgradeable proxy");
+                console.log("callers: WARNING upgradeable proxy, implementation", R.implementationOf(todo[i]));
+            }
+        }
     }
 
     function _isContract(address a) internal view returns (bool) {
@@ -370,6 +572,9 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         console.log("shared (1.0's): DIVIDEND_VAULT", s.vault);
         console.log("shared (1.0's): MIGRATOR", s.migrator);
         console.log("shared (1.0's): TOKEN_DEPLOYER", s.tokenDeployer);
+        if (_envAddr(_padEnv(), address(0)) == address(0)) {
+            console.log("GANG_PAD3_DEPLOYER_NONCE (set it for phase 2)", vm.getNonce(c.deployer));
+        }
         if (s.padBlock != 0) {
             console.log(
                 "--- for the keeper / indexer: 3.0 serves both tracks, next to 1.0 / 2.0 (start block below) ---"
