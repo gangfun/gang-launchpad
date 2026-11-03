@@ -84,6 +84,11 @@ GangBond is built in per pad generation: BSC mainnet 3.0 `0x830b38F695Ca1bCbdD31
 `0xa87727dc3CC28a44709649A22aDbD77287B99fc1` (2.0 `0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9`, 1.0
 `0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086`). A token's bond is on its own generation's GangBond.
 
+**No bond on a vault-bound token** (`gang create --vault`; `gang info` → `vault`): `gang bond post` refuses it, and
+`gang bond status` says no bond can be posted. A bond is slashed as soon as the creator's wallet balance is below X,
+and tokens locked into the vault (often from the vault's own app) leave that wallet, so one lock would lose the whole
+bond. Don't offer a bond for such a token.
+
 ## Sell protection
 
 `gang sell` (on the curve or in the pool) and `gang withdraw` (打新 shares back while minting, each share = 50,000

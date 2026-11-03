@@ -3,7 +3,7 @@ import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund,
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
-import { atTokenPad, CREATOR_FEE_ABI, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, VAULT_GEN, vaultGenOf, vaultModeOf } from './gangpad.js'
+import { atTokenPad, CREATOR_FEE_ABI, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, tokenVaultOf, VAULT_GEN, VAULT_NO_BOND, vaultGenOf, vaultModeOf } from './gangpad.js'
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
@@ -198,15 +198,7 @@ async function labelOf(ctx, registry, recipient) {
   try { return (await ctx.read(registry, REGISTRY_ABI, 'entries', [recipient]))[2] || null } catch { return null }
 }
 
-/**
- * The vault `token` is bound to on ctx.pad, or null: none (a pad without the vault mode, or a 3.0 token created without
- * one). Every 2.0 金库版 token has one. Throws on an RPC error.
- */
-async function vaultOfToken(ctx, token) {
-  if (!(await vaultModeOf(ctx))) return null
-  const v = await ctx.read(ctx.pad, PAD_ABI, 'vaultOf', [token])
-  return v === zeroAddress ? null : v
-}
+const vaultOfToken = tokenVaultOf
 
 /** The token's vault and what it means for holders (2.0 金库版, or a 3.0 token created with --vault); null without one. */
 async function vaultView(ctx, token, c, net = '') {
@@ -216,7 +208,7 @@ async function vaultView(ctx, token, c, net = '') {
   }
   if (!address) return null
   return {
-    address, padGen: ctx.gen,
+    address, padGen: ctx.gen, bond: `none: ${VAULT_NO_BOND}`,
     note: c.graduated
       ? 'graduated: a plain token now, the vault moves it like any other contract'
       : 'until graduation the token moves only through the pad: this vault locks a holder\'s tokens (counted in the holder\'s 1% cap, see gang status → lockedInVault) and releases them, for the wallet that sends the tx and holds an Agent ID',
@@ -561,7 +553,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ...(creatorFee && { creatorFee }),
       ...(vault && {
         padGen: ctx.gen, pad: ctx.pad, vault,
-        vaultNote: 'the token is bound to this vault for good. Until graduation the token moves only through the pad: the vault locks a holder\'s tokens (counted in that holder\'s 1% cap) and releases them through the pad, for the holder that sends the tx and holds an Agent ID; after graduation it is a plain token. This create uses up the wallet\'s naming for the vault: one token per naming',
+        vaultNote: 'the token is bound to this vault for good. Until graduation the token moves only through the pad: the vault locks a holder\'s tokens (counted in that holder\'s 1% cap) and releases them through the pad, for the holder that sends the tx and holds an Agent ID; after graduation it is a plain token. This create uses up the wallet\'s naming for the vault: one token per naming. A vault-bound token takes no GangBond (gang bond post refuses it): a lock moves tokens out of the creator\'s wallet, which would forfeit a bond',
       }),
       note: `${taxed ? 'tax rates and recipient are' : 'untaxed is'} fixed at create. Curve trades pay only the ${fees.curveFeePct}% fee, no tax${taxed ? ': the tax starts in the pool after graduation' : ''}. tokenIfNext changes if another create lands first: the real address is the Created event from \`gang tx --hash …\`.`,
     }, 'create'))

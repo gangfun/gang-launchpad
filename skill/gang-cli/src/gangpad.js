@@ -44,7 +44,8 @@ export const GANG_GENS = {
   mainnet: [
     // 2026-11-03, proxy block 131404298: 3.0 (docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md), the permanent address. Its own
     // GangRouter, tax handler (owned by its GangHandlerAdmin 0xC833…Af76), GangBond and the four module factories, all
-    // bound to this proxy (docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md)
+    // bound to this proxy (docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md). Vault mode since the Safe's upgrade at
+    // block 131454282 (implementation 0x88A4…028D, Pad3Module 0xa712…409A); vaultModeOf reads it from the pad
     {
       gen: PAD3_GEN, pad: '0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29', router: '0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7',
       bond: '0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6', splitterFactory: '0xc1282e7Fd3DFa5e00e74E9EbF8c54fFfB5763194',
@@ -257,6 +258,23 @@ export async function vaultModeOf(ctx, pad = ctx.pad) {
   }
   return hit.p
 }
+
+const VAULT_OF_ABI = parseAbi(['function vaultOf(address token) view returns (address)'])
+/**
+ * The lock vault `token` is bound to on ctx.pad (ctx on the token's generation), or null: none (a pad without the vault
+ * mode, or a token created without one). Every 2.0 金库版 token has one. Throws on an RPC error.
+ */
+export async function tokenVaultOf(ctx, token) {
+  if (!(await vaultModeOf(ctx))) return null
+  const v = await ctx.read(ctx.pad, VAULT_OF_ABI, 'vaultOf', [token])
+  return v === zeroAddress ? null : v
+}
+
+/**
+ * Why a vault-bound token takes no GangBond: report() slashes as soon as the creator's WALLET balance is below the
+ * promised holding, and tokens locked into the vault are not in the wallet, so one lock forfeits the whole bond.
+ */
+export const VAULT_NO_BOND = 'this token is bound to a lock vault, so it takes no GangBond: a bond is slashed (anyone can report it) as soon as the creator\'s wallet balance drops below the promised holding, and tokens locked into the vault are no longer in the wallet, so a single lock (often made in the vault\'s own app) would forfeit the whole bond'
 
 /** A generation's contracts as ctx fields (missing ones null). */
 export const genFields = (g) => Object.fromEntries(GEN_FIELDS.map((k) => [k, g?.[k] ?? null]))
