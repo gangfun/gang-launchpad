@@ -99,6 +99,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
     function _trade(address t, address pad, bool local) internal {
         uint256 w0 = IERC20(T.WBNB).balanceOf(address(p));
         uint256 t0 = IERC20(t).balanceOf(address(p));
+        uint256 m0 = IERC20(t).balanceOf(me); // tokens `me` held before (e.g. bought through the gateway)
         (uint8 st, address q,, uint256 feeBps, uint256 left) = p.getTokenInfo(t);
         if (st != 1 || q != address(0) || feeBps != 100 || left == 0) revert Check("getTokenInfo");
         (address tm,, uint256 est, uint256 cost,, uint256 msgValue,,) = p.tryBuy(t, me, 0, 0.002 ether);
@@ -107,7 +108,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         vm.startBroadcast(pk);
         (uint256 out, uint256 used) = adapter.buyBnb{value: 0.002 ether}(t, est);
         vm.stopBroadcast();
-        if (out != est || used != cost || IERC20(t).balanceOf(me) != out) revert Check("buy");
+        if (out != est || used != cost || IERC20(t).balanceOf(me) != m0 + out) revert Check("buy");
         _after(t, pad, local, w0, t0, out);
 
         uint256 half = out / 2;
@@ -119,7 +120,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         uint256 toSeller = adapter.sell(t, half, funds - fee);
         vm.stopBroadcast();
         if (toSeller != funds - fee || T.DEMO_TREASURY.balance - fee0 != fee) revert Check("adapter sell split");
-        if (IERC20(t).allowance(me, address(p)) != 0 || IERC20(t).balanceOf(me) != out - half) {
+        if (IERC20(t).allowance(me, address(p)) != 0 || IERC20(t).balanceOf(me) != m0 + out - half) {
             revert Check("adapter sell allowance / balance");
         }
         _after(t, pad, local, w0, t0, out - half);
@@ -130,7 +131,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         IERC20(t).approve(address(p), rest);
         uint256 toSeller2 = p.sellToken(0, t, me, rest, funds2, 0, address(0));
         vm.stopBroadcast();
-        if (toSeller2 != funds2 || IERC20(t).balanceOf(me) != 0) revert Check("direct sell");
+        if (toSeller2 != funds2 || IERC20(t).balanceOf(me) != m0) revert Check("direct sell");
         if (IERC20(t).allowance(me, address(p)) != 0) revert Check("direct sell allowance");
         _after(t, pad, local, w0, t0, 0);
         console.log("  bought / for wei", out, used);
