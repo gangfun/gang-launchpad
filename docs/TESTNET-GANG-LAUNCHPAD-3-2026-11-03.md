@@ -112,3 +112,18 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 升级前后比对了 3 个币的记录，结果一致。
 - 升级后只读重跑阶段 2，`self-check ok`。实现合约的代码与参照合约逐字节一致，库也对得上。
 - 升级后跑了验收（3.0 的币和 2.0 的币，包括多跳卖出），20 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793693488007.json`。
+
+## 第四次升级：金库模式（Pad3Module）
+
+规格见 spec §9。用 `script/UpgradeGangLaunchpad3.s.sol`（命令同上，`CALLERS` 不变）：
+
+- 新实现 [`0xe042BABE90a01bE98f9135c5f9B5CCC15e91e0e3`](https://testnet.bscscan.com/address/0xe042BABE90a01bE98f9135c5f9B5CCC15e91e0e3)，它指向的模块 [`0x240d8a4faf6dE25db3373a1A79887aF00ED8Ca5C`](https://testnet.bscscan.com/address/0x240d8a4faf6dE25db3373a1A79887aF00ED8Ca5C)。升级交易 [`0xc5c6a4e0…d1db`](https://testnet.bscscan.com/tx/0xc5c6a4e0113035d51045aaa23e63152504f2cbec6b955b673e7205e9338cd1db)，记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793710211513.json`。
+- 模拟里比对了升级前后 5 个币的记录和计算结果，一致（这是第一次升级到金库模式，升级前没有金库状态可比）；实现合约和模块的代码都和参照逐字节一致，阶段 2 读回 `self-check ok`。
+
+金库验收（`script/GangVaultLaunchpadTestnetAcceptance.s.sol`，`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔交易全部成功，记录在 `broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793710321070.json`。测试金库 `0x206B…FEBd` 由多签角色（测试网是部署钱包）登记并加进 handler 白名单。handler 现在归模块套装的 GangHandlerAdmin，所以脚本改成也接受“handler 归部署钱包持有的 admin”，经 `admin.exec(list)` 加白。
+
+- A 币（WBNB 计价）[`0xEeC9Bd3C1d5B52f95A35F0F2aA3D6899200854b2`](https://testnet.bscscan.com/address/0xEeC9Bd3C1d5B52f95A35F0F2aA3D6899200854b2)：经 router 买入，锁一半，释放其中四分之三，释放的部分卖出；每一步核对钱包、金库余额、`lockedOf`，以及 `walletRoom` = 1% − 余额 − 锁仓量。
+- B 币（测试报价币计价，分红 40%）[`0xb7dc921AcdC54265AA26fd4C25e73251Be962518`](https://testnet.bscscan.com/address/0xb7dc921AcdC54265AA26fd4C25e73251Be962518)：锁仓和释放时，钱包和金库的分红份额都等于余额；买过毕业门槛后毕业（池子 `0xAa92…b250`），金库里剩下的币毕业后照常转回。
+
+升级后重跑 3.0 验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`）：29 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793710457177.json`。3.0 的币、经 3.0 转发的 1.0 和 2.0 的币都走了一遍：入口买入、多跳卖出、带路由费卖出、直接卖出；Gateway 也买入了 3.0 的币。
+

@@ -11,6 +11,7 @@ import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangVaultPad} from "../src/gang/interfaces/IGangVaultPad.sol";
 import {IGangTaxHandlerOps} from "../src/gang/interfaces/IGangTaxHandlerOps.sol";
 import {GangTaxHandler} from "./GangContracts.sol";
+import {GangHandlerAdmin} from "../src/gang/GangHandlerAdmin.sol";
 
 interface IGangRouterBnbV {
     function v3BuyBNB(address token, uint256 minTokensOut, uint256 deadline) external payable returns (uint256);
@@ -100,7 +101,11 @@ contract GangVaultLaunchpadTestnetAcceptance is Script {
         if (x.vpad.vaultOf(address(0)) != address(0)) revert Check("not a vault pad");
         if (!x.pad.routers(router)) revert Check("router not listed");
         if (Ownable(address(x.pad)).owner() != x.me) revert Check("deploy wallet is not the pad owner");
-        if (Ownable(x.pad.taxHandler()).owner() != x.me) revert Check("deploy wallet is not the handler owner");
+        address handlerOwner = Ownable(x.pad.taxHandler()).owner();
+        // the handler is the wallet's, or held by a GangHandlerAdmin the wallet owns (a pad with its module set)
+        bool viaAdmin = handlerOwner != x.me && handlerOwner.code.length != 0;
+        if (viaAdmin && Ownable(handlerOwner).owner() != x.me) revert Check("deploy wallet does not own the handler");
+        if (!viaAdmin && handlerOwner != x.me) revert Check("deploy wallet is not the handler owner");
         if (!x.pad.isAgent(x.me)) revert Check("deploy wallet holds no Agent ID");
         if (x.pad.migrator() == address(0)) revert Check("pad not open");
 
@@ -113,7 +118,11 @@ contract GangVaultLaunchpadTestnetAcceptance is Script {
         x.vault = v == address(0) ? new TestnetLockVault(x.vpad) : TestnetLockVault(v);
         if (!x.vpad.isVault(address(x.vault))) x.vpad.setVault(address(x.vault), true);
         GangTaxHandler h = GangTaxHandler(x.pad.taxHandler());
-        if (!h.isListed(address(x.vault))) IGangTaxHandlerOps(address(h)).list(address(x.vault), "testnet lock vault");
+        if (!h.isListed(address(x.vault))) {
+            bytes memory listCall = abi.encodeCall(IGangTaxHandlerOps.list, (address(x.vault), "testnet lock vault"));
+            if (viaAdmin) GangHandlerAdmin(handlerOwner).exec(listCall);
+            else IGangTaxHandlerOps(address(h)).list(address(x.vault), "testnet lock vault");
+        }
         vm.stopBroadcast();
         console.log("vault", address(x.vault));
 

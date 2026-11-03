@@ -79,7 +79,7 @@ contract VaultLaunchpadTest is GangFixture {
     address internal alice;
     address internal bob;
 
-    function _newPad() internal override returns (GangLaunchpad) {
+    function _newPad() internal virtual override returns (GangLaunchpad) {
         return new GangVaultLaunchpad(
             owner,
             address(quoteRegistry),
@@ -164,7 +164,7 @@ contract VaultLaunchpadTest is GangFixture {
         assertTrue(vpad.isVault(v));
     }
 
-    function test_otherCreates_revert() public {
+    function test_otherCreates_revert() public virtual {
         vm.startPrank(creator);
         vm.expectRevert(IGangVaultPad.UseVaultCreate.selector);
         pad.create("C", "C", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)));
@@ -252,6 +252,7 @@ contract VaultLaunchpadTest is GangFixture {
         _buyToCap(t, alice);
         _lock(t, alice, LOCK_AMT);
         address r = makeAddr("listedRouter");
+        vm.etch(r, hex"00"); // a router is a contract (3.0 checks it)
         vm.prank(owner);
         pad.setRouter(r, true);
         wbnb.mintUnlimited(r, 1 ether);

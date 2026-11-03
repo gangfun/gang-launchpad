@@ -7,6 +7,8 @@ import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transp
 import {GangMainnetRefs as M} from "../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../src/gang/GangLaunchpad3.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
+import {Pad3Module} from "../src/gang/Pad3Module.sol";
+import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 
 /// @title UpgradeGangLaunchpad3 — move the GangLaunchpad 3.0 proxy to a new implementation, checked before the Safe
@@ -42,6 +44,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     struct Snapshot {
         bytes32 settings;
         bytes32[] tokens;
+        /// @dev whether the vault state was read (the current implementation serves the vault mode)
+        bool vault;
     }
 
     function run() external override returns (Stack memory s) {
@@ -84,14 +88,14 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         uint64 wantVersion = _wantVersion(impl, v0, init);
 
         // the upgrade in the simulation, as the owner sends it; checked; rolled back
-        Snapshot memory before = _snapshot(p, s);
+        Snapshot memory before = _snapshot(p, s, _servesVaultMode(proxy));
         uint256 snap = vm.snapshotState();
         vm.prank(upgrader);
         ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
         if (R.implementationOf(proxy) != impl) revert WiringCheck("upgrade: implementation slot");
         (uint64 v1, bool initializing) = R.initState(proxy);
         if (v1 != wantVersion || initializing) revert WiringCheck("upgrade: initialized version");
-        Snapshot memory afterUp = _snapshot(p, s);
+        Snapshot memory afterUp = _snapshot(p, s, before.vault);
         if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
         for (uint256 i; i < before.tokens.length; i++) {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
@@ -129,23 +133,19 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
 
     /// @dev The reference the new implementation must match is what this script would deploy (`_newImpl`).
     function _refImpl(GangLaunchpad3 cur) internal override returns (address) {
-        return _newImpl(cur);
+        return _newImplWith(cur, cur.module());
     }
 
     /// @dev This build's GangLaunchpad3 with the current implementation's seven dependencies (read from its code, never
     ///      typed in). A later version deploys its own contract here.
-    function _newImpl(GangLaunchpad3 cur) internal virtual returns (address) {
-        return address(
-            new GangLaunchpad3(
-                address(cur.quoteRegistry()),
-                address(cur.dividendVault()),
-                address(cur.platformBucket()),
-                cur.taxHandler(),
-                cur.tokenDeployer(),
-                cur.wbnb(),
-                address(cur.padRegistry())
-            )
-        );
+    function _newImpl(GangLaunchpad3 cur) internal returns (address) {
+        return _newImplWith(cur, _refModule(cur));
+    }
+
+    /// @dev This build's implementation with `cur`'s dependencies over `module` (a new module for the upgrade; the
+    ///      checked implementation's own for the reference). A later version deploys its own contract here.
+    function _newImplWith(GangLaunchpad3 cur, address module) internal virtual returns (address) {
+        return Pad3Impl.implWith(Pad3Impl.depsOf(cur), module);
     }
 
     function _checkImpl(address current, address impl) internal {
@@ -174,8 +174,12 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
 
     /// @dev The settings every token trades under, and for the newest SAMPLE tokens both their raw records (as their
     ///      getters return them) and what the named views derive from them (a member read from another place changes
-    ///      a derived value even when the raw bytes do not).
-    function _snapshot(GangLaunchpad3 p, Stack memory s) internal view returns (Snapshot memory snap) {
+    ///      a derived value even when the raw bytes do not); with `vault`, each token's vault state too (vault-mode
+    ///      review: Pad3VaultStore's namespace is not in the compiler's layout, so only real data shows a moved
+    ///      member). `vault` is whether the CURRENT implementation serves the vault mode: the first upgrade to it has
+    ///      no vault state to compare (the views don't exist before it), every later one compares it.
+    function _snapshot(GangLaunchpad3 p, Stack memory s, bool vault) internal view returns (Snapshot memory snap) {
+        snap.vault = vault;
         address[] memory callers = _callers();
         bool[] memory listed = new bool[](callers.length);
         for (uint256 i; i < callers.length; i++) {
@@ -205,8 +209,22 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         snap.tokens = new bytes32[](k);
         for (uint256 i; i < k; i++) {
             address t = p.allTokens(n - 1 - i);
-            snap.tokens[i] = keccak256(abi.encode(_raw(p, t), _derived(p, t)));
+            snap.tokens[i] = keccak256(abi.encode(_raw(p, t), _derived(p, t), vault ? _vaultState(p, t) : bytes("")));
         }
+    }
+
+    /// @dev Whether the pad behind `proxy` answers the vault mode's views now.
+    function _servesVaultMode(address proxy) internal view returns (bool) {
+        (bool ok, bytes memory ret) = proxy.staticcall(abi.encodeCall(Pad3Module.vaultOf, (address(0))));
+        return ok && ret.length == 32;
+    }
+
+    /// @dev `t`'s vault and its listing, grant and history, and what the token's creator locked into it.
+    function _vaultState(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
+        Pad3Module m = Pad3Module(address(p));
+        address v = m.vaultOf(t);
+        (address creator,,,,,,,,,,,) = p.curves(t);
+        return abi.encode(v, m.isVault(v), m.everVault(v), m.vaultCreator(v), m.lockedOf(t, creator));
     }
 
     function _raw(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
@@ -230,14 +248,14 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         bytes[11] memory c = [
             abi.encodeCall(GangLaunchpad3.getTokenInfo, (t)),
             abi.encodeCall(GangLaunchpad3.status, (t)),
-            abi.encodeCall(GangLaunchpad3.gradAmtOf, (t)),
-            abi.encodeCall(GangLaunchpad3.graduationRemaining, (t)),
-            abi.encodeCall(GangLaunchpad3.taxConfigOf, (t)),
+            abi.encodeCall(Pad3Module.gradAmtOf, (t)),
+            abi.encodeCall(Pad3Module.graduationRemaining, (t)),
+            abi.encodeCall(Pad3Module.taxConfigOf, (t)),
             abi.encodeCall(GangLaunchpad3.tryBuy, (t, address(0), 0, 0.01 ether)),
             abi.encodeCall(GangLaunchpad3.trySell, (t, 1 ether)),
-            abi.encodeCall(GangLaunchpad3.exitFeeBpsOf, (t)),
+            abi.encodeCall(Pad3Module.exitFeeBpsOf, (t)),
             abi.encodeCall(GangLaunchpad3.holdBpsOf, (t)),
-            abi.encodeCall(GangLaunchpad3.previewMint, (t, address(0), 1)),
+            abi.encodeCall(Pad3Module.previewMint, (t, address(0), 1)),
             abi.encodeCall(GangLaunchpad3.walletRoom, (t, address(0)))
         ];
         for (uint256 i; i < 11; i++) {

@@ -12,6 +12,7 @@ import {IGangPad} from "../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangGateway} from "../src/router/interfaces/IGangGateway.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
+import {Pad3Impl} from "./Pad3Impl.sol";
 
 /// @dev An aggregator's adapter as written for four.meme: names its caller as the trader, 1% router fee on sells.
 contract Pad3AcceptanceAdapter {
@@ -204,17 +205,7 @@ contract GangLaunchpad3TestnetAcceptance is Script {
         (,, uint128 rq,,,,,,,,,) = p.curves(t);
         address old = R.implementationOf(address(p));
         vm.startBroadcast(pk);
-        address next = address(
-            new GangLaunchpad3(
-                address(p.quoteRegistry()),
-                address(p.dividendVault()),
-                address(p.platformBucket()),
-                p.taxHandler(),
-                p.tokenDeployer(),
-                p.wbnb(),
-                address(p.padRegistry())
-            )
-        );
+        address next = Pad3Impl.deploy(Pad3Impl.depsOf(p));
         ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(address(p)), next, "");
         vm.stopBroadcast();
         if (R.implementationOf(address(p)) != next || next == old) revert Check("upgrade");
