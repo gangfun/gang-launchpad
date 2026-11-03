@@ -37,13 +37,18 @@
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
 | `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
-| `sellToken(0, token, from, to, amount, minFunds)` | 多跳卖出，签名和选择器（`0x930cc050`）与 four.meme TokenManager2 相同。卖 `from` 授权给本 pad 的币，扣掉 pad 1% 手续费后的全部所得付给 `to`：WBNB 计价付原生 BNB，其他计价付计价 ERC-20。聚合器的 router 拿这笔钱继续下一跳。`to` 必须是白名单里的合约（否则 `RecipientNotListed`），不能是本 pad 或 WBNB。调用者和 `from` 的规则与上一行相同。没有路由手续费参数，`minFunds` 按 `to` 实际收到的净额计算 |
+| `sellToken(0, token, from, to, amount, minFunds)` | 多跳卖出，签名和选择器（`0x930cc050`）与 four.meme TokenManager2 相同。卖 `from` 授权给本 pad 的币，扣掉 pad 1% 手续费后的全部所得付给 `to`：WBNB 计价付原生 BNB，其他计价付计价 ERC-20。聚合器的 router 拿这笔钱继续下一跳。`to` 必须就是调用它的合约本身，并且在白名单里（否则 `RecipientNotListed`）；`from` 必须是 `tx.origin`。这一点比 four.meme 严：four.meme 允许任何调用者把所得指给名单里的任意合约，这里用户直接调用、或者一个名单合约把钱指给另一个名单合约都不行，防止所得停在一个谁都能取走余额的合约上。没有路由手续费参数，`minFunds` 按 `to` 实际收到的净额计算 |
 
 - **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。名单有两个用途：
   - 谁可以替卖家调用 `sellToken`；
   - 谁可以收多跳卖出的所得。
 
-  每个加入名单的合约都要审查：卖家只能取它自己的 `msg.sender`，卖出所得只能继续用于这位卖家的路由。
+  每个加入名单的合约都要审查：
+  - 卖家只能取它自己的 `msg.sender`；
+  - 收到的卖出所得只能在同一笔调用里继续用于这位卖家的路由；
+  - 不能有谁都能调用的 sweep，也不能有「按合约当前余额花钱」的路径。
+
+  名单合约一旦出问题，用户的损失可能达到卖出所得的 100%；7 参数 `sellToken` 的所得总是回到卖家本人，路由手续费最多 5%（经误加白的合约强卖时，攻击者压价还会让损失更大，见 AUDIT-BRIEF §25 的 M-1）。
 - **多跳**：
   - Gang 币做第一跳（卖出）：用多跳卖出，所得进聚合器的 router。
   - Gang 币做最后一跳（买入）：router 用前一跳换来的 BNB 或 ERC-20 调 `buyTokenAMAP`，`to` 填用户本人。
@@ -76,7 +81,7 @@
   - 路由手续费不在这里，在 `GatewaySell.routerFee` 里。
 - **`GatewayBuy` / `GatewaySell`**：入口的每笔交易都发，签名和 GangGateway 相同（同一个 topic）。
 - **`Routed(token, pad, trader, isBuy, quoteAmount, tokenAmount)`**：入口转发老币时发，带上目标 pad。
-- **`GatewaySellTo(token, trader, to, caller, amount, funds)`**：多跳卖出，`funds` 付给了 `to`。
+- **`GatewaySellTo(token, trader, to, caller, amount, funds)`**：多跳卖出，`funds` 付给了 `to`。这一版 `caller` 恒等于 `to`，字段留着，以后放宽规则时不用改事件。
 - **`CallerSet(caller, allowed)`**：白名单变更。
 
 ## 5. 部署和 Safe 批次

@@ -50,7 +50,8 @@ interface IGangLaunchpad3 {
         address feeRecipient
     );
     /// @notice A pay-to `sellToken` (multi-hop): `funds` (after the pad's fee) went to `to`, a listed aggregator
-    ///         contract, for `trader`'s `amount` tokens.
+    ///         contract, for `trader`'s `amount` tokens. `caller` equals `to` in this version (`to` must be the
+    ///         caller); kept so a later rule can differ without a new event.
     event GatewaySellTo(
         address indexed token, address indexed trader, address indexed to, address caller, uint256 amount, uint256 funds
     );
@@ -86,7 +87,7 @@ interface IGangLaunchpad3 {
     /// @notice A router fee is due but `feeRecipient` is address(0), the pad itself or WBNB (the fee would sit in the
     ///         pad outside every book).
     error ZeroFeeRecipient();
-    /// @notice Pay-to `sellToken`: `to` is not a listed aggregator contract (`isCaller`).
+    /// @notice Pay-to `sellToken`: `to` is not the calling contract itself, or that contract is not listed (`isCaller`).
     error RecipientNotListed();
     /// @notice `renounceOwnership` is disabled: an ownerless pad could never delist a router or a caller.
     error RenounceDisabled();

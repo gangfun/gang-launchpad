@@ -638,9 +638,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///         signature; buys are open to any caller, sells take the seller itself or a listed caller (`isCaller`,
     ///         Gateway audit M-1); the buyer / seller is always the wallet that sent the tx.
     /// @notice Owner: whitelist (or delist) a contract that may call `sellToken` for a seller other than itself, and
-    ///         that may receive a pay-to `sellToken`'s proceeds (the Gateway's listing review, AUDIT-BRIEF §25.10: a
-    ///         listed contract must take the seller from its own msg.sender and pass the proceeds on to that seller's
-    ///         route only). Contracts only (NotAContract).
+    ///         that may call the pay-to `sellToken` with itself as `to` (the Gateway's listing review, AUDIT-BRIEF
+    ///         §25.10, plus for pay-to: the seller is its own msg.sender, and what it receives is spent on that
+    ///         seller's route within the same call — no open sweep, no path that spends "the contract's balance" for
+    ///         anyone). Contracts only (NotAContract).
     function setCaller(address caller, bool allowed) external onlyOwner {
         // contracts only (Gateway audit L-2): a listed EOA could later delegate to any code with EIP-7702
         if (allowed && !_isPlainContract(caller)) revert NotAContract();
@@ -820,12 +821,13 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     /// @notice four.meme's pay-to sell (TokenManager2.sellToken(origin, token, from, to, amount, minFunds), same
     ///         selector) for multi-hop routes: sells `amount` of `from`'s tokens — with the allowance `from` gave THIS
     ///         address, the tokens never pass through `to` (before graduation they move only by the pad) — and pays
-    ///         everything the curve (or the older pad) pays after its 1% fee to `to`, a listed aggregator contract
-    ///         (`isCaller`, else RecipientNotListed), which goes on with the next hop. Native BNB for a BNB-quoted
-    ///         token, else the quote ERC-20. No router fee here (four.meme's has none either): the aggregator takes
-    ///         its own on a later hop. Caller and seller as `sellToken` with a router fee: the seller itself or a listed
-    ///         caller (NotWhitelisted), the seller being the wallet that sent the tx (TraderNotOrigin). Only a listed
-    ///         contract can receive, so a contract the user is lured into calling cannot route the proceeds to itself.
+    ///         everything the curve (or the older pad) pays after its 1% fee to `to`, which goes on with the next hop.
+    ///         Native BNB for a BNB-quoted token, else the quote ERC-20. No router fee here (four.meme's has none
+    ///         either): the aggregator takes its own on a later hop. `to` must be the CALLER itself and a listed
+    ///         aggregator contract (`isCaller`), else RecipientNotListed (pay-to review M: four.meme lets any caller
+    ///         name a listed `to`; here a seller's direct call, or a call by one listed contract, can never park the
+    ///         proceeds on another listed contract whose balance someone else could spend). The seller is the wallet
+    ///         that sent the tx (TraderNotOrigin).
     /// @param origin ignored (four.meme's reserved field; pass 0)
     /// @param minFunds the least `to` must receive, after the pad's fee (net, as the other `sellToken`)
     /// @return funds what `to` received
@@ -835,8 +837,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         returns (uint256 funds)
     {
         origin; // four.meme's reserved field
+        if (to != msg.sender || !isCaller[to] || to == address(this) || to == wbnb) revert RecipientNotListed();
         _entryCaller(from);
-        if (!isCaller[to] || to == address(this) || to == wbnb) revert RecipientNotListed();
         IERC20 quote;
         uint256 base;
         bool forwarded;
@@ -849,7 +851,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             quote.safeTransfer(to, funds);
         }
         if (forwarded && quote.balanceOf(address(this)) != base) revert EscrowMoved();
-        emit GatewaySellTo(token, from, msg.sender, to, amount, funds);
+        emit GatewaySellTo(token, from, to, msg.sender, amount, funds);
     }
 
     /// @dev Both entry sells: the seller itself or a listed caller (Gateway audit M-1), the seller = tx.origin (§23).

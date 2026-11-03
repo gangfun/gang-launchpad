@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
@@ -41,6 +42,42 @@ contract MultiHopRouter {
         } else {
             IERC20(quote).transfer(msg.sender, got);
         }
+    }
+}
+
+/// @dev A listed router that keeps what it receives for anyone to sweep (pay-to review M): it must never receive a
+///      seller's direct pay-to call.
+contract SweepableRouter {
+    receive() external payable {}
+
+    function sweep(address to) external {
+        (bool ok,) = to.call{value: address(this).balance}("");
+        require(ok);
+    }
+}
+
+/// @dev A `to` that reenters the pad on the BNB it receives, or refuses BNB.
+contract ReenteringRouter {
+    GangLaunchpad3 public immutable entry;
+    bool public refuse;
+    address internal token;
+
+    constructor(GangLaunchpad3 entry_) {
+        entry = entry_;
+    }
+
+    function setRefuse(bool r) external {
+        refuse = r;
+    }
+
+    function gangHop(address t, uint256 amount) external returns (uint256) {
+        token = t;
+        return entry.sellToken(0, t, msg.sender, address(this), amount, 0);
+    }
+
+    receive() external payable {
+        require(!refuse, "no BNB");
+        entry.sellToken(0, token, tx.origin, address(this), 1e18, 0);
     }
 }
 
@@ -126,12 +163,20 @@ contract Pad3SellToTest is GangFixture {
         _solvent(t, address(quoteTok));
     }
 
-    function test_sellTo_userDirect_toAListedRouter() public {
+    /// @dev Pay-to review M: a seller's direct call cannot park the proceeds on a listed contract (one with an open
+    ///      sweep would hand them to anyone); `to` must be the calling contract itself.
+    function test_sellTo_userDirect_refused() public {
         (address t, uint256 out) = _bought(address(wbnb), 0.01 ether);
-        (,, uint256 funds,) = pad3.trySell(t, out);
+        SweepableRouter sweepable = new SweepableRouter();
+        vm.prank(owner);
+        pad3.setCaller(address(sweepable), true);
         vm.prank(alice, alice);
-        pad3.sellToken(0, t, alice, address(hop), out, funds);
-        assertEq(address(hop).balance, funds);
+        vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
+        pad3.sellToken(0, t, alice, address(sweepable), out, 0);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
+        pad3.sellToken(0, t, alice, address(hop), out, 0);
+        assertEq(IERC20(t).balanceOf(alice), out, "nothing sold");
     }
 
     /// @dev Only a listed contract receives: an unlisted router (even called by the seller), an EOA, the pad itself.
@@ -139,11 +184,16 @@ contract Pad3SellToTest is GangFixture {
         (address t, uint256 out) = _bought(address(wbnb), 0.01 ether);
         MultiHopRouter other = new MultiHopRouter(pad3);
         vm.prank(alice, alice);
-        vm.expectRevert(IGangLaunchpad3.NotWhitelisted.selector);
-        other.gangHop(t, out, 0); // unlisted caller
+        vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
+        other.gangHop(t, out, 0); // unlisted caller paying itself
         vm.prank(alice, alice);
         vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
         hop.gangHopTo(t, address(other), out); // listed caller, unlisted recipient
+        vm.prank(owner);
+        pad3.setCaller(address(other), true);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
+        hop.gangHopTo(t, address(other), out); // listed caller, ANOTHER listed recipient
         vm.prank(alice, alice);
         vm.expectRevert(IGangLaunchpad3.RecipientNotListed.selector);
         pad3.sellToken(0, t, alice, makeAddr("eoa"), out, 0);
@@ -179,5 +229,56 @@ contract Pad3SellToTest is GangFixture {
         vm.prank(alice, alice);
         vm.expectRevert(IGangLaunchpad3.NotCurveToken.selector);
         hop.gangHop(t, out, 0);
+    }
+
+    /// @dev `to` gets native BNB after the books are final; reentering from it, or refusing BNB, reverts the whole sell.
+    function test_sellTo_toReentersOrRefuses_reverts() public {
+        (address t, uint256 out) = _bought(address(wbnb), 0.02 ether);
+        ReenteringRouter r = new ReenteringRouter(pad3);
+        vm.prank(owner);
+        pad3.setCaller(address(r), true);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad3.BnbTransferFailed.selector);
+        r.gangHop(t, out / 2);
+        r.setRefuse(true);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad3.BnbTransferFailed.selector);
+        r.gangHop(t, out / 2);
+        assertEq(IERC20(t).balanceOf(alice), out, "nothing sold");
+        _solvent(t, address(wbnb));
+    }
+
+    /// @dev The event names the seller, the recipient (= the caller) and the amounts, in the declared order.
+    function test_sellTo_eventFields() public {
+        (address t, uint256 out) = _bought(address(wbnb), 0.01 ether);
+        (,, uint256 funds,) = pad3.trySell(t, out);
+        vm.recordLogs();
+        vm.prank(alice, alice);
+        hop.gangHop(t, out, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 n;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] != IGangLaunchpad3.GatewaySellTo.selector) continue;
+            assertEq(logs[i].topics[1], bytes32(uint256(uint160(t))));
+            assertEq(logs[i].topics[2], bytes32(uint256(uint160(alice))), "trader");
+            assertEq(logs[i].topics[3], bytes32(uint256(uint160(address(hop)))), "to");
+            (address caller, uint256 amount, uint256 f) = abi.decode(logs[i].data, (address, uint256, uint256));
+            assertEq(caller, address(hop));
+            assertEq(amount, out);
+            assertEq(f, funds);
+            n++;
+        }
+        assertEq(n, 1);
+    }
+
+    function test_sellTo_zeroAndFairTokens() public {
+        (address t,) = _bought(address(wbnb), 0.01 ether);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad.ZeroAmount.selector);
+        hop.gangHop(t, 0, 0);
+        address f = _createFair(alice, address(wbnb), 1);
+        vm.prank(alice, alice);
+        vm.expectRevert(IGangLaunchpad3.NotCurveToken.selector);
+        hop.gangHop(f, 1e18, 0);
     }
 }
