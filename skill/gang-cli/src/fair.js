@@ -3,7 +3,7 @@ import { bawAddress } from './baw.js'
 import { defaultRefPool, dividendOf, fundingStep as fund, parseAmount, parseIntIn, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI, ROUTER_HINTS, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
-import { atTokenPad, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, padNets, rpcTransport } from './gangpad.js'
+import { atTokenPad, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport } from './gangpad.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
 
@@ -15,6 +15,7 @@ import { bondGuard } from './bond.js'
  */
 export const FAIR_NETS = padNets('fair')
 
+const TOKEN_VERSION_ABI = parseAbi(['function tokenVersionOf(address token) view returns (uint8)'])
 const PAD_ABI = parseAbi([
   'function create(string name, string symbol, string logoURI, string metaURI, address quote, address refPool, (uint256 raiseBnb, uint16 capBps, uint16 holdBps, uint16 mintFeeBps, uint16 exitFeeBps) cfg, uint256 devShares) returns (address)',
   'function mint(address token, uint256 shares, uint256 minShares) returns (uint256)',
@@ -277,7 +278,9 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
       const swapBack = sale.launched && sale.pair
         ? await swapBackState(ctx, await ctx.read(ctx.pad, PAD_ABI, 'taxHandler'), token, (await poolReserves(ctx, token, sale.pair))[0])
         : null
-      return out({ success: true, chainId: Number(ctx.chainId), ...pub, ...(ctx.gen && { padGen: ctx.gen }), ...(swapBack && { swapBack }) })
+      // 3.0: the rule set the sale was created under (fixed for good)
+      const tokenVersion = ctx.gen === PAD3_GEN ? await ctx.read(ctx.pad, TOKEN_VERSION_ABI, 'tokenVersionOf', [token]).then(Number).catch(() => null) : null
+      return out({ success: true, chainId: Number(ctx.chainId), ...pub, ...(ctx.gen && { padGen: ctx.gen }), ...(tokenVersion != null && { tokenVersion }), ...(swapBack && { swapBack }) })
     }
     const slippage = parseNum(fail, 'slippage', opt('slippage', '1'), 0, 50)
     const me = walletFor(ctx, opt('from'))

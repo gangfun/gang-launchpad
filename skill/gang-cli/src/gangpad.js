@@ -1,4 +1,4 @@
-import { createTransport, http, parseAbi } from 'viem'
+import { createTransport, encodeFunctionData, http, parseAbi, zeroAddress } from 'viem'
 import { bsc, bscTestnet } from 'viem/chains'
 
 /**
@@ -7,7 +7,7 @@ import { bsc, bscTestnet } from 'viem/chains'
  * on the pad says which kind a token is (0 = not this pad's, 1 = V3 curve, 2 = 打新). The two `create` overloads keep
  * their old selectors, so each command keeps its own ABI fragment.
  *
- * Each network may have several generations of this pad (GANG_GENS: 1.0, 2.0, 2.0 金库版); kindOf on each tells which one has a token.
+ * Each network may have several generations of this pad (GANG_GENS: 3.0, 2.0, 1.0, 2.0 金库版); kindOf on each tells which one has a token.
  *
  * Env (new name first; the old per-command names still work as aliases). The contracts set the create target (gangGens):
  *   mainnet: GANG_PAD (aliases GANG_V3_PAD / GANG_FAIR_PAD), GANG_ROUTER, GANG_BOND, GANG_SPLITTER_FACTORY,
@@ -26,17 +26,35 @@ import { bsc, bscTestnet } from 'viem/chains'
 export const VAULT_GEN = '2.0-vault'
 
 /**
+ * GangLaunchpad 3.0 (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md): one permanent, upgradeable pad (a proxy) with 2.0's
+ * rules, functions and events (same selectors), plus tokenVersionOf (the rule set each token was created under) and a
+ * four.meme-shaped aggregator entry. An upgrade may add the vault mode (spec §9: createWithVault, vaultOf, lockedOf on
+ * the same address): vaultModeOf asks the pad, so this CLI follows the upgrade without a new release.
+ */
+export const PAD3_GEN = '3.0'
+
+/**
  * GangLaunchpad generations on each network, newest first (2.0 金库版 aside: always last, see VAULT_GEN). A create goes to
  * the first; a token already out stays on the pad that created it and is served with that generation's GangRouter,
  * GangBond and module factories (each of them is bound to one pad). 2.0 (docs/SPEC-CURVE-CREATOR-FEE-2026-10-31.md) has
  * the same V3 curves and 打新 sales, and keeps 70% of the 1% curve fee for the token's creator (creatorFeeOf /
- * claimCreatorFee); a 1.0 pad has neither.
+ * claimCreatorFee); a 1.0 pad has neither. 3.0 (PAD3_GEN) keeps 2.0's rules on one upgradeable address.
  */
 export const GANG_GENS = {
   mainnet: [
-    // 2026-10-31, pad block 130874052: 2.0 with the creator fee and the graduation target the creator picks; its own
-    // GangRouter, GangBond, buy-back factory (buyback-burn-v4), split-v1, lp-burn-v1 and combo-v1 factories, all bound to
-    // this pad and listed on its own GangHandlerAdmin
+    // 2026-11-03, proxy block 131404298: 3.0 (docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md), the permanent address. Its own
+    // GangRouter, tax handler (owned by its GangHandlerAdmin 0xC833…Af76), GangBond and the four module factories, all
+    // bound to this proxy (docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md)
+    {
+      gen: PAD3_GEN, pad: '0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29', router: '0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7',
+      bond: '0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6', splitterFactory: '0xc1282e7Fd3DFa5e00e74E9EbF8c54fFfB5763194',
+      splitFactory: '0x904D4498a9257E4d7638afEbB95A1162cB2171f2', lpFactory: '0x98C506F0F4762F9d1Ec96C27499CE8B7e5981752',
+      comboFactory: '0x20188054dE31De844df205712768852BdeD3eA39',
+    },
+    // 2026-10-31, pad block 130874052: 2.0 with the creator fee and the graduation target the creator picks (the create
+    // target until 3.0; its tokens trade and claim here); its own GangRouter, GangBond, buy-back factory
+    // (buyback-burn-v4), split-v1, lp-burn-v1 and combo-v1 factories, all bound to this pad and listed on its own
+    // GangHandlerAdmin
     {
       gen: '2.0', pad: '0x770331a9accdb53ACb4a45B6c5B7D151fADCe557', router: '0xa83209d6bfC2B220cD86410cCDDC71FEb354844a',
       bond: '0x231339463d04A2127E6dD5756756Dd56853AE0D8', splitterFactory: '0x77e499c892e5E6B3eEe1721e6821e9DA1293803C',
@@ -65,8 +83,17 @@ export const GANG_GENS = {
     },
   ],
   testnet: [
+    // 2026-11-03, proxy block 140496214: 3.0 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md), vault mode since its fourth
+    // upgrade. Its own GangRouter, tax handler (GangHandlerAdmin 0x0fb8…9D23), GangBond and module factories
+    {
+      gen: PAD3_GEN, pad: '0x0508232833aE6849c03b28F7aA248BBd5cFCceE2', router: '0x09544Fd87c5Ff2c4fb05885A76861A12e83f87b9',
+      bond: '0xa87727dc3CC28a44709649A22aDbD77287B99fc1', splitterFactory: '0x3533E63EF0386adfBC96227C50f1b82EEA18d110',
+      splitFactory: '0xf8d4FA57FD65Bf16427Eef653518811fFa2606dc', lpFactory: '0x4A3aC160eAF4A2747046b119631988D5D8056B07',
+      comboFactory: '0xdc1687961c8aAf5A0340c1A73b604cf3a2be543C',
+    },
     // 2026-10-31, pad block 139940227: 2.0 with the graduation target the creator picks (GRAD_BNB_TIERS, createWithGradTarget;
-    // docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md); buy-back factory buyback-burn-v4, split-v1, lp-burn-v1, its own GangBond
+    // docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md), the create target until 3.0; buy-back factory buyback-burn-v4, split-v1,
+    // lp-burn-v1, its own GangBond
     {
       gen: '2.0', pad: '0xb14d415f70D7F99f0D93Bd3BF76e0D6b38b53B3E', router: '0x5a4FA2D91638a305EdF027894753c943f095dDAA',
       bond: '0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9', splitterFactory: '0xDC9EdA9a29F4Ff66E7dAb6E5A2142df5a7aC0f6e',
@@ -97,7 +124,7 @@ export const GANG_GENS = {
     },
   ],
 }
-// what a generation brings to a ctx (gen: '1.0' | '2.0' | VAULT_GEN, null for a pad named by the env that this CLI does not know)
+// what a generation brings to a ctx (gen: '1.0' | '2.0' | PAD3_GEN | VAULT_GEN, null for a pad named by the env that this CLI does not know)
 const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory']
 // the env names of each field, per network (new name first; the old per-command names still work as aliases)
 const GEN_ENV = {
@@ -198,6 +225,38 @@ export function gangGens(testnet) {
 
 /** The 2.0 金库版 generation of `gens` (a ctx's gens or gangGens(testnet)), or null when the network has none. */
 export const vaultGenOf = (gens) => gens.find((g) => g.gen === VAULT_GEN) ?? null
+
+const VAULT_PROBE = encodeFunctionData({ abi: parseAbi(['function vaultOf(address token) view returns (address)']), functionName: 'vaultOf', args: [zeroAddress] })
+const vaultModes = new Map()
+const NOT_YET_MS = 10 * 60_000
+// a call the contract refused (a revert, with or without data), not the node failing; an internal error (-32603) is the node's
+const refused = (e) => !e?.walk?.((x) => x?.code === -32603)
+  && !!e?.walk?.((x) => x?.code === 3 || x?.name === 'ExecutionRevertedError' || /execution reverted/i.test(x?.details ?? ''))
+/**
+ * Whether `pad` serves the vault mode (createWithVault, vaultOf, lockedOf, vaultCreator): the 2.0 金库版 pad always,
+ * 1.0 and 2.0 never (both known without a call); 3.0 (and a pad named by the env) once an upgrade added it, told by a
+ * vaultOf(address(0)) call that succeeds with exactly 32 bytes (before that upgrade 3.0 has no fallback: it reverts
+ * without data). A revert is false; any other error (the RPC) is thrown, never taken for "no vault mode".
+ */
+export async function vaultModeOf(ctx, pad = ctx.pad) {
+  const known = [...GANG_GENS.mainnet, ...GANG_GENS.testnet].find((g) => sameAddr(g.pad, pad))
+  if (known?.gen === VAULT_GEN) return true
+  if (known && known.gen !== PAD3_GEN) return false
+  const key = `${ctx.chainId}:${pad.toLowerCase()}`
+  const hit = vaultModes.get(key)
+  // "served" is kept for the run; "not yet" for NOT_YET_MS only, so a long-lived process (gang mcp) sees the upgrade
+  if (!hit || (hit.no && Date.now() - hit.at > NOT_YET_MS)) {
+    const entry = { at: Date.now(), no: false }
+    entry.p = ctx.client.call({ to: pad, data: VAULT_PROBE }).then((r) => (r?.data?.length ?? 0) === 66).catch((e) => {
+      if (refused(e)) return false
+      vaultModes.delete(key)
+      throw e
+    }).then((yes) => { entry.no = !yes; return yes })
+    vaultModes.set(key, entry)
+    return entry.p
+  }
+  return hit.p
+}
 
 /** A generation's contracts as ctx fields (missing ones null). */
 export const genFields = (g) => Object.fromEntries(GEN_FIELDS.map((k) => [k, g?.[k] ?? null]))
