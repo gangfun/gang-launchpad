@@ -276,9 +276,10 @@ contract Pad3SellToTest is GangFixture {
         vm.prank(alice, alice);
         vm.expectRevert(IGangLaunchpad.ZeroAmount.selector);
         hop.gangHop(t, 0, 0);
+        // a 打新 sale trades through the entry in whole shares only (test/gang3/Pad3FairEntry.t.sol)
         address f = _createFair(alice, address(wbnb), 1);
         vm.prank(alice, alice);
-        vm.expectRevert(IGangLaunchpad3.NotCurveToken.selector);
+        vm.expectRevert(IGangLaunchpad3.NotWholeShares.selector);
         hop.gangHop(f, 1e18, 0);
     }
 }

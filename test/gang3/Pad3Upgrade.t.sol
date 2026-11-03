@@ -66,11 +66,15 @@ contract UpgradeHarness is UpgradeGangLaunchpad3 {
 
     /// @dev As the script: the vault flag is read before an upgrade and kept for the read after it.
     function snap(GangLaunchpad3 p, DeployGang.Stack memory s) external view returns (Snapshot memory) {
-        return _snapshot(p, s, _servesVaultMode(address(p)));
+        return _snapshot(p, s, _servesVaultMode(address(p)), new bool[](0));
     }
 
-    function snapAs(GangLaunchpad3 p, DeployGang.Stack memory s, bool vault) external view returns (Snapshot memory) {
-        return _snapshot(p, s, vault);
+    function snapAs(GangLaunchpad3 p, DeployGang.Stack memory s, bool vault, bool[] memory newFairEntry)
+        external
+        view
+        returns (Snapshot memory)
+    {
+        return _snapshot(p, s, vault, newFairEntry);
     }
 
     function checkImpl(address current, address impl) external {
@@ -165,7 +169,7 @@ contract Pad3UpgradeTest is GangFixture {
         address next = Pad3Impl.deploy(Pad3Impl.depsOf(GangLaunchpad3(payable(pad3Impl))));
         vm.prank(upgrader);
         _admin().upgradeAndCall(ITransparentUpgradeableProxy(address(pad)), next, "");
-        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snapAs(pad3, _stack(), before.vault);
+        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snapAs(pad3, _stack(), before.vault, before.newFairEntry);
         assertEq(afterUp.settings, before.settings);
         assertEq(afterUp.tokens.length, before.tokens.length);
         for (uint256 i; i < before.tokens.length; i++) {
