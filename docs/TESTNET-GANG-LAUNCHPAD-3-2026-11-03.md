@@ -143,3 +143,19 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - B 币（测试报价币计价，分红 40%）[`0xb7dc921AcdC54265AA26fd4C25e73251Be962518`](https://testnet.bscscan.com/address/0xb7dc921AcdC54265AA26fd4C25e73251Be962518)：锁仓和释放时，钱包和金库的分红份额都等于余额；买过毕业门槛后毕业（池子 `0xAa92…b250`），金库里剩下的币毕业后照常转回。
 
 升级后重跑 3.0 验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`）：29 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793710457177.json`。3.0 的币、经 3.0 转发的 1.0 和 2.0 的币都走了一遍：入口买入、多跳卖出、带路由费卖出、直接卖出；Gateway 也买入了 3.0 的币。
+
+## 第五次升级：打新经入口交易
+
+规格见 spec §2「打新」、§3。用 `script/UpgradeGangLaunchpad3.s.sol`（命令同上）：
+
+- 新实现 [`0xcfECd267C02945BE11B8cd8C6874df7D89963a21`](https://testnet.bscscan.com/address/0xcfECd267C02945BE11B8cd8C6874df7D89963a21)，模块 [`0xe68bcde17ccfe2890aac2cf9ecd0c8c8f6894471`](https://testnet.bscscan.com/address/0xe68bcde17ccfe2890aac2cf9ecd0c8c8f6894471)；FairLogic 和 LegacyRoute 有改动，这次新部署了这两个库。升级交易 [`0x1d1c0793…cd5a`](https://testnet.bscscan.com/tx/0x1d1c0793f6a0378608b68a529d81f44f87e25c5ebedbdf96742843697e3fcd5a)，记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793732316906.json`。
+- 模拟里比对了 25 个币（含测试网上已有的打新发售），阶段 2 读回 `self-check ok`。
+
+打新入口验收（`script/Pad3FairEntryTestnetAcceptance.s.sol`，`OLD_PADS` 为 1.0 和 2.0）：21 笔交易全部成功，记录在 `broadcast/Pad3FairEntryTestnetAcceptance.s.sol/97/run-1793732378766.json`。在 3.0、1.0、2.0 上各建一个设了门槛的 WBNB 打新，各自经 3.0 的入口：status 为 1；按 `tryBuy` 给的 `amountMsgValue` 用原生 BNB 买入，成交的数量和花费与报价一致到 wei（24 份）；卖回一半，所得等于 `trySell`，授权正好用完。
+
+- 3.0 的发售 [`0x3aB4966ADd59292bAf4692DeeD6C2EAf8e0Bc7aB`](https://testnet.bscscan.com/address/0x3aB4966ADd59292bAf4692DeeD6C2EAf8e0Bc7aB)
+- 1.0 的发售，经 3.0 转发 [`0x6Ce3DBDBFF29134EEC72F9d44b5f5b018dB10BEd`](https://testnet.bscscan.com/address/0x6Ce3DBDBFF29134EEC72F9d44b5f5b018dB10BEd)
+- 2.0 的发售，经 3.0 转发 [`0x8c02c120EbE82Cf2c679B4942875eEaBd8E8de5F`](https://testnet.bscscan.com/address/0x8c02c120EbE82Cf2c679B4942875eEaBd8E8de5F)
+
+升级后重跑 3.0 验收：29 笔交易全部成功（`broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793732455413.json`），曲线币、转发的老币、多跳卖出、Gateway 都照常。
+

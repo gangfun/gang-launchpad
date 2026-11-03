@@ -9,6 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {SharedPlatformFeeBucket as PlatformFeeBucket} from "../common/SharedPlatformFeeBucket.sol";
 import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
+import {IGangLaunchpad3} from "./interfaces/IGangLaunchpad3.sol";
 import {IGangPadHandler, IGangPadToken, IGangTokenDeployer} from "./interfaces/IGangPadDeps.sol";
 import {PadCommon} from "./PadCommon.sol";
 
@@ -24,7 +25,8 @@ import {PadCommon} from "./PadCommon.sol";
 ///      - mint share write blocking, withdraw share write guarded (`_setShareOnExit`, A-5 63/64 check, R3-3);
 ///      - VaultFloorTooHigh checked on every create, before anything else.
 ///      Reentrancy guard, the caller check of `mintFor` / `withdrawFor` (listed router, trader == tx.origin, §23)
-///      and the A-2 `mintFor` check stay in the pad's wrappers.
+///      and the A-2 `mintFor` check stay in the pad's wrappers. GangLaunchpad 3.0's aggregator entry trades a sale
+///      through `entryMint` / `entryWithdraw` and quotes it with `entryQuote` / `entrySellQuote` (spec §2).
 library FairLogic {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
@@ -101,7 +103,7 @@ library FairLogic {
         s.refPool = refUsed;
 
         _emitCreated(token, name, symbol, logoURI, quote, refUsed, cfg, price, s.capShares);
-        _mint(c, s, positions[token][msg.sender], d, token, msg.sender, devShares, devShares);
+        _mint(c, s, positions[token][msg.sender], d, token, msg.sender, devShares, devShares, false);
     }
 
     function _emitCreated(
@@ -147,7 +149,34 @@ library FairLogic {
         IGangLaunchpad.Sale storage s = minting(sales, token);
         _requireAgent(s.gate, trader);
         if (shares == 0) revert IGangLaunchpad.ZeroAmount();
-        accepted = _mint(c, s, positions[token][trader], d, token, trader, shares, minShares);
+        (accepted,) = _mint(c, s, positions[token][trader], d, token, trader, shares, minShares, false);
+    }
+
+    /// @notice GangLaunchpad 3.0's entry buy (`buyTokenAMAP`): the most whole shares `funds` pays for (share price plus
+    ///         the mint fee), for `trader` (the wallet that sent the tx, checked by the pad), out of `funds` the pad
+    ///         already holds for this trade; the unspent part stays on the pad for the caller to refund. As `mintFor`
+    ///         (A-2): only a sale with its gate set, and the trader an Agent of it; the cap and the last-fill cut apply.
+    /// @param minAmount the least tokens `trader` must get (whole shares × TOKENS_PER_SHARE)
+    function entryMint(
+        IGangLaunchpad.Config storage c,
+        mapping(address => IGangLaunchpad.Sale) storage sales,
+        mapping(address => mapping(address => IGangLaunchpad.Position)) storage positions,
+        IGangLaunchpad.Deps memory d,
+        address trader,
+        address token,
+        uint256 funds,
+        uint256 minAmount
+    ) external returns (uint256 amountOut, uint256 fundsUsed) {
+        IGangLaunchpad.Sale storage s = minting(sales, token);
+        if (s.gate == address(0)) revert IGangLaunchpad.RouterNeedsGate();
+        _requireAgent(s.gate, trader);
+        uint256 want = sharesFor(s, funds);
+        if (want == 0) revert IGangLaunchpad3.FundsTooLow();
+        uint256 accepted;
+        (accepted, fundsUsed) = _mint(
+            c, s, positions[token][trader], d, token, trader, want, Math.ceilDiv(minAmount, TOKENS_PER_SHARE), true
+        );
+        amountOut = accepted * TOKENS_PER_SHARE;
     }
 
     /// @dev `trader`'s shares are sold back; the payout goes to msg.sender. Direct `withdraw`: trader = msg.sender,
@@ -166,6 +195,51 @@ library FairLogic {
         uint256 shares,
         uint256 minPayout
     ) external returns (uint256 payout) {
+        payout = _withdraw(
+            sales, positions, owedFee, d, trader, viaCaller ? PULL_ROUTER : PULL_RECLAIM, token, shares, minPayout
+        );
+    }
+
+    /// @notice GangLaunchpad 3.0's entry sell (both `sellToken`s): `amount` of `trader`'s tokens (whole shares) sold
+    ///         back with the allowance `trader` gave the PAD on the token (as the entry's curve sells); the payout
+    ///         stays on the pad for the caller to pay out. A gated sale only, as the entry's buy: the entry trades no
+    ///         ungated sale either way (status 3; its minters withdraw directly, `withdraw`, as always).
+    function entryWithdraw(
+        mapping(address => IGangLaunchpad.Sale) storage sales,
+        mapping(address => mapping(address => IGangLaunchpad.Position)) storage positions,
+        mapping(address => uint256) storage owedFee,
+        IGangLaunchpad.Deps memory d,
+        address trader,
+        address token,
+        uint256 amount
+    ) external returns (address quote, uint256 payout) {
+        IGangLaunchpad.Sale storage s = minting(sales, token);
+        if (s.gate == address(0)) revert IGangLaunchpad.RouterNeedsGate();
+        uint256 shares = wholeShares(amount);
+        if (shares == 0) revert IGangLaunchpad3.NotWholeShares();
+        quote = s.quote;
+        payout = _withdraw(sales, positions, owedFee, d, trader, PULL_PAD, token, shares, 0);
+    }
+
+    /// @dev How `_withdraw` moves the trader's tokens back and where the payout goes: PULL_RECLAIM — `withdraw` by the
+    ///      trader itself, reclaimed (no allowance), paid to it; PULL_ROUTER — `withdrawFor`, the trader's allowance to
+    ///      the calling router, paid to the router; PULL_PAD — the 3.0 entry, the trader's allowance to the pad, the
+    ///      payout left on the pad.
+    uint8 private constant PULL_RECLAIM = 0;
+    uint8 private constant PULL_ROUTER = 1;
+    uint8 private constant PULL_PAD = 2;
+
+    function _withdraw(
+        mapping(address => IGangLaunchpad.Sale) storage sales,
+        mapping(address => mapping(address => IGangLaunchpad.Position)) storage positions,
+        mapping(address => uint256) storage owedFee,
+        IGangLaunchpad.Deps memory d,
+        address trader,
+        uint8 pull,
+        address token,
+        uint256 shares,
+        uint256 minPayout
+    ) private returns (uint256 payout) {
         IGangLaunchpad.Sale storage s = minting(sales, token);
         IGangLaunchpad.Position storage p = positions[token][trader];
         if (shares == 0 || shares > p.shares) revert IGangLaunchpad.BadAmount();
@@ -177,11 +251,12 @@ library FairLogic {
         p.shares -= shares.toUint16();
         s.sold -= shares.toUint16();
 
-        if (viaCaller) IGangPadToken(token).pullFor(trader, msg.sender, shares * TOKENS_PER_SHARE);
+        if (pull == PULL_ROUTER) IGangPadToken(token).pullFor(trader, msg.sender, shares * TOKENS_PER_SHARE);
+        else if (pull == PULL_PAD) IGangPadToken(token).pullFor(trader, address(this), shares * TOKENS_PER_SHARE);
         else IGangPadToken(token).reclaim(msg.sender, shares * TOKENS_PER_SHARE);
         _setShareOnExit(d, token, trader, uint256(p.shares) * TOKENS_PER_SHARE);
         address quote = s.quote;
-        IERC20(quote).safeTransfer(msg.sender, payout);
+        if (pull != PULL_PAD) IERC20(quote).safeTransfer(msg.sender, payout);
         _exitFeeToPlatform(owedFee, d, quote, exitFee);
 
         emit IGangLaunchpad.Withdrawn(token, trader, shares, payout, exitFee, p.shares, s.sold);
@@ -246,6 +321,60 @@ library FairLogic {
         return Math.min(want, Math.min(room, left));
     }
 
+    /// @notice `entryMint`'s quote: shares, their cost and the mint fee (cost + fee is what the entry keeps), all 0
+    ///         when it would revert (ungated or launched sale, `trader` not an Agent, at the cap, too little).
+    ///         `trader` = address(0): a fresh Agent wallet (no shares held, the Agent check left to the fill), as the
+    ///         curve quote treats it.
+    function entryQuote(
+        mapping(address => IGangLaunchpad.Sale) storage sales,
+        mapping(address => mapping(address => IGangLaunchpad.Position)) storage positions,
+        address token,
+        address trader,
+        uint256 funds
+    ) external view returns (uint256 shares, uint256 cost, uint256 fee) {
+        IGangLaunchpad.Sale storage s = sales[token];
+        if (s.creator == address(0) || s.launched || s.gate == address(0)) return (0, 0, 0);
+        if (trader != address(0) && !_agentOf(s.gate, trader)) return (0, 0, 0);
+        uint256 held = positions[token][trader].shares;
+        if (held >= s.capShares) return (0, 0, 0);
+        shares = acceptable(s, held, sharesFor(s, funds));
+        cost = shares * s.sharePrice;
+        fee = (cost * s.mintFeeBps) / PadCommon.BPS;
+    }
+
+    /// @notice `entryWithdraw`'s quote for `amount` tokens: the payout and the exit fee; 0, 0 when it would revert
+    ///         (not whole shares, more than are sold, launched, ungated). The seller's own position and allowance are
+    ///         checked at the sell only.
+    function entrySellQuote(mapping(address => IGangLaunchpad.Sale) storage sales, address token, uint256 amount)
+        external
+        view
+        returns (uint256 payout, uint256 fee)
+    {
+        IGangLaunchpad.Sale storage s = sales[token];
+        uint256 shares = wholeShares(amount);
+        if (s.creator == address(0) || s.launched || s.gate == address(0) || shares == 0 || shares > s.sold) {
+            return (0, 0);
+        }
+        (payout, fee) = withdrawQuote(s, shares);
+    }
+
+    /// @dev The most whole shares `funds` pays for at `s`'s share price plus its mint fee (the fee rounds down, as
+    ///      `_mint` charges it).
+    function sharesFor(IGangLaunchpad.Sale storage s, uint256 funds) internal view returns (uint256 n) {
+        uint256 unit = s.sharePrice;
+        if (funds > type(uint128).max) funds = type(uint128).max;
+        n = (funds * PadCommon.BPS) / (unit * (PadCommon.BPS + s.mintFeeBps));
+        if (n > TOTAL_SHARES) n = TOTAL_SHARES;
+        uint256 next = (n + 1) * unit;
+        if (n < TOTAL_SHARES && next + (next * s.mintFeeBps) / PadCommon.BPS <= funds) n++;
+    }
+
+    /// @dev `amount` in whole shares (0 unless an exact positive multiple of TOKENS_PER_SHARE).
+    function wholeShares(uint256 amount) internal pure returns (uint256) {
+        if (amount == 0 || amount % TOKENS_PER_SHARE != 0) return 0;
+        return amount / TOKENS_PER_SHARE;
+    }
+
     /// @dev Principal of `shares` at the mint price, less the exit fee in force now.
     function withdrawQuote(IGangLaunchpad.Sale storage s, uint256 shares)
         internal
@@ -280,8 +409,9 @@ library FairLogic {
         address token,
         address trader,
         uint256 want,
-        uint256 minShares
-    ) private returns (uint256 accepted) {
+        uint256 minShares,
+        bool prepaid
+    ) private returns (uint256 accepted, uint256 paid) {
         if (p.shares >= s.capShares) revert IGangLaunchpad.WalletCapReached();
         accepted = acceptable(s, p.shares, want);
         if (accepted == 0) revert IGangLaunchpad.ZeroAmount();
@@ -290,7 +420,9 @@ library FairLogic {
         address quote = s.quote;
         uint256 cost = accepted * s.sharePrice;
         uint256 fee = (cost * s.mintFeeBps) / PadCommon.BPS;
-        PadCommon.pullExact(quote, cost + fee);
+        paid = cost + fee;
+        // `prepaid`: the 3.0 entry already holds the funds (`entryMint`); else msg.sender pays exactly
+        if (!prepaid) PadCommon.pullExact(quote, paid);
         PadCommon.toPlatform(d, quote, fee); // blocking; no refund, so nothing to escrow
 
         p.shares += accepted.toUint16();
@@ -357,6 +489,15 @@ library FairLogic {
         address reg = c.agentIdRegistry;
         if (reg == address(0)) revert IGangLaunchpad.NotAgent();
         return reg;
+    }
+
+    /// @dev A quote's Agent check: a gate that reverts reads as "no" (the quote is 0, it never reverts).
+    function _agentOf(address gate, address account) private view returns (bool) {
+        try IERC721(gate).balanceOf(account) returns (uint256 n) {
+            return n != 0;
+        } catch {
+            return false;
+        }
     }
 
     /// @dev Against the sale's snapshot, not the pad's current setting.

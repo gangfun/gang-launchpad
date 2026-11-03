@@ -33,7 +33,7 @@
 
 | 函数 | 说明 |
 |---|---|
-| `getTokenInfo(token)` | `status`：0 = 不是 Gang 币；1 = 在曲线上（或飞轮开盘前）；2 = 已毕业 / 已开盘（返回 `pair`）；3 = 打新进行中（入口不交易）。WBNB 计价返回 `quote = address(0)` |
+| `getTokenInfo(token)` | `status`：0 = 不是 Gang 币；1 = 可经入口交易（曲线上、飞轮开盘前，或设了门槛的打新进行中）；2 = 已毕业 / 已开盘（返回 `pair`）；3 = 没设门槛的打新进行中（入口不交易）。WBNB 计价返回 `quote = address(0)`。打新和飞轮的 `protocolFeeBps` 是铸造费率，`graduationLeft` 是剩下的份数乘以单价 |
 | `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛 |
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
@@ -57,14 +57,20 @@
 - **Agent 门槛关闭时**：入口不接受买入（和 `buyFor` 的 A-2 规则一致），卖出不受影响。
 - **报价和成交一致到 wei**：`tryBuy` 和 `buyTokenAMAP` 用同一套计算，`trySell` 和 `sellToken` 也一样。`trySell` 不检查卖家的 Agent 资格：门槛开启时，非 Agent 卖出会 revert，但报价不是 0。
 - **毕业后**：入口不再交易这个币，`getTokenInfo` 返回池子地址，由聚合器自己去 DEX 路由。毕业后代币解锁，和普通代币一样可以多跳。
+- **打新**（3.0 自己的，以及经 §3 转发的 1.0 / 2.0 的）：只有设了门槛（`Sale.gate`，创建时的 Agent 门槛快照）的发售经入口交易，买卖两边都是；没设门槛的（status 3）入口一律不交易（`RouterNeedsGate`，`tryBuy` / `trySell` 报 0），它的持有人照常直接在 pad 上 `withdraw`。规则和 `mintFor` / `withdrawFor` 相同（A-2）。看的是发售自己的门槛快照，不看 pad 当前的 `agentGateEnabled`：pad 关掉门槛后，设了门槛的发售仍经入口交易。
+  - 买入：`funds` 能买的最多整份（单价加铸造费，费按向下取整），按发售的单钱包上限（0.25%–1%）和最后一份截断；`to` 必须是这个门槛的 Agent。`minAmount` 按整份的代币数量计（向上取整到整份）。`tryBuy`：`estimatedCost` 含铸造费；`amountMsgValue` / `amountApproval` / `amountFunds` 都是这些整份的实际花费（≤ `funds`），照它发送就分毫不差，多发的部分会以 WBNB / 计价币退给 `to`。`trader = address(0)` 时按新的 Agent 钱包报价，成交时再查 Agent。一份不到的钱 `FundsTooLow`。铸币飞轮的买入也一样按实际花费给出 `amountMsgValue`。按实际花费发送没有余量：打新和开池前的飞轮价格固定，不受影响；开池后的飞轮按阶梯定价，报价和成交之间有人先成交跨过阶梯时会少买一份或 `FundsTooLow`（`minAmount` 兜底），想留余量就多发，多出的部分以 WBNB / 计价币退回。
+  - 卖出：只接受整份（`amount` 是 50,000 代币的整数倍，否则 `NotWholeShares`；开池前代币锁仓，余额一定是整份，按比例卖要先去掉零头），按单价退款，扣退出费（1%–2%，发售停滞 7 天后为 0；之后有人铸造满 10 份，退出费会恢复，卖出的 `minFunds` 要留出这个余量）。代币用卖家授权给 3.0 的额度拉回（和曲线币卖出一样），路由手续费和多跳卖出照常。`trySell` 和成交一致；它只看发售，不看卖家自己的持仓和授权。
+  - `getTokenInfo`：`protocolFeeBps` 是铸造费率（只在买入时收），`graduationLeft` 是剩下的份数乘以单价，不含铸造费，有人撤出时会变大。
+  - 卖满的最后一份在这笔入口买入里开池（这笔的 gas 明显更高）；开池后入口不再交易（`NotCurveToken`），`getTokenInfo` 返回池子。开池后的持有线、分红和 1% 税按打新的规则。
+  - GangGateway（旧入口）对同一个打新币仍然报 3、不交易。
 
 ## 3. 老 pad 的币也经 3.0 交易
 
-- **怎么做到**：Safe 在每个支持路由的老 pad 上执行 `setRouter(3.0, true)`。之后，3.0 的入口收到老币时，按 GangPadRegistry 查到它所在的 pad，转去调用那个 pad 的 `buyFor` / `sellFor`（铸币飞轮：`mintFor` / `mintPostFor` / `withdrawFor`）。逻辑和现在的 GangGateway V2 相同。
-- **能转发的 pad**：GangLaunchpad 1.0、2.0、金库版、铸币飞轮 V1 / V2 上的曲线币和飞轮币。
+- **怎么做到**：Safe 在每个支持路由的老 pad 上执行 `setRouter(3.0, true)`。之后，3.0 的入口收到老币时，按 GangPadRegistry 查到它所在的 pad，转去调用那个 pad 的 `buyFor` / `sellFor`（打新：`mintFor` / `withdrawFor`；铸币飞轮：`mintFor` / `mintPostFor` / `withdrawFor`）。曲线币和飞轮币的逻辑和现在的 GangGateway V2 相同；打新按 §2 的规则，报价用老 pad 自己的 `previewMint`，另外检查买家是该发售门槛的 Agent。
+- **能转发的 pad**：GangLaunchpad 1.0、2.0、金库版、铸币飞轮 V1 / V2 上的曲线币和飞轮币，以及 1.0、2.0 上设了门槛的打新（开池前）。
 - **不转发的**：
   - LaunchpadV2 / Soft / U / S 这几个更早的 pad，没有 `buyFor` 和 router 列表，只能在它们自己的 pad 上交易；
-  - 老 pad 上的打新（`status = 3`），这一版不转发，和 Gateway 一致；
+  - 没设门槛的打新（`status = 3`）：老 pad 的 `mintFor` 拒绝它（A-2）；
   - 金库版的 `vaultLock` / `vaultRelease`，只能由金库调用，本来就不是交易。
 - **规则沿用 Gateway**：trader 必须是 `tx.origin`；卖出只接受卖家本人或白名单合约；路由手续费 ≤ 5%；买到的币由老 pad 直接打给用户。卖老币时，用户授权给 3.0。多跳卖出同样适用于老币：老 pad 把卖出所得付给 3.0（它的 router），3.0 再把全部所得转给 `to`。
 - **储备保护**：转发前后，3.0 自己持有的该计价币余额必须完全相同，否则回滚（`EscrowMoved`）。3.0 只对受信 pad 授权本次的 `funds`，用完立刻归零。
@@ -147,6 +153,7 @@
 - 用新版本那次提交运行升级脚本：参照合约由 `_newImpl` 部署；
 - 对新实现跑一遍存储布局测试；
 - 在主网 fork 上演练这笔 Safe 交易。
+- 把打新开放给入口的那次升级（第一次带打新入口的实现）：升级前仍报 status 3 的、设了门槛的 3.0 打新发售，`getTokenInfo` 和 `tryBuy` 这两项会按设计改变，脚本在前后两次快照里都不比较这两项（它们的原始记录和其余计算结果照常比较），升级后再确认它们报 status 1。之后的升级里它们已经是 1，不再例外。
 - 确认模块依赖的接口没变，并在新实现上重跑 `test/fork/Pad3ModulesFork.t.sol`：在新版本那次提交上运行，`PAD3_FORK_IMPL` 填已部署的新实现（fork 上先以 Safe 身份升级），`PAD3_FORK_LIVE=true` 并通过 `HANDLER_ADMIN`、`SPLITTER_FACTORY`、`SPLIT_FACTORY`、`LP_FACTORY`、`COMBO_FACTORY`、`GANG_BOND` 传入线上那套模块，测试会让线上工厂的新克隆和 bond 在新实现上跑一遍。这个模式不带 `--libraries` 运行：工厂脚本比对的是整段运行时代码（含 metadata），`--libraries` 会改变它；阶段 2 读回由升级脚本自己做。GangBond、GangHandlerAdmin 和四个模块工厂及其克隆永久绑定 3.0 的地址，克隆初始化时还缓存了 `taxHandler`、`wbnb`、`quoteRegistry`，所以升级不能改动：`kindOf` 的取值、`curves` 的前 12 个字段、`sales` 的前 14 个字段（顺序和含义）、`isAgent`、`taxHandler()`、`wbnb()`、`quoteRegistry()`。改了它们，已部署的模块和押在 GangBond 里的 BNB 会出错或卡住。2.0 不可升级，所以没有这层依赖；发 bond 的用户也要知道这层信任关系。
 
 ## 7. 已知行为和风险说明
