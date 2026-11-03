@@ -90,8 +90,10 @@ contract Pad3AsGatewayTest is GangGatewayTest {
         (uint256 got2,) = gw.buyTokenAMAP(e, alice, 0.02 ether, 0);
         _approveGw(alice, e);
         (,, uint256 funds2,) = gw.trySell(e, got2);
+        uint256 q0 = quoteTok.balanceOf(alice);
         vm.prank(alice, alice);
         hop.gangHop(e, got2, funds2);
+        assertEq(quoteTok.balanceOf(alice), q0, "nothing to the seller directly");
         assertEq(quoteTok.balanceOf(address(hop)), funds2, "quote ERC-20 on the router");
         _assertGatewayEmpty(e);
     }
@@ -120,6 +122,10 @@ contract Pad3AsGatewayFlywheelTest is GangGatewayFlywheelTest {
         assertEq(w.balance, w0);
         assertEq(IERC20(t).balanceOf(w), 2 * TPS);
         _assertGatewayEmpty(t);
+        // whole shares only, as the other sell
+        vm.prank(w, w);
+        vm.expectRevert(IGangLaunchpad3.NotWholeShares.selector);
+        hop.gangHop(t, TPS + 1, 0);
     }
 }
 
