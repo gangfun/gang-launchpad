@@ -8,6 +8,7 @@ import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangGatewayTest, LyingPad, PointingToken} from "../router/GangGateway.t.sol";
 import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
+import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {GangGatewayFlywheelTest} from "../router/GangGatewayFlywheel.t.sol";
 import {GangGatewayPhishingTest} from "../router/GangGatewayPhishing.t.sol";
 
@@ -42,6 +43,23 @@ contract Pad3AsGatewayTest is GangGatewayTest {
     function test_deploy_zeroAddressesRefused() public override {}
     function test_upgrade_onlyThroughTimelock() public override {}
     function test_whitelist_onlyOwner_twoStepHandOver() public override {}
+
+    /// @dev Audit 3B I-4 (spec): a forwarded trade names the older pad it went to.
+    function test_forward_emitsRouted() public {
+        address t = _v3();
+        (,, uint256 est,,,,,) = gw.tryBuy(t, alice, 0, 0.01 ether);
+        vm.expectEmit(address(gw));
+        emit IGangLaunchpad3.Routed(t, address(pad), alice, true, 0.01 ether, est);
+        vm.prank(alice, alice);
+        gw.buyTokenAMAP{value: 0.01 ether}(t, alice, 0.01 ether, est);
+        (,, uint256 funds,) = gw.trySell(t, est);
+        vm.startPrank(alice, alice);
+        IERC20(t).approve(address(gw), est);
+        vm.expectEmit(address(gw));
+        emit IGangLaunchpad3.Routed(t, address(pad), alice, false, funds, est);
+        gw.sellToken(0, t, alice, est, 0, 0, address(0));
+        vm.stopPrank();
+    }
 }
 
 contract Pad3AsGatewayFlywheelTest is GangGatewayFlywheelTest {

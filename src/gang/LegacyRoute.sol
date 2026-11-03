@@ -150,6 +150,7 @@ library LegacyRoute {
         // what `to` received, not what the pad says: a locked token moves only from its own pad (Gateway audit L-2)
         amountOut = IERC20(token).balanceOf(to) - tokensBefore;
         if (amountOut < minAmount) revert IGangLaunchpad.Slippage();
+        emit IGangLaunchpad3.Routed(token, p, to, true, fundsUsed, amountOut);
     }
 
     /// @notice Sell `from`'s tokens on another registered pad (its `sellFor` / `withdrawFor`, `from`'s allowance to 3.0);
@@ -181,6 +182,7 @@ library LegacyRoute {
             revert IGangLaunchpad3.NotCurveToken();
         }
         funds = quote.balanceOf(address(this)) - base;
+        emit IGangLaunchpad3.Routed(token, p, from, false, funds, amount);
     }
 
     // ---------------------------------------------------------------- internal: 铸币飞轮 (kind 3), as GangGateway V2
