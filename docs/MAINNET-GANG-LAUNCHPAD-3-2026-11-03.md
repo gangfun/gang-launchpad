@@ -28,6 +28,7 @@ GangLaunchpad 3.0 于 2026-11-03 部署到 BSC 主网，平台 Safe 已执行批
 | 共享合约（沿用 1.0 的） | QuoteRegistry `0x8b93…9F17`、平台费桶 `0xB8C4…A21b`、分红金库 `0x1BDB…1aCc`、迁移器 `0xfE38…3604`、TokenDeployer `0x3A54…4558`、GangPadRegistry `0x4fF7…4C5C` |
 | 部署钱包 | `0x4EEd…19d3`。Safe 接手之后，它对 3.0、handler、router 都没有任何权限 |
 | 广播记录 | `broadcast/DeployGangLaunchpad3.s.sol/56/` |
+| 源码验证 | 全部已在 BscScan 验证（2026-11-03）。GangLaunchpad3 实现合约、CurveLogic3、LegacyRoute 用 `forge verify-contract` 提交（Etherscan v2 接口；solc 0.8.28、via-ir、优化 200 次、cancun；源码取自 `0808027`）。GangTaxHandler、GangRouter、TimelockController、两个 ProxyAdmin、两个代理、FairLogic，BscScan 按字节码自动匹配。两个代理都已标记指向各自的实现合约 |
 
 ## 部署过程
 
@@ -60,6 +61,24 @@ GangLaunchpad 3.0 于 2026-11-03 部署到 BSC 主网，平台 Safe 已执行批
 - **批次 5（1.0、2.0 停止发币）**：等 3.0 的模块（GangBond、各模块工厂、GangHandlerAdmin）、后端、网站、CLI 都切到 3.0 之后再执行（`CUTOVER=true`）。
 - 合作方的税收接收方由 Safe 在 3.0 的 handler 上重新登记。
 - 实时告警：代理的 `Upgraded` 事件、ProxyAdmin 的 owner 变更。
-- BscScan 源码验证。
 
 以后再跑阶段 2（打印批次 4、批次 5）或升级时，要用当前线上实现对应的那次提交运行（目前是 `0808027`），详见 spec §5、§6。
+
+## 源码验证命令
+
+```sh
+V="--verifier etherscan --verifier-url https://api.etherscan.io/v2/api?chainid=56 --chain-id 56 --compiler-version 0.8.28 --optimizer-runs 200 --evm-version cancun --via-ir --watch"
+POOL=src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
+forge verify-contract 0x21DAC269a78BFF0d261783a191E9EbaAeF4e5913 src/gang/CurveLogic3.sol:CurveLogic3 $V --libraries $POOL
+forge verify-contract 0x30764D22EB16Bec685fB574f8ae17a6ecD45C7d1 src/gang/LegacyRoute.sol:LegacyRoute $V
+forge verify-contract 0x6e697106BD525AAB8fc0DdC076bd54Be09Ed6231 src/gang/GangLaunchpad3.sol:GangLaunchpad3 $V \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,address,address,address)" \
+    0x8b93919862830ea6A720B28C7D0C42fCbb849F17 0x1BDBDD73f51079c64BCA3917629c84c257921aCc 0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b \
+    0x99E882a21847012329351B598ceB93B135691b3B 0x3A5432c562BcA145Faf21ef956C475c670d14558 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c \
+    0x4fF77D4d9ac080939a24E1B805206bA094C44e5C) \
+  --libraries $POOL --libraries src/gang/CurveLogic3.sol:CurveLogic3:0x21DAC269a78BFF0d261783a191E9EbaAeF4e5913 \
+  --libraries src/gang/FairLogic.sol:FairLogic:0x34E18563622aE05e92FdaCA81a40D83652067c9D \
+  --libraries src/gang/LegacyRoute.sol:LegacyRoute:0x30764D22EB16Bec685fB574f8ae17a6ecD45C7d1
+```
+
+API key 通过 `ETHERSCAN_API_KEY` 环境变量传入，不写在命令里。
