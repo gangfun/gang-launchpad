@@ -38,12 +38,21 @@ decision.
 
 `coverage = bond ÷ dumpValue`, where dumpValue is what selling X into the pair fetches now (after the sell tax, the
 0.25% DEX fee and price impact). ≥ 100%: dumping X loses money. It falls when the price rises; `toFullCover` says how
-much quote would bring it back to 100%. Tiers on gang.fun: ≥ 100% green "押金全覆盖", 50–100% yellow "押金", < 50% a plain gray "押金"
-badge. The colours also need an allow-listed quote (WBNB, a QuoteRegistry quote, GANG) and an X of at least half the
-creator's balance when it was set; otherwise the badge stays gray (any other quote: no coverage shown, its value is
-unknown).
-Coverage is for display and screening only; it never decides where a bond goes. Before the pair there is no market
-to price X: no coverage, a gray badge — show the bond amount and X (% of supply) instead, and `--cover` is not available.
+much quote would bring it back to 100%.
+
+The badge is anchored: gang.fun keeps the dumpValue from when X was set on the pair (the post, if already on it; else
+the clock start; a hold raise takes the lower of the new X's dumpValue and the old anchor scaled to it), and the tier is
+`bond ÷ min(dumpValue now, anchor)`. A price rise never lowers the tier, so a creator need not keep topping up as the
+token does well; a fall raises it as before, and a top-up raises it. The live coverage is always shown next to it
+(`coveragePct`; `dumpChangePct` = how much more X fetches than at the anchor). `gang bond status` reads the anchor from
+gang.fun (mainnet; `tierBasis: anchor`), else the tier is the live one (`tierBasis: live`).
+
+Tiers on gang.fun: ≥ 100% green "押金全覆盖", 50–100% yellow "押金", < 50% a plain gray "押金" badge. The colours also
+need an allow-listed quote (WBNB, a QuoteRegistry quote, GANG) and an X of at least half the creator's balance when it
+was set; otherwise the badge stays gray (any other quote: no coverage shown, its value is unknown).
+Coverage is for display and screening only (filters and sorting use the live coverage); it never decides where a bond
+goes. Before the pair there is no market to price X: no coverage, a gray badge — show the bond amount and X (% of
+supply) instead, and `--cover` is not available.
 
 ## Commands
 
@@ -53,7 +62,7 @@ to price X: no coverage, a gray badge — show the bond amount and X (% of suppl
 | `gang bond topup --token <addr> (--amount <quote> \| --cover <%>)` | creator | add to the bond (`--cover` = target coverage, once running) |
 | `gang bond raise-hold --token <addr> --hold <tokens\|N%>` | creator | raise X, up to the current balance |
 | `gang bond extend --token <addr> --days <n>` | creator | lengthen the commitment: before the pair 90 days in all at most, after it a deadline at most 90 days from now |
-| `gang bond status --token <addr>` | anyone | state, phase (pending / running), X vs balance (headroom), coverage + tier once on the pair, time left or refund date, buy-back progress, the creator's record |
+| `gang bond status --token <addr>` | anyone | state, phase (pending / running), X vs balance (headroom), live coverage + anchored tier once on the pair, time left or refund date, buy-back progress, the creator's record |
 | `gang bond start --token <addr>` | anyone | the token graduated / launched: start the clock (deadline = now + N days) |
 | `gang bond report --token <addr>` | anyone | simulated first; nothing is built when the creator still holds ≥ X |
 | `gang bond settle --token <addr>` | anyone | after T while X is held: run once to ask, again 1 hour later to settle |
