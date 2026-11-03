@@ -487,7 +487,8 @@ BOND (押金承诺, GangBond; any GangLaunchpad token, from create on; GANG_BOND
                                          keeps at least --hold tokens (N% = of the 1B supply) from now on. The --days clock
                                          starts when the token graduates / launches (at once if it already has). --cover 100 =
                                          exactly what dumping X fetches now (only once on the pair). No early withdrawal;
-                                         below X anyone reports it, on the curve too
+                                         below X anyone reports it, on the curve too. A token bound to a lock vault
+                                         (gang create --vault) is refused: a lock takes tokens out of the wallet the bond watches
   gang bond topup --token <addr> (--amount <quote> | --cover <target %>) | gang bond raise-hold --token <addr> --hold <tokens|N%>
   gang bond extend --token <addr> --days <n>
                                          creator only: the bond only grows, X only rises, the commitment only gets longer (90
