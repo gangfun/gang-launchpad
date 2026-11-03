@@ -43,8 +43,8 @@ much quote would bring it back to 100%.
 The badge is anchored: gang.fun keeps the dumpValue from when X was set on the pair (the post, if already on it; else
 the clock start; a hold raise takes the lower of the new X's dumpValue and the old anchor scaled to it, never below the
 old anchor). For an hour after that, a higher dumpValue raises the anchor (after a hold raise: up to the old anchor
-scaled to the new X; a raise inside an open hour keeps that hour), so pushing the price down for a moment can't set a
-low one. The tier is `bond ÷ min(dumpValue now, anchor)`. After that hour a price rise never lowers the tier, so a
+scaled to the new X; a raise inside an open hour restarts it with the same limit), so pushing the price down for a
+moment can't set a low one. The tier is `bond ÷ min(dumpValue now, anchor)`. After that hour a price rise never lowers the tier, so a
 creator need not keep topping up as the token does well; a fall raises it as before, and a top-up raises it. The live
 coverage is always shown next to it (`coveragePct`; `dumpChangePct` = how much more X fetches than at the anchor).
 `gang bond status` reads the anchor from gang.fun (mainnet; `tierBasis: anchor`, with `tierCoveragePct` and
