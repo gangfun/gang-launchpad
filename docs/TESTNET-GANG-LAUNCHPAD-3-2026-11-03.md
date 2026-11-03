@@ -83,3 +83,22 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - **金库 pad 和飞轮 V2 的币经 3.0 转发**：在主网 fork 测试 `test/fork/GangLaunchpad3DeployFork.t.sol` 里测过。测试网上这两个 pad 也已经把 3.0 列为 router。
 - **切换批次**：没执行。
 - **模块**：GangBond、各模块工厂都没有为 3.0 部署。
+
+## 第二次升级：多跳卖出（所得付给 `to`）
+
+新增 four.meme 同签名的 `sellToken(origin, token, from, to, amount, minFunds)`：卖出所得付给 `to`，`to` 必须是发起调用的白名单合约本身。用 `script/UpgradeGangLaunchpad3.s.sol` 升级（命令同上）：
+
+- 新实现 [`0x4E907049E918869Fa7348b5A37627B757BD56474`](https://testnet.bscscan.com/address/0x4E907049E918869Fa7348b5A37627B757BD56474)；
+- 升级交易 [`0x64fd1b84…5f28`](https://testnet.bscscan.com/tx/0x64fd1b8407382fb2771745923b1e9a2fee26255067df9769686b498b8c135f28)；
+- 模拟里比对了升级前后的设置和 2 个币的记录，读回检查通过；
+- 记录：`broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793681441614.json`。
+
+升级后重跑验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`），29 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793681484794.json`。测了三个币：
+
+- 3.0 的币 [`0xB44856a33c1c541648908cE924De7D59B0feF49d`](https://testnet.bscscan.com/address/0xB44856a33c1c541648908cE924De7D59B0feF49d)
+- 1.0 的币 [`0x07Bf5C4C68c5eac8f530598D2b8C1Ae77a7dCd0a`](https://testnet.bscscan.com/address/0x07Bf5C4C68c5eac8f530598D2b8C1Ae77a7dCd0a)
+- 2.0 的币 [`0x2060a91729203CbcB20793c231F05a2d298418bD`](https://testnet.bscscan.com/address/0x2060a91729203CbcB20793c231F05a2d298418bD)
+
+每个币先买入，再卖出四分之一。卖出走的是多跳路由合约 [`0x00BA13e28e99Ad7cb1821A95A63addD3001134db`](https://testnet.bscscan.com/address/0x00BA13e28e99Ad7cb1821A95A63addD3001134db)：卖出所得先到路由合约，由它交给下一跳（这里是转回卖家），金额等于 `trySell` 报价，路由合约上不留余额。剩下的照第一次验收的方式卖出：一半经适配合约卖出并收 1% 路由费，另一半直接卖出。另外 Gateway 买入了 3.0 的币。
+
+读链复核：3.0 的 BNB 余额为 0；3.0 名下这两个老币的余额都是 0；3.0 给 1.0、2.0 的 WBNB 授权都是 0。
