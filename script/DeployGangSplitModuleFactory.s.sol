@@ -20,7 +20,7 @@ interface IHandlerOwner {
 ///         `check` reads the wiring; `checkCode` also proves the factory and its implementation run this repo's code
 ///         (a look-alike answering the same views would otherwise pass, audit 2026-10-30 L-4). The comparison is
 ///         exact (metadata hash included): to re-check a deployed factory, run at the commit it was deployed from.
-/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or
+/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD3 = 3.0 or GANG_PAD2 = 2.0, owned by the Safe; testnet GANG_PAD3, GANG_PAD2 or
 ///      GANG_PAD); HANDLER_ADMIN; SPLIT_FACTORY (optional, an existing one);
 ///      GANG_QUOTE (the GANG quote the keeper serves; mainnet: GANG, the default there; testnet: default none);
 ///      DEPLOYER_PRIVATE_KEY (unless the factory exists); mainnet broadcast needs GANG_MAINNET_OK=true.
