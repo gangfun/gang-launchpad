@@ -23,7 +23,8 @@ import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 ///              (a new reinitializer without PAD3_INIT_CALL, or a set-up call without one, is refused before that);
 ///            - the pad's settings (owner / pending owner, factories, gate, cap, routers, listed CALLERS, …) and, for
 ///              the newest 25 tokens, their raw records AND what the named views derive from them (status, quote, pair,
-///              graduation amount / remaining, tax config, quotes for a fixed buy and sell, 打新 fees) read back as
+///              graduation amount / remaining, tax config, quotes for a fixed buy and sell, wallet room, 打新 mint
+///              preview, exit fee and hold line) read back as
 ///              before. This catches a moved variable or a struct member read in another place; two members of the
 ///              same type swapped can still slip past the raw bytes, and only the named views or the layout test see
 ///              it;
@@ -200,7 +201,17 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
 
     /// @dev Each through a raw staticcall: a view that reverts for this kind of token records its revert data.
     function _derived(GangLaunchpad3 p, address t) internal view returns (bytes memory d) {
-        bytes[9] memory calls = [
+        bytes[] memory calls = _derivedCalls(t);
+        for (uint256 i; i < calls.length; i++) {
+            (bool ok, bytes memory ret) = address(p).staticcall(calls[i]);
+            d = bytes.concat(d, abi.encode(ok, ret));
+        }
+    }
+
+    /// @dev The named views `_derived` reads for `t` (index 3: graduationRemaining).
+    function _derivedCalls(address t) internal pure returns (bytes[] memory calls) {
+        calls = new bytes[](11);
+        bytes[11] memory c = [
             abi.encodeCall(GangLaunchpad3.getTokenInfo, (t)),
             abi.encodeCall(GangLaunchpad3.status, (t)),
             abi.encodeCall(GangLaunchpad3.gradAmtOf, (t)),
@@ -209,11 +220,12 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             abi.encodeCall(GangLaunchpad3.tryBuy, (t, address(0), 0, 0.01 ether)),
             abi.encodeCall(GangLaunchpad3.trySell, (t, 1 ether)),
             abi.encodeCall(GangLaunchpad3.exitFeeBpsOf, (t)),
-            abi.encodeCall(GangLaunchpad3.holdBpsOf, (t))
+            abi.encodeCall(GangLaunchpad3.holdBpsOf, (t)),
+            abi.encodeCall(GangLaunchpad3.previewMint, (t, address(0), 1)),
+            abi.encodeCall(GangLaunchpad3.walletRoom, (t, address(0)))
         ];
-        for (uint256 i; i < calls.length; i++) {
-            (bool ok, bytes memory ret) = address(p).staticcall(calls[i]);
-            d = bytes.concat(d, abi.encode(ok, ret));
+        for (uint256 i; i < 11; i++) {
+            calls[i] = c[i];
         }
     }
 }

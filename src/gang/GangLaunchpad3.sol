@@ -66,6 +66,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     uint256 public constant MIN_REF_DEPTH_BNB = PadCommon.MIN_REF_DEPTH_BNB;
     /// @notice The rule set new tokens are created under (`tokenVersionOf`). 3.0's first rules = 2.0's, version 1.
     uint8 public constant TOKEN_VERSION = 1;
+    /// @notice See `initVersion`.
+    uint64 internal constant INIT_VERSION = 1;
 
     // ---------------------------------------------------------------- V3 constants
     uint256 public constant CURVE_SUPPLY = CurveLogic.CURVE_SUPPLY;
@@ -199,11 +201,12 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         _config.walletCapEnabled = true;
     }
 
-    /// @notice The initialized version this implementation leaves the proxy at: 1 (`initialize`). A later version with
-    ///         a `reinitializer(n)` returns n; script/UpgradeGangLaunchpad3.s.sol then requires the set-up call in the
-    ///         same `upgradeAndCall` (a reinitializer left for later could be called by anyone).
+    /// @notice The initialized version this implementation leaves the proxy at: INIT_VERSION (1: `initialize`). A
+    ///         later version sets INIT_VERSION = n and uses it for BOTH its `reinitializer(INIT_VERSION)` and this view
+    ///         (one constant, so the two cannot drift apart); script/UpgradeGangLaunchpad3.s.sol then requires the
+    ///         set-up call in the same `upgradeAndCall` (a reinitializer left for later could be called by anyone).
     function initVersion() external pure virtual returns (uint64) {
-        return 1;
+        return INIT_VERSION;
     }
 
     // ---------------------------------------------------------------- admin (new tokens / trades only)
