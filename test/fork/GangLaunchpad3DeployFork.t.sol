@@ -22,6 +22,7 @@ import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {GangFlywheelPad} from "../../src/flywheel/GangFlywheelPad.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 import {GatewayAdapter} from "../router/GangGateway.t.sol";
+import {MultiHopRouter} from "../gang3/Pad3SellTo.t.sol";
 import {GangLaunchpad3V2Mock} from "../mocks/GangLaunchpad3V2Mock.sol";
 import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
 
@@ -78,6 +79,7 @@ contract GangLaunchpad3DeployForkTest is Test {
 
     DeployGangLaunchpad3Harness d;
     GatewayAdapter adapter;
+    MultiHopRouter hop;
     address user = makeAddr("pad3-fork-user");
     address feeTo = makeAddr("pad3-fork-feeTo");
 
@@ -128,6 +130,7 @@ contract GangLaunchpad3DeployForkTest is Test {
 
         // before batch 3 an older pad's token can be quoted but not traded through 3.0
         adapter = new GatewayAdapter(IGangGateway(s.pad), feeTo);
+        hop = new MultiHopRouter(GangLaunchpad3(payable(s.pad)));
         address live1 = _liveCurve(p, PAD_1);
         if (live1 != address(0)) {
             vm.prank(user, user);
@@ -142,8 +145,8 @@ contract GangLaunchpad3DeployForkTest is Test {
             assertTrue(IGangPad(olds[i]).routers(s.pad), "older pad lists 3.0");
         }
         assertEq(bytes(d.forwardJson(s)).length, 0, "forward: nothing left");
-        vm.setEnv("CALLERS", vm.toString(address(adapter)));
-        _exec(d.callersJson(s), SAFE, 1);
+        vm.setEnv("CALLERS", string.concat(vm.toString(address(adapter)), ",", vm.toString(address(hop))));
+        _exec(d.callersJson(s), SAFE, 2);
         assertTrue(p.isCaller(address(adapter)));
         d.run();
 
@@ -239,6 +242,19 @@ contract GangLaunchpad3DeployForkTest is Test {
         assertEq(used, cost);
         assertEq(amountFunds, cost);
         assertEq(IERC20(t).balanceOf(user) - b0, out);
+        // a quarter through the pay-to sell (multi-hop): the proceeds land on the listed router, none on the user
+        uint256 quarter = out / 4;
+        {
+            (,, uint256 qf,) = p.trySell(t, quarter);
+            vm.prank(user);
+            IERC20(t).approve(address(p), quarter);
+            uint256 h0 = address(hop).balance;
+            uint256 u0 = user.balance;
+            vm.prank(user, user);
+            assertEq(hop.gangHop(t, quarter, qf), qf, "pay-to sell = trySell");
+            assertEq(address(hop).balance - h0, qf, "native BNB on the router");
+            assertEq(user.balance, u0, "nothing to the seller directly");
+        }
         uint256 half = out / 2;
         (,, uint256 funds,) = p.trySell(t, half);
         assertGt(funds, 0);
@@ -253,7 +269,7 @@ contract GangLaunchpad3DeployForkTest is Test {
         assertEq(feeTo.balance - fee0, funds / 100, "router fee");
         assertEq(address(p).balance, 0, "3.0 holds no BNB");
         if (local) {
-            assertEq(IERC20(t).balanceOf(address(p)), t0 - out + half, "curve tokens out and back");
+            assertEq(IERC20(t).balanceOf(address(p)), t0 - out + half + quarter, "curve tokens out and back");
         } else {
             assertEq(IERC20(t).balanceOf(address(p)), 0, "3.0 holds none of the token");
             assertEq(IERC20(M.WBNB).balanceOf(address(p)), w0, "3.0's reserves untouched");

@@ -37,11 +37,20 @@
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
 | `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
+| `sellToken(0, token, from, to, amount, minFunds)` | 多跳卖出，签名和选择器（`0x930cc050`）与 four.meme TokenManager2 相同。卖 `from` 授权给本 pad 的币，扣掉 pad 1% 手续费后的全部所得付给 `to`：WBNB 计价付原生 BNB，其他计价付计价 ERC-20。聚合器的 router 拿这笔钱继续下一跳。`to` 必须是白名单里的合约（否则 `RecipientNotListed`），不能是本 pad 或 WBNB。调用者和 `from` 的规则与上一行相同。没有路由手续费参数，`minFunds` 按 `to` 实际收到的净额计算 |
 
-- **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。
+- **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。名单有两个用途：
+  - 谁可以替卖家调用 `sellToken`；
+  - 谁可以收多跳卖出的所得。
+
+  每个加入名单的合约都要审查：卖家只能取它自己的 `msg.sender`，卖出所得只能继续用于这位卖家的路由。
+- **多跳**：
+  - Gang 币做第一跳（卖出）：用多跳卖出，所得进聚合器的 router。
+  - Gang 币做最后一跳（买入）：router 用前一跳换来的 BNB 或 ERC-20 调 `buyTokenAMAP`，`to` 填用户本人。
+  - 毕业前代币锁仓，只有 pad 能转出，所以币本身不能进 router：卖出时由 pad 直接从用户钱包扣，买入时直接发到用户钱包。Gang 币不能做中间一跳。
 - **Agent 门槛关闭时**：入口不接受买入（和 `buyFor` 的 A-2 规则一致），卖出不受影响。
 - **报价和成交一致到 wei**：`tryBuy` 和 `buyTokenAMAP` 用同一套计算，`trySell` 和 `sellToken` 也一样。`trySell` 不检查卖家的 Agent 资格：门槛开启时，非 Agent 卖出会 revert，但报价不是 0。
-- **毕业后**：入口不再交易这个币，`getTokenInfo` 返回池子地址，由聚合器自己去 DEX 路由。
+- **毕业后**：入口不再交易这个币，`getTokenInfo` 返回池子地址，由聚合器自己去 DEX 路由。毕业后代币解锁，和普通代币一样可以多跳。
 
 ## 3. 老 pad 的币也经 3.0 交易
 
@@ -51,7 +60,7 @@
   - LaunchpadV2 / Soft / U / S 这几个更早的 pad，没有 `buyFor` 和 router 列表，只能在它们自己的 pad 上交易；
   - 老 pad 上的打新（`status = 3`），这一版不转发，和 Gateway 一致；
   - 金库版的 `vaultLock` / `vaultRelease`，只能由金库调用，本来就不是交易。
-- **规则沿用 Gateway**：trader 必须是 `tx.origin`；卖出只接受卖家本人或白名单合约；路由手续费 ≤ 5%；买到的币由老 pad 直接打给用户。卖老币时，用户授权给 3.0。
+- **规则沿用 Gateway**：trader 必须是 `tx.origin`；卖出只接受卖家本人或白名单合约；路由手续费 ≤ 5%；买到的币由老 pad 直接打给用户。卖老币时，用户授权给 3.0。多跳卖出同样适用于老币：老 pad 把卖出所得付给 3.0（它的 router），3.0 再把全部所得转给 `to`。
 - **储备保护**：转发前后，3.0 自己持有的该计价币余额必须完全相同，否则回滚（`EscrowMoved`）。3.0 只对受信 pad 授权本次的 `funds`，用完立刻归零。
 - **行情**：老币的 `Buy` / `Sell` 仍由老 pad 自己发出，应以老 pad 的事件为准，因为也有交易直接打到老 pad，不经过 3.0。3.0 转发时另外发一个 `Routed`，用于归因。
 - **GangGateway**：保持运行，已经接入的聚合器不受影响。3.0 也把 Gateway 列为 router，所以经 Gateway 也能交易 3.0 的币。
@@ -67,6 +76,7 @@
   - 路由手续费不在这里，在 `GatewaySell.routerFee` 里。
 - **`GatewayBuy` / `GatewaySell`**：入口的每笔交易都发，签名和 GangGateway 相同（同一个 topic）。
 - **`Routed(token, pad, trader, isBuy, quoteAmount, tokenAmount)`**：入口转发老币时发，带上目标 pad。
+- **`GatewaySellTo(token, trader, to, caller, amount, funds)`**：多跳卖出，`funds` 付给了 `to`。
 - **`CallerSet(caller, allowed)`**：白名单变更。
 
 ## 5. 部署和 Safe 批次
