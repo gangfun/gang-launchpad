@@ -28,7 +28,7 @@ interface IOwnable2Step {
 ///         the script itself. A later module kind / version: deploy its factory with HANDLER_ADMIN set (step 2 only);
 ///         the factories the admin still allows besides it are printed with the optional `setFactory(old, false)` that
 ///         stops each (its clones keep working) — the Safe's call, never in the batch.
-/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or
+/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD3 = 3.0 or GANG_PAD2 = 2.0, owned by the Safe; testnet GANG_PAD3, GANG_PAD2 or
 ///      GANG_PAD); HANDLER_ADMIN, SPLITTER_FACTORY (optional, existing ones); ADMIN_OWNER (default: whoever holds the
 ///      handler now — the Safe, or the owner of the older admin holding it; mainnet: must be the Safe, with no handover
 ///      pending, audit 2026-10-31 L-2);
