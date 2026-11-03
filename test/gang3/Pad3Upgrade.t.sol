@@ -23,6 +23,10 @@ contract UpgradeHarness is UpgradeGangLaunchpad3 {
         _checkImpl(current, impl);
     }
 
+    function derivedCalls(address t) external pure returns (bytes[] memory) {
+        return _derivedCalls(t);
+    }
+
     function wantVersion(address impl, uint64 current, bytes memory init) external view returns (uint64) {
         return _wantVersion(impl, current, init);
     }
@@ -71,18 +75,49 @@ contract Pad3UpgradeTest is GangFixture {
         );
     }
 
-    /// @dev Two uint128 members of Curve swapped (realQuote <-> gradAmt): the raw record reads the same, the derived
-    ///      views (graduation remaining, quotes) do not — the snapshot differs and the script refuses.
-    function test_snapshot_seesSameTypeMemberSwap() public {
+    /// @dev An upgrade to a fresh build of the same implementation: the snapshot reads back the same (no false alarm).
+    function test_snapshot_sameCodeReadsTheSame() public {
         address t = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
         vm.prank(alice, alice);
         pad.buy(t, 1 ether, 0);
         UpgradeGangLaunchpad3.Snapshot memory before = h.snap(pad3, _stack());
+        address next = address(
+            new GangLaunchpad3(
+                address(quoteRegistry),
+                address(divVault),
+                address(bucket),
+                address(handler),
+                address(tokenDeployer),
+                address(wbnb),
+                address(padRegistry3)
+            )
+        );
+        vm.prank(upgrader);
+        _admin().upgradeAndCall(ITransparentUpgradeableProxy(address(pad)), next, "");
+        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snap(pad3, _stack());
+        assertEq(afterUp.settings, before.settings);
+        assertEq(afterUp.tokens.length, before.tokens.length);
+        for (uint256 i; i < before.tokens.length; i++) {
+            assertEq(afterUp.tokens[i], before.tokens[i]);
+        }
+    }
+
+    /// @dev Two uint128 members of Curve swapped (realQuote <-> gradAmt, review 3 PoC): the raw record bytes stay the
+    ///      same, but graduationRemaining — one of the snapshot's derived views (`_derivedCalls` index 3) — reads
+    ///      another value, so the snapshot differs. (The mock lacks the other views; this checks the one that sees it.)
+    function test_snapshot_seesSameTypeMemberSwap() public {
+        address t = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
+        vm.prank(alice, alice);
+        pad.buy(t, 1 ether, 0);
+        bytes memory call = h.derivedCalls(t)[3];
+        assertEq(bytes4(call), GangLaunchpad3.graduationRemaining.selector, "index 3 is graduationRemaining");
+        (, bytes memory before) = address(pad).staticcall(call);
         Pad3CurveSwapMock next = new Pad3CurveSwapMock();
         vm.prank(upgrader);
         _admin().upgradeAndCall(ITransparentUpgradeableProxy(address(pad)), address(next), "");
-        UpgradeGangLaunchpad3.Snapshot memory afterUp = h.snap(pad3, _stack());
-        assertTrue(afterUp.tokens[0] != before.tokens[0], "the token's record reads differently");
+        (bool ok, bytes memory afterUp) = address(pad).staticcall(call);
+        assertTrue(ok, "the mock answers graduationRemaining");
+        assertTrue(keccak256(afterUp) != keccak256(before), "the swap shows in a derived view");
     }
 
     /// @dev A new reinitializer needs its set-up call inside the upgrade; a set-up call needs a new reinitializer.

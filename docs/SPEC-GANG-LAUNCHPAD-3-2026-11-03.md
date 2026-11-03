@@ -19,9 +19,9 @@
   - `renounceOwnership` 被禁用（`RenounceDisabled`），否则 pad 没有 owner 之后，被攻破的 router 或白名单调用者就再也撤不掉了。
 - **依赖地址**：报价币登记表、分红金库、平台费桶、税处理器、TokenDeployer、WBNB、GangPadRegistry，共 7 个，写在实现合约的 immutable 里，每笔交易的 gas 和 2.0 一样。每次升级，新实现必须带同样的 7 个地址；升级脚本会在打印 Safe 交易前逐个比对（§6）。
 - **每个币的规则版本**：`tokenVersionOf(token)` 记录这个币创建时的 `TOKEN_VERSION`（3.0 首版为 1），并发 `TokenVersionSet`。**升级不改已有币的规则**：曲线参数、毕业门槛、费率都按币固定；新规则只给新版本号的币用。
-- **存储**：只能在最后追加新变量，不能重排、改类型或删除，继承列表也不能改。`test/gang3/GangLaunchpad3Layout.t.sol` 锁定了每个槽位，以及 `Config`、`Curve`、`Sale`、`Position` 每个结构体成员的位置。`Config` 内联在槽位 3–6，已经没有空间，新设置要放进新变量。以后新增的状态建议放进 ERC-7201 命名空间结构体。
+- **存储**：只能在最后追加新变量，不能重排、改类型或删除，继承列表也不能改。`test/gang3/GangLaunchpad3Layout.t.sol` 锁定了每个槽位，以及 `Config`、`Curve`、`Sale`、`Position` 每个结构体成员的位置。`Config` 内联在槽位 3–6，布局测试不允许再给它加成员，新设置要放进新变量。以后新增的状态建议放进 ERC-7201 命名空间结构体。
 - **事件只增不改**：2.0 的事件照发，签名不变；新信息用新事件（§4）。
-- **需要初始化的新版本**：用 `reinitializer(n)`，同时把 `initVersion()` 改为返回 n；初始化调用必须和升级放在同一笔 `ProxyAdmin.upgradeAndCall` 里，否则中间可能被抢先调用。升级脚本会强制执行这一条。
+- **需要初始化的新版本**：把常量 `INIT_VERSION` 改为 n，`reinitializer(INIT_VERSION)` 和 `initVersion()` 都用这个常量；初始化调用必须和升级放在同一笔 `ProxyAdmin.upgradeAndCall` 里，否则中间可能被抢先调用。升级脚本会强制执行这一条。
 - **交易者检查**：`_checkCurveTrader` / `_lockedOf` 这两个钩子，本地买卖和入口都会走（这一版里都是空的）。以后的版本如果让钩子拒绝某些交易者，`tryBuy` 也必须对这些交易者报 0。
 
 ## 2. 交易接口
@@ -36,7 +36,7 @@
 | `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛 |
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
-| `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（这些地址收到的手续费会留在 pad 上，不属于任何账目） |
+| `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
 
 - **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。
 - **Agent 门槛关闭时**：入口不接受买入（和 `buyFor` 的 A-2 规则一致），卖出不受影响。
@@ -101,7 +101,7 @@
 2. 以 ProxyAdmin owner 的身份在模拟里执行 `upgradeAndCall(proxy, impl, PAD3_INIT_CALL)`，然后检查：
    - 初始化版本等于新实现的 `initVersion()`；
    - pad 的设置（owner、待接收的 owner、工厂、门槛、上限、router、`CALLERS` 的白名单状态等）和升级前相同；
-   - 最新 25 个币的原始记录，以及由它们算出的结果（状态、计价币、交易对、毕业金额和剩余、税配置、固定金额的买卖报价、打新费率），和升级前相同。这样变量挪了位置、结构体成员被读错，都能查出来。同类型的两个成员互换时，原始记录看不出差别，要靠这些计算结果和布局测试来发现；
+   - 最新 25 个币的原始记录，以及由它们算出的结果（状态、计价币、交易对、毕业金额和剩余、税配置、固定金额的买卖报价、钱包剩余额度、打新的铸币预览、退出费和持有线），和升级前相同。这样变量挪了位置、结构体成员被读错，都能查出来。同类型的两个成员互换时，原始记录看不出差别，要靠这些计算结果和布局测试来发现；
    - 部署脚本阶段 2 的全部读回检查通过。
 3. 全部通过后，测试网上如果部署钱包就是 ProxyAdmin owner，直接执行；否则打印 Safe 交易。
 
