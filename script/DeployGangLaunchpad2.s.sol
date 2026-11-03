@@ -61,7 +61,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         address gateway;
     }
 
-    function run() external override returns (Stack memory s) {
+    function run() external virtual override returns (Stack memory s) {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address me = vm.addr(pk);
         Ctx memory x = _ctx(block.chainid == 56);

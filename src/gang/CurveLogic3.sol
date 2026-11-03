@@ -15,7 +15,7 @@ import {PadCommon} from "./PadCommon.sol";
 ///        aggregator interface needs, the curve's math and rules unchanged
 /// @notice External library, delegatecalled by GangLaunchpad3 (runs on the pad's storage, balance and msg.sender;
 ///         events come from the pad). Same create / buy / sell / graduation / creator fee as CurveLogic, line for
-///         line, with four additions (SPEC-GANG-PAD-3 §18.2):
+///         line, with four additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
 ///         1. `buy(..., prepaid)`: the pad already holds `quoteIn` (native BNB it wrapped, or quote it pulled itself),
 ///            so the exact pull from msg.sender is skipped;
 ///         2. `sell(..., pull, payTo)`: whose allowance moves the tokens (PULL_CALLER: msg.sender's own, as 2.0's
@@ -275,7 +275,9 @@ library CurveLogic3 {
             token,
             trader,
             true,
-            v.net + v.protocolFee,
+            // what the pad kept (audit 3A I-1): = GatewayBuy.fundsUsed / tryBuy's cost to the wei, the graduation
+            // cut's 1-wei dust included
+            quoteIn - v.refundGross,
             v.tokensOut,
             v.protocolFee,
             creatorFee,
@@ -379,19 +381,24 @@ library CurveLogic3 {
     // ---------------------------------------------------------------- quotes (3.0)
     /// @notice What `buy(trader, token, quoteIn)` would do now: tokens out, quote kept (fee included), the fee, and
     ///         the refund of a cap / graduation cut; all 0 when it would revert (not a live curve token, quoteIn 0, the
-    ///         gate refuses `trader`, the wallet cap is reached). `trader` = address(0): a fresh wallet, no gate check.
+    ///         gate refuses `trader`, the wallet cap is reached, a quoteIn so large the fee math would overflow).
+    ///         `trader` = address(0): a fresh wallet, no gate check. `locked`: what the pad's `_lockedOf` books for
+    ///         `trader` against the cap (as `buy` takes it).
     function quoteBuy(
         IGangLaunchpad.Config storage c,
         mapping(address => IGangLaunchpad.Curve) storage curves,
         address token,
         address trader,
-        uint256 quoteIn
+        uint256 quoteIn,
+        uint256 locked
     ) external view returns (uint256 tokensOut, uint256 spent, uint256 fee, uint256 refund) {
         IGangLaunchpad.Curve storage cv = curves[token];
         if (cv.creator == address(0) || cv.graduated || quoteIn == 0) return (0, 0, 0, 0);
+        // audit 3B I-1 / 3A I-3: 0 like GangPadRegistry / the gateway, not a panic (no real buy gets near it)
+        if (quoteIn > type(uint256).max / PadCommon.BPS) return (0, 0, 0, 0);
         if (trader != address(0) && c.agentGateEnabled && !PadCommon.isAgent(c, trader)) return (0, 0, 0, 0);
-        if (c.walletCapEnabled && walletRoom(true, token, trader, 0) == 0) return (0, 0, 0, 0);
-        BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn, 0);
+        if (c.walletCapEnabled && walletRoom(true, token, trader, locked) == 0) return (0, 0, 0, 0);
+        BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn, locked);
         return (v.tokensOut, quoteIn - v.refundGross, v.protocolFee, v.refundGross);
     }
 

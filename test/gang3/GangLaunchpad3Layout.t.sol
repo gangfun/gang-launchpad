@@ -58,15 +58,91 @@ contract GangLaunchpad3LayoutTest is Test {
     }
 
     function test_layout_v1() public view {
-        Entry[] memory e = _layout("GangLaunchpad3.sol/GangLaunchpad3.json");
+        string memory a = "GangLaunchpad3.sol/GangLaunchpad3.json";
+        Entry[] memory e = _layout(a);
         assertEq(e.length, 17, "seventeen entries");
         _v1(e);
+        _structs(a, e);
     }
 
     function test_layout_nextVersionAppends() public view {
-        Entry[] memory e = _layout("GangLaunchpad3V2Mock.sol/GangLaunchpad3V2Mock.json");
+        string memory a = "GangLaunchpad3V2Mock.sol/GangLaunchpad3V2Mock.json";
+        Entry[] memory e = _layout(a);
         assertEq(e.length, 18);
         _v1(e);
+        _structs(a, e);
         _is(e[17], "v2Value", 20, "t_uint256");
+    }
+
+    /// @dev A next version with two struct members swapped (Curve: creator / quote; Config: pairFactory / migrator)
+    ///      keeps every top-level slot, and is refused by the member check (audit 3C L-1 PoC).
+    function test_layout_structReorderCaught() public {
+        string memory a = "GangLaunchpad3StructReorderMock.sol/Pad3StructReorderMock.json";
+        Entry[] memory e = _layout(a);
+        _v1(e);
+        vm.expectRevert();
+        this.structsOf(a);
+    }
+
+    function structsOf(string memory artifact) external view {
+        _structs(artifact, _layout(artifact));
+    }
+
+    // ---------------------------------------------------------------- struct members (audit 3C L-1)
+    /// @dev Every member of the four stored structs: label, slot within the struct, byte offset, type. A reordered,
+    ///      retyped or inserted member moves every existing token's record; only appending at the end is safe (and
+    ///      `Config`, held inline at slots 3–6, has no room to grow: a new setting goes into a new variable).
+    function _structs(string memory artifact, Entry[] memory e) internal view {
+        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/out/", artifact));
+        _members(
+            json,
+            e[3].typ,
+            "Config",
+            "pairFactory:0:0:t_address,v3Factory:1:0:t_address,twapWindow:1:20:t_uint32,migrator:2:0:t_address,"
+            "agentIdRegistry:3:0:t_address,agentGateEnabled:3:20:t_bool,walletCapEnabled:3:21:t_bool"
+        );
+        _members(
+            json,
+            _valueType(json, e[7].typ),
+            "Curve",
+            "creator:0:0:t_address,quote:1:0:t_address,realQuote:2:0:t_uint128,sold:2:16:t_uint128,"
+            "gradAmt:3:0:t_uint128,virtualQuote:3:16:t_uint128,graduated:4:0:t_bool,buyTaxBps:4:1:t_uint16,"
+            "sellTaxBps:4:3:t_uint16,dividendBps:4:5:t_uint16,pair:4:7:t_address,refPair:5:0:t_address"
+        );
+        _members(
+            json,
+            _valueType(json, e[8].typ),
+            "Sale",
+            "creator:0:0:t_address,progressAt:0:20:t_uint64,capShares:0:28:t_uint16,holdBps:0:30:t_uint16,"
+            "quote:1:0:t_address,sold:1:20:t_uint16,launched:1:22:t_bool,mintFeeBps:1:23:t_uint16,"
+            "exitFeeBps:1:25:t_uint16,gate:2:0:t_address,sharePrice:3:0:t_uint128,pair:4:0:t_address,"
+            "refPool:5:0:t_address,markSold:5:20:t_uint16"
+        );
+        _members(json, _valueType(json, _valueType(json, e[9].typ)), "Position", "shares:0:0:t_uint16");
+    }
+
+    function _valueType(string memory json, string memory mappingType) internal view returns (string memory) {
+        return vm.parseJsonString(json, string.concat(".storageLayout.types['", mappingType, "'].value"));
+    }
+
+    /// @param want "label:slot:offset:type" per member, comma-separated, in declaration order
+    function _members(string memory json, string memory typeKey, string memory name, string memory want) internal view {
+        assertEq(vm.indexOf(typeKey, string.concat("t_struct(", name, ")")), 0, name);
+        string memory k = string.concat(".storageLayout.types['", typeKey, "'].members");
+        string[] memory w = vm.split(want, ",");
+        assertFalse(vm.keyExistsJson(json, string.concat(k, "[", vm.toString(w.length), "]")), name);
+        for (uint256 i; i < w.length; i++) {
+            string memory m = string.concat(k, "[", vm.toString(i), "]");
+            string memory got = string.concat(
+                vm.parseJsonString(json, string.concat(m, ".label")),
+                ":",
+                vm.parseJsonString(json, string.concat(m, ".slot")),
+                ":",
+                vm.toString(vm.parseJsonUint(json, string.concat(m, ".offset"))),
+                ":",
+                vm.parseJsonString(json, string.concat(m, ".type"))
+            );
+            assertEq(got, w[i], name);
+        }
     }
 }

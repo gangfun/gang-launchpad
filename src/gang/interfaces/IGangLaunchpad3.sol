@@ -2,15 +2,16 @@
 pragma solidity 0.8.28;
 
 /// @notice What GangLaunchpad 3.0 adds to 2.0's ABI (IGangLaunchpad, unchanged): events only appended, never changed
-///         (SPEC-GANG-PAD-3 §18.2). Declared here so the pad and CurveLogic3 emit the same events.
+///         (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §4). Declared here so the pad and CurveLogic3 emit the same
+///         events.
 interface IGangLaunchpad3 {
     /// @notice `token` was created under rule set `version` (the pad's TOKEN_VERSION then); every create, both kinds.
     event TokenVersionSet(address indexed token, uint8 version);
 
     /// @notice Every curve trade of a 3.0 token, next to 2.0's `Buy` / `Sell`, with the whole fee split and the price
     ///         after the trade.
-    /// @param quoteAmount buy: quote the curve took (fee included, refund excluded); sell: quote the curve paid out
-    ///        before its fee
+    /// @param quoteAmount buy: quote the pad kept (fee included, refund excluded; = GatewayBuy.fundsUsed); sell: quote
+    ///        the curve paid out before its fee. A router fee is not here: it is GatewaySell's `routerFee`
     /// @param tokenAmount tokens bought / sold
     /// @param protocolFee the 1% (creatorFee + the platform's part)
     /// @param creatorFee the creator's part of protocolFee, kept on the pad (`creatorFeeOf`)
@@ -50,6 +51,18 @@ interface IGangLaunchpad3 {
     );
     /// @notice A contract allowed (or no longer allowed) to call `sellToken` for a seller other than itself.
     event CallerSet(address indexed caller, bool allowed);
+    /// @notice An entry trade of an older pad's token, forwarded to `pad` (after GatewayBuy / GatewaySell's data):
+    ///         `quoteAmount` = funds the older pad kept (buy) / paid after its fee (sell), `tokenAmount` = tokens
+    ///         `trader` received (buy) / sold (sell). Market data stays the older pad's own Buy / Sell (trades also reach
+    ///         it directly); this one attributes the entry's share.
+    event Routed(
+        address indexed token,
+        address indexed pad,
+        address indexed trader,
+        bool isBuy,
+        uint256 quoteAmount,
+        uint256 tokenAmount
+    );
 
     /// @notice `sellToken` by a contract that is neither the seller nor listed (`isCaller`).
     error NotWhitelisted();
@@ -64,8 +77,11 @@ interface IGangLaunchpad3 {
     error NotWholeShares();
     /// @notice `feeRate` above MAX_FEE_RATE (500 = 5%).
     error FeeRateTooHigh();
-    /// @notice A router fee is due but `feeRecipient` is address(0).
+    /// @notice A router fee is due but `feeRecipient` is address(0), the pad itself or WBNB (the fee would sit in the
+    ///         pad outside every book).
     error ZeroFeeRecipient();
+    /// @notice `renounceOwnership` is disabled: an ownerless pad could never delist a router or a caller.
+    error RenounceDisabled();
     /// @notice BNB-quoted: msg.value != funds; ERC-20-quoted: msg.value != 0.
     error BadMsgValue();
     /// @notice `tryBuy` by token amount (four.meme `amount != 0`): buys by funds only.

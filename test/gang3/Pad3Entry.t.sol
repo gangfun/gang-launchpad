@@ -3,6 +3,7 @@ pragma solidity 0.8.28;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
@@ -171,5 +172,69 @@ contract Pad3EntryTest is GangFixture {
         vm.prank(owner);
         vm.expectRevert(IGangLaunchpad3.NotAContract.selector);
         pad3.setCaller(alice, true);
+    }
+
+    // ---------------------------------------------------------------- audit 3 fixes
+    /// @dev Audit 3C L-2: an ownerless pad could never delist a router or a caller.
+    function test_renounceOwnership_disabled() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        pad3.renounceOwnership();
+        vm.prank(owner);
+        vm.expectRevert(IGangLaunchpad3.RenounceDisabled.selector);
+        pad3.renounceOwnership();
+        assertEq(Ownable(address(pad)).owner(), owner);
+    }
+
+    /// @dev Audit 3A I-2 / 3B I-2: a router fee to the pad itself would sit outside every book: refused.
+    function test_sellToken_feeToThePad_refused() public {
+        address t = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
+        vm.prank(bob, bob);
+        (uint256 out,) = pad3.buyTokenAMAP{value: 0.01 ether}(t, bob, 0.01 ether, 0);
+        vm.startPrank(bob, bob);
+        IERC20(t).approve(address(pad), out);
+        vm.expectRevert(IGangLaunchpad3.ZeroFeeRecipient.selector);
+        pad3.sellToken(0, t, bob, out, 0, 100, address(pad));
+        // no fee: the recipient is not used
+        pad3.sellToken(0, t, bob, out, 0, 0, address(pad));
+        vm.stopPrank();
+        assertEq(IERC20(t).balanceOf(bob), 0);
+    }
+
+    /// @dev Audit 3B I-1: a quote so large the fee math would overflow is 0 (as GangPadRegistry / the gateway), not a
+    ///      panic.
+    function test_tryBuy_hugeFunds_isZero() public {
+        address t = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
+        (uint256 est,,,) = _quote(t, bob, type(uint256).max);
+        assertEq(est, 0);
+        (est,,,) = _quote(t, bob, type(uint256).max / 10_000);
+        assertGt(est, 0, "the largest accepted quote still quotes");
+    }
+
+    /// @dev Audit 3A I-1: on the graduating buy (graduation cut) TradeV1's quoteAmount is what the pad kept, = the
+    ///      entry's fundsUsed = tryBuy's cost, to the wei.
+    function test_tradeV1_graduatingBuy_quoteAmountIsFundsUsed() public {
+        vm.prank(owner);
+        pad.setWalletCapEnabled(false);
+        address t = _createV3(alice, address(wbnb), _tax(0, 0, 0, address(0)));
+        uint256 funds = 30 ether;
+        vm.deal(bob, funds);
+        (, uint256 cost,,) = _quote(t, bob, funds);
+        vm.recordLogs();
+        vm.prank(bob, bob);
+        (, uint256 used) = pad3.buyTokenAMAP{value: funds}(t, bob, funds, 0);
+        (,,,,,, bool graduated,,,,,) = _curveView(t);
+        assertTrue(graduated, "graduated");
+        assertLt(used, funds, "cut");
+        assertEq(used, cost, "tryBuy cost");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 found;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] != IGangLaunchpad3.TradeV1.selector) continue;
+            (, uint256 quoteAmount) = abi.decode(logs[i].data, (bool, uint256));
+            assertEq(quoteAmount, used, "TradeV1.quoteAmount = fundsUsed");
+            found++;
+        }
+        assertEq(found, 1);
     }
 }

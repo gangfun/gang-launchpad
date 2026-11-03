@@ -27,4 +27,8 @@ contract GangLaunchpad3V2Mock is GangLaunchpad3 {
     function initializeV2(uint256 v) external reinitializer(2) {
         v2Value = v;
     }
+
+    function initVersion() external pure override returns (uint64) {
+        return 2;
+    }
 }

@@ -27,9 +27,10 @@ import {FairLogic} from "./FairLogic.sol";
 /// @title GangLaunchpad 3.0 — the upgradeable Gang pad: one permanent address for both launch kinds
 /// @notice GangLaunchpad 2.0 (bonding curve V3 with the creator's 70% of the 1% fee and graduation tiers, and 打新)
 ///         behind a TransparentUpgradeableProxy: users, routers and aggregators keep the PROXY address for good, and
-///         later features ship as upgrades of this implementation instead of new pads (SPEC-GANG-PAD-3 §15–§16). Every
-///         external function, getter, constant, event and error of 2.0 keeps its name, selector and layout, so
-///         GangPadRegistry, GangGateway, GangRouter, the CLI and indexers read it as they read 2.0.
+///         later features ship as upgrades of this implementation instead of new pads
+///         (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §1). Every external function, getter, constant, event and error
+///         of 2.0 keeps its name, selector and layout, so GangPadRegistry, GangGateway, GangRouter, the CLI and
+///         indexers read it as they read 2.0.
 ///         What 3.0 adds: `tokenVersionOf` (the rule set each token was created under, emitted as `TokenVersionSet`;
 ///         an upgrade never changes the rules of a token already created — the upgrade policy, checked in review).
 ///         - V3 (kindOf 1): V2 curve / Agent gate (current setting) / 1% wallet cap / graduation at the creator's
@@ -38,16 +39,17 @@ import {FairLogic} from "./FairLogic.sol";
 ///           (GangToken → handler).
 ///         - 打新 (kindOf 2): 10,000 equal shares at one fixed price both ways; the last share launches the pair; each
 ///           sale snapshots its rules (cap, gate, fees, hold line) at create.
-/// @dev Upgrades: the ProxyAdmin (created by the proxy) is owned by the upgrade multisig, no timelock (spec §16). The
-///      six dependencies are implementation immutables (as 2.0, same gas per trade): a new implementation is deployed
-///      with the same six (the deploy script checks it). The reentrancy guard, router list and A-2 router checks are
-///      here, in the wrappers, kept apart on purpose: `buyFor` needs the pad's gate on now, `mintFor` needs the sale's
+/// @dev Upgrades: the ProxyAdmin (created by the proxy) is owned by the platform Safe, no timelock
+///      (SPEC-GANG-LAUNCHPAD-3 §1, §6). The seven dependencies are implementation immutables (as 2.0, same gas per
+///      trade): a new implementation is deployed with the same seven (script/UpgradeGangLaunchpad3.s.sol compares
+///      them before printing the Safe's upgrade). The reentrancy guard, router list and A-2 router checks are here, in
+///      the wrappers, kept apart on purpose: `buyFor` needs the pad's gate on now, `mintFor` needs the sale's
 ///      snapshot gate set. Funds of one quote are shared by curves and sales on this one address; each path only ever
 ///      moves its own token's escrow (curve: `realQuote` and `creatorFeeOf`; sale: sold × price; exit fees owed:
 ///      `owedFee`).
-///      STORAGE LAYOUT (proxy storage, locked by test/gang/GangLaunchpad3Layout.t.sol). Upgrade rule: append new
-///      variables after the last one; never reorder, retype or remove a variable, and never change the inheritance
-///      list. Ownable `_owner` (0), Ownable2Step `_pendingOwner` (1), ReentrancyGuard `_status` (2, 0 on a fresh proxy =
+///      STORAGE LAYOUT (proxy storage, locked by test/gang3/GangLaunchpad3Layout.t.sol, struct members included).
+///      Upgrade rule: append new variables after the last one; never reorder, retype or remove a variable or a struct
+///      member, and never change the inheritance list. Ownable `_owner` (0), Ownable2Step `_pendingOwner` (1), ReentrancyGuard `_status` (2, 0 on a fresh proxy =
 ///      not entered), then this contract's variables in declaration order from slot 3. Initializable keeps its flag in
 ///      its ERC-7201 slot. A version that needs set-up uses `reinitializer(n)` through ProxyAdmin.upgradeAndCall.
 interface IWBNB3 {
@@ -197,9 +199,22 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         _config.walletCapEnabled = true;
     }
 
+    /// @notice The initialized version this implementation leaves the proxy at: 1 (`initialize`). A later version with
+    ///         a `reinitializer(n)` returns n; script/UpgradeGangLaunchpad3.s.sol then requires the set-up call in the
+    ///         same `upgradeAndCall` (a reinitializer left for later could be called by anyone).
+    function initVersion() external pure virtual returns (uint64) {
+        return 1;
+    }
+
     // ---------------------------------------------------------------- admin (new tokens / trades only)
     /// @notice One-shot. Last step of the deploy: `create` needs a migrator, so the pad opens only once everything
     ///         else is wired (A-1).
+    /// @notice Disabled (audit 3C L-2): without an owner no router or caller could ever be delisted. Hand over with
+    ///         `transferOwnership` + `acceptOwnership` instead.
+    function renounceOwnership() public view override onlyOwner {
+        revert RenounceDisabled();
+    }
+
     function setMigrator(address migrator_) external onlyOwner {
         if (_config.migrator != address(0)) revert MigratorAlreadySet();
         if (migrator_ == address(0)) revert ZeroAddress();
@@ -613,7 +628,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     }
 
     // ---------------------------------------------------------------- aggregator entry (four.meme-shaped)
-    /// @notice GangGateway's entry, built into the pad (SPEC-GANG-PAD-3 §17–§18): what an aggregator's four.meme
+    /// @notice GangGateway's entry, built into the pad (SPEC-GANG-LAUNCHPAD-3 §2, §3): what an aggregator's four.meme
     ///         adapter calls for this pad's curve tokens AND, forwarded with this pad as their listed router, the
     ///         tokens of the other pads GangPadRegistry trusts (1.0, 2.0, the vault pad, 铸币飞轮 V1 / V2;
     ///         LegacyRoute). The user approves THIS address once; the aggregator's contract calls it with no
@@ -685,7 +700,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             // as GangGateway on a pad with the gate off (A-2): no buy quote, no buy (sells still work)
             if (kind == KIND_CURVE && _config.agentGateEnabled) {
                 (estimatedAmount, estimatedCost, estimatedFee,) =
-                    CurveLogic.quoteBuy(_config, curves, token, trader, funds);
+                    CurveLogic.quoteBuy(_config, curves, token, trader, funds, _lockedOf(token, trader));
             }
         } else {
             (quote, estimatedAmount, estimatedCost, estimatedFee) =
@@ -735,10 +750,14 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             if (cv.graduated) revert NotCurveToken();
             // the same rule as `buyFor` (A-2) and as GangGateway on any pad: the entry buys only with the gate on
             if (!_config.agentGateEnabled) revert RouterNeedsGate();
+            // the same hooks as `buy` / `buyFor` (no-ops in this version; a later rule set must not be skipped here)
+            _checkCurveTrader(token, to);
             IERC20 quote = IERC20(cv.quote);
             _payIn(address(quote), funds);
             uint256 toBefore = quote.balanceOf(to);
-            amountOut = CurveLogic.buy(_config, curves, creatorFeeOf, _deps(), to, token, funds, minAmount, 0, true);
+            amountOut = CurveLogic.buy(
+                _config, curves, creatorFeeOf, _deps(), to, token, funds, minAmount, _lockedOf(token, to), true
+            );
             fundsUsed = funds - (quote.balanceOf(to) - toBefore);
         } else if (kind != 0) {
             revert NotCurveToken();
@@ -781,6 +800,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (kind == KIND_CURVE) {
             Curve storage cv = curves[token];
             if (cv.graduated) revert NotCurveToken();
+            _checkCurveTrader(token, from);
             quote = IERC20(cv.quote);
             funds = CurveLogic.sell(
                 _config, curves, creatorFeeOf, _deps(), from, CurveLogic.PULL_PAD, token, amount, 0, address(this)
@@ -794,7 +814,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         uint256 fee = (funds * feeRate) / BPS;
         fundsToSeller = funds - fee;
         if (fundsToSeller < minFunds) revert Slippage();
-        if (fee > 0 && feeRecipient == address(0)) revert ZeroFeeRecipient();
+        // the pad itself, or WBNB (its payable fallback books the BNB fee as the pad's WBNB): outside every book
+        if (fee > 0 && (feeRecipient == address(0) || feeRecipient == address(this) || feeRecipient == wbnb)) {
+            revert ZeroFeeRecipient();
+        }
 
         if (address(quote) == wbnb) {
             IWBNB3(wbnb).withdraw(funds);
@@ -899,7 +922,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     }
 
     /// @dev Who may trade `token` on the curve beyond the usual checks. Anyone on this pad; kept as 2.0's hook point for a
-    ///      later rule set.
+    ///      later rule set. A version that makes it refuse someone must make `tryBuy` quote 0 for them too (review 3).
     function _checkCurveTrader(address, address) internal pure {}
 
     /// @dev What `user` holds in `token`'s vault, counted against the 1% wallet cap with the wallet balance. None on
