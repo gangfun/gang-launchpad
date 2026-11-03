@@ -12,6 +12,7 @@ let answers = []
 const server = createServer((req, res) => {
   seen.push(req.url)
   const [status, body] = answers.shift() ?? [500, null]
+  if (status === 'hang') return
   res.writeHead(status, { 'content-type': 'application/json' }).end(body == null ? '' : JSON.stringify(body))
 })
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
@@ -35,7 +36,7 @@ try {
   assert.equal(tierBps(1n * E, 0n, null), MAX_UINT)
 
   answers = [[200, { round: 2, bond, anchorDumpValue: String(4n * E) }]]
-  assert.equal(await anchorOf(ctx, token, 2), 4n * E)
+  assert.equal(await anchorOf(ctx, token, 2, 5n * E), 4n * E)
   assert.equal(seen.pop(), `/api/bonds/${token.toLowerCase()}`)
 
   // another round (a re-post gang.fun has not indexed yet), another GangBond, no anchor, 0, 404, 500: live tier
@@ -48,17 +49,30 @@ try {
     [500, null],
   ]) {
     answers = [a]
-    assert.equal(await anchorOf(ctx, token, 2), null)
+    assert.equal(await anchorOf(ctx, token, 2, 5n * E), null)
   }
+  // a hold raise gang.fun has not indexed yet: its anchor is for the old X
+  answers = [[200, { round: 2, bond, holdAmount: String(4n * E), anchorDumpValue: String(4n * E) }]]
+  assert.equal(await anchorOf(ctx, token, 2, 5n * E), null)
+  answers = [[200, { round: 2, bond, holdAmount: String(5n * E), anchorDumpValue: String(4n * E) }]]
+  assert.equal(await anchorOf(ctx, token, 2, 5n * E), 4n * E)
+
+  // gang.fun answers too slowly: the live tier, after ANCHOR_WAIT_MS at most
+  answers = [['hang']]
+  const t0 = Date.now()
+  assert.equal(await anchorOf(ctx, token, 2, 5n * E), null)
+  assert.ok(Date.now() - t0 < 5_000)
+
   // a server from before the anchor fields: no bond field either → the round's own GangBond assumed, no anchor
   answers = [[200, { round: 2 }]]
-  assert.equal(await anchorOf(ctx, token, 2), null)
+  assert.equal(await anchorOf(ctx, token, 2, 5n * E), null)
 
   // testnet: gang.fun is not asked
   const n = seen.length
-  assert.equal(await anchorOf({ chainId: '97', bond }, token, 2), null)
+  assert.equal(await anchorOf({ chainId: '97', bond }, token, 2, 5n * E), null)
   assert.equal(seen.length, n)
   console.log('bond-tier: ok')
 } finally {
+  server.closeAllConnections()
   server.close()
 }

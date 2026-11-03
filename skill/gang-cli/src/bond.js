@@ -162,24 +162,30 @@ const TIER_NOTE = { full: '押金全覆盖: dumping X now loses money (bond ≥ 
 
 /**
  * The tier's coverage (bps): the bond over the lower of the dump value now and the anchor. gang.fun anchors the badge to
- * the dump value when X was set on the pair (post on it / clock start / hold raise), so a price rise never lowers the tier
- * and an honest creator need not keep adding to stay 押金全覆盖; the live coverage is still shown next to it. No anchor:
- * the live coverage. MAX_UINT when X fetches nothing (as GangBond.coverageBps).
+ * the dump value when X was set on the pair (post on it / clock start / hold raise; raised to any higher live read in the
+ * hour after, so a one-block dip can't set it), so a price rise never lowers the tier and an honest creator need not keep
+ * adding to stay 押金全覆盖; the live coverage is still shown next to it. No anchor: the live coverage. MAX_UINT when X
+ * fetches nothing (as GangBond.coverageBps).
  */
 export const tierBps = (amount, dump, anchor) => {
   const d = anchor != null && anchor < dump ? anchor : dump
   return d ? (amount * BPS) / d : MAX_UINT
 }
 
+/** How long a bond command waits for gang.fun's anchor before going on with the live tier. */
+const ANCHOR_WAIT_MS = 3_000
+
 /**
  * gang.fun's anchor for this round (wei of the quote), or null: not mainnet (gang.fun indexes mainnet only), no anchor
- * indexed yet, another round, or gang.fun unreachable — the tier is then the live one. Never fails the command.
+ * indexed yet, another round, an X gang.fun has not caught up with (a hold raise not indexed yet: its anchor is for the
+ * old X), or gang.fun unreachable / slower than ANCHOR_WAIT_MS — the tier is then the live one. Never fails the command.
  */
-export async function anchorOf(ctx, token, round) {
+export async function anchorOf(ctx, token, round, hold) {
   if (String(ctx.chainId) !== '56') return null
   try {
-    const r = await apiGet(`/bonds/${token.toLowerCase()}`, undefined, '')
+    const r = await apiGet(`/bonds/${token.toLowerCase()}`, AbortSignal.timeout(ANCHOR_WAIT_MS), '')
     if (!r || Number(r.round) !== round || !same(r.bond ?? ctx.bond, ctx.bond) || !/^\d+$/.test(r.anchorDumpValue ?? '')) return null
+    if (r.holdAmount != null && String(r.holdAmount) !== String(hold)) return null
     const a = BigInt(r.anchorDumpValue)
     return a > 0n ? a : null
   } catch { return null }
@@ -189,8 +195,9 @@ async function nowOf(ctx) {
   return Number((await ctx.client.getBlock()).timestamp)
 }
 
-/** The bond and everything around it, formatted; raw fields kept under `_raw` for the commands. */
-async function bondView(ctx, token, m) {
+/** The bond and everything around it, formatted; raw fields kept under `_raw` for the commands. withAnchor: ask gang.fun
+ *  for the tier's anchor (status and the previews that show a tier; report / settle don't wait on it). */
+async function bondView(ctx, token, m, withAnchor = false) {
   const b = await ctx.read(ctx.bond, BOND_ABI, 'bondOf', [token])
   const state = STATES[Number(b.state)] ?? String(b.state)
   const quote = b.quote === zeroAddress ? m.quote : b.quote
@@ -239,7 +246,7 @@ async function bondView(ctx, token, m) {
     const [dump, cov, anchor] = await Promise.all([
       ctx.read(ctx.bond, BOND_ABI, 'dumpValue', [token]),
       ctx.read(ctx.bond, BOND_ABI, 'coverageBps', [token]),
-      anchorOf(ctx, token, Number(b.round)),
+      withAnchor ? anchorOf(ctx, token, Number(b.round), b.holdAmount) : null,
     ])
     const left = Number(b.deadline) - now
     const settleAt = Number(b.requestAt)
@@ -253,7 +260,7 @@ async function bondView(ctx, token, m) {
       anchorDumpValue: anchor == null ? null : q(anchor),
       ...(anchored && { dumpChangePct: pctOfBps(((dump - anchor) * BPS) / anchor) }),
       tierNote: anchored
-        ? `the price rose since X was set: the badge stays at the anchor (${tierOf(tcov)}); dumping X now fetches more than then, live coverage ${cov === MAX_UINT ? '-' : pctOfBps(cov)}%`
+        ? `dumping X now fetches more than at the anchor: the badge stays at the anchor's tier (${tierOf(tcov)}); live coverage ${cov === MAX_UINT ? '-' : pctOfBps(cov)}%`
         : TIER_NOTE[tierOf(tcov)],
       toFullCover: dump > b.amount ? q(dump - b.amount) : '0',
       ...(left > 0 ? { secondsLeft: left, daysLeft: Math.round((left / DAY) * 10) / 10 } : { pastDeadline: true }),
@@ -357,7 +364,7 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
   if (!ctx.bond) return fail('this token\'s GangLaunchpad generation has no GangBond in this CLI version', { token, chainId, padGen: ctx.gen })
   const m = await marketOf(ctx, token)
   if (!m) return fail('not a GangLaunchpad token (V3 or 打新) on this network: bonds cover only those', { token, chainId })
-  const view = await bondView(ctx, token, m)
+  const view = await bondView(ctx, token, m, ['status', 'topup', 'raise-hold'].includes(sub))
   const { _raw: raw, ...pub } = view
   const b = raw.bond
   const qf = (x) => formatUnits(x, raw.dec)
@@ -554,8 +561,11 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     if (sim.failed) return out({ success: false, step: 'raise-hold', ...sim.failed })
     const dump = m.live ? await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold]) : null
     const cov = !dump ? null : (b.amount * BPS) / dump
-    // gang.fun's new anchor: the dump of the new X now, or the old anchor scaled to it if lower (a raise after a rise)
-    const anchor = raw.anchor == null || !b.holdAmount ? null : (raw.anchor * hold) / b.holdAmount
+    // gang.fun's new anchor: the dump of the new X now, or the old anchor scaled to it if lower (a raise after a rise),
+    // never below the old anchor (a raise in a dip must not lock in a low one)
+    const scaled = raw.anchor == null || !b.holdAmount ? null : (raw.anchor * hold) / b.holdAmount
+    const lower = scaled == null || dump == null ? null : dump < scaled ? dump : scaled
+    const anchor = lower == null ? null : lower > raw.anchor ? lower : raw.anchor
     const tcov = dump == null ? null : tierBps(b.amount, dump, anchor)
     return out(send('raiseHold', [token, hold], {
       step: 'raise-hold', holdBefore: view.holdTokens, holdAfter: tokens(hold), creatorBalance: view.creatorBalance,
