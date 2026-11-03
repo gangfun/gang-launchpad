@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1793711589038,
+  "meta": {
+    "name": "gang: GangLaunchpad 3.0 modules, batch 2 (allow Split / LP / Combo factories)",
+    "description": "GangHandlerAdmin 0xC833\u2026Af76 (3.0's tax handler admin): setFactory(true) for GangSplitModuleFactory 0x904D\u202671f2, GangLiquiditySplitterFactory 0x98C5\u20261752, GangComboSplitterFactory 0x2018\u2026eA39, all bound to GangLaunchpad 3.0 0x2bEb\u2026AB29. Same as 2.0's module batch 2.",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E",
+    "createdFromOwnerAddress": "",
+    "checksum": ""
+  },
+  "transactions": [
+    {
+      "to": "0xC833CEC2B283759003945C0Bf8C048aB1949Af76",
+      "value": "0",
+      "data": "0x71013c10000000000000000000000000904d4498a9257e4d7638afebb95a1162cb2171f20000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xC833CEC2B283759003945C0Bf8C048aB1949Af76",
+      "value": "0",
+      "data": "0x71013c1000000000000000000000000098c506f0f4762f9d1ec96c27499ce8b7e59817520000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": null,
+      "contractInputsValues": null
+    },
+    {
+      "to": "0xC833CEC2B283759003945C0Bf8C048aB1949Af76",
+      "value": "0",
+      "data": "0x71013c1000000000000000000000000020188054de31de844df205712768852bded3ea390000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}

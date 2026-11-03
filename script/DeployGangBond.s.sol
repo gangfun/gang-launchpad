@@ -12,7 +12,7 @@ import {GangBond} from "../src/gang/GangBond.sol";
 /// @notice One contract, no owner, nothing to wire: GangBond only reads the pad and the tokens and trades with their
 ///         pairs, so the pad, vault and tax handler are left as they are. Checks the pad's WBNB and prints the address
 ///         for the CLI (GANG_BOND / GANG_TESTNET_BOND) and the server's indexer.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or GANG_PAD); GANG_BOND (re-run: deploy nothing, only check that one); mainnet broadcast
+/// @dev Env: DEPLOYER_PRIVATE_KEY, the pad (GangModulePadScript: mainnet GANG_PAD3 = 3.0 or GANG_PAD2 = 2.0, owned by the Safe; testnet GANG_PAD3, GANG_PAD2 or GANG_PAD); GANG_BOND (re-run: deploy nothing, only check that one); mainnet broadcast
 ///      needs GANG_MAINNET_OK=true.
 contract DeployGangBond is GangModulePadScript {
     error WrongChain(uint256 chainId);

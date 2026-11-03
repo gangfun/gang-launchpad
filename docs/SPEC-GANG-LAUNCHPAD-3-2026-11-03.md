@@ -147,6 +147,7 @@
 - 用新版本那次提交运行升级脚本：参照合约由 `_newImpl` 部署；
 - 对新实现跑一遍存储布局测试；
 - 在主网 fork 上演练这笔 Safe 交易。
+- 确认模块依赖的接口没变，并在新实现上重跑 `test/fork/Pad3ModulesFork.t.sol`：在新版本那次提交上运行，`PAD3_FORK_IMPL` 填已部署的新实现（fork 上先以 Safe 身份升级），`PAD3_FORK_LIVE=true` 并通过 `HANDLER_ADMIN`、`SPLITTER_FACTORY`、`SPLIT_FACTORY`、`LP_FACTORY`、`COMBO_FACTORY`、`GANG_BOND` 传入线上那套模块，测试会让线上工厂的新克隆和 bond 在新实现上跑一遍。这个模式不带 `--libraries` 运行：工厂脚本比对的是整段运行时代码（含 metadata），`--libraries` 会改变它；阶段 2 读回由升级脚本自己做。GangBond、GangHandlerAdmin 和四个模块工厂及其克隆永久绑定 3.0 的地址，克隆初始化时还缓存了 `taxHandler`、`wbnb`、`quoteRegistry`，所以升级不能改动：`kindOf` 的取值、`curves` 的前 12 个字段、`sales` 的前 14 个字段（顺序和含义）、`isAgent`、`taxHandler()`、`wbnb()`、`quoteRegistry()`。改了它们，已部署的模块和押在 GangBond 里的 BNB 会出错或卡住。2.0 不可升级，所以没有这层依赖；发 bond 的用户也要知道这层信任关系。
 
 ## 7. 已知行为和风险说明
 

@@ -19,7 +19,7 @@ interface IHandlerOwner {
 ///         `admin.setFactory(factory, true)`. On testnet, when the deployer owns the admin, the script sends it. The
 ///         code comparison is exact (metadata hash included): to re-check a deployed factory, run at the commit it
 ///         was deployed from.
-/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD2, a 2.0 pad owned by the Safe; testnet GANG_PAD2 or
+/// @dev Env: the pad (GangModulePadScript: mainnet GANG_PAD3 = 3.0 or GANG_PAD2 = 2.0, owned by the Safe; testnet GANG_PAD3, GANG_PAD2 or
 ///      GANG_PAD); HANDLER_ADMIN; LP_FACTORY (optional, an existing one);
 ///      DEPLOYER_PRIVATE_KEY (unless the factory exists); mainnet broadcast needs GANG_MAINNET_OK=true.
 contract DeployGangLiquiditySplitterFactory is GangModulePadScript {
