@@ -2,6 +2,7 @@ import { createPublicClient, parseAbi, encodeFunctionData, decodeEventLog, forma
 import { decimalsOf, fundingStep as fund, parseAmount, parseIntIn, parseNum, revertOf as revertIn, step, units, GAS_RESERVE } from './steps.js'
 import { atTokenPad, GANG_GENS, gangGens, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, padNets, rpcTransport } from './gangpad.js'
 import { bawAddress } from './baw.js'
+import { get as apiGet } from './discover.js'
 
 /**
  * `gang bond …` — GangBond (Agent 押金承诺, gang-launchpad src/gang/GangBond.sol): a creator of a GangLaunchpad token
@@ -159,6 +160,31 @@ const ceilDiv = (a, b) => (a + b - 1n) / b
 const tierOf = (bps) => (bps >= BPS ? 'full' : bps >= 5_000n ? 'bond' : 'none')
 const TIER_NOTE = { full: '押金全覆盖: dumping X now loses money (bond ≥ what the sale fetches)', bond: '押金: bond covers 50–100% of what dumping X fetches', none: 'below 50% coverage: a plain gray 押金 badge on gang.fun (bond and coverage still shown)' }
 
+/**
+ * The tier's coverage (bps): the bond over the lower of the dump value now and the anchor. gang.fun anchors the badge to
+ * the dump value when X was set on the pair (post on it / clock start / hold raise), so a price rise never lowers the tier
+ * and an honest creator need not keep adding to stay 押金全覆盖; the live coverage is still shown next to it. No anchor:
+ * the live coverage. MAX_UINT when X fetches nothing (as GangBond.coverageBps).
+ */
+export const tierBps = (amount, dump, anchor) => {
+  const d = anchor != null && anchor < dump ? anchor : dump
+  return d ? (amount * BPS) / d : MAX_UINT
+}
+
+/**
+ * gang.fun's anchor for this round (wei of the quote), or null: not mainnet (gang.fun indexes mainnet only), no anchor
+ * indexed yet, another round, or gang.fun unreachable — the tier is then the live one. Never fails the command.
+ */
+export async function anchorOf(ctx, token, round) {
+  if (String(ctx.chainId) !== '56') return null
+  try {
+    const r = await apiGet(`/bonds/${token.toLowerCase()}`, undefined, '')
+    if (!r || Number(r.round) !== round || !same(r.bond ?? ctx.bond, ctx.bond) || !/^\d+$/.test(r.anchorDumpValue ?? '')) return null
+    const a = BigInt(r.anchorDumpValue)
+    return a > 0n ? a : null
+  } catch { return null }
+}
+
 async function nowOf(ctx) {
   return Number((await ctx.client.getBlock()).timestamp)
 }
@@ -210,14 +236,25 @@ async function bondView(ctx, token, m) {
       })
       return { ...v, _raw: raw }
     }
-    const [dump, cov] = await Promise.all([
+    const [dump, cov, anchor] = await Promise.all([
       ctx.read(ctx.bond, BOND_ABI, 'dumpValue', [token]),
       ctx.read(ctx.bond, BOND_ABI, 'coverageBps', [token]),
+      anchorOf(ctx, token, Number(b.round)),
     ])
     const left = Number(b.deadline) - now
     const settleAt = Number(b.requestAt)
+    const tcov = tierBps(b.amount, dump, anchor)
+    const anchored = anchor != null && dump > anchor
     Object.assign(v, {
-      phase: 'running', violated, dumpValue: q(dump), coveragePct: cov === MAX_UINT ? null : pctOfBps(cov), tier: tierOf(cov), tierNote: TIER_NOTE[tierOf(cov)],
+      phase: 'running', violated, dumpValue: q(dump), coveragePct: cov === MAX_UINT ? null : pctOfBps(cov),
+      // the badge: anchored on gang.fun (a price rise never lowers it); coveragePct / toFullCover stay live
+      // tierBasis anchor: at the dump value when X was set (or now, if lower); live: no anchor from gang.fun
+      tier: tierOf(tcov), tierCoveragePct: tcov === MAX_UINT ? null : pctOfBps(tcov), tierBasis: anchor == null ? 'live' : 'anchor',
+      anchorDumpValue: anchor == null ? null : q(anchor),
+      ...(anchored && { dumpChangePct: pctOfBps(((dump - anchor) * BPS) / anchor) }),
+      tierNote: anchored
+        ? `the price rose since X was set: the badge stays at the anchor (${tierOf(tcov)}); dumping X now fetches more than then, live coverage ${cov === MAX_UINT ? '-' : pctOfBps(cov)}%`
+        : TIER_NOTE[tierOf(tcov)],
       toFullCover: dump > b.amount ? q(dump - b.amount) : '0',
       ...(left > 0 ? { secondsLeft: left, daysLeft: Math.round((left / DAY) * 10) / 10 } : { pastDeadline: true }),
       ...violatedNote,
@@ -230,7 +267,7 @@ async function bondView(ctx, token, m) {
             : `settle is due: gang bond settle --token ${token} returns the bond to the creator (X must still be held)`,
       }),
     })
-    Object.assign(raw, { dump, cov })
+    Object.assign(raw, { dump, cov, anchor })
   }
   if (state === 'slashed') {
     const [ready, quoteIn, tokensOut] = await ctx.read(ctx.bond, BOND_ABI, 'previewBurn', [token])
@@ -499,9 +536,11 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     if (sim.failed) return out({ success: false, step: 'topup', ...sim.failed })
     const total = b.amount + amount
     const cov = !raw.dump ? null : (total * BPS) / raw.dump
+    const tcov = raw.dump == null ? null : tierBps(total, raw.dump, raw.anchor)
     return out(send('topUp', [token, amount], {
       step: 'topup', add: qf(amount), bondAfter: qf(total), quote: view.quote, payWith: pay.value ? 'BNB' : view.quote,
-      dumpValue: view.dumpValue, coveragePct: cov == null ? null : pctOfBps(cov), tier: cov == null ? 'full' : tierOf(cov), deadline: view.deadline,
+      dumpValue: view.dumpValue, coveragePct: cov == null ? null : pctOfBps(cov),
+      tier: tcov == null || tcov === MAX_UINT ? 'full' : tierOf(tcov), ...(view.tierBasis && { tierBasis: view.tierBasis }), deadline: view.deadline,
       note: 'a bond can only grow: nothing comes back before settle',
     }, pay.value))
   }
@@ -515,9 +554,16 @@ export async function runBond(sub, { opt, flag, out, fail, summarize }) {
     if (sim.failed) return out({ success: false, step: 'raise-hold', ...sim.failed })
     const dump = m.live ? await ctx.read(ctx.bond, BOND_ABI, 'quoteDump', [token, hold]) : null
     const cov = !dump ? null : (b.amount * BPS) / dump
+    // gang.fun's new anchor: the dump of the new X now, or the old anchor scaled to it if lower (a raise after a rise)
+    const anchor = raw.anchor == null || !b.holdAmount ? null : (raw.anchor * hold) / b.holdAmount
+    const tcov = dump == null ? null : tierBps(b.amount, dump, anchor)
     return out(send('raiseHold', [token, hold], {
       step: 'raise-hold', holdBefore: view.holdTokens, holdAfter: tokens(hold), creatorBalance: view.creatorBalance,
-      ...(dump != null && { dumpValueAfter: qf(dump), coveragePctAfter: cov == null ? null : pctOfBps(cov) }), deadline: view.deadline,
+      ...(dump != null && {
+        dumpValueAfter: qf(dump), coveragePctAfter: cov == null ? null : pctOfBps(cov),
+        tierAfter: tcov === MAX_UINT ? 'full' : tierOf(tcov), ...(view.tierBasis && { tierBasis: view.tierBasis }),
+      }),
+      deadline: view.deadline,
       note: 'X can only go up; a higher X means dumping it fetches more, so the same bond covers less',
     }))
   }
