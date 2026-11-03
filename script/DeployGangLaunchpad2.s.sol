@@ -61,7 +61,7 @@ contract DeployGangLaunchpad2 is DeployGang {
         address gateway;
     }
 
-    function run() external override returns (Stack memory s) {
+    function run() external virtual override returns (Stack memory s) {
         uint256 pk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address me = vm.addr(pk);
         Ctx memory x = _ctx(block.chainid == 56);
@@ -317,7 +317,7 @@ contract DeployGangLaunchpad2 is DeployGang {
     }
 
     /// @dev `who` is a GangHandlerAdmin over `handler`, owned by `owner`.
-    function _isOwnersAdmin(address who, address handler, address owner) internal view returns (bool) {
+    function _isOwnersAdmin(address who, address handler, address owner) internal view virtual returns (bool) {
         if (who.code.length == 0) return false;
         try GangHandlerAdmin(who).handler() returns (address h) {
             return h == handler && GangHandlerAdmin(who).owner() == owner;

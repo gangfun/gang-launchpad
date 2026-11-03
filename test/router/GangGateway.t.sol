@@ -172,8 +172,7 @@ contract GangGatewayTest is GangFixture {
         address[] memory pads = new address[](1);
         pads[0] = address(pad);
         reg = GangPadRegistry(RG.deploy(owner, pads).proxy);
-        stack = G.deploy(address(reg), address(wbnb), owner, R.MAINNET_MIN_DELAY);
-        gw = GangGateway(payable(stack.proxy));
+        gw = GangGateway(payable(_newGateway(address(reg))));
         vm.prank(owner);
         pad.setRouter(address(gw), true);
         adapter = new GatewayAdapter(IGangGateway(address(gw)), feeTo);
@@ -184,6 +183,13 @@ contract GangGatewayTest is GangFixture {
         alice = _newAgent();
         bob = _newAgent();
         vm.deal(human, 10 ether);
+    }
+
+    /// @dev The aggregator entry under test: GangGateway as deployed (test/gang3/Pad3AsGateway.t.sol re-runs this
+    ///      suite with GangLaunchpad 3.0's built-in entry forwarding to this pad instead).
+    function _newGateway(address reg_) internal virtual returns (address) {
+        stack = G.deploy(reg_, address(wbnb), owner, R.MAINNET_MIN_DELAY);
+        return stack.proxy;
     }
 
     // ---------------------------------------------------------------- helpers
@@ -206,7 +212,7 @@ contract GangGatewayTest is GangFixture {
         IERC20(t).approve(address(gw), type(uint256).max);
     }
 
-    function _assertGatewayEmpty(address t) internal view {
+    function _assertGatewayEmpty(address t) internal view virtual {
         assertEq(address(gw).balance, 0, "gateway BNB");
         assertEq(wbnb.balanceOf(address(gw)), 0, "gateway WBNB");
         assertEq(quoteTok.balanceOf(address(gw)), 0, "gateway quoteTok");
@@ -216,7 +222,7 @@ contract GangGatewayTest is GangFixture {
     }
 
     // ---------------------------------------------------------------- deployment
-    function test_deploy_selfCheckPasses() public view {
+    function test_deploy_selfCheckPasses() public view virtual {
         G.check(
             stack,
             G.Expect({
@@ -234,14 +240,14 @@ contract GangGatewayTest is GangFixture {
         assertEq(gw.PROTOCOL_FEE_BPS(), 100);
     }
 
-    function test_deploy_implAndProxyCannotBeInitializedAgain() public {
+    function test_deploy_implAndProxyCannotBeInitializedAgain() public virtual {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         GangGateway(payable(stack.impl)).initialize(address(reg), address(wbnb), owner);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         gw.initialize(address(reg), address(wbnb), owner);
     }
 
-    function test_deploy_zeroAddressesRefused() public {
+    function test_deploy_zeroAddressesRefused() public virtual {
         address impl = address(new GangGateway());
         vm.expectRevert(IGangGateway.NotDeployed.selector);
         new TransparentUpgradeableProxy(
@@ -258,7 +264,7 @@ contract GangGatewayTest is GangFixture {
     }
 
     /// @dev Upgrades only through the timelock: the Safe itself cannot call the ProxyAdmin, the timelock waits 48 h.
-    function test_upgrade_onlyThroughTimelock() public {
+    function test_upgrade_onlyThroughTimelock() public virtual {
         GangGateway next = new GangGateway();
         bytes memory call = abi.encodeCall(
             ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(address(gw)), address(next), bytes(""))
@@ -567,7 +573,7 @@ contract GangGatewayTest is GangFixture {
         gw.tryBuy(t, alice, 1 ether, 0);
     }
 
-    function test_delisted_onlyRouter() public {
+    function test_delisted_onlyRouter() public virtual {
         address t = _v3();
         uint256 got = _buy(alice, t, 0.01 ether);
         _approveGw(alice, t);
@@ -608,7 +614,7 @@ contract GangGatewayTest is GangFixture {
     }
 
     /// @dev Audit L-2: a pad the registry returns cannot fake a fill — amountOut is `to`'s balance change.
-    function test_buy_lyingPadCannotFakeAFill() public {
+    function test_buy_lyingPadCannotFakeAFill() public virtual {
         LyingPad liar = new LyingPad(address(wbnb));
         vm.prank(owner);
         reg.addPad(address(liar));
@@ -703,7 +709,7 @@ contract GangGatewayTest is GangFixture {
         assertEq(adapter.sell(t, got, net), net);
     }
 
-    function test_sell_padAllowanceDoesNotCount() public {
+    function test_sell_padAllowanceDoesNotCount() public virtual {
         address t = _v3();
         uint256 got = _buy(alice, t, 0.01 ether);
         vm.prank(alice);
@@ -768,7 +774,7 @@ contract GangGatewayTest is GangFixture {
         assertEq(IERC20(t).balanceOf(alice), 0);
     }
 
-    function test_whitelist_onlyOwner_twoStepHandOver() public {
+    function test_whitelist_onlyOwner_twoStepHandOver() public virtual {
         assertEq(gw.owner(), owner);
         vm.prank(alice);
         vm.expectRevert(IGangGateway.OnlyOwner.selector);

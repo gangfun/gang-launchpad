@@ -49,6 +49,11 @@ contract MergeGuardsTest is GangFixture {
     // ================================================================ downstream strings (verbatim)
     /// @dev gangfun-server indexer/src/v3.js V3_PAD_EVENTS + fairMint.js FAIR_PAD_EVENTS, and the CLI's
     ///      skill/gang-cli/src/v3.js / fair.js PAD_ABI events. All emitted by the one pad.
+    /// @dev Events a later pad generation adds on top of 2.0's (none here; GangLaunchpad 3.0: TokenVersionSet).
+    function _extraPadEvents() internal pure virtual returns (string[] memory s) {
+        s = new string[](0);
+    }
+
     function _downstreamPadEvents() internal pure returns (string[] memory s) {
         s = new string[](16);
         // v3.js V3_PAD_EVENTS (CLI v3.js:53-57 has the same strings)
@@ -589,7 +594,7 @@ contract MergeGuardsTest is GangFixture {
         _fullRound();
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        Ev[] memory padEv = _parseAll(_cat(_downstreamPadEvents(), _oldPADEvents()));
+        Ev[] memory padEv = _parseAll(_cat(_cat(_downstreamPadEvents(), _oldPADEvents()), _extraPadEvents()));
         Ev[] memory hEv = _parseAll(_cat(_downstreamHandlerEvents(), _oldHANDLEREvents()));
         Ev[] memory tEv = _parseAll(_cat(_downstreamTokenEvents(), _oldTOKENEvents()));
         Ev[] memory vEv = _parseAll(_cat(_downstreamVaultEvents(), _oldVAULTEvents()));

@@ -168,10 +168,16 @@ library GangRouterDeployLib {
     ///      match (`sameCode`: metadata aside). A look-alike with the same ERC-1967 slots but other code (a backdoor)
     ///      fails here.
     function checkProxyCode(Router memory r) internal view {
+        if (!isProxyCode(r.proxy, r.proxyAdmin)) revert WiringCheck("router proxy code");
+    }
+
+    /// @notice `proxy`'s runtime code is this build's TransparentUpgradeableProxy with `_admin` = `proxyAdmin` (see
+    ///         checkProxyCode). Also used for GangLaunchpad 3.0's proxy.
+    function isProxyCode(address proxy, address proxyAdmin) internal view returns (bool) {
         bytes memory want = vm.getDeployedCode("TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy");
-        bytes memory got = r.proxy.code;
-        if (got.length != want.length || want.length < 32) revert WiringCheck("router proxy code");
-        bytes32 adminWord = bytes32(uint256(uint160(r.proxyAdmin)));
+        bytes memory got = proxy.code;
+        if (got.length != want.length || want.length < 32) return false;
+        bytes32 adminWord = bytes32(uint256(uint160(proxyAdmin)));
         uint256 filled;
         for (uint256 p; p + 32 <= want.length; p++) {
             bytes32 w;
@@ -188,7 +194,7 @@ library GangRouterDeployLib {
                 p += 31;
             }
         }
-        if (filled == 0 || !sameCode(got, want)) revert WiringCheck("router proxy code");
+        return filled != 0 && sameCode(got, want);
     }
 
     /// @dev Proxy (its own code) → impl (this build's GangRouter, locked) and → ProxyAdmin (the one the proxy deployed,
