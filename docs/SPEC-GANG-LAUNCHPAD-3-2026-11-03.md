@@ -39,7 +39,7 @@
 | `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
 | `sellToken(0, token, from, to, amount, minFunds)` | 多跳卖出，签名和选择器（`0x930cc050`）与 four.meme TokenManager2 相同。卖 `from` 授权给本 pad 的币，扣掉 pad 1% 手续费后的全部所得付给 `to`：WBNB 计价付原生 BNB，其他计价付计价 ERC-20。聚合器的 router 拿这笔钱继续下一跳。`to` 必须就是调用它的合约本身，并且在白名单里（否则 `RecipientNotListed`）；`from` 必须是 `tx.origin`。这一点比 four.meme 严：four.meme 允许任何调用者把所得指给名单里的任意合约，这里用户直接调用、或者一个名单合约把钱指给另一个名单合约都不行，防止所得停在一个谁都能取走余额的合约上。没有路由手续费参数，`minFunds` 按 `to` 实际收到的净额计算 |
 
-- **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。名单有两个用途：
+- **白名单**：`setCaller(caller, allowed)` 只有 owner 能调；只接受合约，不接受 EOA 或 EIP-7702 委托的 EOA。`setRouter` 也一样，只接受合约。名单有两个用途：
   - 谁可以替卖家调用 `sellToken`；
   - 谁可以收多跳卖出的所得。
 
@@ -88,21 +88,38 @@
 
 `script/DeployGangLaunchpad3.s.sol` 沿用 2.0 的两阶段流程：
 
-1. **阶段 1**：部署 3.0 自己的 GangTaxHandler、实现合约、代理（`ProxyAdmin` 归 OWNER）和 GangRouter，并完成部署钱包自己能做的设置。主网上必须带 `PAD3_NEW=true`。
+1. **阶段 1**：部署 3.0 自己的 GangTaxHandler、实现合约、代理（`ProxyAdmin` 归 OWNER）和 GangRouter，并完成部署钱包自己能做的设置。
+   - 主网上必须带 `PAD3_NEW=true`；Registry 里已经有一个 3.0 时拒绝部署，防止重复部署。
+   - 只链接线上的 PoolCheck（`--libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B1…bDb3`），其他库由脚本新部署。
+   - 结束时打印 `GANG_PAD3_DEPLOYER_NONCE`，阶段 2 要用。
 2. **Safe 批次 1**：在共享合约上登记 3.0（分红金库、迁移器、TokenDeployer、平台费桶、GangPadRegistry），共 9 笔。
-3. **阶段 2**：从链上读回全部配置并核对，开始移交 owner。
+3. **阶段 2**：从链上读回全部配置并核对，开始移交 owner。在 Safe 接手之前，还要确认部署钱包没有私下加过东西：
+   - 部署钱包的 nonce 必须等于阶段 1 结束时的值，加上阶段 2 自己发出的移交交易。多发了任何一笔交易都拒绝。
+   - handler 的税收接收方列表为空。
+   - 如果有能完整返回日志的 RPC，可以再加 `PAD3_LOG_SCAN=true`，扫描 pad 的 `RouterSet` / `CallerSet` 事件。
+
+   **签批次 2 之前，立刻再只读跑一次阶段 2。**
 4. **Safe 批次 2**：接受 handler 和 pad 的所有权，`setMigrator` 开放 3.0。
-5. **Safe 批次 3**：老 pad 执行 `setRouter(3.0, true)`。
-6. **Safe 批次 4**（有 `CALLERS` 时）：给聚合器合约加白名单。会打印每个合约的 codehash，方便核对。
+5. **Safe 批次 3**：老 pad 执行 `setRouter(3.0, true)`。批次 3–5 要等 OWNER 真正拿到 pad 和 handler 之后才会打印：光开放了还不够，pending owner 也必须为空。
+6. **Safe 批次 4**（有 `CALLERS` 时）：给聚合器合约加白名单。
+   - 主网上必须提供 `CALLER_CODEHASHES`，和审核时记录的 codehash 逐个比对。
+   - 可升级代理默认拒绝，因为代理的 codehash 说明不了背后的逻辑；确实要加时设 `CALLERS_PROXY_OK=true`，脚本会打印代理背后的实现地址。
 7. **Safe 批次 5**（只在带 `CUTOVER=true` 时打印）：1.0、2.0 停止发币。等后端、网站、CLI 和模块都切到 3.0 再执行。金库版和铸币飞轮继续发币。
+
+**运行规则**：
+- 阶段 1 和阶段 2 必须用同一份代码和编译设置运行。构建一旦变了，参照合约对不上，forge 还会在模拟里补部署新的库，阶段 2 会因此拒绝。
+- 从阶段 1 结束到 Safe 执行批次 2，部署钱包不能发任何交易，失败的交易也算。否则 nonce 检查会拒绝，只能人工逐笔核对后再改 `GANG_PAD3_DEPLOYER_NONCE`。
+- 只允许用 `--libraries` 指定 PoolCheck。CurveLogic3、FairLogic、LegacyRoute 必须交给 forge 从本次构建部署，被显式指定会直接拒绝。
+- 3.0 升级之后，再跑阶段 2（比如打印批次 4、批次 5，或做复查）时，要用当前线上实现对应的那次提交来跑。否则参照合约对不上，会报 `pad implementation code`。
 
 批次 3–5 打印之前，脚本会先以 owner 身份在模拟里执行一遍，确认结果正确再回滚。脚本读回时会核对：
 
 - 代理的代码；
 - ProxyAdmin 是代理自己创建的那个，代码就是 OpenZeppelin 原版，owner 正确；
 - 实现合约已锁定，代理已初始化；
+- 实现合约的代码，和脚本在模拟里用本次构建、相同依赖现场部署的参照合约逐字节一致（只有 metadata 不比）。链接的库地址也必须相同：forge 用 CREATE2 部署库，地址由代码决定，所以库也是本次构建的。主网上，PoolCheck 还必须是线上那一个；
 - 7 个依赖地址；
-- 转发用的库已经链接。
+- handler 如果归一个 GangHandlerAdmin 管，这个 admin 的代码也必须是本次构建的，而且没有待接收的 owner。
 
 ## 6. 升级流程
 
@@ -111,18 +128,21 @@
 1. 新实现由 `PAD3_IMPL` 指定，或者由脚本按当前实现的依赖地址现场部署。脚本先确认：
    - 新实现的 7 个依赖和当前实现完全一致；
    - 新实现已锁定，不是当前实现，带有入口函数；
+   - 新实现的代码，和脚本在模拟里用本次构建现场部署的一份参照合约（`_newImpl`，依赖地址相同）逐字节一致，链接的库地址也必须相同。所以把 `PAD3_IMPL` 换成一个外观相同但另有代码的合约，或者链接了别的库，检查都不会通过。以后的版本改写 `_newImpl` 即可；
    - 它的 `TOKEN_VERSION` 不低于当前实现；
    - 它的 `initVersion()` 不低于代理当前的初始化版本。如果更高（新版本带 reinitializer），必须提供 `PAD3_INIT_CALL`，和升级放在同一笔交易里；如果相等，不允许带初始化调用。
 2. 以 ProxyAdmin owner 的身份在模拟里执行 `upgradeAndCall(proxy, impl, PAD3_INIT_CALL)`，然后检查：
    - 初始化版本等于新实现的 `initVersion()`；
    - pad 的设置（owner、待接收的 owner、工厂、门槛、上限、router、`CALLERS` 的白名单状态等）和升级前相同；
    - 最新 25 个币的原始记录，以及由它们算出的结果（状态、计价币、交易对、毕业金额和剩余、税配置、固定金额的买卖报价、钱包剩余额度、打新的铸币预览、退出费和持有线），和升级前相同。这样变量挪了位置、结构体成员被读错，都能查出来。同类型的两个成员互换时，原始记录看不出差别，要靠这些计算结果和布局测试来发现；
-   - 部署脚本阶段 2 的全部读回检查通过。
+   - 3.0 自身的读回检查通过：代理、实现、库、ProxyAdmin、Registry、入口探针。部署时的固定值（TWAP、keeper、门槛开关等）不再要求，Safe 之后可能正常改过它们。设置有没有被升级改动，由上面的升级前后对比来查。
 3. 全部通过后，测试网上如果部署钱包就是 ProxyAdmin owner，直接执行；否则打印 Safe 交易。
 
-每次升级前还要做三件事：
+每次升级前还要做这几件事：
 
 - 写清这次改了什么；
+- 确认所有 `reinitializer` 都用 `INIT_VERSION`，`initVersion()` 也返回它（脚本靠这两处是否一致，来判断要不要带初始化调用）；
+- 用新版本那次提交运行升级脚本：参照合约由 `_newImpl` 部署；
 - 对新实现跑一遍存储布局测试；
 - 在主网 fork 上演练这笔 Safe 交易。
 

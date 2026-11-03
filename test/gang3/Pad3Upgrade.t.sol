@@ -12,19 +12,78 @@ import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
 import {GangLaunchpad3V2Mock} from "../mocks/GangLaunchpad3V2Mock.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {Pad3CurveSwapMock, MockWBNBFallback} from "../mocks/GangLaunchpad3Review3Mocks.sol";
+import {GangHandlerAdmin} from "../../src/gang/GangHandlerAdmin.sol";
+
+/// @dev Answers `handler()` / `owner()` as the owner's GangHandlerAdmin would, with other code (final audit M-2).
+contract FakeHandlerAdmin {
+    address public immutable handler;
+    address public immutable owner;
+    address public pendingOwner;
+
+    constructor(address owner_, address handler_) {
+        owner = owner_;
+        handler = handler_;
+    }
+}
 
 /// @dev Exposes the upgrade script's own checks (the same code the script runs).
 contract UpgradeHarness is UpgradeGangLaunchpad3 {
+    /// @dev Per harness, not the process-wide env (tests run in parallel): the version this build "ships".
+    bool internal v2;
+
+    function setV2(bool on) external {
+        v2 = on;
+    }
+
+    function _newImpl(GangLaunchpad3 cur) internal override returns (address) {
+        if (!v2) return super._newImpl(cur);
+        return address(
+            new GangLaunchpad3V2Mock(
+                address(cur.quoteRegistry()),
+                address(cur.dividendVault()),
+                address(cur.platformBucket()),
+                cur.taxHandler(),
+                cur.tokenDeployer(),
+                cur.wbnb(),
+                address(cur.padRegistry())
+            )
+        );
+    }
+
+    address[] internal callers;
+
+    function setCallers(address[] memory c) external {
+        callers = c;
+    }
+
+    function _callers() internal view override returns (address[] memory) {
+        return callers;
+    }
+
     function snap(GangLaunchpad3 p, DeployGang.Stack memory s) external view returns (Snapshot memory) {
         return _snapshot(p, s);
     }
 
-    function checkImpl(address current, address impl) external view {
+    function checkImpl(address current, address impl) external {
         _checkImpl(current, impl);
     }
 
     function derivedCalls(address t) external pure returns (bytes[] memory) {
         return _derivedCalls(t);
+    }
+
+    function checkImplCode(address impl) external {
+        _checkImplCode(impl, false);
+    }
+
+    function isOwnersAdmin(address who, address handler, address owner) external view returns (bool) {
+        return _isOwnersAdmin(who, handler, owner);
+    }
+
+    function checkSeen(DeployGang.Stack memory s, address gateway, bool routers, address[] memory seen) external view {
+        Ctx memory x;
+        x.gateway = gateway;
+        _checkSeen(s, x, routers, seen);
     }
 
     function wantVersion(address impl, uint64 current, bytes memory init) external view returns (uint64) {
@@ -50,7 +109,6 @@ contract Pad3UpgradeTest is GangFixture {
         pad3 = GangLaunchpad3(payable(address(pad)));
         h = new UpgradeHarness();
         alice = _newAgent();
-        vm.setEnv("CALLERS", "");
     }
 
     function _admin() internal view returns (ProxyAdmin) {
@@ -123,7 +181,9 @@ contract Pad3UpgradeTest is GangFixture {
     /// @dev A new reinitializer needs its set-up call inside the upgrade; a set-up call needs a new reinitializer.
     function test_wantVersion_reinitializerMustRunInTheUpgrade() public {
         address v2 = _v2();
+        h.setV2(true);
         h.checkImpl(pad3Impl, v2);
+        h.setV2(false);
         bytes memory init = abi.encodeCall(GangLaunchpad3V2Mock.initializeV2, (7));
         vm.expectRevert(
             abi.encodeWithSelector(DeployGang.WiringCheck.selector, "PAD3_INIT_CALL missing: reinitializer left open")
@@ -152,5 +212,48 @@ contract Pad3UpgradeTest is GangFixture {
         vm.expectRevert(IGangLaunchpad3.ZeroFeeRecipient.selector);
         pad3.sellToken(0, t, alice, out, 0, 500, address(wbnb));
         vm.stopPrank();
+    }
+
+    // ---------------------------------------------------------------- final audit (deploy) fixes
+    /// @dev M-1 / L-1: the implementation and its libraries must be this build's code; same views, other code fails.
+    function test_implCode_thisBuildOnly() public {
+        h.checkImplCode(pad3Impl);
+        address v2 = _v2(); // every 3.0 view and the same dependencies, but not this build's GangLaunchpad3
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad implementation code"));
+        h.checkImplCode(v2);
+    }
+
+    /// @dev M-2: only this build's GangHandlerAdmin passes for the owner's admin, not a look-alike.
+    function test_isOwnersAdmin_realCodeOnly() public {
+        GangHandlerAdmin real = new GangHandlerAdmin(owner, address(handler));
+        assertTrue(h.isOwnersAdmin(address(real), address(handler), owner));
+        FakeHandlerAdmin fake = new FakeHandlerAdmin(owner, address(handler));
+        assertFalse(h.isOwnersAdmin(address(fake), address(handler), owner));
+    }
+
+    /// @dev M-3: an address that got RouterSet / CallerSet and is listed now, beyond the router / gateway / CALLERS.
+    function test_checkSeen_unexpectedListingRefused() public {
+        DeployGang.Stack memory s = _stack();
+        s.pad = address(pad);
+        address gw = address(new FakeHandlerAdmin(owner, owner));
+        address extra = address(new FakeHandlerAdmin(owner, owner));
+        vm.startPrank(owner);
+        pad3.setRouter(gw, true);
+        pad3.setRouter(extra, true);
+        pad3.setCaller(extra, true);
+        vm.stopPrank();
+        address[] memory seen = new address[](2);
+        seen[0] = address(router);
+        seen[1] = gw;
+        h.checkSeen(s, gw, true, seen); // router + gateway: fine
+        seen[1] = extra;
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad.routers: unexpected router"));
+        h.checkSeen(s, gw, true, seen);
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad.isCaller: unexpected caller"));
+        h.checkSeen(s, gw, false, seen);
+        address[] memory ok = new address[](1);
+        ok[0] = extra;
+        h.setCallers(ok);
+        h.checkSeen(s, gw, false, seen);
     }
 }

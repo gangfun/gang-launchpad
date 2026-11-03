@@ -102,3 +102,13 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 每个币先买入，再卖出四分之一。卖出走的是多跳路由合约 [`0x00BA13e28e99Ad7cb1821A95A63addD3001134db`](https://testnet.bscscan.com/address/0x00BA13e28e99Ad7cb1821A95A63addD3001134db)：卖出所得先到路由合约，由它交给下一跳（这里是转回卖家），金额等于 `trySell` 报价，路由合约上不留余额。剩下的照第一次验收的方式卖出：一半经适配合约卖出并收 1% 路由费，另一半直接卖出。另外 Gateway 买入了 3.0 的币。
 
 读链复核：3.0 的 BNB 余额为 0；3.0 名下这两个老币的余额都是 0；3.0 给 1.0、2.0 的 WBNB 授权都是 0。
+
+## 第三次升级：上线前的最终审计修复
+
+上线前又做了一轮全新的独立审计，分合约、部署和升级流程两路进行。合约这一路改了一处：`setRouter` 现在只接受合约地址。其余修复都在部署脚本和升级脚本里，详见 spec 的 §5 和 §6。
+
+这次升级用的是新版升级脚本，它会在模拟里用这次的构建现场部署一份参照实现合约，和新实现逐字节比对。
+- 新实现 [`0x64625481aFEf2705f779dc58E7316694A91473Eb`](https://testnet.bscscan.com/address/0x64625481aFEf2705f779dc58E7316694A91473Eb)，升级交易 [`0x6d25ba02…5852`](https://testnet.bscscan.com/tx/0x6d25ba02d206697aa95512aa1c9a0b5656dc28be9502f72f6e8c87cca54d5852)，记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793693421984.json`。
+- 升级前后比对了 3 个币的记录，结果一致。
+- 升级后只读重跑阶段 2，`self-check ok`。实现合约的代码与参照合约逐字节一致，库也对得上。
+- 升级后跑了验收（3.0 的币和 2.0 的币，包括多跳卖出），20 笔交易全部成功，记录在 `broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793693488007.json`。

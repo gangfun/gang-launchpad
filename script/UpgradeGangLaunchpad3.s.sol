@@ -76,6 +76,10 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         } else {
             console.log("new implementation (PAD3_IMPL)", impl);
         }
+        if (init.length != 0) {
+            console.log("set-up call in the upgrade, selector:");
+            console.logBytes4(bytes4(init));
+        }
         _checkImpl(current, impl);
         uint64 wantVersion = _wantVersion(impl, v0, init);
 
@@ -92,7 +96,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         for (uint256 i; i < before.tokens.length; i++) {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
         }
-        _check2(s, c, x);
+        // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
+        // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
+        _checkPad3(s, c, x);
+        _checkLibs(s, c);
+        _checkOriginTrader(s);
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
 
@@ -119,6 +127,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (want == current && init.length != 0) revert WiringCheck("PAD3_INIT_CALL without a new reinitializer");
     }
 
+    /// @dev The reference the new implementation must match is what this script would deploy (`_newImpl`).
+    function _refImpl(GangLaunchpad3 cur) internal override returns (address) {
+        return _newImpl(cur);
+    }
+
     /// @dev This build's GangLaunchpad3 with the current implementation's seven dependencies (read from its code, never
     ///      typed in). A later version deploys its own contract here.
     function _newImpl(GangLaunchpad3 cur) internal virtual returns (address) {
@@ -135,7 +148,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         );
     }
 
-    function _checkImpl(address current, address impl) internal view {
+    function _checkImpl(address current, address impl) internal {
         if (impl == current) revert WiringCheck("PAD3_IMPL is the current implementation");
         if (impl.code.length == 0) revert WiringCheck("PAD3_IMPL has no code");
         if (!_hasSelector(impl.code, GangLaunchpad3.buyTokenAMAP.selector)) revert WiringCheck("PAD3_IMPL not a 3.x");
@@ -154,6 +167,9 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
                 || a.tokenDeployer() != b.tokenDeployer() || a.wbnb() != b.wbnb()
                 || address(a.padRegistry()) != address(b.padRegistry())
         ) revert WiringCheck("PAD3_IMPL dependencies differ");
+        // final audit (deploy) M-1: this build's code (what `_newImpl` deploys), with this build's libraries — never a
+        // look-alike at an address someone slipped into the env
+        _checkImplCode(impl, block.chainid == 56);
     }
 
     /// @dev The settings every token trades under, and for the newest SAMPLE tokens both their raw records (as their

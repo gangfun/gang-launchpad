@@ -29,8 +29,47 @@ import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
 /// @dev A partner vault stand-in (the vault pad lists contracts only).
 contract VaultStub {}
 
+/// @dev The upgrade script of a build whose next version is GangLaunchpad3V2Mock (its `_newImpl`).
+contract UpgradeToV2Mock is UpgradeGangLaunchpad3 {
+    function _newImpl(GangLaunchpad3 cur) internal override returns (address) {
+        return address(
+            new GangLaunchpad3V2Mock(
+                address(cur.quoteRegistry()),
+                address(cur.dividendVault()),
+                address(cur.platformBucket()),
+                cur.taxHandler(),
+                cur.tokenDeployer(),
+                cur.wbnb(),
+                address(cur.padRegistry())
+            )
+        );
+    }
+}
+
 /// @dev Exposes the script's Safe batch builders (the same code the script runs and prints).
 contract DeployGangLaunchpad3Harness is DeployGangLaunchpad3 {
+    /// @dev After the test's Safe upgrade to GangLaunchpad3V2Mock, the read-back compares against that build.
+    bool internal v2;
+
+    function setV2(bool on) external {
+        v2 = on;
+    }
+
+    function _refImpl(GangLaunchpad3 cur) internal override returns (address) {
+        if (!v2) return super._refImpl(cur);
+        return address(
+            new GangLaunchpad3V2Mock(
+                address(cur.quoteRegistry()),
+                address(cur.dividendVault()),
+                address(cur.platformBucket()),
+                cur.taxHandler(),
+                cur.tokenDeployer(),
+                cur.wbnb(),
+                address(cur.padRegistry())
+            )
+        );
+    }
+
     function wiringJson(DeployGang.Stack memory s) external pure returns (string memory) {
         return _wiringJson(s, _ctxM(), true, M.OWNER_SAFE);
     }
@@ -70,7 +109,8 @@ contract DeployGangLaunchpad3Harness is DeployGangLaunchpad3 {
 ///         the Safe through the ProxyAdmin (state kept, the token still trades, phase 2 still passes). Agent IDs are
 ///         mocked (balanceOf = 1 for everyone). No broadcast. One test: the script reads process-wide env vars. Run it
 ///         alone (`--match-path test/fork/GangLaunchpad3DeployFork.t.sol`).
-/// @dev Needs BSC_RPC_URL (without it the test returns at once).
+/// @dev Needs BSC_RPC_URL (without it the test returns at once), and the live PoolCheck linked as on mainnet (the
+///      read-back pins it): forge test --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 contract GangLaunchpad3DeployForkTest is Test {
     address constant PAD_1 = 0x15CFD2dc8278Fb87a1783ef42111618E20874365;
     address constant PAD_2 = 0x770331a9accdb53ACb4a45B6c5B7D151fADCe557;
@@ -104,6 +144,8 @@ contract GangLaunchpad3DeployForkTest is Test {
 
         // phase 1: impl + proxy (initialized, ProxyAdmin = the Safe), own wiring; shared listing left to the Safe
         DeployGang.Stack memory s = d.run();
+        // phase 2 proves the deploy wallet sent nothing else in between (final audit M-3)
+        vm.setEnv("GANG_PAD3_DEPLOYER_NONCE", vm.toString(vm.getNonce(me)));
         GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
         address admin = R.adminOf(s.pad);
         assertEq(ProxyAdmin(admin).owner(), SAFE, "upgrades: the Safe from the start");
@@ -146,6 +188,10 @@ contract GangLaunchpad3DeployForkTest is Test {
         }
         assertEq(bytes(d.forwardJson(s)).length, 0, "forward: nothing left");
         vm.setEnv("CALLERS", string.concat(vm.toString(address(adapter)), ",", vm.toString(address(hop))));
+        vm.setEnv(
+            "CALLER_CODEHASHES",
+            string.concat(vm.toString(address(adapter).codehash), ",", vm.toString(address(hop).codehash))
+        );
         _exec(d.callersJson(s), SAFE, 2);
         assertTrue(p.isCaller(address(adapter)));
         d.run();
@@ -373,12 +419,16 @@ contract GangLaunchpad3DeployForkTest is Test {
             )
         );
         vm.setEnv("PAD3_IMPL", vm.toString(next));
+        // not this build's GangLaunchpad3 code (final audit M-1); then with the script of the build that ships it
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad implementation code"));
+        u.run();
+        UpgradeToV2Mock u2 = new UpgradeToV2Mock();
         vm.expectRevert(
             abi.encodeWithSelector(DeployGang.WiringCheck.selector, "PAD3_INIT_CALL missing: reinitializer left open")
         );
-        u.run();
+        u2.run();
         vm.setEnv("PAD3_INIT_CALL", vm.toString(abi.encodeCall(GangLaunchpad3V2Mock.initializeV2, (7))));
-        u.run();
+        u2.run();
         assertEq(R.implementationOf(address(p)), cur, "still not sent");
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
         vm.setEnv("PAD3_INIT_CALL", "0x");
@@ -404,6 +454,7 @@ contract GangLaunchpad3DeployForkTest is Test {
                 ITransparentUpgradeableProxy(s.pad), next, abi.encodeCall(GangLaunchpad3V2Mock.initializeV2, (7))
             );
         assertEq(R.implementationOf(s.pad), next);
+        d.setV2(true);
         assertEq(GangLaunchpad3V2Mock(payable(s.pad)).v2Value(), 7);
         assertEq(Ownable(s.pad).owner(), SAFE);
         assertEq(p.tokenVersionOf(t), 1, "version kept");
@@ -465,6 +516,9 @@ contract GangLaunchpad3DeployForkTest is Test {
         vm.setEnv("GANG_ROUTER3", vm.toString(address(0)));
         vm.setEnv("PAD3_NEW", "false");
         vm.setEnv("CALLERS", "");
+        vm.setEnv("CALLER_CODEHASHES", "");
+        vm.setEnv("GANG_PAD3_DEPLOYER_NONCE", "0");
+        vm.setEnv("PAD3_LOG_SCAN", "false");
         vm.setEnv("CUTOVER", "true");
         vm.setEnv("ROUTER_TIMELOCK_DELAY", "172800");
         vm.setEnv("MAINNET_OWNER_IS_DEPLOYER", "false");
