@@ -8,7 +8,7 @@ BSC 主网（chainId 56），2026-11-02 部署。代码为 `main` 的 `d8090c0`�
 - **发币权限**：只有 Safe 用 `setVaultCreator` 为这个金库指定的钱包，才能把币绑到该金库。每次指定只能发一个币。
 - **共用合约**：和 1.0、2.0 共用分红金库、平台手续费池、毕业迁移合约、TokenDeployer、报价登记表和 pad 登记表。
 - **没有接的**：GangBond 和各个模块 factory 都没接（按设计）。也没有切换批次，1.0 和 2.0 照常创建。
-- **状态**：已开放，Safe 拥有 pad 和 handler。金库还没登记。
+- **状态**：已开放，Safe 拥有 pad 和 handler。第一个金库已登记，绑定它的币已经发出（见「已登记的金库」）。
 
 ## 地址
 
@@ -87,7 +87,33 @@ BSC 主网（chainId 56），2026-11-02 部署。代码为 `main` 的 `d8090c0`�
    - `pad.setVaultCreator(金库, 发币钱包)`。
 4. Safe 执行后，发币钱包调用 `createWithVault(..., 金库)` 发币。每次指定只能用一次，要再发一个币需要重新指定。
 
+## 已登记的金库
+
+### 金库 1（2026-11-02）
+
+- **金库**：[`0xd6eCDF1CecC2A0b44C2AB6d521F084f32f1eb4FE`](https://bscscan.com/address/0xd6eCDF1CecC2A0b44C2AB6d521F084f32f1eb4FE#code)，源码已在 BscScan 验证。
+- **登记前的核对**：
+  - 源码调用 `vaultLock` / `vaultRelease`，并按 `token.locked()` 在内盘和毕业后两种转账方式之间切换；
+  - 锁入和取回都要求 `msg.sender == tx.origin`；
+  - `setToken` 校验 `PAD.vaultOf(token) == 本金库`；
+  - 链上 `PAD` 是本 pad。
+- **发币钱包**：`0xDE331D9025A7d25B054653A4C61369492bC74505`（EOA，持有 Agent ID）。
+- **Safe 批次（3 笔）**：[`0x3b328879…513b`](https://bscscan.com/tx/0x3b3288791f0af4a25b01d65fa3993e91d34b3d3202e1c9d5d13e9978a7a5513b)，区块 131227539。
+  - `pad.setVault(金库, true)`；
+  - `handler.list(金库, "vault")`；
+  - `pad.setVaultCreator(金库, 发币钱包)`。
+  
+  执行后读回：`isVault`、`everVault`、handler `isListed` 都为 true，`vaultCreator` 是发币钱包。
+- **发币**：[`0xfac5fbe1…6560`](https://bscscan.com/tx/0xfac5fbe193d00e79e74bd16c229373187fe34006069bda4a1c70840ba4e36560)，区块 131237171，由发币钱包发起。
+  - 币：[`0xc6E2DF999F005E499cfd3DFB6f450E945B044774`](https://bscscan.com/token/0xc6E2DF999F005E499cfd3DFB6f450E945B044774)；
+  - 参数：WBNB 计价，买 / 卖税各 4%，分红 0，收税地址是发币钱包，毕业目标 6 BNB。
+  
+  读回结果：
+  - pad 的 `vaultOf(币)` 是本金库，`vaultCreator(金库)` 已清零；
+  - GangPadRegistry 的 `lookup(币)` 指向本 pad，kind 为 1；
+  - 金库的 `token()` 已设为这个币。
+- **CLI**：0.27.0 起，`gang create --vault` 可以在这个 pad 上发币；`gang info` 能读出 `padGen: 2.0-vault` 和绑定的金库（PR #107）。
+
 ## 待办
 
-- 金库方的主网金库：登记批次，以及之后的发币记录。
-- 后端 indexer / keeper 和网站加上主网配置。
+- 下一个金库：按「登记金库」一节，从 BscScan 源码核对开始。
