@@ -8,6 +8,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
+import {FlyUpgradeHarness, Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
@@ -64,12 +65,8 @@ contract Pad3FairEntryForkTest is Test {
         (uint8 st0,,,,) = p.getTokenInfo(pre);
         assertEq(st0, 3, "live implementation: not traded through the entry");
 
-        address cur = R.implementationOf(PAD3);
-        address impl = Pad3Impl.deploy(Pad3Impl.depsOf(GangLaunchpad3(payable(cur))));
-        vm.setEnv("PAD3_IMPL", vm.toString(impl));
-        new UpgradeGangLaunchpad3().run();
-        vm.prank(SAFE);
-        ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
+        (FlyUpgradeHarness u, UpgradeGangLaunchpad3.Stack memory st) = Pad3LiveUpgrade.check();
+        address impl = Pad3LiveUpgrade.execute(u, st, SAFE);
         assertEq(R.implementationOf(PAD3), impl);
         (uint8 st1,,,,) = p.getTokenInfo(pre);
         assertEq(st1, 1, "the sale from before the upgrade trades through the entry now");
@@ -169,6 +166,12 @@ contract Pad3FairEntryForkTest is Test {
         vm.setEnv("CALLER_CODEHASHES", "");
         vm.setEnv("CALLERS_PROXY_OK", "true");
         vm.setEnv("PAD3_INIT_CALL", "0x");
+        // the script deploys the implementation and the 铸币飞轮 tax handler (Pad3LiveUpgrade)
+        vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(address(0)));
+        vm.setEnv("GANG_MAINNET_OK", "true");
         vm.setEnv("PAD3_LOG_SCAN", "false");
         vm.setEnv("CUTOVER", "false");
         vm.setEnv("ROUTER_TIMELOCK_DELAY", "172800");

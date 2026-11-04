@@ -34,7 +34,7 @@
 | 函数 | 说明 |
 |---|---|
 | `getTokenInfo(token)` | `status`：0 = 不是 Gang 币；1 = 可经入口交易（曲线上、飞轮开盘前，或设了门槛的打新进行中）；2 = 已毕业 / 已开盘（返回 `pair`）；3 = 没设门槛的打新进行中（入口不交易）。WBNB 计价返回 `quote = address(0)`。打新和飞轮的 `protocolFeeBps` 是铸造费率，`graduationLeft` 是剩下的份数乘以单价 |
-| `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛 |
+| `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛；飞轮的额度按钱包算，飞轮币传 0 时返回全 0，要传真实钱包 |
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
 | `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
@@ -111,7 +111,7 @@
 6. **Safe 批次 4**（有 `CALLERS` 时）：给聚合器合约加白名单。
    - 主网上必须提供 `CALLER_CODEHASHES`，和审核时记录的 codehash 逐个比对。
    - 可升级代理默认拒绝，因为代理的 codehash 说明不了背后的逻辑；确实要加时设 `CALLERS_PROXY_OK=true`，脚本会打印代理背后的实现地址。
-7. **Safe 批次 5**（只在带 `CUTOVER=true` 时打印）：1.0、2.0 停止发币。等后端、网站、CLI 和模块都切到 3.0 再执行。金库版和铸币飞轮继续发币。
+7. **Safe 批次 5**（只在带 `CUTOVER=true` 时打印）：1.0、2.0、金库版（TokenDeployer）和铸币飞轮 V2（MintTokenDeployer）停止发币，已有的币不受影响。等后端、网站、CLI 和模块都切到 3.0 再执行。
 
 **运行规则**：
 - 阶段 1 和阶段 2 必须用同一份代码和编译设置运行。构建一旦变了，参照合约对不上，forge 还会在模拟里补部署新的库，阶段 2 会因此拒绝。
@@ -203,3 +203,49 @@
 
 **金库状态的升级规则**：`Pad3VaultStore.Layout` 只能在末尾追加成员，`SLOT` 永远不变。编译器的存储布局不包含命名空间，所以 `test/gang3/Pad3Vault.t.sol` 用 `vm.load` 钉住 `SLOT` 和每个成员的位置；升级脚本在当前实现已有金库模式时，对抽样的币比对金库状态（`vaultOf`、金库的登记 / 历史 / 指定创建人、创建人的 `lockedOf`）。部署和升级脚本要求实现合约和模块各自只链接列出的库（PoolCheck 除外），以后给任一方新增库，要先加进 `_checkNotPreLinked` 的名单。
 
+
+## 10. 铸币飞轮模式（模块）
+
+规则和铸币飞轮 V2（GangFlywheelPad）相同，放在 3.0 的同一个地址上：创建、开池前铸造 / 退出、提前开池、开池、开池后铸造、dev 分成、邀请额度和全部查询，用同一套逻辑库（FlywheelLogic、FlywheelPostLogic）。飞轮币在 `kindOf` 里记为 3。
+
+- **结构**：代码在 `Pad3FlyModule`。`Pad3Module` 的 fallback 把自己没有的选择器 delegatecall 给它（地址是 `Pad3Module` 的 immutable），不再串第三层。飞轮独有的状态（V2 的 `Sale`、`accounts`、`owedDev`、`postRulesOf`，以及飞轮自己的 router 名单）在 ERC-7201 命名空间 `gang.pad3.fly`（`Pad3FlyStore`），其余和 3.0 的其他币共用：`_config`、`bridgePoolOf`、`kindOf`、`logoURIOf`、`owedFee`（按计价币）、`allTokens`、`tokenVersionOf`。`Pad3FlyStore.Layout` 只能在末尾追加成员，`SLOT` 永远不变（`test/gang3/Pad3Fly.t.sol` 钉住）。
+- **同名函数按币分流**：`sales(token)`（打新返回 3.0 的 `Sale`，飞轮返回 V2 的 `Sale`）、`withdraw`、`withdrawFor`、`baselineOf`、`holdBpsOf`、入口的 `getTokenInfo` / `tryBuy` / `trySell` / `buyTokenAMAP` / 两个 `sellToken` 在实现合约里按 `kindOf` 分流；`previewMint`、`previewWithdraw`、`exitFeeBpsOf` 在 `Pad3Module` 里分流。实现合约存打新发售的变量改名为 `_sales`（槽位不变）。
+- **和 V2 接口的差别**：
+  - `taxHandler()`、`tokenDeployer()` 是 3.0 曲线 / 打新用的那两个；飞轮的是 `flyTaxHandler()`、`flyTokenDeployer()`、`flyVaultCore()`。对接 V2 的代码要读这几个。
+  - 3.0 没有 V2 的 `KIND()`。
+  - 每份大小：`TOKENS_PER_SHARE()` 是 3.0 的常量，等于打新的 50,000 代币；飞轮每份 100,000。按币查 `shareSizeOf(token)`：打新 50,000，飞轮 100,000。3.0 自己的入口按币取份额大小。
+- **代客交易（router）**：飞轮的 `mintFor` / `withdrawFor` / `mintPostFor` 只认飞轮自己的 router 名单（`setFlyRouter`，默认为空；规则同 `setRouter`），不认 3.0 的 `routers`。原因：线上 GangGateway V2 等按 pad 的 `TOKENS_PER_SHARE()` 切份，对 3.0 的飞轮币会把份数算成两倍，卖出时会卖掉用户没打算卖的部分。这类代码不能列进飞轮名单；要列的 router 必须按 `shareSizeOf` 取份额。
+- **入口**：3.0 自己的飞轮币经入口交易，规则和 GangGateway V2 / LegacyRoute 对飞轮币的处理相同：开池前买入按整份铸造（单价加铸造费，`amountMsgValue` 等于实际花费），卖出按整份退回；开池后，开了开池后铸造的发售经入口铸造（status 2，池子也能交易），其他的不经入口交易；没设门槛的发售 status 3。
+- **分红金库**：共享金库给每个 pad 一个门槛和一个 operator，都是一次性的；3.0 的是曲线 / 打新的（门槛 10,000 代币，operator 是它的 GangTaxHandler）。飞轮币改登记在 **`Pad3FlyVaultCore`** 名下：这是一个不可升级、没有 owner 的小合约，在金库里充当飞轮币的 pad。
+  - 门槛和 V2 相同，1,000 代币（创建时由 FlywheelLogic 设定）；
+  - operator 是飞轮的 FlywheelTaxHandler，由金库的 owner 绑定。税处理器像在 V2 上一样直接写持有人份额、记入分红，3.0 不经手；
+  - 3.0 自己对飞轮币的金库操作（创建时的门槛、登记、开池前的份额）经这个合约转给金库，只有 3.0 能调；
+  - 持有人照常在共享金库领取分红。`vault.launchpadOf(飞轮币)` 和 `TokenRegistered` 事件里的 launchpad 是这个合约，不是 3.0：链下按它们识别 pad 或过滤事件的代码要改用 `registry.lookup(token)`（或代币自己的 `launchpad()`）。
+- **三个自己的依赖**（飞轮模块的 immutable）：
+  - 新部署的 `FlywheelTaxHandler`，代码和 V2 的相同（金库是共享金库，费桶是 3.0 的），`launchpad` 是 3.0 代理；
+  - 飞轮 V2 的 `MintTokenDeployer`（主网 `0x2C95…072E`，owner 是平台 Safe），由 Safe 执行 `setLaunchpad(3.0, true)`；
+  - 3.0 的 `Pad3FlyVaultCore`。
+- **计价币**：除了 V2 的规则，3.0 自己的币（任何 kind）都不能当飞轮的计价币。
+- **大小**：实现合约 21,643 B，`Pad3Module` 9,741 B，`Pad3FlyModule` 21,675 B，`Pad3FlyVaultCore` 1,442 B。
+
+**第一次带飞轮模式的升级**（`UpgradeGangLaunchpad3`）：
+
+1. 脚本从部署钱包部署飞轮税处理器（owner 从一开始就是 ProxyAdmin 的 owner，也就是 Safe；部署钱包从不持有它）、`Pad3FlyVaultCore`（pad 是代理）和实现合约（其模块指向新的飞轮模块）。**这一次运行不打印 Safe 批次**；等交易上链后，用 `PAD3_IMPL`、`PAD3_FLY_HANDLER`、`PAD3_FLY_VAULT_CORE` 只读重跑一次，打印批次；Safe 签名前再只读重跑一次。主网的代币部署器只能是 V2 那个。之后的升级一律从当前模块读这三个依赖，env 里给的值必须和它一致（飞轮币的税处理器写死在代币里，核心写死在金库里，不能换）。
+2. Safe 批次依次是（已经做过的会跳过）：税处理器 `setLaunchpad(3.0)`、`setKeeper(keeper)`，`MintTokenDeployer.setLaunchpad(3.0, true)`，平台费桶 `setOperator(税处理器, true)`，金库 `setLaunchpad(核心, true)`、`setOperator(税处理器, 核心)`（同时把税处理器排除出份额），最后是升级。脚本在模拟里按这个顺序以 Safe 身份执行，再做 §6 的全部检查。核心或税处理器在金库里已经绑给别的地址时拒绝。
+3. 部署和升级脚本另外检查：
+   - 飞轮模块的代码和本次构建的参照模块逐字节一致（共用的依赖和 pad 相同），`TOKEN_VERSION` 相同，只链接 FlywheelLogic 和 FlywheelPostLogic（由 forge 从本次构建部署）；
+   - 税处理器的代码和参照一致，`launchpad` 是代理，keeper 已设，没有待生效的 keeper / router 变更，owner 是 OWNER（没有待接收的 owner），是费桶的 operator；
+   - 核心的代码和参照一致（金库、代理），在金库里登记，operator 是税处理器，门槛不超过 1,000；
+   - 代币部署器是 MintTokenDeployer 的代码（主网是 V2 那个，owner 是 Safe），列着代理；金库和迁移器都列着代理。
+4. 以后的升级，快照也比较抽样飞轮币的命名空间状态（creator 的账户、欠 dev 的分成、开池后规则）。
+5. 这次提交之后，`DeployGangLaunchpad3` 阶段 2 的读回（以及批次 3–5 的打印）要求实现带飞轮模块，所以只能在飞轮升级执行之后跑。
+6. 第一次接线时，税处理器的 DEX router 必须是平台的 Pancake router，且没有待生效的变更（router 在构造时设定，代码比对看不到它）。之后 router 和 keeper 由 Safe 经延迟流程更换，脚本不钉死，只要求没有待生效的变更。
+7. 主网模拟要在一个区块的 gas 内完成：脚本对同一个实现只做一次逐字节比对，三个构建产物分别在独立的调用帧里读。签名前的只读重跑就是实际的主网演练。
+
+切换时（§5 批次 5）飞轮 V2 和 1.0、2.0、金库版一起停止发币（`MintTokenDeployer.setLaunchpad(V2, false)`），V2 已有的发售不受影响。
+
+**测试**：
+- `test/gang3/Pad3FlyParity.t.sol`：飞轮 V2 的 17 套测试在 3.0 上原样重跑，接线和主网相同（3.0 自己的 operator 位置已占、门槛 10,000，飞轮币在核心名下）。
+- `test/gang3/Pad3Fly.t.sol`：同一个 pad 上打新和飞轮并存、按币分流的查询和退出、金库核心的权限和接线、飞轮 router 名单和 pad 名单分开、开池后税处理器写份额并把分红送到持有人、入口买卖往返、命名空间钉住。
+- `test/fork/Pad3LegacyForwardFork.t.sol`：主网 fork 上升级到这次构建后，经 3.0 入口实际买卖线上老 pad 的币：1.0、2.0 的曲线币，飞轮 V1、V2 正在铸造的发售。
+- `test/fork/Pad3FlyUpgradeFork.t.sol`：在 BSC 主网 fork 上按主网流程跑升级脚本（部署税处理器、核心和实现，模拟检查），以 Safe 身份执行批次，然后在 3.0 上创建飞轮币，经入口买卖，提前开池，在 Pancake 开池，把份额写进线上的共享金库，并把池子交易的税作为分红送到持有人。`Pad3VaultUpgradeFork`、`Pad3FairEntryFork` 也走同一条升级路径（`test/fork/Pad3LiveUpgrade.sol`）。

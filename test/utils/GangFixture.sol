@@ -18,6 +18,9 @@ import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {GangPadRegistry} from "../../src/gang/GangPadRegistry.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {GangTaxHandler} from "../../src/gang/GangTaxHandler.sol";
+import {FlywheelTaxHandler} from "../../src/flywheel/FlywheelTaxHandler.sol";
+import {MintTokenDeployer} from "../../src/flywheel/MintTokenDeployer.sol";
+import {Pad3FlyVaultCore} from "../../src/gang/Pad3FlyVaultCore.sol";
 import {GangToken} from "../../src/gang/GangToken.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
@@ -84,6 +87,10 @@ abstract contract GangFixture is Test {
     address internal pad3Impl;
     /// @dev 3.0 only: the GangPadRegistry proxy its aggregator entry reads (built by `_newPad3`)
     GangPadRegistry internal padRegistry3;
+    /// @dev 3.0's 铸币飞轮 tax handler, token deployer and vault core (set by `_newPad3`; wired in `setUp`).
+    FlywheelTaxHandler public flyHandler;
+    MintTokenDeployer public flyDeployer;
+    Pad3FlyVaultCore public flyCore;
     address public treasury = makeAddr("treasury");
     address public feeVault = makeAddr("feeVault");
     /// @dev the router's Pancake V2 router: a 1:1 stand-in answering factory() / WETH() (the real pool entries are
@@ -136,6 +143,15 @@ abstract contract GangFixture is Test {
         handler.list(treasury, "partner treasury");
         pad.setAgentGate(true, address(agents));
         pad.setRouter(address(router), true);
+        if (address(flyHandler) != address(0)) {
+            // 3.0's 铸币飞轮 listings (UpgradeGangLaunchpad3's `_flyPrep`)
+            flyHandler.setLaunchpad(address(pad));
+            flyHandler.setKeeper(keeper);
+            flyDeployer.setLaunchpad(address(pad), true);
+            bucket.setOperator(address(flyHandler), true);
+            divVault.setLaunchpad(address(flyCore), true);
+            divVault.setOperator(address(flyHandler), address(flyCore));
+        }
         pad.setMigrator(address(migrator)); // last (A-1)
         vm.stopPrank();
     }
@@ -171,21 +187,32 @@ abstract contract GangFixture is Test {
                 )
             );
         }
+        // the 铸币飞轮 module's own three, as on mainnet: V2's kind of token deployer, a FlywheelTaxHandler and the vault
+        // core of the proxy (the vault's one operator for 3.0 itself is `handler`)
+        flyDeployer = new MintTokenDeployer(owner);
+        flyHandler = new FlywheelTaxHandler(owner, address(divVault), address(bucket), address(0));
+        // creates from here: the vault core, the 铸币飞轮 module, Pad3Module, the implementation, the proxy
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 4);
+        flyCore = new Pad3FlyVaultCore(address(divVault), predicted);
         GangLaunchpad3 impl = GangLaunchpad3(
             payable(Pad3Impl.deploy(
-                    address(quoteRegistry),
-                    address(divVault),
-                    address(bucket),
-                    address(handler),
-                    address(tokenDeployer),
-                    address(wbnb),
-                    address(padRegistry3)
+                    Pad3Impl.Deps(
+                        address(quoteRegistry),
+                        address(divVault),
+                        address(bucket),
+                        address(handler),
+                        address(tokenDeployer),
+                        address(wbnb),
+                        address(padRegistry3)
+                    ),
+                    Pad3Impl.FlyDeps(address(flyHandler), address(flyDeployer), address(flyCore))
                 ))
         );
         pad3Impl = address(impl);
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(impl), upgrader, abi.encodeCall(GangLaunchpad3.initialize, (owner, address(pairFactory)))
         );
+        require(address(proxy) == predicted, "the vault core's pad is the proxy");
         return GangLaunchpad(address(proxy));
     }
 
