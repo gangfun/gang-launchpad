@@ -47,6 +47,11 @@ GangLaunchpad 3.0 于 2026-11-03 部署到 BSC 主网，平台 Safe 已执行批
    - 部署钱包随后发了 2 笔 `transferOwnership(Safe)`（nonce 377 到 379）。
 4. **Safe 批次 2**（`…-SAFE-BATCH-2-…json`，3 笔），执行交易 [`0x4163683b…8bc2`](https://bscscan.com/tx/0x4163683b2f6dd835b1df69ac44e3179e717b4710b2d636bfe8f033c44be48bc2)，区块 131407584：Safe 接受 handler 和 pad 的所有权，然后 `setMigrator`，3.0 开放。执行后核对：部署钱包的 nonce 仍是 379，pad 和 handler 的 owner 都是 Safe，没有待接收的 owner。
 5. **Safe 批次 3**（`…-SAFE-BATCH-3-…json`，5 笔），执行交易 [`0x76219e76…0e6b`](https://bscscan.com/tx/0x76219e76a6fda9d6ba7a5510521a6712598ce26ddc4e36fa98ea5be09f3d0e6b)，区块 131408635：1.0、2.0、金库版、飞轮 V1 和 V2 都执行了 `setRouter(3.0, true)`。
+6. **Safe 批次 4**（`…-SAFE-BATCH-4-…json`，3 笔），执行交易 [`0x7a5a0ca2…31a9`](https://bscscan.com/tx/0x7a5a0ca229ce107e0e731d57ff4caf8ab6f4cebbeafbb228728edb77136d31a9)，区块 131415869：把聚合器的三个 router 合约加入白名单（`setCaller`）。
+   - 这三个地址是 `0x1de460f363AF910f51726DEf188F9004276Bf4bc`、`0xDB97fC3329Ed1939012D56ECeaef00Be1C0CdFF5`、`0x3508DcA95a64C9378Cb07eF6F40553A50905372a`。
+   - 三个都是可升级代理。它们的实现合约在 BscScan 上没有公开源码，所以没有做代码审查，是按平台决定（认定这些 router 可信）加入的。生成批次时设置了 `CALLERS_PROXY_OK=true`，并对照了当时的 codehash。
+   - `0xDB97…dFF5` 的 ProxyAdmin owner 是一个普通钱包（EOA），另外两个是合约。
+   - 如果需要撤销，Safe 对相应地址调用 `setCaller(地址, false)` 即可，立即生效。
 
 ## 部署后的检查
 
@@ -57,10 +62,9 @@ GangLaunchpad 3.0 于 2026-11-03 部署到 BSC 主网，平台 Safe 已执行批
 
 ## 还没做的
 
-- **批次 4（聚合器白名单）**：等聚合器提供 router 地址并完成代码审查。主网上需要同时提供 `CALLERS` 和 `CALLER_CODEHASHES`。
 - **批次 5（1.0、2.0 停止发币）**：等 3.0 的模块（GangBond、各模块工厂、GangHandlerAdmin）、后端、网站、CLI 都切到 3.0 之后再执行（`CUTOVER=true`）。
 - 合作方的税收接收方由 Safe 在 3.0 的 handler 上重新登记。
-- 实时告警：代理的 `Upgraded` 事件、ProxyAdmin 的 owner 变更。
+- 实时告警：代理的 `Upgraded` 事件、ProxyAdmin 的 owner 变更。三个已加白的聚合器代理的 `Upgraded` 事件也要一并监控。
 
 以后再跑阶段 2（打印批次 4、批次 5）或升级时，要用当前线上实现对应的那次提交运行（目前是 `0808027`），详见 spec §5、§6。
 
