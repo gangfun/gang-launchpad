@@ -316,6 +316,8 @@ export const MERGED_ERRORS_ABI = parseAbi([
   'error StillLocked()', 'error SwapBackOutOfGas()', 'error SellDuringFlashSwap()', 'error BadKind()',
   // 2.0, both kinds: the graduation amount / raise in the quote is more than a PancakeSwap pair can hold
   'error QuoteAmountTooLarge()',
+  // the token deployer, on a create from a pad it no longer lists (a pad stops creating at a cut-over)
+  'error OnlyLaunchpad()',
 ])
 export const MERGED_HINTS = {
   Untaxed: 'this token is untaxed (0% / 0%): it never gets a pool tax, a tax route or dividends; nothing to release or claim on it',
@@ -327,6 +329,7 @@ export const MERGED_HINTS = {
   StillLocked: 'the token has not graduated / launched yet',
   SwapBackOutOfGas: 'too little gas for the sell-time tax chunk: re-run with the estimated gas limit (do not cap it lower)',
   SellDuringFlashSwap: 'a sell paid in from a flash swap callback is refused by this token',
+  OnlyLaunchpad: 'on a create: this pad has stopped creating tokens (its token deployer no longer lists it); its existing tokens keep working. Leave GANG_PAD / GANG_TESTNET_PAD and their aliases unset to create on the current pad, or update the CLI (npm i -g @gangfun/cli@latest)',
   QuoteAmountTooLarge: 'in this quote the graduation target / raise is more than a PancakeSwap pair can hold (the quote is priced far below BNB, often by a skewed --ref-pool): pick another quote or reference pool',
 }
 

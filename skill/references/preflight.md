@@ -6,7 +6,7 @@ signs nothing.
 ```json
 {
   "success": true,
-  "cliVersion": "0.16.5",
+  "cliVersion": "0.30.0",
   "status": "CONNECTED",
   "address": "0x562b...D571",
   "createPad": "0x2bEb...AB29",

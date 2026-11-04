@@ -157,7 +157,8 @@ const TIERS = ['flat', 'standard', 'linear']
 // can be the token's first pool touch in its block, which costs more than an estimate made against the block before.
 // Chapel fork: a pool buy at its bare estimate (431k) ran out of gas inside the holder-share sync and used 428k with
 // room; a sell that also sold a tax chunk ran out at 750k and used 661k with room (estimate 755k)
-const GAS_FLOOR = { buy: 750_000n, sell: 1_200_000n, mintPost: 900_000n, launch: 3_500_000n }
+// a launch on 3.0: 2.54M to 3.80M measured on forks
+const GAS_FLOOR = { buy: 750_000n, sell: 1_200_000n, mintPost: 900_000n, launch: 5_000_000n }
 const GAS_NOTE = 'gas limit set with room: a hot token\'s first trade in a block costs more than the estimate shows'
 
 const HINTS = {
@@ -739,7 +740,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (!name || !symbol) fail('--name and --symbol are required')
     checkMeta()
     if (!(await padOpen(ctx))) fail(closed(ctx, testnet), { pad: ctx.pad, padVersion: ctx.version })
-    if (flag('grad')) fail('--grad is a V3 curve setting (the graduation target, 2.0): a 铸币飞轮 sale fills at its --raise instead, so leave --grad out')
+    if (flag('grad')) fail('--grad is a V3 curve setting (the graduation target, 2.0 / 3.0): a 铸币飞轮 sale fills at its --raise instead, so leave --grad out')
     const presetName = opt('preset', 'j')
     const preset = FLY_PRESETS[presetName]
     if (!preset) fail(`--preset must be ${Object.keys(FLY_PRESETS).join(' or ')}`, { got: presetName })
@@ -865,7 +866,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
       const minShares = flag('min-shares') ? parseIntIn(fail, 'min-shares', opt('min-shares'), 1, Number(accepted)) : Number(accepted)
       const need = cost + fee
       const fills = sale.sold + Number(accepted) === TOTAL_SHARES
-      // launchDelay 0: the mint that fills also launches (about 2.5M gas); near the end other mints landing first can make
+      // launchDelay 0: the mint that fills also launches (up to about 3.8M gas); near the end other mints landing first can make
       // this one that mint, so it gets a launch-sized gas limit
       const mayLaunch = sale.rules.launchDelaySec === 0 && sale.sharesLeft - Number(accepted) <= 10 * sale.rules.maxPerTx
       const extra = {
@@ -1010,8 +1011,8 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     return out(write(tx, {
       step: sub, kind: 'fly', token, sold: sale.sold, ...(tx.gas && { gasLimit: tx.gas.toString() }),
       note: sub === 'launch'
-        ? `creates the PancakeSwap pool at the mint price (about 2.5M gas); protection runs ${sale.rules.protectionSec}s after it`
-        : sale.rules.launchDelaySec ? `stops the sale at ${sale.sold} shares; anyone can launch it ${sale.rules.launchDelaySec}s later (gang fly launch)` : `stops the sale at ${sale.sold} shares and launches in the same tx (about 2.5M gas)`,
+        ? `creates the PancakeSwap pool at the mint price (up to about 3.8M gas); protection runs ${sale.rules.protectionSec}s after it`
+        : sale.rules.launchDelaySec ? `stops the sale at ${sale.sold} shares; anyone can launch it ${sale.rules.launchDelaySec}s later (gang fly launch)` : `stops the sale at ${sale.sold} shares and launches in the same tx (up to about 3.8M gas)`,
     }))
   }
 
