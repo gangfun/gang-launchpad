@@ -6,7 +6,7 @@
 
 **一个动作一条命令（0.12.0+）：** `gang buy` / `sell` / `info` / `status` / `claim` / `mint` / `withdraw` / `release` 对所有币都能用：CLI 先读出这个币的类型，再执行 V3、打新或 V2 / Soft 的逻辑。`gang v3 …` / `gang fair …` 保留为别名。
 
-**铸币飞轮（0.18.0+）：** `gang create --fly` 在 GangFlywheelPad（单独的发射台，kind 3）上开一场铸币飞轮：按份 mint，每个钱包有额度，邀请可以加额度；打满后按 mint 价开池，开池后还能继续 mint。统一命令会自动识别这类币（`kind: "fly"`），`gang fly …` 是别名。2026-10-30 起在 BSC 主网运行（V1 发射台 `0x631e66560F4FAE4e486B65349edE48189E48B029`）；0.21.0 起新币发在 V2 发射台 `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a`（已内置；V2 开放前 `create --fly` 会直接说明），其他命令按代币自己的发射台走。`--testnet` 走 BSC 测试网（V1 第 2 套，V2 `0x7069…E3d6`）。规则见 `skill/references/fly.md`。
+**铸币飞轮（0.18.0+）：** `gang create --fly` 开一场铸币飞轮（kind 3）：按份 mint，每个钱包有额度，邀请可以加额度；打满后按 mint 价开池，开池后还能继续 mint。统一命令会自动识别这类币（`kind: "fly"`），`gang fly …` 是别名。2026-10-30 起在 BSC 主网运行（V1 发射台 `0x631e66560F4FAE4e486B65349edE48189E48B029`）；0.21.0 起新币发在 V2 发射台 `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a`，0.30.0 起发在 GangLaunchpad 3.0（见下）。其他命令按代币自己的发射台走，V1、V2 的币照常可用（`gang info` 的 `padVersion`：1、2 或 3）。`--testnet` 走 BSC 测试网（V1 第 2 套，V2 `0x7069…E3d6`，3.0）。规则见 `skill/references/fly.md`。
 
 **V3 税收币和打新（0.9.0+）：** 走 GangLaunchpad，2026-10-27 起在 BSC 主网运行（1.0：内盘 `0x15CFD2dc8278Fb87a1783ef42111618E20874365`，GangRouter `0xE040445690Aa56C8b68B7f7038C7b2562B5079C4`；2.0（2026-10-31 起）：内盘 `0x770331a9accdb53ACb4a45B6c5B7D151fADCe557`，GangRouter `0xa83209d6bfC2B220cD86410cCDDC71FEb354844a`；CLI 0.30.0 起新币发到 3.0，见下文；都已内置）；`--testnet` 走 BSC 测试网（新币发到 3.0，2.0 和第 10 套即 1.0 上的币照常用）。
 
@@ -20,7 +20,7 @@
 
 **2.0 金库版：绑定锁仓金库的币（0.27.0+）：** 和 1.0、2.0 并列的第三个内盘（GangVaultLaunchpad：V3 曲线、creator 分成和 `--grad` 都和 2.0 一样；没有打新）。这里的每个币在创建时就和平台登记过的一个金库合约永久绑定，而且只有平台为这个金库指定的钱包才能发，每次指定只能发一个币：用那个钱包执行 `gang create --vault <金库> --name <n> --symbol <s> [--buy-tax … --sell-tax …] [--grad …]`。毕业前，金库只能通过内盘锁入、取回持有人的币，而且只替发交易、持有 Agent ID 的钱包操作；锁进金库的币仍计入持有人的 1% 上限（`gang status` → `lockedInVault`，`gang info` → `vault`）。毕业后就是普通的币。买卖和 2.0 一样（`gang buy` / `gang sell` 通过 `kindOf` 找到这个内盘）。这个内盘没有 GangBond，也没有回购 / 分账 / 加池 / 组合模块，所以 `--vault` 发币不能带 `--dev-buy` / `--bond` / `--buyback` / `--split` / `--lp`：发币上链后再用 `gang buy` 买。普通的 `gang create` 不会发到这个内盘。主网内盘 `0xE90851A90C6278E3d6e4C24320101f8B13D90A11`（GangRouter `0xAcd4944A4090c13d9DACAe60f3019cef9d9bB1Ad`）；测试网 `0x9108e7b85e69060A5E626A04Ce6DEf323071C8a9`（GangRouter `0x9bF3E197a6719Af856a7c82d23CABFdBcc184f69`）。
 
-**GangLaunchpad 3.0（0.30.0+）：** 一个固定地址、可升级的内盘（代理合约），规则和 2.0 相同：V3 曲线、`--grad`、creator 分成和打新都一样，2.0 的函数和事件全部保留、选择器不变；另外有 `tokenVersionOf`（每个币创建时的规则版本，`gang info` → `tokenVersion`）和内置的聚合器入口。BSC 主网和测试网上，V3 新币和打新都发到 3.0（`gang preflight` → `createPadGen` 为 `3.0`）。3.0 有自己的 GangRouter、GangBond 和回购 / 分账 / 加池 / 组合模块工厂，所以 `--dev-buy` / `--bond` / `--buyback` / `--split` / `--lp` 一键发射照常可用。1.0、2.0 和 2.0 金库版上的币照常在各自内盘交易、领取、押金。`gang create --vault`：3.0 上线了金库模式的网络就发到 3.0（CLI 向内盘查询 `vaultOf(0)` 是否有返回；主网在区块 131454282 升级后已上线，测试网也已上线），否则仍发到 2.0 金库版内盘；仍然不能带一键发射参数。绑定金库的币不能交押金：`gang bond post` 会拒绝，因为钱包余额一低于承诺持有量 X 押金就会被罚没，而锁进金库的币已经不在钱包里；3.0 的金库币同样显示 `vault` / `lockedInVault`。铸币飞轮仍在 GangFlywheelPad。主网内盘 `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29`（GangRouter `0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7`，GangBond `0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6`）；测试网 `0x0508232833aE6849c03b28F7aA248BBd5cFCceE2`（GangRouter `0x09544Fd87c5Ff2c4fb05885A76861A12e83f87b9`，GangBond `0xa87727dc3CC28a44709649A22aDbD77287B99fc1`）；两边的金库模式都已上线。
+**GangLaunchpad 3.0（0.30.0+）：** 一个固定地址、可升级的内盘（代理合约），规则和 2.0 相同：V3 曲线、`--grad`、creator 分成和打新都一样，2.0 的函数和事件全部保留、选择器不变；另外有 `tokenVersionOf`（每个币创建时的规则版本，`gang info` → `tokenVersion`）和内置的聚合器入口。BSC 主网和测试网上，V3 新币和打新都发到 3.0（`gang preflight` → `createPadGen` 为 `3.0`）。3.0 有自己的 GangRouter、GangBond 和回购 / 分账 / 加池 / 组合模块工厂，所以 `--dev-buy` / `--bond` / `--buyback` / `--split` / `--lp` 一键发射照常可用。1.0、2.0 和 2.0 金库版上的币照常在各自内盘交易、领取、押金。`gang create --vault`：3.0 上线了金库模式的网络就发到 3.0（CLI 向内盘查询 `vaultOf(0)` 是否有返回；主网在区块 131454282 升级后已上线，测试网也已上线），否则仍发到 2.0 金库版内盘；仍然不能带一键发射参数。绑定金库的币不能交押金：`gang bond post` 会拒绝，因为钱包余额一低于承诺持有量 X 押金就会被罚没，而锁进金库的币已经不在钱包里；3.0 的金库币同样显示 `vault` / `lockedInVault`。2026-11-04 起 `gang create --fly` 也发到 3.0（它的铸币飞轮模式，`kindOf` 为 3）：规则、`--guard` / `--twap-window` 和各项限制都和 V2 发射台相同，只是地址在 3.0；每份 100,000 枚，分红门槛 1,000 枚。`--quote` 不能是 3.0 的币。设了 Agent 门槛的打新（3.0 自己的，以及经 3.0 转发的 1.0 / 2.0 的）现在也能经 3.0 的聚合器入口交易；`gang mint` / `gang withdraw` 不变（走内盘或 GangRouter），没设门槛的发售不走入口。主网内盘 `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29`（GangRouter `0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7`，GangBond `0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6`）；测试网 `0x0508232833aE6849c03b28F7aA248BBd5cFCceE2`（GangRouter `0x09544Fd87c5Ff2c4fb05885A76861A12e83f87b9`，GangBond `0xa87727dc3CC28a44709649A22aDbD77287B99fc1`）；两边的金库模式都已上线。
 
 ## 安装
 
@@ -110,10 +110,10 @@ gang combo status|distribute|release|set-payee|bind|chunk --token 0x… [--asset
 gang create --fair … [--shares <n>] --bond <数量> [--bond-hold …] --bond-days <7-90>                    # 打新：发币（含 dev 份额）→ 押金
 gang execute --request-id <id>
 gang tx --pending                            # 在 Binance App 里批准过的交易：按预览时的调用自动找到交易，再按下面这条处理
-# 铸币飞轮（GangFlywheelPad；主网，--testnet 走测试网第 2 套）。--preset j（默认，J 模板）或 steady，每一项都能单独改：
+# 铸币飞轮（在 GangLaunchpad 3.0 上；主网，--testnet 走 BSC 测试网）。--preset j（默认，J 模板）或 steady，每一项都能单独改：
 # --raise 3-50 --quota 5-100 --invite-bonus 0-3 --max-per-tx 1-10 --hold 60-90 --mint-fee 1-3 --exit-fee 1-2 --dev-cut 0-10
 # --buy-pct 0-50 --sell-tax 1-2 --launch-delay 0-300 --window 300-1800 --cap-mul 1-2 --post-mint|--no-post-mint
-# 只限 V2 发射台：--guard off|15|20|30（默认 off：价格下跌时不暂停 mint）--twap-window 15|30（默认 30）；开池后 mint 打开时 --quota ≤ 10
+# --guard off|15|20|30（默认 off：价格下跌时不暂停 mint）--twap-window 15|30（默认 30）；开池后 mint 打开时 --quota ≤ 10
 # --tier flat|standard|linear [--step-pct --step-shares --max-mul] --supply-cap 10-500
 gang create --fly --name <n> --symbol <s> [--preset j|steady] [设置…] [--dev-shares 1] [--logo …] [--testnet]
 gang mint --token <addr> --shares <n> [--ref <邀请人>] [--slippage 2]   # 开池前按发售价；开池后 mintPost（不低于池子价格）
@@ -275,7 +275,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_UPDATE_URL` | 新版本检查查询的地址，默认 `https://registry.npmjs.org/@gangfun/cli/latest`；npmjs 慢或打不开时，可以换成 npm 镜像的 `…/@gangfun/cli/latest` |
 | `GANG_PAD` / `GANG_TESTNET_PAD` | 覆盖合并后的内盘合约 GangLaunchpad（主网 / 测试网），V3 和打新共用（默认：主网 3.0 `0x2bEb…AB29`（2.0 `0x7703…E557`、1.0 `0x15CF…4365` 留给各自的币），测试网 3.0 `0x0508…ceE2`；测试网 2.0 `0xb14d…3B3E`、第一版 2.0 `0x6381…39be` 和第 10 套 `0xFebF…5BB1` 留给各自的币）。旧名 `GANG_V3_PAD` / `GANG_FAIR_PAD`、`GANG_V3_TESTNET_PAD` / `GANG_FAIR_TESTNET_PAD` 仍可用（别名） |
 | `GANG_TESTNET_RPC_URL` | 测试网 RPC，可填一个或逗号分隔的多个（不设时先用 PublicNode，再用 BNB Chain 的测试网节点）；旧名 `GANG_V3_TESTNET_RPC_URL` / `GANG_FAIR_TESTNET_RPC_URL` 仍可用 |
-| `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2（铸币飞轮），新币发在这里。默认：主网 `0x2818…8a5a`，测试网 `0x7069…E3d6` |
+| `GANG_FLY_PAD_V2` / `GANG_TESTNET_FLY_PAD_V2` | GangFlywheelPad V2（铸币飞轮）；新币发在 GangLaunchpad 3.0。默认：主网 `0x2818…8a5a`，测试网 `0x7069…E3d6` |
 | `GANG_FLY_PAD` / `GANG_TESTNET_FLY_PAD` | GangFlywheelPad V1（铸币飞轮）。默认：主网 `0x631e…B029`（2026-10-30 起开放），测试网第 2 套 `0xD648…951c` |
 | `GANG_BOND` / `GANG_TESTNET_BOND` | 发币目标那一代的 GangBond（押金承诺，`gang bond`；已有的币用它自己那一代的）。默认：主网 3.0 `0x830b…E9D6`（2.0 `0x2313…E0D8`，1.0 `0xe92d…14E4`，2026-10-29 起，CLI 0.16.2+），测试网 3.0 `0xa877…9fc1`（2.0 `0x3974…51F9`，第一版 2.0 `0x9139…F97f`，1.0 `0xd6a8…1086`） |
 | `GANG_SPLIT_FACTORY` / `GANG_TESTNET_SPLIT_FACTORY` | 发币目标那一代的 GangSplitModuleFactory（`--split`）。默认：主网 3.0 `0x904D…71f2`（2.0 `0xa73d…ec59`，1.0 `0x27e0…067c`，2026-10-30 起，CLI 0.19.0+），测试网 3.0 `0xf8d4…06dc`（2.0 `0xb9ab…3513`，第一版 2.0 `0x860D…0879`，1.0 `0x5F7d…567E`） |

@@ -42,13 +42,13 @@ picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md
 newest generation the CLI knows on that network (`gang preflight` → `createPadGen`: 3.0 on BSC mainnet and the testnet).
 A token keeps trading on the generation it was created on (1.0, 2.0, 3.0, 2.0 金库版); the CLI finds it.
 
-**铸币飞轮 (Mint Flywheel, `fly`)** lives on its own pad, GangFlywheelPad: shares with a quota per wallet (invites
-add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
+**铸币飞轮 (Mint Flywheel, `fly`)** goes on GangLaunchpad 3.0 too (older tokens stay on GangFlywheelPad): shares with a
+quota per wallet (invites add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
 
 The older pads (LaunchpadV2, Soft, LaunchpadU, LaunchpadS) take no new tokens; their tokens keep trading. **One command
 per action, whatever the pad**: `gang buy|sell|info|status|claim|mint|withdraw|release --token <addr>` reads the token's
 kind and runs that kind's code; the result's `kind` says which (`v3`, `fair`, `fly`, `v2`, `soft`). For a new token offer
-only GangLaunchpad (V3 or 打新) or GangFlywheelPad (铸币飞轮), never an older pad or Soft's 20 BNB curve.
+only GangLaunchpad (V3, 打新 or 铸币飞轮), never an older pad or Soft's 20 BNB curve.
 
 The `gang` CLI reads the chain and builds calldata; every signature goes through the user's Agentic Wallet (`baw`).
 It never holds keys.

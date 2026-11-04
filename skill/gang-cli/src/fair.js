@@ -261,12 +261,15 @@ export async function runFair(sub, { opt, flag, out, fail, summarize, resolveLog
   let ctx
   try { ctx = fairCtx(testnet) } catch (e) { return fail(e.message) }
   // a token is served by the GangLaunchpad generation that has it (its pad, router, GangBond); a create goes to the newest
-  if (sub !== 'create' && sub !== 'tx' && (await atTokenPad(ctx, opt('token'))) === null) return fail(KIND_UNREAD.error, { token: opt('token'), retry: KIND_UNREAD.retry })
+  const onPad = sub !== 'create' && sub !== 'tx' ? await atTokenPad(ctx, opt('token')) : undefined
+  if (onPad === null) return fail(KIND_UNREAD.error, { token: opt('token'), retry: KIND_UNREAD.retry })
   // not a sale on this pad: on the merged pad it may be a V3 token (kindOf), so point at `gang v3`
   const notFair = async (token) => {
     const { error, kind } = await notThisKind(ctx, token, 'fair', testnet ? ' --testnet' : '')
     return fail(error, { token, chainId: ctx.chainId, ...(kind && { kind }) })
   }
+  // 3.0's sales() answers a 铸币飞轮 token with another struct: never read it as a 打新 sale
+  if (onPad === 'fly') return notFair(opt('token'))
 
   if (sub === 'info' || sub === 'status') {
     const token = tokenArg(opt, fail)
