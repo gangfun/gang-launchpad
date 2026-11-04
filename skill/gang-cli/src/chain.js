@@ -7,6 +7,7 @@ import { mapLimit } from './limit.js'
 export const ADDR = {
   v2: '0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E',
   soft: '0x4E6f13c8A453c1b8b4E20b590082bb233a5b80d7',
+  softFirst: '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7', // the first Soft pad: it holds the Soft tokens, same ABI
   u: '0xF81C4E51c48466c6025B0165b1Ea0F6978c712cb',
   s: '0x60aee38576035E757deD30fF8db8A8DA476430C1',
   wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
@@ -28,6 +29,7 @@ const read = (address, abi, functionName, args = []) => client.readContract({ ad
 const PADS = [
   { id: 'v2', address: ADDR.v2, kind: 'v2', abi: V2_ABI },
   { id: 'soft', address: ADDR.soft, kind: 'soft', abi: SOFT_ABI },
+  { id: 'soft', address: ADDR.softFirst, kind: 'soft', abi: SOFT_ABI },
   { id: 'u', address: ADDR.u, kind: 'v2', abi: V2_ABI },
   { id: 's', address: ADDR.s, kind: 'v2', abi: S_ABI }, // 9-field Curve (no taxed): see S_ABI
 ]
