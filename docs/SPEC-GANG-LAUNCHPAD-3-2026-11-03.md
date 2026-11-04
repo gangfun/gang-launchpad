@@ -111,7 +111,7 @@
 6. **Safe 批次 4**（有 `CALLERS` 时）：给聚合器合约加白名单。
    - 主网上必须提供 `CALLER_CODEHASHES`，和审核时记录的 codehash 逐个比对。
    - 可升级代理默认拒绝，因为代理的 codehash 说明不了背后的逻辑；确实要加时设 `CALLERS_PROXY_OK=true`，脚本会打印代理背后的实现地址。
-7. **Safe 批次 5**（只在带 `CUTOVER=true` 时打印）：1.0、2.0、金库版（TokenDeployer）和铸币飞轮 V2（MintTokenDeployer）停止发币，已有的币不受影响。等后端、网站、CLI 和模块都切到 3.0 再执行。
+7. **Safe 批次 5**（只在带 `CUTOVER=true` 时打印）：1.0、2.0、金库版（TokenDeployer）和铸币飞轮 V2（MintTokenDeployer）停止发币，已有的币不受影响。等后端、网站、CLI 和模块都切到 3.0 再执行。 `test/fork/Pad3CutoverFork.t.sol` 在主网 fork 上演练：老 pad 停止发币后，3.0 的曲线、打新、飞轮照常创建和交易，1.0、2.0 和飞轮 V1、V2 的币照常经 3.0 交易。
 
 **运行规则**：
 - 阶段 1 和阶段 2 必须用同一份代码和编译设置运行。构建一旦变了，参照合约对不上，forge 还会在模拟里补部署新的库，阶段 2 会因此拒绝。
