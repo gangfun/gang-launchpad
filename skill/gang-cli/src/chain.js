@@ -79,15 +79,13 @@ function sInfoFromCurve(c) {
 /** The curve of a resolved pad in one shape, whatever the pad's layout. */
 const curveInfo = (pad) => (pad.kind === 'soft' ? softInfoFromCurve(pad.curve) : pad.id === 's' ? sInfoFromCurve(pad.curve) : v2InfoFromCurve(pad.curve))
 
-const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)', 'function token1() view returns (address)'])
+const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)'])
 
-/** A graduated Soft token's price in its PancakeSwap pool: BNB per token, 1e18 scale; null when the pair is not with WBNB. */
+/** A graduated Soft token's price in its PancakeSwap pool (always against WBNB): BNB per token, 1e18 scale. */
 async function softPoolPrice(token, pair) {
-  const [[r0, r1], t0, t1] = await Promise.all([read(pair, PAIR_ABI, 'getReserves'), read(pair, PAIR_ABI, 'token0'), read(pair, PAIR_ABI, 'token1')])
-  const wbnb = ADDR.wbnb.toLowerCase()
-  const [tokenReserve, bnbReserve] = t1.toLowerCase() === wbnb ? [r0, r1] : t0.toLowerCase() === wbnb ? [r1, r0] : [0n, 0n]
-  if (tokenReserve === 0n || t0.toLowerCase() !== token.toLowerCase() && t1.toLowerCase() !== token.toLowerCase()) return null
-  return (bnbReserve * 10n ** 18n) / tokenReserve
+  const [[r0, r1], t0] = await Promise.all([read(pair, PAIR_ABI, 'getReserves'), read(pair, PAIR_ABI, 'token0')])
+  const [tokenReserve, bnbReserve] = t0.toLowerCase() === token.toLowerCase() ? [r0, r1] : [r1, r0]
+  return tokenReserve > 0n ? (bnbReserve * 10n ** 18n) / tokenReserve : null
 }
 
 export async function tokenInfo(token, me) {
@@ -96,8 +94,9 @@ export async function tokenInfo(token, me) {
   const [name, symbol] = await Promise.all([erc(token, 'name'), erc(token, 'symbol')])
   let locked = null
   try { locked = await erc(token, 'locked') } catch { /* */ }
+  // the wallet cap is the curve's: a graduated token has none
   let cap = null
-  try { cap = await read(pad.address, pad.abi, 'MAX_PER_WALLET') } catch { /* */ }
+  if (!base.graduated) try { cap = await read(pad.address, pad.abi, 'MAX_PER_WALLET') } catch { /* */ }
 
   let price = null
   if (pad.kind === 'soft') {
@@ -132,7 +131,7 @@ export async function tokenInfo(token, me) {
   if (me) {
     const bal = await erc(token, 'balanceOf', [me])
     info.myBalance = fmtTok(bal); info.myBalanceRaw = bal.toString()
-    try {
+    if (!base.graduated) try {
       const room = await read(pad.address, pad.abi, 'walletRoom', [token, me])
       info.myRoomTokens = fmtTok(room); info.myRoomRaw = room.toString()
     } catch { /* */ }
@@ -143,7 +142,7 @@ export async function tokenInfo(token, me) {
 /**
  * `gang list` without --kind: the newest `perPad` tokens of each V2 / Soft / U / S pad, read on chain (the fallback when
  * gang.fun's API is down). Reading every token of every pad took minutes (LaunchpadV2 alone has hundreds), so the
- * newest first, a few reads at a time. → { tokens, pads: [{ pad, total, listed }] }
+ * newest first, a few reads at a time. → { tokens, pads: [{ pad, address, total, listed }] }
  */
 export async function listTokens(me, perPad = 20) {
   const tokens = []
