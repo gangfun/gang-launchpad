@@ -61,7 +61,7 @@ contract Pad3StructReorderMock is Initializable, Ownable2Step, ReentrancyGuard {
     mapping(address router => bool) public routers;
     mapping(address token => uint8) public kindOf;
     mapping(address token => Curve) internal curves;
-    mapping(address token => Sale) internal sales;
+    mapping(address token => Sale) internal _sales;
     mapping(address token => mapping(address user => Position)) internal positions;
     mapping(address token => string) public logoURIOf;
     mapping(address quote => uint256) public owedFee;

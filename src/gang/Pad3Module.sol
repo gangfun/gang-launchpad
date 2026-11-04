@@ -14,6 +14,7 @@ import {PadCommon} from "./PadCommon.sol";
 import {CurveLogic3 as CurveLogic} from "./CurveLogic3.sol";
 import {FairLogic} from "./FairLogic.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
+import {Pad3FlyStore} from "./Pad3FlyStore.sol";
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
 ///        address) and the pad's off-chain views (moved out of the pad for its 24 KB limit)
@@ -36,6 +37,7 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     using SafeERC20 for IERC20;
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
+    uint8 internal constant KIND_FLY = 3;
     /// @notice Must equal GangLaunchpad3.TOKEN_VERSION (the scripts and tests check it).
     uint8 public constant TOKEN_VERSION = 1;
 
@@ -45,7 +47,7 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     mapping(address router => bool) internal routers;
     mapping(address token => uint8) internal kindOf;
     mapping(address token => Curve) internal curves;
-    mapping(address token => Sale) internal sales;
+    mapping(address token => Sale) internal _sales;
     mapping(address token => mapping(address user => Position)) internal positions;
     mapping(address token => string) internal logoURIOf;
     mapping(address quote => uint256) internal owedFee;
@@ -62,6 +64,9 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     address internal immutable taxHandler;
     address internal immutable tokenDeployer;
     address internal immutable wbnb;
+    /// @notice 3.0's 铸币飞轮 module (Pad3FlyModule): every selector this module does not define runs there,
+    ///         delegatecalled (the pad's call, still in the proxy's storage). The last link: it has no fallback.
+    address public immutable flyModule;
 
     constructor(
         address quoteRegistry_,
@@ -69,12 +74,15 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
         address platformBucket_,
         address taxHandler_,
         address tokenDeployer_,
-        address wbnb_
+        address wbnb_,
+        address flyModule_
     ) Ownable(address(0xdEaD)) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
                 || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
+                || flyModule_ == address(0)
         ) revert ZeroAddress();
+        flyModule = flyModule_;
         quoteRegistry = quoteRegistry_;
         dividendVault = dividendVault_;
         platformBucket = platformBucket_;
@@ -82,6 +90,54 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
         tokenDeployer = tokenDeployer_;
         wbnb = wbnb_;
     }
+
+    /// @notice Selectors not defined here (the 铸币飞轮 mode): Pad3FlyModule's.
+    fallback() external payable {
+        _toFly();
+    }
+
+    /// @dev This call, as it came, delegatecalled to the 铸币飞轮 module (never comes back).
+    function _toFly() internal {
+        address m = flyModule;
+        // memory-safe: execution ends here (return / revert), no Solidity code reads memory after it
+        assembly ("memory-safe") {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), m, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+
+    /// @dev `_toFly` from a view (the 铸币飞轮 module's function is a view too).
+    function _toFlyView() internal view {
+        function() internal f = _toFly;
+        function() internal view v;
+        assembly ("memory-safe") {
+            v := f
+        }
+        v();
+    }
+
+    /// @dev Views shared by 打新 and 铸币飞轮 by name: a 铸币飞轮 token's are the 铸币飞轮 module's (V2's).
+    modifier flyToModuleView(address token) {
+        if (kindOf[token] == KIND_FLY) _toFlyView();
+        _;
+    }
+
+    /// @notice Tokens a whole share holds for `token`: 50,000 for 3.0's 打新, 100,000 for its 铸币飞轮, 0 otherwise
+    ///         (curves; an older pad's token: its pad's `TOKENS_PER_SHARE`). Sells of share tokens through the entry
+    ///         take whole shares only.
+    function shareSizeOf(address token) external view returns (uint256) {
+        uint8 kind = kindOf[token];
+        if (kind == FairLogic.KIND) return FairLogic.TOKENS_PER_SHARE;
+        if (kind == KIND_FLY) return FLY_TOKENS_PER_SHARE;
+        return 0;
+    }
+
+    /// @dev FlywheelLogic.TOKENS_PER_SHARE (Pad3FlyModule checks it equals)
+    uint256 internal constant FLY_TOKENS_PER_SHARE = 100_000 ether;
 
     /// @notice This module's dependencies (through the pad: the module's own; the scripts compare them with the pad's).
     function moduleDeps() external view returns (Deps memory) {
@@ -97,7 +153,8 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
         Pad3VaultStore.Layout storage v = Pad3VaultStore.layout();
         if (enabled) {
             if (!_isPlainContract(vault)) revert VaultNotContract();
-            if (routers[vault]) revert VaultIsRouter();
+            // neither router list of the pad (re-review I-2: the 铸币飞轮 one too)
+            if (routers[vault] || Pad3FlyStore.layout().routers[vault]) revert VaultIsRouter();
             v.everVault[vault] = true;
         } else if (v.vaultCreator[vault] != address(0)) {
             delete v.vaultCreator[vault];
@@ -282,9 +339,10 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     function previewMint(address token, address user, uint256 shares)
         external
         view
+        flyToModuleView(token)
         returns (uint256 accepted, uint256 cost, uint256 fee)
     {
-        Sale storage s = sales[token];
+        Sale storage s = _sales[token];
         if (_status(token) != Status.Minting) return (0, 0, 0);
         accepted = FairLogic.acceptable(s, positions[token][user].shares, shares);
         cost = accepted * s.sharePrice;
@@ -295,17 +353,18 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     function previewWithdraw(address token, address user, uint256 shares)
         external
         view
+        flyToModuleView(token)
         returns (uint256 payout, uint256 fee)
     {
         if (_status(token) != Status.Minting || shares == 0 || shares > positions[token][user].shares) {
             return (0, 0);
         }
-        return FairLogic.withdrawQuote(sales[token], shares);
+        return FairLogic.withdrawQuote(_sales[token], shares);
     }
 
     /// @notice The exit fee a withdraw pays now: the sale's own, or 0 once it has made no progress for STALE_AFTER.
-    function exitFeeBpsOf(address token) external view returns (uint256) {
-        return FairLogic.exitFeeBps(sales[token]);
+    function exitFeeBpsOf(address token) external view flyToModuleView(token) returns (uint256) {
+        return FairLogic.exitFeeBps(_sales[token]);
     }
 
     // ---------------------------------------------------------------- internal
@@ -318,7 +377,7 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
     }
 
     function _status(address token) internal view returns (Status) {
-        Sale storage s = sales[token];
+        Sale storage s = _sales[token];
         if (s.creator == address(0)) return Status.None;
         if (s.launched) return Status.Launched;
         return Status.Minting;

@@ -538,8 +538,8 @@ contract FlywheelV2InvariantTest is StdInvariant, FlywheelFixture {
         router = new MiniRouter(pad);
         vm.startPrank(owner);
         quoteRegistry.setQuote(address(bq), true, 15 ether);
-        pad.setRouter(address(router), true);
         vm.stopPrank();
+        _allowRouter(address(router));
         h = new FlyInvHandler(pad, handler, vault, agents, wbnb, bq, router, address(bucket));
         // the handler mints Agent IDs and faucet tokens
         targetContract(address(h));

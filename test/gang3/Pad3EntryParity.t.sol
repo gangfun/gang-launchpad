@@ -36,7 +36,7 @@ contract CurveLogic3ParityTest is GangFixture {
 
     /// @dev Moves the curve to `level` of its graduation amount (capped below it) with the wallet cap off.
     function _prime(address t, uint256 level) internal {
-        uint256 g = Pad3Module(address(pad)).gradAmtOf(t);
+        uint256 g = Pad3Module(payable(address(pad))).gradAmtOf(t);
         uint256 target = level % g;
         if (target < 1e9) return;
         vm.prank(owner);

@@ -221,6 +221,44 @@ library FlywheelLogic {
         uint256 shares,
         uint256 minPayout
     ) external returns (uint256 payout) {
+        payout = _withdraw(
+            sales, accounts, owedFee, d, trader, viaCaller ? PULL_ROUTER : PULL_RECLAIM, token, shares, minPayout
+        );
+    }
+
+    /// @notice GangLaunchpad 3.0's entry sell of its own 铸币飞轮 sale (both `sellToken`s): `trader`'s `shares` sold
+    ///         back with the allowance `trader` gave the PAD on the token (as the entry's other sells); the payout
+    ///         stays on the pad for the caller to pay out.
+    function entryWithdraw(
+        mapping(address => IFlywheelPad.Sale) storage sales,
+        mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
+        mapping(address => uint256) storage owedFee,
+        IGangLaunchpad.Deps memory d,
+        address trader,
+        address token,
+        uint256 shares
+    ) external returns (uint256 payout) {
+        payout = _withdraw(sales, accounts, owedFee, d, trader, PULL_PAD, token, shares, 0);
+    }
+
+    /// @dev How `_withdraw` takes the tokens back and pays: PULL_RECLAIM — `withdraw` by the trader, reclaimed (no
+    ///      allowance), paid to msg.sender (the trader); PULL_ROUTER — `withdrawFor`, the trader's allowance to the
+    ///      calling router, paid to it; PULL_PAD — 3.0's entry, the trader's allowance to the pad, payout left on it.
+    uint8 private constant PULL_RECLAIM = 0;
+    uint8 private constant PULL_ROUTER = 1;
+    uint8 private constant PULL_PAD = 2;
+
+    function _withdraw(
+        mapping(address => IFlywheelPad.Sale) storage sales,
+        mapping(address => mapping(address => IFlywheelPad.Account)) storage accounts,
+        mapping(address => uint256) storage owedFee,
+        IGangLaunchpad.Deps memory d,
+        address trader,
+        uint8 pull,
+        address token,
+        uint256 shares,
+        uint256 minPayout
+    ) private returns (uint256 payout) {
         IFlywheelPad.Sale storage s = sales[token];
         if (!withdrawable(s)) revert IFlywheelPad.NotMinting();
         IFlywheelPad.Account storage a = accounts[token][trader];
@@ -238,11 +276,13 @@ library FlywheelLogic {
         s.totalShares -= n;
         uint256 tokens = shares * TOKENS_PER_SHARE;
         a.baseline -= tokens;
-        // direct: the pad takes the tokens back; via a listed router: with the allowance the trader gave the router
-        if (viaCaller) IFlyToken(token).pullFor(trader, msg.sender, tokens);
+        // direct: the pad takes the tokens back; via a listed router: with the allowance the trader gave the router;
+        // via 3.0's entry: with the allowance the trader gave the pad
+        if (pull == PULL_ROUTER) IFlyToken(token).pullFor(trader, msg.sender, tokens);
+        else if (pull == PULL_PAD) IFlyToken(token).pullFor(trader, address(this), tokens);
         else IFlyToken(token).reclaim(trader, tokens);
         _setShareOnExit(d, token, trader, a.baseline);
-        IERC20(s.quote).safeTransfer(msg.sender, payout);
+        if (pull != PULL_PAD) IERC20(s.quote).safeTransfer(msg.sender, payout);
         _exitFeeToPlatform(owedFee, d, s.quote, fee);
         emit IFlywheelPad.Withdrawn(token, trader, shares, payout, fee);
     }
@@ -482,12 +522,14 @@ library FlywheelLogic {
         if (gate != address(0) && IERC721(gate).balanceOf(account) == 0) revert IFlywheelPad.NotAgent();
     }
 
-    /// @dev A sell-back must not depend on the vault (it is the only way out); a starved call is refused (A-5).
+    /// @dev A sell-back must not depend on the vault (it is the only way out); a starved call is refused (A-5). /31, not
+    ///      /63: on GangLaunchpad 3.0 the write goes through its vault core (two calls deep), and a starved inner call
+    ///      leaves up to 1/32 here (re-review I-1).
     function _setShareOnExit(IGangLaunchpad.Deps memory d, address token, address user, uint256 share) private {
         uint256 gasBefore = gasleft();
         try SharedDividendVault(d.dividendVault).setShare(token, user, share) {}
         catch {
-            if (gasleft() <= gasBefore / 63) revert IGangLaunchpad.OutOfGas();
+            if (gasleft() <= gasBefore / 31) revert IGangLaunchpad.OutOfGas();
             emit IFlywheelPad.ShareWriteFailed(token, user, share);
         }
     }

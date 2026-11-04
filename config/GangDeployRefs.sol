@@ -18,7 +18,7 @@ library GangMainnetRefs {
     address internal constant OWNER_SAFE = 0x2866369F7acEFC9760bdE7779362fae5cD68B41E;
     /// @notice The deploy wallet (no role after the hand-over).
     address internal constant DEPLOYER = 0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3;
-    /// @notice The keeper wallet on the production server (201).
+    /// @notice The platform keeper wallet.
     address internal constant KEEPER = 0xB6f1F1BFb92476Abb0998B425dE0deC5F927cFc7;
     /// @notice GangPadRegistry proxy (owner = OWNER_SAFE; docs/MAINNET-PAD-REGISTRY-2026-10-28.md). GangGateway reads it.
     address internal constant PAD_REGISTRY = 0x4fF77D4d9ac080939a24E1B805206bA094C44e5C;
@@ -27,6 +27,8 @@ library GangMainnetRefs {
     /// @notice GangFlywheelPad V1 (new sales stopped 2026-10-31; its sales still run) and V2.
     address internal constant FLYWHEEL_PAD_V1 = 0x631e66560F4FAE4e486B65349edE48189E48B029;
     address internal constant FLYWHEEL_PAD_V2 = 0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a;
+    /// @notice The MintTokenDeployer of 铸币飞轮 V2 and GangLaunchpad 3.0's 铸币飞轮 tokens (owner: OWNER_SAFE).
+    address internal constant FLYWHEEL_TOKEN_DEPLOYER = 0x2C95228AfA6eF211371A87f480aBa0f5c0Da072E;
     address internal constant WBNB = 0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c;
     address internal constant USDT = 0x55d398326f99059fF775485246999027B3197955;
     /// @dev USDT → WBNB bridge pool (Pancake V3), set on the pad with setBridgePool.

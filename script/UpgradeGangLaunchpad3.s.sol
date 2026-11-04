@@ -7,7 +7,14 @@ import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transp
 import {GangMainnetRefs as M} from "../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../src/gang/GangLaunchpad3.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
+import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
+import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
+import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
+import {Pad3FlyVaultCore} from "../src/gang/Pad3FlyVaultCore.sol";
+import {Pad3FlyModule} from "../src/gang/Pad3FlyModule.sol";
 import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 
@@ -36,10 +43,27 @@ import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 ///         slot and struct member; this script checks real data only.
 /// @dev Env: as DeployGangLaunchpad3 phase 2 (DEPLOYER_PRIVATE_KEY, GANG_PAD = 1.0, GANG_PAD3, GANG_ROUTER3, OWNER,
 ///      KEEPER, GANG_GATEWAY, GANG_PAD_REGISTRY, CALLERS), plus PAD3_IMPL (optional), PAD3_INIT_CALL (optional
-///      calldata: the new implementation's reinitializer). A later version replaces `_newImpl` with its own contract. Mainnet broadcast needs
-///      GANG_MAINNET_OK=true (only PAD3_IMPL's deployment is broadcast there; the upgrade is the Safe's).
+///      calldata: the new implementation's reinitializer), PAD3_FLY_HANDLER / PAD3_FLY_TOKEN_DEPLOYER / PAD3_FLY_VAULT_CORE (optional; see
+///      `_resolveFly`; testnet's first 铸币飞轮 upgrade needs the deployer). A later version replaces `_newImpl` with
+///      its own contract. Mainnet broadcast needs GANG_MAINNET_OK=true (only the deployments are broadcast there; the
+///      listings and the upgrade are the Safe's). A run that deploys prints no batch: re-run read-only with the
+///      deployed addresses, and again right before the Safe signs.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
+
+    /// @dev One upgrade as `_simulate` runs it.
+    struct Up {
+        address admin;
+        address upgrader;
+        address impl;
+        bytes init;
+        uint64 wantVersion;
+        address[] prepTo;
+        bytes[] prepCall;
+    }
+
+    /// @dev The 铸币飞轮 module's own three dependencies for the implementation `_newImpl` deploys (`_resolveFly`).
+    Pad3Impl.FlyDeps internal _fly;
 
     struct Snapshot {
         bytes32 settings;
@@ -61,7 +85,6 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         address proxy = _envAddr(_padEnv(), address(0));
         if (proxy == address(0)) revert WiringCheck("GANG_PAD3");
         s = _load2(proxy, x.pad1, c);
-        GangLaunchpad3 p = GangLaunchpad3(payable(proxy));
         address admin = R.adminOf(proxy);
         address upgrader = ProxyAdmin(admin).owner();
         if (c.mainnet && upgrader != M.OWNER_SAFE) revert WiringCheck("ProxyAdmin owner is not the Safe");
@@ -75,10 +98,14 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         console.log("ProxyAdmin / owner", admin, upgrader);
 
         address impl = _envAddr("PAD3_IMPL", address(0));
+        bool deployed = _resolveFly(GangLaunchpad3(payable(current)), impl, s, c, pk, upgrader);
+        (address[] memory prepTo, bytes[] memory prepCall) = _flyPrep(s, c.keeper, c.dexRouter, upgrader);
+
         if (impl == address(0)) {
             vm.startBroadcast(pk);
             impl = _newImpl(GangLaunchpad3(payable(current)));
             vm.stopBroadcast();
+            deployed = true;
             console.log("new implementation (deployed now; pass it as PAD3_IMPL on any re-run)", impl);
         } else {
             console.log("new implementation (PAD3_IMPL)", impl);
@@ -88,16 +115,48 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             console.logBytes4(bytes4(init));
         }
         _checkImpl(current, impl);
-        uint64 wantVersion = _wantVersion(impl, v0, init);
+        {
+            (, Pad3Impl.FlyDeps memory f) = Pad3Impl.flyDepsOf(GangLaunchpad3(payable(impl)));
+            if (
+                f.flyTaxHandler != _fly.flyTaxHandler || f.flyTokenDeployer != _fly.flyTokenDeployer
+                    || f.flyVaultCore != _fly.flyVaultCore
+            ) {
+                revert WiringCheck("PAD3_IMPL fly dependencies are not the resolved ones");
+            }
+        }
+        _simulate(s, c, x, Up(admin, upgrader, impl, init, _wantVersion(impl, v0, init), prepTo, prepCall));
 
-        // the upgrade in the simulation, as the owner sends it; checked; rolled back
-        Snapshot memory before = _snapshot(p, s, _servesVaultMode(proxy), new bool[](0));
+        bytes memory call = abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(proxy), impl, init));
+        if (!c.mainnet && upgrader == me) {
+            vm.startBroadcast(pk);
+            _sendPrep(prepTo, prepCall, upgrader, false);
+            ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
+            vm.stopBroadcast();
+            console.log("upgraded (testnet, the deploy wallet owns the ProxyAdmin)");
+            return s;
+        }
+        // audit C M-2: a batch is only printed from a run that deployed nothing, i.e. from the addresses on chain
+        if (deployed) {
+            console.log("\nDeployed in this run: once mined, re-run read-only with PAD3_IMPL, PAD3_FLY_HANDLER and");
+            console.log("PAD3_FLY_VAULT_CORE set to the addresses above to print the Safe batch.");
+            return s;
+        }
+        console.log("\n=== Safe batch: upgrade GangLaunchpad 3.0 (ProxyAdmin.upgradeAndCall, effective at once) ===");
+        if (prepTo.length != 0) console.log("(the fly-mode listings first, then the upgrade, in one batch)");
+        console.log(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call));
+    }
+
+    /// @dev The upgrade in the simulation, as the owner sends it (the 铸币飞轮 listings first); checked; rolled back.
+    function _simulate(Stack memory s, Cfg memory c, Ctx memory x, Up memory u) internal {
+        GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
+        Snapshot memory before = _snapshot(p, s, _servesVaultMode(s.pad), new bool[](0));
         uint256 snap = vm.snapshotState();
-        vm.prank(upgrader);
-        ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
-        if (R.implementationOf(proxy) != impl) revert WiringCheck("upgrade: implementation slot");
-        (uint64 v1, bool initializing) = R.initState(proxy);
-        if (v1 != wantVersion || initializing) revert WiringCheck("upgrade: initialized version");
+        _sendPrep(u.prepTo, u.prepCall, u.upgrader, true);
+        vm.prank(u.upgrader);
+        ProxyAdmin(u.admin).upgradeAndCall(ITransparentUpgradeableProxy(s.pad), u.impl, u.init);
+        if (R.implementationOf(s.pad) != u.impl) revert WiringCheck("upgrade: implementation slot");
+        (uint64 v1, bool initializing) = R.initState(s.pad);
+        if (v1 != u.wantVersion || initializing) revert WiringCheck("upgrade: initialized version");
         Snapshot memory afterUp = _snapshot(p, s, before.vault, before.newFairEntry);
         if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
         for (uint256 i; i < before.tokens.length; i++) {
@@ -111,19 +170,147 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _checkOriginTrader(s);
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
+    }
 
-        bytes memory call = abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(proxy), impl, init));
-        if (!c.mainnet && upgrader == me) {
-            vm.startBroadcast(pk);
-            ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
-            vm.stopBroadcast();
-            console.log("upgraded (testnet, the deploy wallet owns the ProxyAdmin)");
-            return s;
+    /// @dev The listings `_flyPrep` found, as the ProxyAdmin's owner sends them: pranked (the simulation) or broadcast
+    ///      (testnet, the deploy wallet owns them all).
+    function _sendPrep(address[] memory to, bytes[] memory data, address upgrader, bool prank) internal {
+        for (uint256 i; i < to.length; i++) {
+            if (prank) vm.prank(upgrader);
+            (bool ok,) = to[i].call(data[i]);
+            if (!ok) revert WiringCheck("fly listing call failed");
         }
-        console.log("\n=== Safe batch: upgrade GangLaunchpad 3.0 (ProxyAdmin.upgradeAndCall, effective at once) ===");
-        console.log(
-            string.concat(_head(c.mainnet, upgrader, "gang: upgrade GangLaunchpad 3.0"), _tx(admin, call, false), "]}")
+    }
+
+    function _batchJson(
+        bool mainnet,
+        address upgrader,
+        address[] memory to,
+        bytes[] memory data,
+        address admin,
+        bytes memory call
+    ) internal pure returns (string memory j) {
+        j = _head(mainnet, upgrader, "gang: upgrade GangLaunchpad 3.0");
+        for (uint256 i; i < to.length; i++) {
+            j = string.concat(j, _tx(to[i], data[i], i != 0));
+        }
+        j = string.concat(j, _tx(admin, call, to.length != 0), "]}");
+    }
+
+    /// @dev The 铸币飞轮 module's own three dependencies (`_fly`).
+    ///      - Once the current module has a 铸币飞轮 module: its three, always (audit C H-1: a 铸币飞轮 token's handler
+    ///        and vault core are fixed in the token and the vault, so a later upgrade can never move them);
+    ///        PAD3_FLY_HANDLER / PAD3_FLY_TOKEN_DEPLOYER / PAD3_FLY_VAULT_CORE, if given, must equal them.
+    ///      - The first upgrade with one: those env values, else PAD3_IMPL's, else V2's MintTokenDeployer (mainnet: only
+    ///        it), a FlywheelTaxHandler deployed now (owned by the ProxyAdmin's owner from the start — audit C M-1: the
+    ///        deploy wallet never holds it — over the shared vault, the pad's bucket and the DEX router; its launchpad
+    ///        and keeper are set in the batch) and a Pad3FlyVaultCore of the proxy deployed now. Returns whether
+    ///        anything was deployed (broadcast).
+    function _resolveFly(
+        GangLaunchpad3 cur,
+        address implEnv,
+        Stack memory s,
+        Cfg memory c,
+        uint256 pk,
+        address upgrader
+    ) internal returns (bool deployed) {
+        (bool has, Pad3Impl.FlyDeps memory f) = Pad3Impl.flyDepsOf(cur);
+        Pad3Impl.FlyDeps memory e = Pad3Impl.FlyDeps(
+            _envAddr("PAD3_FLY_HANDLER", address(0)),
+            _envAddr("PAD3_FLY_TOKEN_DEPLOYER", address(0)),
+            _envAddr("PAD3_FLY_VAULT_CORE", address(0))
         );
+        if (has) {
+            if (
+                (e.flyTaxHandler != address(0) && e.flyTaxHandler != f.flyTaxHandler)
+                    || (e.flyTokenDeployer != address(0) && e.flyTokenDeployer != f.flyTokenDeployer)
+                    || (e.flyVaultCore != address(0) && e.flyVaultCore != f.flyVaultCore)
+            ) revert WiringCheck("PAD3_FLY_* differ from the current module's");
+        } else if (implEnv != address(0)) {
+            (, f) = Pad3Impl.flyDepsOf(GangLaunchpad3(payable(implEnv)));
+        }
+        address d = e.flyTokenDeployer != address(0) ? e.flyTokenDeployer : f.flyTokenDeployer;
+        if (d == address(0) && c.mainnet) d = M.FLYWHEEL_TOKEN_DEPLOYER;
+        if (d == address(0)) revert WiringCheck("PAD3_FLY_TOKEN_DEPLOYER");
+        if (c.mainnet && d != M.FLYWHEEL_TOKEN_DEPLOYER) revert WiringCheck("fly token deployer is not V2's");
+        address h = e.flyTaxHandler != address(0) ? e.flyTaxHandler : f.flyTaxHandler;
+        address core = e.flyVaultCore != address(0) ? e.flyVaultCore : f.flyVaultCore;
+        if (h == address(0) || core == address(0)) {
+            vm.startBroadcast(pk);
+            if (h == address(0)) h = address(new FlywheelTaxHandler(upgrader, s.vault, s.bucket, c.dexRouter));
+            if (core == address(0)) core = address(new Pad3FlyVaultCore(s.vault, s.pad));
+            vm.stopBroadcast();
+            deployed = true;
+        }
+        console.log("fly tax handler (PAD3_FLY_HANDLER)", h);
+        console.log("fly vault core (PAD3_FLY_VAULT_CORE)", core);
+        console.log("fly token deployer", d);
+        if (Ownable(h).owner() != upgrader) revert WiringCheck("fly handler not owned by the ProxyAdmin owner");
+        _fly = Pad3Impl.FlyDeps(h, d, core);
+    }
+
+    /// @dev What the ProxyAdmin's owner still has to do for the 铸币飞轮 dependencies, before the upgrade: the handler's
+    ///      one-shot launchpad (the proxy) and first keeper, 3.0 listed on the token deployer, the handler a bucket
+    ///      operator, the vault core listed in the vault and the handler bound as its operator (which also excludes
+    ///      the handler from shares). Each contract must be the owner's (mainnet: the Safe owns all).
+    function _flyPrep(Stack memory s, address keeper, address dexRouter, address upgrader)
+        internal
+        view
+        returns (address[] memory to, bytes[] memory data)
+    {
+        FlywheelTaxHandler h = FlywheelTaxHandler(_fly.flyTaxHandler);
+        address d = _fly.flyTokenDeployer;
+        address core = _fly.flyVaultCore;
+        SharedDividendVault v = SharedDividendVault(s.vault);
+        to = new address[](6);
+        data = new bytes[](6);
+        uint256 n;
+        address lp = h.launchpad();
+        if (lp != address(0) && lp != s.pad) revert WiringCheck("fly handler serves another launchpad");
+        if (lp == address(0)) {
+            // first wiring (re-review L-1): the router is set at construction, undelayed, outside the code check, so a
+            // look-alike handler given as PAD3_FLY_HANDLER must not bring its own
+            if (address(h.dexRouter()) != dexRouter || h.dexRouterEta() != 0) {
+                revert WiringCheck("fly handler router is not the DEX router");
+            }
+            (to[n], data[n++]) =
+            (_ownedBy(address(h), upgrader), abi.encodeCall(FlywheelTaxHandler.setLaunchpad, (s.pad)));
+        }
+        if (!h.keeperSet()) {
+            (to[n], data[n++]) = (_ownedBy(address(h), upgrader), abi.encodeWithSignature("setKeeper(address)", keeper));
+        }
+        if (!MintTokenDeployer(d).launchpads(s.pad)) {
+            (to[n], data[n++]) = (_ownedBy(d, upgrader), abi.encodeCall(MintTokenDeployer.setLaunchpad, (s.pad, true)));
+        }
+        if (!SharedPlatformFeeBucket(s.bucket).operators(address(h))) {
+            (to[n], data[n++]) =
+            (_ownedBy(s.bucket, upgrader), abi.encodeCall(SharedPlatformFeeBucket.setOperator, (address(h), true)));
+        }
+        if (!v.launchpads(core)) {
+            (to[n], data[n++]) =
+            (_ownedBy(s.vault, upgrader), abi.encodeCall(SharedDividendVault.setLaunchpad, (core, true)));
+        }
+        // the binding is once and for good: refuse a core or handler already bound to anything else
+        address boundOp = v.operatorFor(core);
+        address boundCore = v.operatorOf(address(h));
+        if ((boundOp != address(0) && boundOp != address(h)) || (boundCore != address(0) && boundCore != core)) {
+            revert WiringCheck("fly handler / vault core bound elsewhere in the vault");
+        }
+        if (boundOp == address(0)) {
+            (to[n], data[n++]) =
+            (_ownedBy(s.vault, upgrader), abi.encodeCall(SharedDividendVault.setOperator, (address(h), core)));
+        }
+        assembly ("memory-safe") {
+            mstore(to, n)
+            mstore(data, n)
+        }
+    }
+
+    function _ownedBy(address target, address upgrader) internal view returns (address) {
+        if (Ownable(target).owner() != upgrader) {
+            revert WiringCheck("fly dependency not owned by the ProxyAdmin owner");
+        }
+        return target;
     }
 
     /// @dev Review 3: the version the new implementation leaves the proxy at (`initVersion`) decides whether a set-up
@@ -143,7 +330,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     /// @dev This build's GangLaunchpad3 with the current implementation's seven dependencies (read from its code, never
     ///      typed in). A later version deploys its own contract here.
     function _newImpl(GangLaunchpad3 cur) internal returns (address) {
-        return _newImplWith(cur, _refModule(cur));
+        return _newImplWith(cur, Pad3Impl.module(Pad3Impl.depsOf(cur), _fly));
     }
 
     /// @dev This build's implementation with `cur`'s dependencies over `module` (a new module for the upgrade; the
@@ -225,7 +412,12 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             address t = p.allTokens(n - 1 - i);
             if (!given) snap.newFairEntry[i] = _fairNotYetRouted(p, t);
             snap.tokens[i] = keccak256(
-                abi.encode(_raw(p, t), _derived(p, t, snap.newFairEntry[i]), vault ? _vaultState(p, t) : bytes(""))
+                abi.encode(
+                    _raw(p, t),
+                    _derived(p, t, snap.newFairEntry[i]),
+                    vault ? _vaultState(p, t) : bytes(""),
+                    p.kindOf(t) == 3 ? _flyState(p, t) : bytes("")
+                )
             );
         }
     }
@@ -261,10 +453,19 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
 
     /// @dev `t`'s vault and its listing, grant and history, and what the token's creator locked into it.
     function _vaultState(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
-        Pad3Module m = Pad3Module(address(p));
+        Pad3Module m = Pad3Module(payable(address(p)));
         address v = m.vaultOf(t);
         (address creator,,,,,,,,,,,) = p.curves(t);
         return abi.encode(v, m.isVault(v), m.everVault(v), m.vaultCreator(v), m.lockedOf(t, creator));
+    }
+
+    /// @dev A 铸币飞轮 token's state in its namespace (audit C L-4; `sales` is in `_raw`): the creator's account, the
+    ///      dev cut owed, the post-launch rules. None exist before the first upgrade with the 铸币飞轮 mode.
+    function _flyState(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
+        Pad3FlyModule f = Pad3FlyModule(address(p));
+        address creator = f.sales(t).creator;
+        (uint16 guardBps, uint32 twapWindow) = f.postRulesOf(t);
+        return abi.encode(f.accounts(t, creator), f.owedDev(t), guardBps, twapWindow);
     }
 
     function _raw(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
