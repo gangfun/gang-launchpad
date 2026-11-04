@@ -75,7 +75,7 @@
 - **规则沿用 Gateway**：trader 必须是 `tx.origin`；卖出只接受卖家本人或白名单合约；路由手续费 ≤ 5%；买到的币由老 pad 直接打给用户。卖老币时，用户授权给 3.0。多跳卖出同样适用于老币：老 pad 把卖出所得付给 3.0（它的 router），3.0 再把全部所得转给 `to`。
 - **储备保护**：转发前后，3.0 自己持有的该计价币余额必须完全相同，否则回滚（`EscrowMoved`）。3.0 只对受信 pad 授权本次的 `funds`，用完立刻归零。
 - **行情**：老币的 `Buy` / `Sell` 仍由老 pad 自己发出，应以老 pad 的事件为准，因为也有交易直接打到老 pad，不经过 3.0。3.0 转发时另外发一个 `Routed`，用于归因。
-- **GangGateway**：保持运行，已经接入的聚合器不受影响。3.0 也把 Gateway 列为 router，所以经 Gateway 也能交易 3.0 的币。
+- **GangGateway**：保持运行，已经接入的聚合器不受影响。3.0 也把 Gateway 列为 router，所以经 Gateway 也能交易 3.0 的曲线币；打新和铸币飞轮不走 Gateway，走 3.0 的入口（见 §10）。
 
 ## 4. 事件
 
@@ -218,7 +218,7 @@
   - 每份大小：`TOKENS_PER_SHARE()` 是 3.0 的常量，等于打新的 50,000 代币；飞轮每份 100,000。按币查 `shareSizeOf(token)`：打新 50,000，飞轮 100,000。3.0 自己的入口按币取份额大小。
 - **代客交易（router）**：飞轮的 `mintFor` / `withdrawFor` / `mintPostFor` 只认飞轮自己的 router 名单（`setFlyRouter`，默认为空；规则同 `setRouter`），不认 3.0 的 `routers`。原因：仓库里的 GangGateway V2 这类代码按 pad 的 `TOKENS_PER_SHARE()` 切份，对 3.0 的飞轮币会把份数算成两倍，卖出时会卖掉用户没打算卖的部分。这类代码不能列进飞轮名单；要列的 router 必须按 `shareSizeOf` 取份额。
 - **GangGateway**：主网的 GangGateway 还是第一版（实现 `0xcc20bc90336729da3a37005e2389deb963f61360`），只交易曲线币，对所有飞轮币 `getTokenInfo` 报 0。V2 的升级排进过时间锁，2026-11-04 由 Safe 取消，不再执行。聚合器交易飞轮币走 3.0 的入口。
-- **入口**：3.0 自己的飞轮币经入口交易，规则和 LegacyRoute 对 V1 / V2 飞轮币的处理相同：开池前买入按整份铸造（单价加铸造费，`amountMsgValue` 等于实际花费），卖出按整份退回；开池后，开了开池后铸造的发售经入口铸造（status 2，池子也能交易），其他的不经入口交易；没设门槛的发售 status 3。
+- **入口**：3.0 自己的飞轮币经入口交易，规则和 LegacyRoute 对 V1 / V2 飞轮币的处理相同：开池前买入按整份铸造（单价加铸造费，`amountMsgValue` 等于实际花费），卖出按整份退回；开池后，开了开池后铸造的发售经入口铸造（status 2，池子也能交易），其他的不经入口交易；没设门槛的发售 status 3。这一点和 LegacyRoute 不同：转发的 V1 / V2 发售没设门槛时报 status 1，`tryBuy` / `trySell` 返回 0。
 - **分红金库**：共享金库给每个 pad 一个门槛和一个 operator，都是一次性的；3.0 的是曲线 / 打新的（门槛 10,000 代币，operator 是它的 GangTaxHandler）。飞轮币改登记在 **`Pad3FlyVaultCore`** 名下：这是一个不可升级、没有 owner 的小合约，在金库里充当飞轮币的 pad。
   - 门槛和 V2 相同，1,000 代币（创建时由 FlywheelLogic 设定）；
   - operator 是飞轮的 FlywheelTaxHandler，由金库的 owner 绑定。税处理器像在 V2 上一样直接写持有人份额、记入分红，3.0 不经手；
