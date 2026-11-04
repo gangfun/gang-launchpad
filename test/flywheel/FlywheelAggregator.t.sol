@@ -50,8 +50,7 @@ contract FlywheelAggregatorTest is FlywheelFixture {
         );
         router = new RouterStub(pad, wbnb);
         wbnb.mintUnlimited(address(router), 1_000 ether);
-        vm.prank(owner);
-        pad.setRouter(address(router), true);
+        _allowRouter(address(router));
     }
 
     // ------------------------------------------------------------ registry

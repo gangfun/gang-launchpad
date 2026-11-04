@@ -7,8 +7,8 @@ import {Test} from "forge-std/Test.sol";
 ///         (foundry.toml `extra_output`). Locks 0 = Ownable._owner, 1 = Ownable2Step._pendingOwner,
 ///         2 = ReentrancyGuard._status, then 3.0's variables from slot 3 (`_config` takes 3–6), and checks that the
 ///         well-formed next version (GangLaunchpad3V2Mock) appended its one new variable after the last one. Changing
-///         the pad's layout must change this test on purpose. Pad3Module (delegatecalled from the pad's fallback) must
-///         mirror the layout exactly.
+///         the pad's layout must change this test on purpose. Pad3Module (delegatecalled from the pad's fallback) and
+///         Pad3FlyModule (from Pad3Module's) must mirror the layout exactly.
 contract GangLaunchpad3LayoutTest is Test {
     struct Entry {
         string label;
@@ -47,7 +47,9 @@ contract GangLaunchpad3LayoutTest is Test {
         _is(e[5], "routers", 8, "t_mapping(t_address,t_bool)");
         _is(e[6], "kindOf", 9, "t_mapping(t_address,t_uint8)");
         _is(e[7], "curves", 10, "t_mapping(t_address,t_struct(Curve)");
-        _is(e[8], "sales", 11, "t_mapping(t_address,t_struct(Sale)");
+        // `_sales` (named `sales` up to the 铸币飞轮 mode, whose `sales(token)` dispatches by kind): a label only, the slot
+        // and type are the same
+        _is(e[8], "_sales", 11, "t_mapping(t_address,t_struct(Sale)");
         _is(e[9], "positions", 12, "t_mapping(t_address,t_mapping(t_address,t_struct(Position)");
         _is(e[10], "logoURIOf", 13, "t_mapping(t_address,t_string_storage)");
         _is(e[11], "owedFee", 14, "t_mapping(t_address,t_uint256)");
@@ -75,11 +77,20 @@ contract GangLaunchpad3LayoutTest is Test {
         _is(e[17], "v2Value", 20, "t_uint256");
     }
 
-    /// @dev Pad3Module runs by delegatecall in the proxy's storage: it must declare exactly the pad's variables, in the
-    ///      pad's order and types (struct members included), and nothing else (its own state is in ERC-7201 namespaces).
+    /// @dev Pad3Module and Pad3FlyModule run by delegatecall in the proxy's storage: each must declare exactly the
+    ///      pad's variables, in the pad's order and types (struct members included), and nothing else (their own state
+    ///      is in ERC-7201 namespaces).
     function test_layout_moduleMirrorsPad() public view {
+        _mirrors("Pad3Module.sol/Pad3Module.json");
+    }
+
+    function test_layout_flyModuleMirrorsPad() public view {
+        _mirrors("Pad3FlyModule.sol/Pad3FlyModule.json");
+    }
+
+    function _mirrors(string memory artifact) internal view {
         Entry[] memory p = _layout("GangLaunchpad3.sol/GangLaunchpad3.json");
-        Entry[] memory m = _layout("Pad3Module.sol/Pad3Module.json");
+        Entry[] memory m = _layout(artifact);
         assertEq(m.length, p.length, "same number of variables");
         for (uint256 i; i < p.length; i++) {
             assertEq(m[i].label, p[i].label, "label");
@@ -88,7 +99,7 @@ contract GangLaunchpad3LayoutTest is Test {
             assertEq(m[i].typ, p[i].typ, p[i].label);
         }
         _v1(m);
-        _structs("Pad3Module.sol/Pad3Module.json", m);
+        _structs(artifact, m);
     }
 
     /// @dev A next version with two struct members swapped (Curve: creator / quote; Config: pairFactory / migrator)

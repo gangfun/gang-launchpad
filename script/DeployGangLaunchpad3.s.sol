@@ -17,9 +17,50 @@ import {IGangLaunchpad3} from "../src/gang/interfaces/IGangLaunchpad3.sol";
 import {Pad3CodeCheck as CC} from "./Pad3CodeCheck.sol";
 import {Pad3Impl} from "./Pad3Impl.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
+import {Pad3FlyModule} from "../src/gang/Pad3FlyModule.sol";
+import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
+import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
+import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
+import {SharedPlatformFeeBucket} from "../src/common/SharedPlatformFeeBucket.sol";
+import {SharedMigrator} from "../src/common/SharedMigrator.sol";
+import {Pad3FlyVaultCore} from "../src/gang/Pad3FlyVaultCore.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangTaxHandler} from "./GangContracts.sol";
 import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
+
+/// @title Pad3LinkCheck — one build artifact's libraries, for `_checkNotPreLinked`, in the simulation only
+/// @dev Its own contract: each artifact (megabytes of JSON) is read in its own call frame, whose memory is freed after
+///      it (three in one frame run out of gas on memory), and forge refuses a script calling itself.
+contract Pad3LinkCheck {
+    Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+
+    error WiringCheck(string what);
+
+    function check(string memory artifact, string memory dir, string[] memory names) external view {
+        // audit C L-1: the artifacts of this build (FOUNDRY_OUT when the build writes elsewhere)
+        string memory json =
+            vm.readFile(string.concat(vm.projectRoot(), "/", vm.envOr("FOUNDRY_OUT", string("out")), "/", artifact));
+        for (uint256 i; i < names.length; i++) {
+            string memory k =
+                string.concat(".deployedBytecode.linkReferences['src/", dir, "/", names[i], ".sol'].", names[i]);
+            if (!vm.keyExistsJson(json, k)) {
+                revert WiringCheck(string.concat("library given at build time (link PoolCheck only): ", names[i]));
+            }
+        }
+        // every library of every source file (two libraries in one file count as two)
+        string[] memory files = vm.parseJsonKeys(json, ".deployedBytecode.linkReferences");
+        uint256 n;
+        for (uint256 i; i < files.length; i++) {
+            string memory f = string.concat(".deployedBytecode.linkReferences['", files[i], "']");
+            n += vm.parseJsonKeys(json, f).length;
+        }
+        // PoolCheck: a link reference unless given (mainnet: given, the live one)
+        if (vm.keyExistsJson(json, ".deployedBytecode.linkReferences['src/launchpad-v2/PoolCheck.sol']")) n--;
+        if (n != names.length) {
+            revert WiringCheck(string.concat("libraries not listed in _checkNotPreLinked: ", artifact));
+        }
+    }
+}
 
 /// @title DeployGangLaunchpad3 — GangLaunchpad 3.0, the upgradeable pad with the aggregator entry built in
 /// @notice The 2.0 deploy (DeployGangLaunchpad2: same two phases, checks and Safe batches 1 / 2) with these
@@ -37,21 +78,25 @@ import {DeployGangLaunchpad2} from "./DeployGangLaunchpad2.s.sol";
 ///           batch 3 (forward): `setRouter(3.0, true)` on every older pad that has a router list (mainnet: 1.0, 2.0,
 ///           the vault pad, 铸币飞轮 V1 / V2): 3.0's entry then trades their curve tokens too;
 ///           batch 4 (callers, when CALLERS is given): `setCaller(c, true)` on 3.0 for aggregator contracts;
-///           batch 5 (cut-over, only with CUTOVER=true, once backend / site / CLI / modules use 3.0): 1.0 and 2.0 stop
-///           creating. The
-///           vault pad and the 铸币飞轮 keep creating (3.0 has neither mode).
+///           batch 5 (cut-over, only with CUTOVER=true, once backend / site / CLI / modules use 3.0): 1.0, 2.0, the
+///           vault pad and 铸币飞轮 V2 stop creating (3.0 has every mode they have).
 /// @dev Link as DeployGangLaunchpad2 (mainnet: PoolCheck only; never CurveLogic3 / FairLogic / LegacyRoute, forge
 ///      deploys them fresh). Env as DeployGangLaunchpad2 (GANG_PAD = 1.0: the shared contracts are read from it),
 ///      plus: PAD3_NEW (mainnet phase 1), GANG_PAD3_DEPLOYER_NONCE (phase 2, from phase 1's log; mainnet required),
 ///      PAD3_LOG_SCAN (optional), CALLER_CODEHASHES (mainnet, with CALLERS), CALLERS_PROXY_OK,
 ///      CUTOVER (print batch 5), CALLERS (comma-separated contracts, optional; testnet phase 1 lists them
 ///      itself), LEGACY_PADS (testnet only, comma-separated; default: the registry's pads that have a router list),
-///      GANG_PAD2 (testnet only: the 2.0 to stop in the cut-over).
+///      GANG_PAD2 / GANG_VAULT_PAD / FLYWHEEL_PAD_V2 (testnet only, optional: the older pads to stop in the cut-over),
+///      PAD3_FLY_TOKEN_DEPLOYER (testnet phase 1: the MintTokenDeployer of 3.0's 铸币飞轮 tokens; it must be the deploy
+///      wallet's), FOUNDRY_OUT (if the build's artifacts are not in out/).
 contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     address internal constant MAINNET_PAD_2 = 0x770331a9accdb53ACb4a45B6c5B7D151fADCe557;
     address internal constant MAINNET_VAULT_PAD = 0xE90851A90C6278E3d6e4C24320101f8B13D90A11;
     uint8 internal constant PAD3_TOKEN_VERSION = 1;
     uint256 internal constant PAD3_MAX_FEE_RATE = 500;
+
+    /// @dev The implementation `_checkImplCode` last passed (its code and its modules' code cannot change).
+    address internal _codeChecked;
 
     function _padName() internal pure override returns (string memory) {
         return "GangLaunchpad 3.0";
@@ -90,18 +135,33 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     /// @dev The handler, the implementation, the proxy (initialized in its constructor: no window in which anyone else
     ///      could initialize it; ProxyAdmin owned by OWNER), then the router on the proxy.
     function _deploy2(Stack memory s, Cfg memory c) internal override {
+        // 3.0 is live on mainnet: a later version comes by UpgradeGangLaunchpad3 (a fresh mainnet 3.0 would also need
+        // the 铸币飞轮 listings of `_flyPrep` in batch 1)
+        if (c.mainnet) revert WiringCheck("3.0 is live on mainnet: upgrade it");
+        // the 铸币飞轮 tax handler is the OWNER's from the start, as on an upgrade (`_resolveFly`): this path sets it up
+        // itself, so the deploy wallet must be OWNER (testnet)
+        if (c.owner != c.deployer) revert WiringCheck("fresh 3.0 with OWNER != deployer: not supported");
         s.handler = address(new GangTaxHandler(c.deployer, s.vault, s.bucket, c.dexRouter));
-        // the vault mode module, then the implementation over it (Pad3Impl: the one way both are made)
+        FlywheelTaxHandler fly = new FlywheelTaxHandler(c.owner, s.vault, s.bucket, c.dexRouter);
+        // the vault core needs the proxy's address: four creates on (the core, the 铸币飞轮 module, the module, the
+        // implementation)
+        address proxy = vm.computeCreateAddress(c.deployer, vm.getNonce(c.deployer) + 4);
+        address core = address(new Pad3FlyVaultCore(s.vault, proxy));
+        // the modules, then the implementation over them (Pad3Impl: the one way they are made)
         address impl = Pad3Impl.deploy(
             Pad3Impl.Deps(
                 s.quoteRegistry, s.vault, s.bucket, s.handler, s.tokenDeployer, c.wbnb, _ctx(c.mainnet).padRegistry
-            )
+            ),
+            Pad3Impl.FlyDeps(address(fly), vm.envAddress("PAD3_FLY_TOKEN_DEPLOYER"), core)
         );
         s.pad = address(
             new TransparentUpgradeableProxy(
                 impl, c.owner, abi.encodeCall(GangLaunchpad3.initialize, (c.deployer, c.factory))
             )
         );
+        if (s.pad != proxy) revert WiringCheck("vault core: the proxy is not where it was predicted");
+        fly.setLaunchpad(s.pad);
+        fly.setKeeper(c.keeper);
         s.padBlock = block.number;
         _setRouter(s, R.deploy(s.pad, c.wbnb, c.dexRouter, R.timelockSafe(c.mainnet, c.owner), c.routerDelay));
     }
@@ -121,6 +181,13 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
                 IGangPad(pads[i]).setRouter(s.pad, true);
             }
         }
+        // the 铸币飞轮 module's listings (testnet: the deploy wallet owns the token deployer, bucket and vault)
+        Pad3FlyModule fm = Pad3FlyModule(Pad3Module(payable(GangLaunchpad3(payable(s.pad)).module())).flyModule());
+        address h = fm.flyTaxHandler();
+        MintTokenDeployer(fm.flyTokenDeployer()).setLaunchpad(s.pad, true);
+        SharedPlatformFeeBucket(s.bucket).setOperator(h, true);
+        SharedDividendVault(s.vault).setLaunchpad(fm.flyVaultCore(), true);
+        SharedDividendVault(s.vault).setOperator(h, fm.flyVaultCore());
     }
 
     // ---------------------------------------------------------------- phase 2
@@ -191,6 +258,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         } catch {
             revert WiringCheck("entry tryBuy");
         }
+        _checkFly(s, c);
         address[] memory callers = _callers();
         for (uint256 i; i < callers.length; i++) {
             if (!_isContract(callers[i])) revert WiringCheck("CALLERS: not a contract");
@@ -215,6 +283,9 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     ///         holds only the code it was derived from), so a look-alike implementation, or one linked to other
     ///         libraries, fails. On mainnet the live PoolCheck must be the one linked.
     function _checkImplCode(address impl, bool mainnet) internal {
+        // once per implementation: the references are whole deployments (the upgrade's simulation checks the same
+        // implementation before and after the upgrade, inside one block's gas)
+        if (impl == _codeChecked) return;
         _checkNotPreLinked();
         GangLaunchpad3 cur = GangLaunchpad3(payable(impl));
         address ref = _refImpl(cur);
@@ -227,9 +298,66 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         if (m.code.length == 0 || !R.sameCode(m.code, _refModule(cur).code)) {
             revert WiringCheck("pad module code");
         }
-        if (Pad3Module(m).TOKEN_VERSION() != cur.TOKEN_VERSION()) {
+        if (Pad3Module(payable(m)).TOKEN_VERSION() != cur.TOKEN_VERSION()) {
             revert WiringCheck("module TOKEN_VERSION");
         }
+        // the 铸币飞轮 module Pad3Module's fallback delegates to: this build's, with the pad's four shared dependencies
+        // and its own two (read from it; `_checkFly` checks they serve the proxy), on the same rule version
+        address fly = Pad3Module(payable(m)).flyModule();
+        if (fly.code.length == 0 || !R.sameCode(fly.code, _refFlyModule(cur).code)) {
+            revert WiringCheck("pad fly module code");
+        }
+        if (Pad3FlyModule(fly).TOKEN_VERSION() != cur.TOKEN_VERSION()) revert WiringCheck("fly module TOKEN_VERSION");
+        _codeChecked = impl;
+    }
+
+    /// @notice The 铸币飞轮 module's own three dependencies serve this proxy:
+    ///         - the tax handler is this build's FlywheelTaxHandler (immutables: the shared vault and the pad's bucket)
+    ///           with the proxy as its launchpad, a keeper, owned by OWNER (not pending: audit C M-1), no keeper or
+    ///           router change pending, a bucket operator;
+    ///         - the vault core is this build's Pad3FlyVaultCore of the proxy over the shared vault, listed there, at
+    ///           most V2's floor, with the handler as its operator (which also excludes the handler from shares);
+    ///         - the token deployer is MintTokenDeployer code (mainnet: 铸币飞轮 V2's, the Safe's) listing the proxy;
+    ///         - and the pad's own listings the mode uses: the vault and the migrator list the proxy.
+    ///         The keeper and router themselves are the Safe's to change later (delayed): not pinned here.
+    function _checkFly(Stack memory s, Cfg memory c) internal {
+        Pad3FlyModule fly = Pad3FlyModule(Pad3Module(payable(GangLaunchpad3(payable(s.pad)).module())).flyModule());
+        FlywheelTaxHandler h = FlywheelTaxHandler(fly.flyTaxHandler());
+        address d = fly.flyTokenDeployer();
+        address core = fly.flyVaultCore();
+        SharedDividendVault v = SharedDividendVault(s.vault);
+        if (!R.sameCode(address(h), _refFlyHandler(s).code)) revert WiringCheck("fly handler code");
+        if (h.launchpad() != s.pad) revert WiringCheck("fly handler launchpad");
+        if (!h.keeperSet() || h.keeper() == address(0)) revert WiringCheck("fly handler keeper");
+        if (h.keeperEta() != 0 || h.dexRouterEta() != 0) revert WiringCheck("fly handler: a change is pending");
+        if (h.owner() != c.owner || h.pendingOwner() != address(0)) revert WiringCheck("fly handler owner");
+        if (!SharedPlatformFeeBucket(s.bucket).operators(address(h))) {
+            revert WiringCheck("bucket.setOperator(fly handler)");
+        }
+        if (!R.sameCode(core, _refFlyVaultCore(s).code)) revert WiringCheck("fly vault core code");
+        if (!v.launchpads(core)) revert WiringCheck("vault.setLaunchpad(fly vault core)");
+        if (v.operatorFor(core) != address(h)) revert WiringCheck("vault.setOperator(fly handler, fly vault core)");
+        if (v.minimumShareBalanceOf(core) > 1_000 ether) revert WiringCheck("fly vault core floor");
+        if (!v.launchpads(s.pad) || !SharedMigrator(s.migrator).launchpads(s.pad)) {
+            revert WiringCheck("vault / migrator do not list 3.0");
+        }
+        if (!R.sameCode(d, type(MintTokenDeployer).runtimeCode)) revert WiringCheck("fly token deployer code");
+        if (c.mainnet && (d != M.FLYWHEEL_TOKEN_DEPLOYER || Ownable(d).owner() != M.OWNER_SAFE)) {
+            revert WiringCheck("fly token deployer is not V2's");
+        }
+        if (!MintTokenDeployer(d).launchpads(s.pad)) revert WiringCheck("deployer.setLaunchpad(3.0)");
+        // the live GangGateway V2 sizes shares by the pad's TOKENS_PER_SHARE (audit B M-1): never a 铸币飞轮 router
+        if (c.mainnet && fly.flyRouters(M.GANG_GATEWAY)) revert WiringCheck("GangGateway is a fly router");
+    }
+
+    /// @dev This build's FlywheelTaxHandler over the shared vault and the pad's bucket (its two immutables), and its
+    ///      Pad3FlyVaultCore of the proxy, in the simulation only.
+    function _refFlyHandler(Stack memory s) internal returns (address) {
+        return address(new FlywheelTaxHandler(address(1), s.vault, s.bucket, address(0)));
+    }
+
+    function _refFlyVaultCore(Stack memory s) internal returns (address) {
+        return address(new Pad3FlyVaultCore(s.vault, s.pad));
     }
 
     /// @dev Delta review of the deploy fixes (L-1): the reference links the same libraries this run links, so an
@@ -239,36 +367,17 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
     ///      module's are read, and each must link exactly the listed libraries: a library added to either later fails
     ///      here until it is listed (vault-mode review L-2: a module library given at build time would be
     ///      delegatecalled in the proxy).
-    function _checkNotPreLinked() internal view {
+    function _checkNotPreLinked() internal {
+        Pad3LinkCheck links = new Pad3LinkCheck();
         string[] memory pad = new string[](3);
         (pad[0], pad[1], pad[2]) = ("CurveLogic3", "FairLogic", "LegacyRoute");
-        _checkLinks("GangLaunchpad3.sol/GangLaunchpad3.json", pad);
+        links.check("GangLaunchpad3.sol/GangLaunchpad3.json", "gang", pad);
         string[] memory module = new string[](2);
         (module[0], module[1]) = ("CurveLogic3", "FairLogic");
-        _checkLinks("Pad3Module.sol/Pad3Module.json", module);
-    }
-
-    function _checkLinks(string memory artifact, string[] memory names) internal view {
-        string memory json = vm.readFile(string.concat(vm.projectRoot(), "/out/", artifact));
-        for (uint256 i; i < names.length; i++) {
-            string memory k =
-                string.concat(".deployedBytecode.linkReferences['src/gang/", names[i], ".sol'].", names[i]);
-            if (!vm.keyExistsJson(json, k)) {
-                revert WiringCheck(string.concat("library given at build time (link PoolCheck only): ", names[i]));
-            }
-        }
-        // every library of every source file (two libraries in one file count as two)
-        string[] memory files = vm.parseJsonKeys(json, ".deployedBytecode.linkReferences");
-        uint256 n;
-        for (uint256 i; i < files.length; i++) {
-            string memory f = string.concat(".deployedBytecode.linkReferences['", files[i], "']");
-            n += vm.parseJsonKeys(json, f).length;
-        }
-        // PoolCheck: a link reference unless given (mainnet: given, the live one)
-        if (vm.keyExistsJson(json, ".deployedBytecode.linkReferences['src/launchpad-v2/PoolCheck.sol']")) n--;
-        if (n != names.length) {
-            revert WiringCheck(string.concat("libraries not listed in _checkNotPreLinked: ", artifact));
-        }
+        links.check("Pad3Module.sol/Pad3Module.json", "gang", module);
+        string[] memory fly = new string[](2);
+        (fly[0], fly[1]) = ("FlywheelLogic", "FlywheelPostLogic");
+        links.check("Pad3FlyModule.sol/Pad3FlyModule.json", "flywheel", fly);
     }
 
     /// @dev This build's implementation with `cur`'s dependencies, deployed in the simulation only (every caller runs
@@ -279,10 +388,19 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         return Pad3Impl.implWith(Pad3Impl.depsOf(cur), cur.module());
     }
 
-    /// @dev This build's vault mode module with `cur`'s dependencies, in the simulation only. A later version deploys
-    ///      its own module here.
+    /// @dev This build's Pad3Module with `cur`'s dependencies over `cur`'s own 铸币飞轮 module (its address is an
+    ///      immutable of the module; that module is compared with `_refFlyModule`), in the simulation only. A later
+    ///      version deploys its own module here.
     function _refModule(GangLaunchpad3 cur) internal virtual returns (address) {
-        return Pad3Impl.module(Pad3Impl.depsOf(cur));
+        return Pad3Impl.moduleWith(Pad3Impl.depsOf(cur), Pad3Module(payable(cur.module())).flyModule());
+    }
+
+    /// @dev This build's 铸币飞轮 module with `cur`'s four shared dependencies and its own module's two, in the
+    ///      simulation only.
+    function _refFlyModule(GangLaunchpad3 cur) internal virtual returns (address) {
+        (bool ok, Pad3Impl.FlyDeps memory f) = Pad3Impl.flyDepsOf(cur);
+        if (!ok) revert WiringCheck("pad has no fly module");
+        return Pad3Impl.flyModule(Pad3Impl.depsOf(cur), f);
     }
 
     /// @dev `code` holds PUSH20 `a` (0x73 ‖ a), as a library call does.
@@ -404,7 +522,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         }
         j = _cutover3Json(s, x, c);
         if (bytes(j).length == 0) {
-            console.log("\ncut-over: 1.0 and 2.0 no longer create");
+            console.log("\ncut-over: 1.0, 2.0, the vault pad and fly V2 no longer create");
         } else {
             console.log("\n=== Safe batch 5 (cut-over, only once backend / site / CLI / modules use 3.0) ===");
             console.log(j);
@@ -487,34 +605,50 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         j = string.concat(j, "]}");
     }
 
-    /// @dev Batch 5: 1.0 and 2.0 (those still creating) stop creating ("" when neither does). 3.0 must be creating.
+    /// @dev Batch 5: the older pads 3.0 replaces stop creating, those still creating ("" when none is): 1.0, 2.0 and
+    ///      the vault pad on the TokenDeployer, 铸币飞轮 V2 on the MintTokenDeployer (3.0's 铸币飞轮 one). Their tokens
+    ///      already created are not affected. 3.0 must be creating on both deployers. Testnet: GANG_PAD2,
+    ///      GANG_VAULT_PAD, FLYWHEEL_PAD_V2 (each optional).
     function _cutover3Json(Stack memory s, Ctx memory x, Cfg memory c) internal returns (string memory j) {
-        TokenDeployer td = TokenDeployer(s.tokenDeployer);
-        address[2] memory old = [x.pad1, c.mainnet ? MAINNET_PAD_2 : _envAddr("GANG_PAD2", address(0))];
-        address[2] memory todo;
+        address fd =
+            Pad3FlyModule(Pad3Module(payable(GangLaunchpad3(payable(s.pad)).module())).flyModule()).flyTokenDeployer();
+        // TokenDeployer and MintTokenDeployer share `launchpads` / `setLaunchpad(address,bool)`
+        address[4] memory dep = [s.tokenDeployer, s.tokenDeployer, s.tokenDeployer, fd];
+        address[4] memory old = [
+            x.pad1,
+            c.mainnet ? MAINNET_PAD_2 : _envAddr("GANG_PAD2", address(0)),
+            c.mainnet ? MAINNET_VAULT_PAD : _envAddr("GANG_VAULT_PAD", address(0)),
+            c.mainnet ? M.FLYWHEEL_PAD_V2 : _envAddr("FLYWHEEL_PAD_V2", address(0))
+        ];
+        bool[4] memory todo;
         uint256 n;
-        for (uint256 i; i < 2; i++) {
-            if (old[i] != address(0) && old[i] != s.pad && td.launchpads(old[i])) todo[n++] = old[i];
+        for (uint256 i; i < 4; i++) {
+            todo[i] = old[i] != address(0) && old[i] != s.pad && TokenDeployer(dep[i]).launchpads(old[i]);
+            if (todo[i]) n++;
         }
         if (n == 0) return "";
+        // both deployers' owner (mainnet: the Safe) signs the one batch
         address owner = Ownable(s.tokenDeployer).owner();
+        if (Ownable(fd).owner() != owner) revert WiringCheck("cut-over: the two token deployers' owners differ");
         uint256 snap = vm.snapshotState();
-        for (uint256 i; i < n; i++) {
+        for (uint256 i; i < 4; i++) {
+            if (!todo[i]) continue;
             vm.prank(owner);
-            td.setLaunchpad(todo[i], false);
+            TokenDeployer(dep[i]).setLaunchpad(old[i], false);
         }
-        bool ok = td.launchpads(s.pad);
-        for (uint256 i; i < n; i++) {
-            ok = ok && !td.launchpads(todo[i]);
+        bool ok = TokenDeployer(s.tokenDeployer).launchpads(s.pad) && TokenDeployer(fd).launchpads(s.pad);
+        for (uint256 i; i < 4; i++) {
+            ok = ok && !TokenDeployer(dep[i]).launchpads(old[i]);
         }
         vm.revertToState(snap);
         if (!ok) revert WiringCheck("cut-over batch");
-        j = _head(c.mainnet, owner, "gang: 1.0 / 2.0 stop creating (3.0 is live)");
-        for (uint256 i; i < n; i++) {
-            console.log("cut-over: stops creating", todo[i]);
-            j = string.concat(
-                j, _tx(s.tokenDeployer, abi.encodeCall(TokenDeployer.setLaunchpad, (todo[i], false)), i != 0)
-            );
+        j = _head(c.mainnet, owner, "gang: 1.0 / 2.0 / vault pad / fly V2 stop creating (3.0 is live)");
+        bool comma;
+        for (uint256 i; i < 4; i++) {
+            if (!todo[i]) continue;
+            console.log("cut-over: stops creating", old[i]);
+            j = string.concat(j, _tx(dep[i], abi.encodeCall(TokenDeployer.setLaunchpad, (old[i], false)), comma));
+            comma = true;
         }
         j = string.concat(j, "]}");
     }

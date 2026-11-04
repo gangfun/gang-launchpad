@@ -197,7 +197,7 @@ contract Pad3VaultTest is VaultLaunchpadTest {
 
     /// @dev The module on its own: its own (empty) storage, owned by no one; nothing to take or set there.
     function test_module_directCallsDoNothing() public {
-        Pad3Module m = Pad3Module(_pad3().module());
+        Pad3Module m = Pad3Module(payable(_pad3().module()));
         assertEq(m.owner(), address(0xdEaD));
         vm.prank(owner);
         vm.expectRevert();
@@ -292,7 +292,7 @@ contract Pad3VaultTest is VaultLaunchpadTest {
     /// @dev The two tax-config previews, through the pad (the module): a listed recipient passes either; the creator
     ///      itself only `checkTaxConfigFor` it; anyone else neither.
     function test_checkTaxConfig_throughThePad() public view {
-        Pad3Module m = Pad3Module(address(pad));
+        Pad3Module m = Pad3Module(payable(address(pad)));
         (bool ok,) = m.checkTaxConfig(_tax(200, 300, 0, address(vault)));
         assertTrue(ok, "listed recipient");
         (ok,) = m.checkTaxConfig(_tax(200, 300, 0, creator));
