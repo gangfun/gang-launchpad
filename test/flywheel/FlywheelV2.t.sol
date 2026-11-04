@@ -19,8 +19,6 @@ import {TwapMockPair} from "../mocks/TwapMockPair.sol";
 ///         ID (and the overshoot) is sold in the pool right away.
 abstract contract FlywheelV2Base is FlywheelFixture {
     uint256 internal constant BPS = 10_000;
-    /// @dev GangFlywheelPad's storage slot of `postRulesOf` (checked by `_setRules`).
-    uint256 internal constant POST_RULES_SLOT = 16;
 
     struct Sc {
         uint256 attack; // 1 same block, 2 next block, 22 dump N / observe N+1 / mint N+2, 3 hold, 4 backrun
@@ -72,7 +70,7 @@ abstract contract FlywheelV2Base is FlywheelFixture {
     /// @dev Test-only: switch a launched sale's post rules in place, so one pool path is checked under every guard and
     ///      window (a real sale's rules are fixed at create).
     function _setRules(uint256 g, uint256 w) internal {
-        bytes32 slot = keccak256(abi.encode(t, POST_RULES_SLOT));
+        bytes32 slot = keccak256(abi.encode(t, _postRulesSlot()));
         vm.store(address(pad), slot, bytes32((w << 16) | g));
         (uint16 g2, uint32 w2) = pad.postRulesOf(t);
         require(g2 == g && w2 == w, "postRulesOf slot moved");

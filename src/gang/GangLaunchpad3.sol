@@ -118,6 +118,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
     uint8 internal constant KIND_FAIR = FairLogic.KIND;
+    /// @dev 3.0's own 铸币飞轮 tokens: served by Pad3FlyModule (through Pad3Module), V2's rules and selectors
+    uint8 internal constant KIND_FLY = 3;
 
     // ---------------------------------------------------------------- aggregator entry constants (GangGateway's)
     /// @notice Highest router fee a seller can be charged on `sellToken` (four.meme's cap): 5%.
@@ -150,7 +152,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     /// @inheritdoc IGangPadView
     mapping(address token => uint8) public kindOf;
     mapping(address token => Curve) public curves;
-    mapping(address token => Sale) public sales;
+    /// @dev 打新 sales (kind 2); read with `sales(token)`, which serves 铸币飞轮 sales (kind 3) too
+    mapping(address token => Sale) internal _sales;
     mapping(address token => mapping(address user => Position)) public positions;
     mapping(address token => string) public logoURIOf;
     /// @notice 打新 exit fees the bucket refused; anyone can `flushFees` them once it accepts.
@@ -457,7 +460,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ) external nonReentrant returns (address token) {
         token = FairLogic.create(
             _config,
-            sales,
+            _sales,
             positions,
             bridgePoolOf,
             _deps(),
@@ -475,7 +478,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     /// @param minShares Revert if the last-fill truncation leaves fewer than this.
     function mint(address token, uint256 shares, uint256 minShares) external nonReentrant returns (uint256 accepted) {
-        accepted = FairLogic.mint(_config, sales, positions, _deps(), msg.sender, token, shares, minShares);
+        accepted = FairLogic.mint(_config, _sales, positions, _deps(), msg.sender, token, shares, minShares);
     }
 
     /// @notice A listed router mints for `trader`, the wallet that sent the tx (§23). The router pays cost + mint fee,
@@ -490,16 +493,21 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         _forTrader(trader);
         // A-2 (打新): the sale's own snapshot gate must be set — ungated, a router could name any trader (e.g. the
         // future pair, seeding it before launch to take the LP). Kept as is; the origin binding (§23) also stops that.
-        if (FairLogic.minting(sales, token).gate == address(0)) revert RouterNeedsGate();
-        accepted = FairLogic.mint(_config, sales, positions, _deps(), trader, token, shares, minShares);
+        if (FairLogic.minting(_sales, token).gate == address(0)) revert RouterNeedsGate();
+        accepted = FairLogic.mint(_config, _sales, positions, _deps(), trader, token, shares, minShares);
     }
 
     /// @notice Before the sale fills: sell `shares` back to the pad at the mint price, minus the exit fee (none once
     ///         the sale is stale). The mint fee paid is the platform's and is not returned.
     /// @param minPayout Reverts (Slippage) below this: a mint landing first can restart the stale clock and bring the
     ///        exit fee back (flow review F3). Use `previewWithdraw` for the expected payout.
-    function withdraw(address token, uint256 shares, uint256 minPayout) external nonReentrant returns (uint256 payout) {
-        payout = FairLogic.withdraw(sales, positions, owedFee, _deps(), msg.sender, false, token, shares, minPayout);
+    function withdraw(address token, uint256 shares, uint256 minPayout)
+        external
+        flyToModule(token)
+        nonReentrant
+        returns (uint256 payout)
+    {
+        payout = FairLogic.withdraw(_sales, positions, owedFee, _deps(), msg.sender, false, token, shares, minPayout);
     }
 
     /// @notice A listed router withdraws `trader`'s shares, `trader` being the wallet that sent the tx (§23). The
@@ -508,11 +516,12 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///         are the trader's. No gate, as `withdraw` (the only way out). Reverts OnlyRouter / TraderNotOrigin.
     function withdrawFor(address trader, address token, uint256 shares, uint256 minPayout)
         external
+        flyToModule(token)
         nonReentrant
         returns (uint256 payout)
     {
         _forTrader(trader);
-        payout = FairLogic.withdraw(sales, positions, owedFee, _deps(), trader, true, token, shares, minPayout);
+        payout = FairLogic.withdraw(_sales, positions, owedFee, _deps(), trader, true, token, shares, minPayout);
     }
 
     /// @notice Send exit fees the bucket refused on to it, now that it accepts again. Anyone can call.
@@ -521,7 +530,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     }
 
     function status(address token) public view returns (Status) {
-        Sale storage s = sales[token];
+        Sale storage s = _sales[token];
         if (s.creator == address(0)) return Status.None;
         if (s.launched) return Status.Launched;
         return Status.Minting;
@@ -529,13 +538,13 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     /// @inheritdoc IGangPadView
     /// @dev Read by the handler on every pool trade of a 打新 token: plain storage, no library call.
-    function baselineOf(address token, address user) external view returns (uint256) {
+    function baselineOf(address token, address user) external view flyToModuleView(token) returns (uint256) {
         return uint256(positions[token][user].shares) * TOKENS_PER_SHARE;
     }
 
     /// @inheritdoc IGangPadView
-    function holdBpsOf(address token) external view returns (uint16) {
-        return sales[token].holdBps;
+    function holdBpsOf(address token) external view flyToModuleView(token) returns (uint16) {
+        return _sales[token].holdBps;
     }
 
     // ---------------------------------------------------------------- aggregator entry (four.meme-shaped)
@@ -567,8 +576,14 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///         delegatecalled: the proxy's storage, balance and msg.sender. An unknown selector reverts there; a value
     ///         sent to a non-payable module function reverts there too.
     fallback() external payable {
+        _toModule();
+    }
+
+    /// @dev This call, as it came, delegatecalled to the module; returns or reverts with its result (never comes back).
+    function _toModule() internal {
         address m = module;
-        assembly {
+        // memory-safe: execution ends here (return / revert), no Solidity code reads memory after it
+        assembly ("memory-safe") {
             calldatacopy(0, 0, calldatasize())
             let ok := delegatecall(gas(), m, 0, calldatasize(), 0, 0)
             returndatacopy(0, 0, returndatasize())
@@ -576,6 +591,72 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             case 0 { revert(0, returndatasize()) }
             default { return(0, returndatasize()) }
         }
+    }
+
+    /// @dev `_toModule` from a view: the module's function is a view too, so nothing is written (a write would revert
+    ///      under the STATICCALL a view is called with).
+    function _toModuleView() internal view {
+        function() internal f = _toModule;
+        function() internal view v;
+        assembly ("memory-safe") {
+            v := f
+        }
+        v();
+    }
+
+    /// @dev 3.0's own 铸币飞轮 token: the whole call is the 铸币飞轮 module's (before any guard of this function runs).
+    modifier flyToModule(address token) {
+        if (kindOf[token] == KIND_FLY) _toModule();
+        _;
+    }
+
+    /// @dev `flyToModule` for views.
+    modifier flyToModuleView(address token) {
+        if (kindOf[token] == KIND_FLY) _toModuleView();
+        _;
+    }
+
+    /// @notice A sale's record: a 打新 sale's (`Sale`, as the getter of 2.0); for 3.0's own 铸币飞轮 tokens, the
+    ///         铸币飞轮 module returns GangFlywheelPad V2's `IFlywheelPad.Sale` instead (same selector as V2's
+    ///         `sales`). Use `kindOf` to tell which.
+    function sales(address token)
+        external
+        view
+        flyToModuleView(token)
+        returns (
+            address creator,
+            uint64 progressAt,
+            uint16 capShares,
+            uint16 holdBps,
+            address quote,
+            uint16 sold,
+            bool launched,
+            uint16 mintFeeBps,
+            uint16 exitFeeBps,
+            address gate,
+            uint128 sharePrice,
+            address pair,
+            address refPool,
+            uint16 markSold
+        )
+    {
+        Sale storage s = _sales[token];
+        return (
+            s.creator,
+            s.progressAt,
+            s.capShares,
+            s.holdBps,
+            s.quote,
+            s.sold,
+            s.launched,
+            s.mintFeeBps,
+            s.exitFeeBps,
+            s.gate,
+            s.sharePrice,
+            s.pair,
+            s.refPool,
+            s.markSold
+        );
     }
 
     /// @notice GangGateway's getTokenInfo: status 0 = not a Gang token; 1 = traded here (on its curve, a 铸币飞轮 sale
@@ -587,6 +668,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     function getTokenInfo(address token)
         public
         view
+        flyToModuleView(token)
         returns (uint8 status, address quote, address pair, uint256 protocolFeeBps, uint256 graduationLeft)
     {
         uint8 kind = kindOf[token];
@@ -597,7 +679,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             return (STATUS_CURVE, quote, address(0), PROTOCOL_FEE_BPS, uint256(cv.gradAmt) - cv.realQuote);
         }
         if (kind == KIND_FAIR) {
-            Sale storage s = sales[token];
+            Sale storage s = _sales[token];
             quote = _external(s.quote);
             if (s.launched) return (STATUS_POOL, quote, s.pair, 0, 0);
             // a gated sale trades through the entry (whole shares at the share price; 1 = tradable here), as a
@@ -617,6 +699,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     function tryBuy(address token, address trader, uint256 amount, uint256 funds)
         external
         view
+        flyToModuleView(token)
         returns (
             address tokenManager,
             address quote,
@@ -644,7 +727,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
                     CurveLogic.quoteBuy(_config, curves, token, trader, funds, _lockedOf(token, trader));
             } else if (kind == KIND_FAIR) {
                 (uint256 shares, uint256 cost, uint256 fee) =
-                    FairLogic.entryQuote(sales, positions, token, trader, funds);
+                    FairLogic.entryQuote(_sales, positions, token, trader, funds);
                 (estimatedAmount, estimatedCost, estimatedFee) = (shares * TOKENS_PER_SHARE, cost + fee, fee);
             }
         } else {
@@ -665,6 +748,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     function trySell(address token, uint256 amount)
         external
         view
+        flyToModuleView(token)
         returns (address tokenManager, address quote, uint256 funds, uint256 fee)
     {
         tokenManager = address(this);
@@ -672,7 +756,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (kind != 0) {
             (, quote,,,) = getTokenInfo(token);
             if (kind == KIND_CURVE) (funds, fee) = CurveLogic.quoteSell(curves, token, amount);
-            else if (kind == KIND_FAIR) (funds, fee) = FairLogic.entrySellQuote(sales, token, amount);
+            else if (kind == KIND_FAIR) (funds, fee) = FairLogic.entrySellQuote(_sales, token, amount);
         } else {
             (quote, funds, fee) = LegacyRoute.trySell(padRegistry, token, amount);
             quote = _external(quote);
@@ -689,6 +773,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     function buyTokenAMAP(address token, address to, uint256 funds, uint256 minAmount)
         external
         payable
+        flyToModule(token)
         nonReentrant
         returns (uint256 amountOut, uint256 fundsUsed)
     {
@@ -709,12 +794,12 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             );
             fundsUsed = funds - (quote.balanceOf(to) - toBefore);
         } else if (kind == KIND_FAIR) {
-            Sale storage sa = sales[token];
+            Sale storage sa = _sales[token];
             if (sa.launched) revert NotCurveToken();
             IERC20 quote = IERC20(sa.quote);
             _payIn(address(quote), funds);
             (amountOut, fundsUsed) =
-                FairLogic.entryMint(_config, sales, positions, _deps(), to, token, funds, minAmount);
+                FairLogic.entryMint(_config, _sales, positions, _deps(), to, token, funds, minAmount);
             if (funds > fundsUsed) quote.safeTransfer(to, funds - fundsUsed);
         } else if (kind != 0) {
             revert NotCurveToken();
@@ -744,7 +829,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         uint256 minFunds,
         uint256 feeRate,
         address feeRecipient
-    ) external nonReentrant returns (uint256 fundsToSeller) {
+    ) external flyToModule(token) nonReentrant returns (uint256 fundsToSeller) {
         origin; // four.meme's reserved field
         _entryCaller(from);
         if (feeRate > MAX_FEE_RATE) revert FeeRateTooHigh();
@@ -784,6 +869,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     /// @return funds what `to` received
     function sellToken(uint256 origin, address token, address from, address to, uint256 amount, uint256 minFunds)
         external
+        flyToModule(token)
         nonReentrant
         returns (uint256 funds)
     {
@@ -829,9 +915,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
                 _config, curves, creatorFeeOf, _deps(), from, CurveLogic.PULL_PAD, token, amount, 0, address(this)
             );
         } else if (kind == KIND_FAIR) {
-            if (sales[token].launched) revert NotCurveToken();
+            if (_sales[token].launched) revert NotCurveToken();
             address q;
-            (q, funds) = FairLogic.entryWithdraw(sales, positions, owedFee, _deps(), from, token, amount);
+            (q, funds) = FairLogic.entryWithdraw(_sales, positions, owedFee, _deps(), from, token, amount);
             quote = IERC20(q);
         } else if (kind != 0) {
             revert NotCurveToken();

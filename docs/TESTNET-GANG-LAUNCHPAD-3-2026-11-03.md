@@ -159,3 +159,18 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 
 升级后重跑 3.0 验收：29 笔交易全部成功（`broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793732455413.json`），曲线币、转发的老币、多跳卖出、Gateway 都照常。
 
+## 第六次升级：铸币飞轮
+
+规格见 spec §10。用 `script/UpgradeGangLaunchpad3.s.sol`（命令同上，另加 `PAD3_FLY_TOKEN_DEPLOYER=0x61efEAdD550EaAc2257d5d1A5327df82397C712f`，即测试网 V2 的 MintTokenDeployer）：14 笔交易全部成功，记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793770459557.json`。
+
+- 新实现 [`0xB26fAb9696E557fb7958F1B492c646d8F5ACA6c6`](https://testnet.bscscan.com/address/0xB26fAb9696E557fb7958F1B492c646d8F5ACA6c6)，模块 [`0x68bb9b004F0b62dA24b78539A155bB75841Cd2ff`](https://testnet.bscscan.com/address/0x68bb9b004F0b62dA24b78539A155bB75841Cd2ff)，飞轮模块 [`0x3Fd50Ed75F6DdCDD6615E81eAAd72f679FeD1d29`](https://testnet.bscscan.com/address/0x3Fd50Ed75F6DdCDD6615E81eAAd72f679FeD1d29)
+- 飞轮税 handler [`0x2d03F8638F8D1Bcb6836670C20edE0e47d65231f`](https://testnet.bscscan.com/address/0x2d03F8638F8D1Bcb6836670C20edE0e47d65231f)，飞轮的金库 core [`0x570B68854a3117d6c4081875B74CD4563C586494`](https://testnet.bscscan.com/address/0x570B68854a3117d6c4081875B74CD4563C586494)
+- 模拟里比对了 25 个币，阶段 2 读回 `self-check ok`。接线和升级在同一次运行里发出；主网这些接线由 Safe 批次完成。
+
+铸币飞轮验收（`script/Pad3FlyTestnetAcceptance.s.sol`）：9 笔交易全部成功，记录在 `broadcast/Pad3FlyTestnetAcceptance.s.sol/97/run-1793770522978.json`。发售 [`0x58fDC010FCaE18fB1E8D277BA23D8eA6c3114dd4`](https://testnet.bscscan.com/address/0x58fDC010FCaE18fB1E8D277BA23D8eA6c3114dd4)：kind 3，份额大小 100,000，在共享金库里挂在飞轮的 core 下，门槛 1,000；经入口用 BNB 买入、卖回一份，数额和 `tryBuy`、`trySell` 一致；再用 V2 自己的 `mint`、`withdraw`，基线和金库份额一致。开盘要 3,000 份，来自多个 Agent 钱包，由主网 fork 测试覆盖（`test/fork/Pad3FlyUpgradeFork.t.sol`）。
+
+升级后重跑已有模式的验收，全部成功：
+
+- 3.0 验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`）：29 笔，`broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793770589306.json`
+- 打新入口验收（`OLD_PADS` 同上）：21 笔，`broadcast/Pad3FairEntryTestnetAcceptance.s.sol/97/run-1793770678645.json`
+- 金库验收（`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔，`broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793770805959.json`

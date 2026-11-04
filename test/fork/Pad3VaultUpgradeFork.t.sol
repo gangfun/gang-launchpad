@@ -9,6 +9,7 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
+import {FlyUpgradeHarness, Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
@@ -60,10 +61,7 @@ contract Pad3VaultUpgradeForkTest is Test {
 
         // this build's implementation (and module) with the live one's dependencies, checked by the script
         address cur = R.implementationOf(PAD3);
-        address impl = Pad3Impl.deploy(Pad3Impl.depsOf(GangLaunchpad3(payable(cur))));
-        vm.setEnv("PAD3_IMPL", vm.toString(impl));
-        UpgradeGangLaunchpad3 u = new UpgradeGangLaunchpad3();
-        u.run();
+        (FlyUpgradeHarness u, UpgradeGangLaunchpad3.Stack memory st) = Pad3LiveUpgrade.check();
         assertEq(R.implementationOf(PAD3), cur, "printed for the Safe, not sent");
 
         // a curve token made and bought on the live implementation, traded again after the upgrade
@@ -77,13 +75,12 @@ contract Pad3VaultUpgradeForkTest is Test {
 
         // the Safe's batch: ProxyAdmin.upgradeAndCall(proxy, impl, "") — no set-up call (same initialized version)
         uint256 count = p.tokenCount();
-        vm.prank(SAFE);
-        ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
+        address impl = Pad3LiveUpgrade.execute(u, st, SAFE);
         assertEq(R.implementationOf(PAD3), impl);
         assertEq(Ownable(PAD3).owner(), SAFE, "owner kept");
         assertEq(p.tokenCount(), count, "tokens kept");
         assertTrue(p.module() != address(0));
-        assertEq(Pad3Module(p.module()).owner(), address(0xdEaD), "the module on its own: no owner");
+        assertEq(Pad3Module(payable(p.module())).owner(), address(0xdEaD), "the module on its own: no owner");
 
         // the token made before the upgrade trades on, both ways, with no vault
         assertEq(vp.vaultOf(live), address(0));
@@ -147,8 +144,8 @@ contract Pad3VaultUpgradeForkTest is Test {
 
         // a moved view answers through the fallback
         (,, uint128 rq,, uint128 gradAmt,,,,,,,) = p.curves(t);
-        assertEq(Pad3Module(PAD3).gradAmtOf(t), gradAmt);
-        assertEq(Pad3Module(PAD3).graduationRemaining(t), gradAmt - rq);
+        assertEq(Pad3Module(payable(PAD3)).gradAmtOf(t), gradAmt);
+        assertEq(Pad3Module(payable(PAD3)).graduationRemaining(t), gradAmt - rq);
     }
 
     /// @dev A dividend vault token on the live dividend vault: lock and release keep both sides' shares at their
@@ -197,6 +194,12 @@ contract Pad3VaultUpgradeForkTest is Test {
         vm.setEnv("CALLER_CODEHASHES", "");
         vm.setEnv("CALLERS_PROXY_OK", "true");
         vm.setEnv("PAD3_INIT_CALL", "0x");
+        // the script deploys the implementation and the 铸币飞轮 tax handler (Pad3LiveUpgrade)
+        vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));
+        vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(address(0)));
+        vm.setEnv("GANG_MAINNET_OK", "true");
         vm.setEnv("PAD3_LOG_SCAN", "false");
         vm.setEnv("CUTOVER", "false");
         vm.setEnv("ROUTER_TIMELOCK_DELAY", "172800");

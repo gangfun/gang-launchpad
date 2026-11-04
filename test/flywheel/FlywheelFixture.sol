@@ -12,6 +12,8 @@ import {MintTokenDeployer} from "../../src/flywheel/MintTokenDeployer.sol";
 import {FlywheelTaxHandler} from "../../src/flywheel/FlywheelTaxHandler.sol";
 import {GangFlywheelPad} from "../../src/flywheel/GangFlywheelPad.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
+import {Pad3FlyStore} from "../../src/gang/Pad3FlyStore.sol";
+import {Pad3FlyModule} from "../../src/gang/Pad3FlyModule.sol";
 import {TwapMockPair, TwapMockPairFactory} from "../mocks/TwapMockPair.sol";
 import {MockAgentId} from "../mocks/MockAgentId.sol";
 import {MockWBNB} from "../mocks/MockWBNB.sol";
@@ -52,21 +54,12 @@ abstract contract FlywheelFixture is Test {
         migrator = new SharedMigrator(owner, address(factory));
         deployer = new MintTokenDeployer(owner);
         handler = new FlywheelTaxHandler(owner, address(vault), address(bucket), address(0));
-        pad = new GangFlywheelPad(
-            owner,
-            address(quoteRegistry),
-            address(vault),
-            address(bucket),
-            address(handler),
-            address(deployer),
-            address(wbnb),
-            address(factory)
-        );
+        pad = GangFlywheelPad(payable(_newFlyPad()));
         vm.startPrank(owner);
         bucket.setOperator(address(pad), true);
         bucket.setOperator(address(handler), true);
         vault.setLaunchpad(address(pad), true);
-        vault.setOperator(address(handler), address(pad));
+        _bindFlyHandler();
         vault.setExcluded(address(migrator), true);
         vault.setExcluded(address(bucket), true);
         migrator.addLaunchpad(address(pad));
@@ -77,6 +70,58 @@ abstract contract FlywheelFixture is Test {
         pad.setMigrator(address(migrator));
         vm.stopPrank();
         dev = _newAgent();
+    }
+
+    /// @dev The 铸币飞轮 pad under test: GangFlywheelPad V2 here; test/gang3/Pad3FlyParity.t.sol re-runs the suites with
+    ///      GangLaunchpad 3.0 (its 铸币飞轮 module) in its place, through the same selectors.
+    function _newFlyPad() internal virtual returns (address) {
+        return address(
+            new GangFlywheelPad(
+                owner,
+                address(quoteRegistry),
+                address(vault),
+                address(bucket),
+                address(handler),
+                address(deployer),
+                address(wbnb),
+                address(factory)
+            )
+        );
+    }
+
+    /// @dev Pranked as the owner. V2: the handler is the pad's one vault operator. GangLaunchpad 3.0
+    ///      (test/gang3/Pad3FlyParity.t.sol), as on mainnet: the pad's one operator is already its curve / 打新 handler
+    ///      (a stand-in here) and its floor 3.0's (10,000), so the 铸币飞轮 tokens' core is the pad's vault core, whose
+    ///      operator the handler is.
+    function _bindFlyHandler() internal {
+        if (!_onPad3()) {
+            vault.setOperator(address(handler), address(pad));
+            return;
+        }
+        vault.setOperator(makeAddr("pad3 curve and fair-mint tax handler"), address(pad));
+        vault.setMinimumShareBalance(address(pad), 10_000 ether);
+        address core = Pad3FlyModule(address(pad)).flyVaultCore();
+        vault.setLaunchpad(core, true);
+        vault.setOperator(address(handler), core);
+    }
+
+    /// @dev The pad under test is GangLaunchpad 3.0 (it answers `flyVaultCore`).
+    function _onPad3() internal view returns (bool) {
+        (bool ok, bytes memory ret) = address(pad).staticcall(abi.encodeWithSignature("flyVaultCore()"));
+        return ok && ret.length == 32;
+    }
+
+    /// @dev Lists `router` for the pad's `mintFor` / `withdrawFor` / `mintPostFor` (3.0: its 铸币飞轮 router list).
+    function _allowRouter(address router) internal {
+        bool pad3 = _onPad3();
+        vm.prank(owner);
+        if (pad3) Pad3FlyModule(address(pad)).setFlyRouter(router, true);
+        else pad.setRouter(router, true);
+    }
+
+    /// @dev Where `postRulesOf` is kept (test-only rewrites): V2's slot 16, or member 3 of 3.0's 铸币飞轮 namespace.
+    function _postRulesSlot() internal view returns (uint256) {
+        return _onPad3() ? uint256(Pad3FlyStore.SLOT) + 3 : 16;
     }
 
     // ------------------------------------------------------------ actors
