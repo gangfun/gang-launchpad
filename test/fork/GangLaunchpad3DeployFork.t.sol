@@ -335,7 +335,7 @@ contract GangLaunchpad3DeployForkTest is Test {
         assertEq(out, est, "gateway fill = quote");
     }
 
-    /// @dev A minting 铸币飞轮 sale bought and sold back (whole shares) through 3.0, as through the gateway.
+    /// @dev A minting 铸币飞轮 sale bought and sold back (whole shares) through 3.0's entry.
     function _flyThrough(GangLaunchpad3 p, address pad) internal {
         GangFlywheelPad f = GangFlywheelPad(payable(pad));
         address t;
