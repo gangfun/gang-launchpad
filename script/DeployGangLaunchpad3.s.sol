@@ -346,7 +346,8 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
             revert WiringCheck("fly token deployer is not V2's");
         }
         if (!MintTokenDeployer(d).launchpads(s.pad)) revert WiringCheck("deployer.setLaunchpad(3.0)");
-        // the live GangGateway V2 sizes shares by the pad's TOKENS_PER_SHARE (audit B M-1): never a 铸币飞轮 router
+        // GangGateway is never a 铸币飞轮 router: its V2 code, not deployed on mainnet, sizes shares by the pad's
+        // TOKENS_PER_SHARE (audit B M-1)
         if (c.mainnet && fly.flyRouters(M.GANG_GATEWAY)) revert WiringCheck("GangGateway is a fly router");
     }
 
