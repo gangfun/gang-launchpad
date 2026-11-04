@@ -16,7 +16,6 @@ import { decodeFunctionData, encodeFunctionResult, parseAbi, toFunctionSelector,
 const t = (n) => `0x${String(n).padStart(40, '0')}`
 const lower = (a) => a.toLowerCase()
 const SOFT_FIRST = '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7', SOFT_LATER = '0x4E6f13c8A453c1b8b4E20b590082bb233a5b80d7'
-const WBNB = '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c'
 const ON_FIRST = t(0xa1), ON_LATER = t(0xa2), GRADUATED = t(0xa3), NOWHERE = t(0xa4), CREATOR = t(0xa5), PAIR = t(0xa6), ME = t(0xa7)
 const TOKENS_OF = { [lower(SOFT_FIRST)]: [ON_FIRST, GRADUATED], [lower(SOFT_LATER)]: [ON_LATER] }
 const E18 = 10n ** 18n
@@ -39,7 +38,6 @@ const ABI = parseAbi([
   'function allowance(address, address) view returns (uint256)',
   'function getReserves() view returns (uint112, uint112, uint32)',
   'function token0() view returns (address)',
-  'function token1() view returns (address)',
 ])
 const SEL = new Map(ABI.map((x) => [toFunctionSelector(x), x.name]))
 
@@ -71,7 +69,6 @@ const answer = (to, data) => {
     // 200 BNB against 40,000,000 tokens: 5e-6 BNB per token
     getReserves: () => (inPair ? [40_000_000n * E18, 200n * E18, 0] : null),
     token0: () => (inPair ? GRADUATED : null),
-    token1: () => (inPair ? WBNB : null),
   }[fn]()
   if (value === null) return [false]
   return [true, encodeFunctionResult({ abi: ABI, functionName: fn, result: value })]
@@ -148,6 +145,10 @@ try {
   assert.equal(graduated.fdvBnb, 5000)
   assert.equal(graduated.raisedBnb, '20', 'it raised its whole target')
   assert.equal(graduated.progressPct, 100)
+  assert.equal(graduated.walletCapTokens, null, 'the wallet cap is the curve\'s')
+  const mine = await gang('status', '--token', GRADUATED)
+  assert.equal(mine.myBalance, '5')
+  assert.equal(mine.myRoomTokens, undefined, 'no room left to read after graduation')
 
   const refused = await gang('quote', '--token', GRADUATED, '--amount', '0.01')
   assert.equal(refused.success, false)
