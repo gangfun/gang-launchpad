@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.26.0'
+  version: '0.30.0'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.16.5, npm)
+      label: Gang CLI (@gangfun/cli ≥0.30.0, npm)
 ---
 
 # Gang Skill
@@ -30,31 +30,32 @@ Before graduation a token **can't be transferred**, only bought and sold on the 
 
 **Every new token launches on GangLaunchpad** (BSC mainnet; `--testnet` = BSC testnet, whose tokens have no value), as one of two kinds:
 - **V3**: a bonding curve that graduates into PancakeSwap V2 (LP burned) once its target is raised in its quote: on 1.0
-  always 15 BNB; on 2.0 the creator picks 6 / 9 / 12 / 15 BNB with `--grad` (default 9). Untaxed unless created with a
+  always 15 BNB; on 2.0 and 3.0 the creator picks 6 / 9 / 12 / 15 BNB with `--grad` (default 9). Untaxed unless created with a
   buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
 - **打新 (fair mint)**: shares at one fixed price; the sale launches its pool when it fills ([fair.md](references/fair.md)).
 
 **GangLaunchpad 2.0** is a new generation of the same pad: the same V3 curves and 打新 sales, plus a **creator fee**: of
 the 1% fee on every V3 curve buy and sell, 70% is kept for the token's creator, who claims it any time with
 `gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)), and a **graduation target the creator
-picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)). New tokens go to the newest generation the
-CLI knows on that network (`gang preflight` → `createPadGen`: 2.0 on BSC mainnet, since 2026-10-31, and on
-the testnet). A token keeps trading on the generation it was created on; the CLI finds it.
+picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)).
+**GangLaunchpad 3.0** keeps 2.0's rules on one permanent, upgradeable address (CLI 0.30.0+). New tokens go to the
+newest generation the CLI knows on that network (`gang preflight` → `createPadGen`: 3.0 on BSC mainnet and the testnet).
+A token keeps trading on the generation it was created on (1.0, 2.0, 3.0, 2.0 金库版); the CLI finds it.
 
-**铸币飞轮 (Mint Flywheel, `fly`)** lives on its own pad, GangFlywheelPad: shares with a quota per wallet (invites
-add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
+**铸币飞轮 (Mint Flywheel, `fly`)** goes on GangLaunchpad 3.0 too (older tokens stay on GangFlywheelPad): shares with a
+quota per wallet (invites add quota), a pool at the mint price once it fills, and minting that goes on after launch ([fly.md](references/fly.md)).
 
 The older pads (LaunchpadV2, Soft, LaunchpadU, LaunchpadS) take no new tokens; their tokens keep trading. **One command
 per action, whatever the pad**: `gang buy|sell|info|status|claim|mint|withdraw|release --token <addr>` reads the token's
 kind and runs that kind's code; the result's `kind` says which (`v3`, `fair`, `fly`, `v2`, `soft`). For a new token offer
-only GangLaunchpad (V3 or 打新) or GangFlywheelPad (铸币飞轮), never an older pad or Soft's 20 BNB curve.
+only GangLaunchpad (V3, 打新 or 铸币飞轮), never an older pad or Soft's 20 BNB curve.
 
 The `gang` CLI reads the chain and builds calldata; every signature goes through the user's Agentic Wallet (`baw`).
 It never holds keys.
 
 ## Start of a session
 
-1. `gang version`. If it prints only the help, or a version below **0.16.5**, the CLI is **older than these rules**:
+1. `gang version`. If it prints only the help, or a version below **0.30.0**, the CLI is **older than these rules**:
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
    <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->
@@ -87,7 +88,7 @@ text for X. Offer it to the user once; never post it yourself.
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |
 | Launch in one command (create + dev buy + bond + buy-back, split, auto-liquidity, or several at once) | V3: `gang create … --dev-buy <quote> [--bond …] [--buyback <pct>] [--split self:<pct>,<addr>:<pct>,…] [--lp <pct>]` (two or three of these = one combined recipient, fixed for good) · 打新: `gang create --fair … --shares <n> --bond …`; re-run until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond---buyback---split---lp) |
 | Tax token: tax, recipient, dividend, claim, buy-back, split, auto-liquidity, combined | `gang create --buy-tax … --sell-tax …` · `gang claim` · `gang release` · `gang buyback …` · `gang split …` · `gang lp …` · `gang combo …` | [v3.md](references/v3.md) |
-| Creator fee (GangLaunchpad 2.0) | `gang creator-fee` · `gang creator-fee --token <addr> --claim [--to <addr>]` | [v3.md](references/v3.md#creator-fee-ganglaunchpad-20) |
+| Creator fee (GangLaunchpad 2.0 / 3.0) | `gang creator-fee` · `gang creator-fee --token <addr> --claim [--to <addr>]` | [v3.md](references/v3.md#creator-fee-ganglaunchpad-20) |
 | 打新 fair mint | `gang create --fair …` · `gang mint` / `gang withdraw` before it fills | [fair.md](references/fair.md) |
 | 铸币飞轮 (Mint Flywheel), invites | `gang create --fly [--preset j] …` · `gang mint [--ref <inviter>]` · `gang withdraw` · `gang fly open-early\|launch\|invite` | [fly.md](references/fly.md) |
 | Creator bond (押金承诺) | `gang bond post\|topup\|raise-hold\|extend\|status\|start\|report\|settle\|refund\|burn` | [bond.md](references/bond.md) |

@@ -4,7 +4,9 @@ A 打新 sale has no bonding curve. Half the supply (500,000,000) is sold in **1
 the other half plus every share's principal goes into a PancakeSwap V2 pool when the last share is minted, so the pool
 **opens at the mint price** (LP burned). **No deadline, no refund**: a sale stays open until it fills. Until then a
 minter can sell shares back to the sale at the same price, less the exit fee. Sales live on GangLaunchpad next to V3
-tokens; the unified commands detect them (`kind: "fair"`).
+tokens; the unified commands detect them (`kind: "fair"`). Since 2026-11-04 aggregators can also trade a sale with an
+Agent gate through 3.0's entry (3.0's own sales and 1.0 / 2.0's, whole shares both ways). Nothing changes here: `gang mint` /
+`gang withdraw` go to the pad or the GangRouter, and a share held either way sells back the same.
 
 ```bash
 gang list --kind fair [--status minting|launched|all]

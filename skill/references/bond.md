@@ -79,9 +79,15 @@ Writes print a preview → `gang execute`; none carries a `--note`. Relay any `w
 `post` / `topup` of a WBNB-quoted token pay native BNB; `--use-wbnb` pays WBNB instead (approve first, then re-run).
 A `burn` preview made while no chunk is ready sends the maximum minimum: if a chunk has become buyable by the time it
 lands, it reverts instead of buying unpriced; re-run for a priced preview.
-GangBond is built in per pad generation: BSC mainnet 2.0 `0x231339463d04A2127E6dD5756756Dd56853AE0D8` (1.0
-`0xe92dC940CB23Dc328639A7334e69F9CCdf3a14E4`), testnet 2.0 `0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9` (1.0
+GangBond is built in per pad generation: BSC mainnet 3.0 `0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6` (2.0
+`0x231339463d04A2127E6dD5756756Dd56853AE0D8`, 1.0 `0xe92dC940CB23Dc328639A7334e69F9CCdf3a14E4`), testnet 3.0
+`0xa87727dc3CC28a44709649A22aDbD77287B99fc1` (2.0 `0x39749B59066d9cd1c55E2Fc48B31a3978C9951F9`, 1.0
 `0xd6a8dd5d1E6641a34A255f25Db2B3ED397CB1086`). A token's bond is on its own generation's GangBond.
+
+**No bond on a vault-bound token** (`gang create --vault`; `gang info` → `vault`): `gang bond post` refuses it, and
+`gang bond status` says no bond can be posted. A bond is slashed as soon as the creator's wallet balance is below X,
+and tokens locked into the vault (often from the vault's own app) leave that wallet, so one lock would lose the whole
+bond. Don't offer a bond for such a token.
 
 ## Sell protection
 
