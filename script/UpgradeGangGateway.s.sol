@@ -14,7 +14,8 @@ import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangGatewayDeployLib as G} from "./GangGatewayDeployLib.sol";
 
 /// @title UpgradeGangGateway — move the GangGateway proxy to this build (V2: 铸币飞轮 support, AUDIT-BRIEF §26)
-/// @notice The proxy, its users' approvals and its storage stay; only the implementation changes, through the 48 h
+/// @notice Mainnet's V2 upgrade was cancelled on 2026-11-04, so mainnet stays on the first version. The proxy, its
+///         users' approvals and its storage stay; only the implementation changes, through the 48 h
 ///         timelock (GangGatewayDeployLib: timelock.schedule → wait minDelay → timelock.execute of
 ///         ProxyAdmin.upgradeAndCall(proxy, newImpl, "")). Three runs:
 ///         1. deploy: the new implementation (or GATEWAY_IMPL, already deployed), checked to be this build and locked;
@@ -23,7 +24,7 @@ import {GangGatewayDeployLib as G} from "./GangGatewayDeployLib.sol";
 ///         2. after the delay: the execute call, sent or printed the same way (same GATEWAY_IMPL).
 ///         3. once the proxy runs this build: the full read-back self-check (GangGatewayDeployLib.check), then the
 ///            `setRouter(proxy, true)` of every registered pad that does not list the gateway yet (sent when the deploy
-///            wallet owns the pad, else printed for its owner). Mainnet's V2 upgrade was cancelled on 2026-11-04.
+///            wallet owns the pad, else printed for its owner).
 ///         The run picks its step from the chain: proxy on this build → 3; operation ready → 2; else 1.
 ///         Step 1 without GATEWAY_IMPL deploys a new implementation every time it is broadcast: pass the first one's
 ///         address from then on (a second one would be a second operation). Without --broadcast that implementation
