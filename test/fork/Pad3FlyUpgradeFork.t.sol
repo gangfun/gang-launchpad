@@ -8,8 +8,8 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
-import {FlyUpgradeHarness} from "./Pad3LiveUpgrade.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
+import {FlyUpgradeHarness, Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3FlyModule} from "../../src/gang/Pad3FlyModule.sol";
@@ -89,6 +89,28 @@ contract Pad3FlyUpgradeForkTest is Test {
         assertEq(handler.owner(), SAFE);
         (to,) = h.prep(s, M.KEEPER, SAFE);
         assertEq(to.length, 0, "nothing left for the Safe");
+
+        address t = _sale();
+        _gatewayRefused(t);
+        _entryRoundTrip(t);
+        _launchAndPayHolders(t, handler);
+    }
+
+    /// @notice The file the Safe signs (PAD3_FORK_BATCH), as written, over the contracts it names: then the same sale.
+    function test_fork_signedBatchThenSale() public {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        string memory batch = Pad3LiveUpgrade.batchFile();
+        if (bytes(rpc).length == 0 || bytes(batch).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        uint256 forkBlock = vm.envOr("PAD3_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        Pad3LiveUpgrade.executeBatchFile(batch, SAFE);
+        FlywheelTaxHandler handler = FlywheelTaxHandler(Pad3FlyModule(PAD3).flyTaxHandler());
+        assertEq(handler.owner(), SAFE, "the Safe's from the start");
 
         address t = _sale();
         _gatewayRefused(t);
