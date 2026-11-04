@@ -155,6 +155,8 @@
 - 在主网 fork 上演练这笔 Safe 交易。
 - 把打新开放给入口的那次升级（第一次带打新入口的实现）：升级前仍报 status 3 的、设了门槛的 3.0 打新发售，`getTokenInfo` 和 `tryBuy` 这两项会按设计改变，脚本在前后两次快照里都不比较这两项（它们的原始记录和其余计算结果照常比较），升级后再确认它们报 status 1。之后的升级里它们已经是 1，不再例外。
 - 确认模块依赖的接口没变，并在新实现上重跑 `test/fork/Pad3ModulesFork.t.sol`：在新版本那次提交上运行，`PAD3_FORK_IMPL` 填已部署的新实现（fork 上先以 Safe 身份升级），`PAD3_FORK_LIVE=true` 并通过 `HANDLER_ADMIN`、`SPLITTER_FACTORY`、`SPLIT_FACTORY`、`LP_FACTORY`、`COMBO_FACTORY`、`GANG_BOND` 传入线上那套模块，测试会让线上工厂的新克隆和 bond 在新实现上跑一遍。这个模式不带 `--libraries` 运行：工厂脚本比对的是整段运行时代码（含 metadata），`--libraries` 会改变它；阶段 2 读回由升级脚本自己做。GangBond、GangHandlerAdmin 和四个模块工厂及其克隆永久绑定 3.0 的地址，克隆初始化时还缓存了 `taxHandler`、`wbnb`、`quoteRegistry`，所以升级不能改动：`kindOf` 的取值、`curves` 的前 12 个字段、`sales` 的前 14 个字段（顺序和含义）、`isAgent`、`taxHandler()`、`wbnb()`、`quoteRegistry()`。改了它们，已部署的模块和押在 GangBond 里的 BNB 会出错或卡住。2.0 不可升级，所以没有这层依赖；发 bond 的用户也要知道这层信任关系。
+- 批次带接线时（比如第一次带飞轮模块的升级），`PAD3_FORK_IMPL` 不够：用 `PAD3_FORK_BATCH` 指向要签的批次文件（仓库内路径），`Pad3ModulesFork`、`test_fork_signedBatchThenSale` 和用 `Pad3LiveUpgrade` 的 fork 测试会以 Safe 身份原样执行这份文件，不跑升级脚本。升级执行之后重跑，用一个 `transactions` 为空的文件。
+- 这些 fork 测试跑得比普通节点保留旧状态的时间长：要用能读旧状态的 RPC，并用 `PAD3_FORK_BLOCK` 固定区块（`Pad3ModulesFork`、`test_fork_signedBatchThenSale`），缓存让重跑能接着走。trace 里的 `FatalExternalError`（测试结果只显示 `EvmError: Revert`）是 RPC 读取失败，不是合约回滚。
 
 ## 7. 已知行为和风险说明
 

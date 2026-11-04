@@ -8,6 +8,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
+import {Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {IGangPad} from "../../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
@@ -98,7 +99,10 @@ contract Pad3ModulesForkTest is Test {
         bool live = vm.envOr("PAD3_FORK_LIVE", Ownable(handler).owner() != M.OWNER_SAFE);
         _env(pk, live);
         address impl = vm.envOr("PAD3_FORK_IMPL", address(0));
-        if (impl != address(0)) {
+        if (bytes(Pad3LiveUpgrade.batchFile()).length != 0) {
+            // the upgrade as the Safe signs it, with the listings the read-back expects
+            Pad3LiveUpgrade.executeBatchFile(Pad3LiveUpgrade.batchFile(), M.OWNER_SAFE);
+        } else if (impl != address(0)) {
             vm.prank(M.OWNER_SAFE);
             ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
             assertEq(R.implementationOf(PAD3), impl);
