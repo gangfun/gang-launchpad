@@ -163,8 +163,8 @@ contract Pad3FlyUpgradeForkTest is Test {
         assertEq(vault.minimumShareBalanceFor(t), 1_000 ether);
     }
 
-    /// @dev The live GangGateway V2 is a router of 3.0 but sizes shares by its TOKENS_PER_SHARE (50,000): not a
-    ///      铸币飞轮 router, so its for-trader calls on a 3.0 铸币飞轮 token revert (audit B M-1).
+    /// @dev GangGateway is a router of 3.0 but not a 铸币飞轮 router (its V2 code, not deployed on mainnet, sizes shares
+    ///      by TOKENS_PER_SHARE, 50,000), so its for-trader calls on a 3.0 铸币飞轮 token revert (audit B M-1).
     function _gatewayRefused(address t) internal {
         address w = _agent();
         vm.prank(w);
