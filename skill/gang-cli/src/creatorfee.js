@@ -214,6 +214,7 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   if (kind === null) return fail('could not read the token\'s kind from GangLaunchpad (kindOf; RPC error)', { token, retry: 'same command again' })
   if (kind === 'none') return fail(`not a GangLaunchpad token on ${testnet ? 'the BSC testnet' : 'BSC mainnet'}${testnet ? '' : ' (add --testnet for a testnet token)'}`, { token, chainId })
   if (kind === 'fair') return fail('a 打新 (fair-mint) sale has no creator fee: only V3 curve trades on GangLaunchpad 2.0 / 3.0 pay one', { token, kind })
+  if (kind === 'fly') return fail('a 铸币飞轮 (Mint Flywheel) token has no creator fee: only V3 curve trades on GangLaunchpad 2.0 / 3.0 pay one (its creator gets the dev cut and a share of the pool tax: gang info)', { token, kind })
   const c = await ctx.read(ctx.pad, CURVES_ABI, 'curves', [token])
   const [creator, quote, , , , , graduated] = c
   const symbol = await ctx.read(token, SYMBOL_ABI, 'symbol').catch(() => null)

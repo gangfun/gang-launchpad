@@ -4,8 +4,8 @@ import { bsc, bscTestnet } from 'viem/chains'
 /**
  * GangLaunchpad (contract merge, 2026-10-27): V3 tax tokens (bonding curve) and 打新 (fair-mint) sales live on ONE pad —
  * one address, one state, one tax handler, one GangRouter. `gang v3` and `gang fair` both talk to it; `kindOf(token)`
- * on the pad says which kind a token is (0 = not this pad's, 1 = V3 curve, 2 = 打新). The two `create` overloads keep
- * their old selectors, so each command keeps its own ABI fragment.
+ * on the pad says which kind a token is (0 = not this pad's, 1 = V3 curve, 2 = 打新, 3 = 铸币飞轮: on 3.0 only, see
+ * fly.js). The two `create` overloads keep their old selectors, so each command keeps its own ABI fragment.
  *
  * Each network may have several generations of this pad (GANG_GENS: 3.0, 2.0, 1.0, 2.0 金库版); kindOf on each tells which one has a token.
  *
@@ -29,7 +29,9 @@ export const VAULT_GEN = '2.0-vault'
  * GangLaunchpad 3.0 (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md): one permanent, upgradeable pad (a proxy) with 2.0's
  * rules, functions and events (same selectors), plus tokenVersionOf (the rule set each token was created under) and a
  * four.meme-shaped aggregator entry. An upgrade may add the vault mode (spec §9: createWithVault, vaultOf, lockedOf on
- * the same address): vaultModeOf asks the pad, so this CLI follows the upgrade without a new release.
+ * the same address): vaultModeOf asks the pad, so this CLI follows the upgrade without a new release. Since 2026-11-04 it
+ * also has the 铸币飞轮 mode (spec §10, kind 3; fly.js), and gated 打新 sales trade through the entry (spec §2, §3). This
+ * CLI does not trade through the entry: it mints and sells back on the pad, or through the GangRouter.
  */
 export const PAD3_GEN = '3.0'
 
@@ -45,7 +47,8 @@ export const GANG_GENS = {
     // 2026-11-03, proxy block 131404298: 3.0 (docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md), the permanent address. Its own
     // GangRouter, tax handler (owned by its GangHandlerAdmin 0xC833…Af76), GangBond and the four module factories, all
     // bound to this proxy (docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md). Vault mode since the Safe's upgrade at
-    // block 131454282 (implementation 0x88A4…028D, Pad3Module 0xa712…409A); vaultModeOf reads it from the pad
+    // block 131454282 (implementation 0x88A4…028D, Pad3Module 0xa712…409A); vaultModeOf reads it from the pad. 铸币飞轮 mode
+    // and 打新 through the entry since 2026-11-04 (fly tax handler 0x7De9…3ba0, vault core 0x9d90…767E, deployer 0x2C95…072E)
     {
       gen: PAD3_GEN, pad: '0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29', router: '0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7',
       bond: '0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6', splitterFactory: '0xc1282e7Fd3DFa5e00e74E9EbF8c54fFfB5763194',
@@ -85,7 +88,8 @@ export const GANG_GENS = {
   ],
   testnet: [
     // 2026-11-03, proxy block 140496214: 3.0 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md), vault mode since its fourth
-    // upgrade. Its own GangRouter, tax handler (GangHandlerAdmin 0x0fb8…9D23), GangBond and module factories
+    // upgrade, 铸币飞轮 mode and 打新 through the entry since (fly tax handler 0x2d03…231f, vault core 0x570B…6494). Its own
+    // GangRouter, tax handler (GangHandlerAdmin 0x0fb8…9D23), GangBond and module factories
     {
       gen: PAD3_GEN, pad: '0x0508232833aE6849c03b28F7aA248BBd5cFCceE2', router: '0x09544Fd87c5Ff2c4fb05885A76861A12e83f87b9',
       bond: '0xa87727dc3CC28a44709649A22aDbD77287B99fc1', splitterFactory: '0x3533E63EF0386adfBC96227C50f1b82EEA18d110',
@@ -327,9 +331,9 @@ export const MERGED_HINTS = {
 }
 
 const KIND_ABI = parseAbi(['function kindOf(address token) view returns (uint8)'])
-const KINDS = ['none', 'v3', 'fair']
+const KINDS = ['none', 'v3', 'fair', 'fly']
 
-/** 'v3' | 'fair' | 'none' from the merged pad's kindOf; null on a pad without kindOf (before the merge) or on an RPC error. */
+/** 'v3' | 'fair' | 'fly' | 'none' from the merged pad's kindOf (fly: 3.0 only); null on a pad without kindOf (before the merge) or on an RPC error. */
 export async function kindOf(ctx, token) {
   try {
     return KINDS[Number(await ctx.read(ctx.pad, KIND_ABI, 'kindOf', [token]))] ?? null
@@ -339,13 +343,14 @@ export async function kindOf(ctx, token) {
 }
 
 /**
- * Which generation's pad has `token`, asked of every pad of ctx.gens at once: { g, kind } with kind 'v3' | 'fair';
+ * Which generation's pad has `token`, asked of every pad of ctx.gens at once: { g, kind } with kind 'v3' | 'fair' |
+ * 'fly' (3.0's own 铸币飞轮 tokens; V1 / V2 ones are on GangFlywheelPad, not in ctx.gens: fly.js finds those);
  * { g: null, kind: 'none' } when no pad has it; kind null when a pad could not be read and no other one has it.
  */
 export async function genOf(ctx, token) {
   const gens = ctx.gens ?? [ctx]
   const kinds = await Promise.all(gens.map((g) => kindOf({ ...ctx, pad: g.pad }, token)))
-  const i = kinds.findIndex((k) => k === 'v3' || k === 'fair')
+  const i = kinds.findIndex((k) => k === 'v3' || k === 'fair' || k === 'fly')
   if (i >= 0) return { g: gens[i], kind: kinds[i] }
   return { g: null, kind: kinds.includes(null) ? null : 'none' }
 }
@@ -482,6 +487,9 @@ export async function gradTargetBnbOf(ctx, token) {
 export async function notThisKind(ctx, token, want, net = '') {
   const kind = await kindOf(ctx, token)
   const ask = want === 'v3' ? 'a LaunchpadV3 (tax) token' : 'a 打新 (fair-mint) sale'
+  if (kind === 'fly') {
+    return { error: `this is a 铸币飞轮 (Mint Flywheel) token: gang info / buy / sell / mint / withdraw --token ${token}${net} pick the right pad code`, kind }
+  }
   if (kind === 'fair' && want === 'v3') {
     return { error: `this is a 打新 (fair-mint) token, not a V3 token: gang info / buy / sell / mint / withdraw --token ${token}${net} pick the right pad code`, kind }
   }

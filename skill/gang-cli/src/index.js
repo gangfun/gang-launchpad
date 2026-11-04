@@ -245,7 +245,7 @@ const followSkipped = (follow) =>
 const HELP = `gang — agent-only launchpad on BNB Chain (Binance Agentic Wallet) · new tokens on GangLaunchpad (V3 / 打新)
 
 One command per action, whatever pad the token is on: buy / sell / info / status / claim / mint / withdraw / release
-read the token's kind (GangLaunchpad kindOf: V3 curve or 打新 sale; GangFlywheelPad: 铸币飞轮; otherwise the V2 / Soft /
+read the token's kind (GangLaunchpad kindOf: V3 curve, 打新 sale or 3.0's 铸币飞轮; GangFlywheelPad: 铸币飞轮; otherwise the V2 / Soft /
 U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tokens carry kind: "v3" | "fair" | "fly". --testnet
 = BSC testnet (GangLaunchpad and GangFlywheelPad only); --calldata prints the raw tx instead of a baw preview; --from
 <addr> reads / builds for that wallet (V2 / Soft: graduated tokens only).
@@ -366,8 +366,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
               [--tier flat|standard|linear [--step-pct 0-10 --step-shares 100-100000 --max-mul 1-10]] [--supply-cap 10-500]
               [--guard off|15|20|30] [--twap-window 15|30] [--dev-shares <n>] [--quote 0x… --ref-pool 0x…] [--logo …]
               [--website URL] [--twitter @handle] [--description …]
-                                         a 铸币飞轮 (Mint Flywheel, GangFlywheelPad) sale (mainnet; --testnet = BSC testnet
-                                         set 2). 10,000 shares at raise / 10,000 each; a quota per wallet
+                                         a 铸币飞轮 (Mint Flywheel) sale on GangLaunchpad 3.0 (mainnet; --testnet = BSC
+                                         testnet). 10,000 shares at raise / 10,000 each; a quota per wallet
                                          (--quota + --invite-bonus per wallet it invites), --max-per-tx per mint, Agent ID
                                          only. Fills (or the creator opens early at ≥ 30%), launches --launch-delay s later
                                          (anyone; gang.fun's keeper too) into PancakeSwap at the mint price, then --window s
@@ -609,7 +609,7 @@ COMBO (a V3 token whose recipient is a combined recipient, combo-v1; GANG_COMBO_
   gang tx --pending                      a trade that waited for Binance App approval (execute: pendingConfirmation): find its tx
                                          in the wallet's history by the exact call previewed, then as gang tx --hash below
   gang tx --hash <0x..> [--testnet]      wait for receipt and decode Gang events: V2 / Soft / U / S, GangLaunchpad (V3 /
-                                         打新, tax router, vaults), GangFlywheelPad (铸币飞轮 pad and tax handler), split modules,
+                                         打新, 铸币飞轮, tax routers, vaults), GangFlywheelPad (铸币飞轮 pads), split modules,
                                          LP splitters and combined recipients (publishes a queued --note; mainnet). GangLaunchpad events
                                          carry units: "raw" (amounts in wei, 18 decimals; bps / shares as is)
 
@@ -640,9 +640,9 @@ for BNB buys / mints and every pool trade). Built in: GangLaunchpad 3.0 (where n
 mainnet and the testnet. A token is always served by its own generation's pad, router, GangBond and module factories; these
 variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
-GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2, where new tokens go; default: the built-in mainnet / testnet V2). --guard / --twap-window
-(V2 only): the guard is off by default (post-launch minting does not pause on a price drop; the quota cap of 10 per
-wallet bounds it); --guard 15|20|30 pauses mints while the pool is that % below its average over --twap-window (30)
+GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2; default: the built-in mainnet / testnet V2); new 铸币飞轮 tokens go to the built-in
+GangLaunchpad 3.0. --guard / --twap-window (3.0 and V2): the guard is off by default (post-launch minting does not pause
+on a price drop; the quota cap of 10 per wallet bounds it); --guard 15|20|30 pauses mints while the pool is that % below its average over --twap-window (30)
 
 Private RPC: this CLI never broadcasts itself. Trades go out through the Agentic Wallet (gang execute), which picks its
 own RPC; a --calldata tx is sent by whatever signs it. To keep a large pool buy out of the public mempool (front-running),
@@ -1017,7 +1017,7 @@ const NOT_FOR = {
 }
 
 /**
- * 'v3' | 'fair' on GangLaunchpad, 'fly' on GangFlywheelPad (mainnet, or BSC testnet with --testnet); else 'legacy'
+ * 'v3' | 'fair' | 'fly' on GangLaunchpad, 'fly' on GangFlywheelPad (mainnet, or BSC testnet with --testnet); else 'legacy'
  * (mainnet V2 / Soft / U / S).
  * kindOf unreadable (RPC): 'legacy' only for a verb that code checks again (LEGACY_VERBS), a retry hint otherwise.
  */
@@ -1027,8 +1027,8 @@ async function padKind(token, verb) {
   try { ctx = v3Ctx(testnet) } catch (e) { fail(e.message) }
   // every GangLaunchpad generation of this network (3.0, 2.0, 1.0, 2.0 金库版) is asked
   const { kind } = await genOf(ctx, token)
-  if (kind === 'v3' || kind === 'fair') return kind
-  // not GangLaunchpad's: the 铸币飞轮 pad (GangFlywheelPad, kind 3) is asked next
+  if (kind === 'v3' || kind === 'fair' || kind === 'fly') return kind
+  // not GangLaunchpad's: the older 铸币飞轮 pads (GangFlywheelPad V1 / V2) are asked next
   const fly = await isFlyToken(flyCtx(testnet), token)
   if (fly) return 'fly'
   if (fly === null && (testnet || !LEGACY_VERBS.has(verb))) {
