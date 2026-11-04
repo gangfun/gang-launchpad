@@ -63,7 +63,8 @@ contract Pad3FairEntryForkTest is Test {
         // upgrade script leaves its entry views out of the comparison and checks it reads 1 after (audit 2B L-1)
         address pre = _createSale(PAD3, 9);
         (uint8 st0,,,,) = p.getTokenInfo(pre);
-        assertEq(st0, 3, "live implementation: not traded through the entry");
+        // (1 once the Safe's upgrade has run: the upgrade below is then an empty batch)
+        if (st0 != 1) assertEq(st0, 3, "live implementation: not traded through the entry");
 
         (FlyUpgradeHarness u, UpgradeGangLaunchpad3.Stack memory st) = Pad3LiveUpgrade.check();
         address impl = Pad3LiveUpgrade.execute(u, st, SAFE);
