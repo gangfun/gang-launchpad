@@ -1,4 +1,4 @@
-import { createPublicClient, formatEther, parseEther, encodeFunctionData, decodeEventLog, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, formatEther, parseAbi, parseEther, encodeFunctionData, decodeEventLog, isAddress, zeroAddress } from 'viem'
 import { bsc } from 'viem/chains'
 import { SOFT_ABI, V2_ABI, S_ABI, ERC20_ABI, WBNB_ABI } from './abi.js'
 import { genOf, padNets, rpcTransport } from './gangpad.js'
@@ -6,8 +6,8 @@ import { mapLimit } from './limit.js'
 
 export const ADDR = {
   v2: '0x1B8F3f69DFa0a7F63d308C7EB0Fd38D8b099966E',
-  soft: '0x4E6f13c8A453c1b8b4E20b590082bb233a5b80d7',
-  softFirst: '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7', // the first Soft pad: it holds the Soft tokens, same ABI
+  softFirst: '0x315Ba2e8952D06094CC636b2B84229FA32fb23A7', // holds the Soft tokens, GANG included
+  softLater: '0x4E6f13c8A453c1b8b4E20b590082bb233a5b80d7', // same ABI, no tokens yet
   u: '0xF81C4E51c48466c6025B0165b1Ea0F6978c712cb',
   s: '0x60aee38576035E757deD30fF8db8A8DA476430C1',
   wbnb: '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
@@ -28,8 +28,8 @@ const read = (address, abi, functionName, args = []) => client.readContract({ ad
 
 const PADS = [
   { id: 'v2', address: ADDR.v2, kind: 'v2', abi: V2_ABI },
-  { id: 'soft', address: ADDR.soft, kind: 'soft', abi: SOFT_ABI },
   { id: 'soft', address: ADDR.softFirst, kind: 'soft', abi: SOFT_ABI },
+  { id: 'soft', address: ADDR.softLater, kind: 'soft', abi: SOFT_ABI },
   { id: 'u', address: ADDR.u, kind: 'v2', abi: V2_ABI },
   { id: 's', address: ADDR.s, kind: 'v2', abi: S_ABI }, // 9-field Curve (no taxed): see S_ABI
 ]
@@ -79,6 +79,17 @@ function sInfoFromCurve(c) {
 /** The curve of a resolved pad in one shape, whatever the pad's layout. */
 const curveInfo = (pad) => (pad.kind === 'soft' ? softInfoFromCurve(pad.curve) : pad.id === 's' ? sInfoFromCurve(pad.curve) : v2InfoFromCurve(pad.curve))
 
+const PAIR_ABI = parseAbi(['function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)', 'function token1() view returns (address)'])
+
+/** A graduated Soft token's price in its PancakeSwap pool: BNB per token, 1e18 scale; null when the pair is not with WBNB. */
+async function softPoolPrice(token, pair) {
+  const [[r0, r1], t0, t1] = await Promise.all([read(pair, PAIR_ABI, 'getReserves'), read(pair, PAIR_ABI, 'token0'), read(pair, PAIR_ABI, 'token1')])
+  const wbnb = ADDR.wbnb.toLowerCase()
+  const [tokenReserve, bnbReserve] = t1.toLowerCase() === wbnb ? [r0, r1] : t0.toLowerCase() === wbnb ? [r1, r0] : [0n, 0n]
+  if (tokenReserve === 0n || t0.toLowerCase() !== token.toLowerCase() && t1.toLowerCase() !== token.toLowerCase()) return null
+  return (bnbReserve * 10n ** 18n) / tokenReserve
+}
+
 export async function tokenInfo(token, me) {
   const pad = await resolvePad(token)
   const base = curveInfo(pad)
@@ -90,7 +101,7 @@ export async function tokenInfo(token, me) {
 
   let price = null
   if (pad.kind === 'soft') {
-    try { price = base.graduated ? 100000000000n : await read(pad.address, pad.abi, 'spotPrice', [token]) } catch { /* */ }
+    try { price = base.graduated ? await softPoolPrice(token, base.pair) : await read(pad.address, pad.abi, 'spotPrice', [token]) } catch { /* */ }
   } else if (base.virtualQuote && base.virtualQuote > 0n) {
     // spot ≈ virtualQuote / (VIRTUAL_TOKEN - sold) * 1e18-ish; expose raised/grad instead
     const vq = BigInt(base.virtualQuote)
@@ -101,7 +112,8 @@ export async function tokenInfo(token, me) {
   }
 
   const grad = base.gradAmt != null ? BigInt(base.gradAmt) : (pad.kind === 'soft' ? await read(pad.address, pad.abi, 'GRADUATION_BNB') : 15n * 10n ** 18n)
-  const raised = BigInt(base.raised)
+  // a graduated Soft curve's realBnb went to the pool: it raised its whole target
+  const raised = pad.kind === 'soft' && base.graduated ? grad : BigInt(base.raised)
   const info = {
     token, name, symbol, creator: base.creator, graduated: base.graduated,
     pair: base.graduated ? base.pair : null, locked,
@@ -144,8 +156,8 @@ export async function listTokens(me, perPad = 20) {
       const infos = await mapLimit(addrs, 8, (a) => tokenInfo(a, me).catch(() => null))
       const listed = infos.filter(Boolean)
       tokens.push(...listed)
-      pads.push({ pad: pad.id, total: n, listed: listed.length })
-    } catch { pads.push({ pad: pad.id, total: null, listed: 0, error: 'pad unreadable' }) }
+      pads.push({ pad: pad.id, address: pad.address, total: n, listed: listed.length })
+    } catch { pads.push({ pad: pad.id, address: pad.address, total: null, listed: 0, error: 'pad unreadable' }) }
   }
   return { tokens, pads }
 }
@@ -219,6 +231,9 @@ function v2QuoteSellFromCurve(base, tokensIn) {
 
 export async function quoteBuy(token, buyer, amountHuman) {
   const pad = await resolvePad(token)
+  if (curveInfo(pad).graduated) {
+    throw new Error(`${token} has graduated: it trades in its PancakeSwap pool, not on the curve. gang buy --amount <n> builds that trade`)
+  }
   const gross = parseEther(amountHuman)
   if (pad.kind === 'soft') {
     const [tokensOut, bnbIn, fee, refund] = await read(pad.address, pad.abi, 'quoteBuy', [token, buyer, gross])
@@ -255,7 +270,7 @@ export async function quoteSell(token, tokensIn) {
 export async function isAgent(account) {
   // Prefer V2 gate (create path); fall back Soft.
   try { return await read(ADDR.v2, V2_ABI, 'isAgent', [account]) } catch { /* */ }
-  try { return await read(ADDR.soft, SOFT_ABI, 'isAgent', [account]) } catch { /* */ }
+  try { return await read(ADDR.softFirst, SOFT_ABI, 'isAgent', [account]) } catch { /* */ }
   return false
 }
 
