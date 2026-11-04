@@ -223,6 +223,10 @@ contract LaunchpadV2 is Ownable2Step, ReentrancyGuard {
         if (quote == address(0)) quote = wbnb;
         (uint256 lockedGrad, address refUsed) = _lockGradAmt(quote, refPool);
 
+        // Fail fast BEFORE deploying the token: a too-small gradAmt otherwise burns the
+        // full ERC-20 deployment + dividend registration gas on every reverted create.
+        if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
+
         if (taxed) {
             dividendVault.ensureMinimumShareBalance(TAXED_MIN_SHARE);
             token = address(new TaxLaunchToken(name, symbol));
@@ -233,7 +237,6 @@ contract LaunchpadV2 is Ownable2Step, ReentrancyGuard {
             token = address(new LaunchToken(name, symbol));
         }
 
-        if (lockedGrad < MIN_GRAD_AMT) revert GradAmtTooSmall();
         address refPair = refUsed;
         _writeCurve(token, quote, lockedGrad, taxed, refPair);
         logoURIOf[token] = logoURI;
