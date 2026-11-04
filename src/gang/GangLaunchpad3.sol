@@ -578,10 +578,12 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         }
     }
 
-    /// @notice GangGateway's getTokenInfo: status 0 = not a Gang token; 1 = on its curve (or a 铸币飞轮 sale before
-    ///         launch); 2 = graduated / launched (`pair`); 3 = a 打新 sale still minting (not traded here). The quote as
-    ///         address(0) for WBNB (native BNB in and out here). `protocolFeeBps`: 100 on a curve (铸币飞轮: the mint
-    ///         fee); `graduationLeft`: quote the curve still needs (铸币飞轮: the price of the shares left).
+    /// @notice GangGateway's getTokenInfo: status 0 = not a Gang token; 1 = traded here (on its curve, a 铸币飞轮 sale
+    ///         before launch, or a gated 打新 sale still minting); 2 = graduated / launched (`pair`); 3 = an ungated
+    ///         打新 sale still minting (not traded here). The quote as address(0) for WBNB (native BNB in and out
+    ///         here). `protocolFeeBps`: 100 on a curve (打新 / 铸币飞轮: the mint fee, charged on buys only);
+    ///         `graduationLeft`: quote the curve still needs (打新 / 铸币飞轮: the price of the shares left, before the
+    ///         mint fee; it grows again when minters withdraw).
     function getTokenInfo(address token)
         public
         view
@@ -598,7 +600,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             Sale storage s = sales[token];
             quote = _external(s.quote);
             if (s.launched) return (STATUS_POOL, quote, s.pair, 0, 0);
-            return (STATUS_MINTING, quote, address(0), 0, 0);
+            // a gated sale trades through the entry (whole shares at the share price; 1 = tradable here), as a
+            // 铸币飞轮 sale does; an ungated one stays 3 (no router can mint it, A-2)
+            if (s.gate == address(0)) return (STATUS_MINTING, quote, address(0), 0, 0);
+            return (STATUS_CURVE, quote, address(0), s.mintFeeBps, (TOTAL_SHARES - s.sold) * s.sharePrice);
         }
         (status, quote, pair, protocolFeeBps, graduationLeft) = LegacyRoute.info(padRegistry, token);
         quote = _external(quote);
@@ -606,7 +611,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     /// @notice Helper3.tryBuy's layout with the trader added (GangGateway's): what `buyTokenAMAP(token, trader,
     ///         funds, 0)` would do now, all 0 when it would revert. Buys by funds only (`amount` must be 0).
-    ///         `trader` = address(0): a fresh wallet, no gate check (curve tokens; 铸币飞轮 quotes need the trader).
+    ///         `trader` = address(0): a fresh wallet, no gate check (curve and 打新 tokens; 铸币飞轮 quotes need the
+    ///         trader). A 打新 / 铸币飞轮 buy fills whole shares: `amountMsgValue` / `amountApproval` and `amountFunds`
+    ///         are their exact cost (≤ funds); send that.
     function tryBuy(address token, address trader, uint256 amount, uint256 funds)
         external
         view
@@ -624,6 +631,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (amount != 0) revert AmountNotSupported();
         tokenManager = address(this);
         uint8 kind = kindOf[token];
+        bool byShares = kind == KIND_FAIR;
         if (kind != 0) {
             (, quote,,,) = getTokenInfo(token);
             // as GangGateway on a pad with the gate off (A-2): no buy quote, no buy (sells still work)
@@ -634,15 +642,21 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             ) {
                 (estimatedAmount, estimatedCost, estimatedFee,) =
                     CurveLogic.quoteBuy(_config, curves, token, trader, funds, _lockedOf(token, trader));
+            } else if (kind == KIND_FAIR) {
+                (uint256 shares, uint256 cost, uint256 fee) =
+                    FairLogic.entryQuote(sales, positions, token, trader, funds);
+                (estimatedAmount, estimatedCost, estimatedFee) = (shares * TOKENS_PER_SHARE, cost + fee, fee);
             }
         } else {
-            (quote, estimatedAmount, estimatedCost, estimatedFee) =
+            (quote, estimatedAmount, estimatedCost, estimatedFee, byShares) =
                 LegacyRoute.tryBuy(padRegistry, token, trader, funds);
             quote = _external(quote);
         }
         if (estimatedAmount == 0) return (tokenManager, quote, 0, 0, 0, 0, 0, 0);
-        if (quote == address(0)) amountMsgValue = funds;
-        else amountApproval = funds;
+        // a 打新 / 铸币飞轮 buy fills whole shares: send exactly their cost (a curve buy: the funds as given)
+        uint256 pay = byShares ? estimatedCost : funds;
+        if (quote == address(0)) amountMsgValue = pay;
+        else amountApproval = pay;
         amountFunds = estimatedCost;
     }
 
@@ -658,6 +672,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (kind != 0) {
             (, quote,,,) = getTokenInfo(token);
             if (kind == KIND_CURVE) (funds, fee) = CurveLogic.quoteSell(curves, token, amount);
+            else if (kind == KIND_FAIR) (funds, fee) = FairLogic.entrySellQuote(sales, token, amount);
         } else {
             (quote, funds, fee) = LegacyRoute.trySell(padRegistry, token, amount);
             quote = _external(quote);
@@ -666,8 +681,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     /// @notice Buy with `funds` of the quote; tokens go to `to`, the wallet that sent the tx (TraderNotOrigin). BNB-quoted:
     ///         msg.value == funds (native BNB). ERC-20-quoted: msg.value == 0, `funds` pulled from msg.sender. A cap /
-    ///         graduation cut (or a 铸币飞轮 mint's unspent part) goes back to `to` in the quote ERC-20 (WBNB for a
-    ///         BNB-quoted token). The Agent gate and the wallet cap are `to`'s.
+    ///         graduation cut (or a 打新 / 铸币飞轮 mint's unspent part) goes back to `to` in the quote ERC-20 (WBNB for
+    ///         a BNB-quoted token). The Agent gate and the wallet cap are `to`'s. A 打新 sale (gated): the most whole
+    ///         shares `funds` pays for, at its share price plus its mint fee.
     /// @return amountOut tokens `to` received, at least `minAmount`
     /// @return fundsUsed funds the pad kept
     function buyTokenAMAP(address token, address to, uint256 funds, uint256 minAmount)
@@ -692,6 +708,14 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
                 _config, curves, creatorFeeOf, _deps(), to, token, funds, minAmount, _lockedOf(token, to), true
             );
             fundsUsed = funds - (quote.balanceOf(to) - toBefore);
+        } else if (kind == KIND_FAIR) {
+            Sale storage sa = sales[token];
+            if (sa.launched) revert NotCurveToken();
+            IERC20 quote = IERC20(sa.quote);
+            _payIn(address(quote), funds);
+            (amountOut, fundsUsed) =
+                FairLogic.entryMint(_config, sales, positions, _deps(), to, token, funds, minAmount);
+            if (funds > fundsUsed) quote.safeTransfer(to, funds - fundsUsed);
         } else if (kind != 0) {
             revert NotCurveToken();
         } else {
@@ -787,8 +811,9 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (from != tx.origin) revert TraderNotOrigin();
     }
 
-    /// @dev Both entry sells: `amount` of `from`'s tokens sold into the pad (own curve, PULL_PAD) or forwarded to their
-    ///      older pad (LegacyRoute); the proceeds after the curve's 1% fee are on the pad, to be paid out by the caller.
+    /// @dev Both entry sells: `amount` of `from`'s tokens sold into the pad (own curve, PULL_PAD; own 打新 sale, whole
+    ///      shares back at the share price less the exit fee) or forwarded to their older pad (LegacyRoute); the
+    ///      proceeds (after the curve's 1% fee / the exit fee) are on the pad, to be paid out by the caller.
     ///      `base`: the pad's own balance of `quote` before a forwarded sell (escrow check).
     function _entrySell(address token, address from, uint256 amount)
         internal
@@ -803,6 +828,11 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             funds = CurveLogic.sell(
                 _config, curves, creatorFeeOf, _deps(), from, CurveLogic.PULL_PAD, token, amount, 0, address(this)
             );
+        } else if (kind == KIND_FAIR) {
+            if (sales[token].launched) revert NotCurveToken();
+            address q;
+            (q, funds) = FairLogic.entryWithdraw(sales, positions, owedFee, _deps(), from, token, amount);
+            quote = IERC20(q);
         } else if (kind != 0) {
             revert NotCurveToken();
         } else {

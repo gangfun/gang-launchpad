@@ -42,6 +42,10 @@ contract Pad3AsGatewayTest is GangGatewayTest {
         return Pad3Entry.deploy(address(wbnb), reg_, owner);
     }
 
+    function _tradesFair() internal pure override returns (bool) {
+        return true;
+    }
+
     function test_deploy_selfCheckPasses() public view override {}
     function test_deploy_implAndProxyCannotBeInitializedAgain() public override {}
     function test_deploy_zeroAddressesRefused() public override {}
@@ -107,6 +111,10 @@ contract Pad3AsGatewayFlywheelTest is GangGatewayFlywheelTest {
         return Pad3Entry.deploy(address(wbnb), reg_, owner);
     }
 
+    function _exactShareCost() internal pure override returns (bool) {
+        return true;
+    }
+
     /// @dev The pay-to sell (multi-hop) of 铸币飞轮 shares before launch: withdrawn through the pad, paid to the router.
     function test_beforeLaunch_sellTo_proceedsToTheRouter() public {
         GangLaunchpad3 p3 = GangLaunchpad3(payable(address(gw)));
@@ -153,6 +161,10 @@ contract Pad3LocalEntryTest is GangGatewayTest {
 
     function _newGateway(address) internal view override returns (address) {
         return address(pad);
+    }
+
+    function _tradesFair() internal pure override returns (bool) {
+        return true;
     }
 
     function _assertGatewayEmpty(address t) internal view override {
