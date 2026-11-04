@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.26.0'
+  version: '0.30.0'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.16.5, npm)
+      label: Gang CLI (@gangfun/cli ≥0.30.0, npm)
 ---
 
 # Gang Skill
@@ -55,7 +55,7 @@ It never holds keys.
 
 ## Start of a session
 
-1. `gang version`. If it prints only the help, or a version below **0.16.5**, the CLI is **older than these rules**:
+1. `gang version`. If it prints only the help, or a version below **0.30.0**, the CLI is **older than these rules**:
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
    <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->
