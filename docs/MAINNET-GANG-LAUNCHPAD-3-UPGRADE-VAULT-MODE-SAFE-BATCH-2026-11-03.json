@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1793717615030,
+  "meta": {
+    "name": "gang: upgrade GangLaunchpad 3.0 \u2014 vault mode (Pad3Module)",
+    "description": "ProxyAdmin 0xCe83\u2026df48 .upgradeAndCall(GangLaunchpad 3.0 proxy 0x2bEb\u2026AB29, new implementation 0x88A4\u2026028D, \"\"): effective at once, no set-up call (initVersion stays 1). The new implementation delegates the vault mode and the moved views to Pad3Module 0xa712\u2026409A. Built from gang-launchpad main 6863704 (PR #119); checked by script/UpgradeGangLaunchpad3.s.sol (code = this build's reference, 7 dependencies, settings and token records before = after, phase-2 read-back).",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E",
+    "createdFromOwnerAddress": "",
+    "checksum": ""
+  },
+  "transactions": [
+    {
+      "to": "0xCe83Be827bf2B6bAFe0ca6d1320Dce965CE3df48",
+      "value": "0",
+      "data": "0x9623609d0000000000000000000000002bebed4be8c8f46c17776c71d7a6a45dbc5cab2900000000000000000000000088a4c3e0ae30ae47cd4de6d79da6fe0db95b028d00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
