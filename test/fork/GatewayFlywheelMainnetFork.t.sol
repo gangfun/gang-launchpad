@@ -17,9 +17,10 @@ import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangGatewayDeployLib as G} from "../../script/GangGatewayDeployLib.sol";
 import {GatewayAdapter} from "../router/GangGateway.t.sol";
 
-/// @notice GangGateway V2 (铸币飞轮 support, AUDIT-BRIEF §26) on a BSC mainnet fork: the live proxy upgraded the way
-///         the Safe will do it (timelock.schedule → 48 h → execute of ProxyAdmin.upgradeAndCall), the read-back
-///         self-check against this build, then listed by the Safe on both flywheel pads. On live V1 and V2 sales:
+/// @notice GangGateway V2 (铸币飞轮 support, AUDIT-BRIEF §26) on a BSC mainnet fork only: the Safe cancelled its mainnet
+///         upgrade on 2026-11-04. The live proxy upgraded through the timelock
+///         (timelock.schedule → 48 h → execute of ProxyAdmin.upgradeAndCall), the read-back
+///         self-check against this build, then listed on both flywheel pads as their owner. On live V1 and V2 sales:
 ///         a pre-launch buy and sell-back and a post-launch buy through an aggregator-style adapter, each matching
 ///         tryBuy / trySell to the wei; and a live curve token on GangLaunchpad 1.0 still trades as before. The
 ///         trader's Agent ID is mocked (balanceOf = 1).
