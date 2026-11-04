@@ -34,7 +34,7 @@
 | 函数 | 说明 |
 |---|---|
 | `getTokenInfo(token)` | `status`：0 = 不是 Gang 币；1 = 可经入口交易（曲线上、飞轮开盘前，或设了门槛的打新进行中）；2 = 已毕业 / 已开盘（返回 `pair`）；3 = 没设门槛的打新进行中（入口不交易）。WBNB 计价返回 `quote = address(0)`。打新和飞轮的 `protocolFeeBps` 是铸造费率，`graduationLeft` 是剩下的份数乘以单价 |
-| `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛 |
+| `tryBuy(token, trader, 0, funds)` | 按金额报价，`amount` 必须是 0。会 revert 的情况一律返回全 0。`trader = address(0)` 表示新钱包，不查门槛；飞轮的额度按钱包算，飞轮币传 0 时返回全 0，要传真实钱包 |
 | `trySell(token, amount)` | 扣掉 pad 1% 手续费后能拿到的金额和这笔手续费；不卖得出时返回 0 |
 | `buyTokenAMAP(token, to, funds, minAmount)` | `to` 必须是发起交易的钱包（`tx.origin`）。WBNB 计价：`msg.value == funds`，直接用原生 BNB；ERC-20 计价：`msg.value == 0`，从调用者扣 `funds`。因额度或毕业被截断的部分退给 `to`（WBNB 计价退 WBNB） |
 | `sellToken(0, token, from, amount, minFunds, feeRate, feeRecipient)` | 卖 `from` 授权给本 pad 的币。调用者必须是 `from` 本人，或在白名单里（`isCaller`）。`from` 必须是 `tx.origin`。路由手续费 `feeRate ≤ 500`（5%）给 `feeRecipient`，其余给 `from`；WBNB 计价付原生 BNB。有手续费时，`feeRecipient` 不能是 0、本 pad 或 WBNB（手续费会被烧掉，或者留在 pad / WBNB 合约里，谁也取不出来） |
@@ -247,4 +247,5 @@
 **测试**：
 - `test/gang3/Pad3FlyParity.t.sol`：飞轮 V2 的 17 套测试在 3.0 上原样重跑，接线和主网相同（3.0 自己的 operator 位置已占、门槛 10,000，飞轮币在核心名下）。
 - `test/gang3/Pad3Fly.t.sol`：同一个 pad 上打新和飞轮并存、按币分流的查询和退出、金库核心的权限和接线、飞轮 router 名单和 pad 名单分开、开池后税处理器写份额并把分红送到持有人、入口买卖往返、命名空间钉住。
+- `test/fork/Pad3LegacyForwardFork.t.sol`：主网 fork 上升级到这次构建后，经 3.0 入口实际买卖线上老 pad 的币：1.0、2.0 的曲线币，飞轮 V1、V2 正在铸造的发售。
 - `test/fork/Pad3FlyUpgradeFork.t.sol`：在 BSC 主网 fork 上按主网流程跑升级脚本（部署税处理器、核心和实现，模拟检查），以 Safe 身份执行批次，然后在 3.0 上创建飞轮币，经入口买卖，提前开池，在 Pancake 开池，把份额写进线上的共享金库，并把池子交易的税作为分红送到持有人。`Pad3VaultUpgradeFork`、`Pad3FairEntryFork` 也走同一条升级路径（`test/fork/Pad3LiveUpgrade.sol`）。
