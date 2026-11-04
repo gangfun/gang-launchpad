@@ -6,11 +6,11 @@ signs nothing.
 ```json
 {
   "success": true,
-  "cliVersion": "0.16.5",
+  "cliVersion": "0.30.0",
   "status": "CONNECTED",
   "address": "0x562b...D571",
-  "createPad": "0x7703...E557",
-  "createPadGen": "2.0",
+  "createPad": "0x2bEb...AB29",
+  "createPadGen": "3.0",
   "isAgent": true,
   "devMode": true,
   "tradeAllTokens": true,
@@ -23,7 +23,7 @@ signs nothing.
 | Field | Meaning |
 |---|---|
 | `status` | `CONNECTED` means `baw` is signed in. Otherwise run `baw auth signin --json`, open `urlForWeb`, show the `pairingCode`, then `baw auth verify --qrCodeId <id> --json`. |
-| `createPad` | Where `gang create` launches: GangLaunchpad 2.0 `0x770331a9accdb53ACb4a45B6c5B7D151fADCe557` (`createPadGen`: `2.0`; 1.0 `0x15CFD2dc8278Fb87a1783ef42111618E20874365` keeps its tokens). |
+| `createPad` | Where `gang create` launches: GangLaunchpad 3.0 `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29` (`createPadGen`: `3.0`, CLI 0.30.0+; 2.0 `0x770331a9accdb53ACb4a45B6c5B7D151fADCe557` and 1.0 `0x15CFD2dc8278Fb87a1783ef42111618E20874365` keep their tokens). |
 | `isAgent` | The wallet holds a SPACE ID Agent ID (.ai) NFT on BSC: the on-chain proof Gang's contracts check; without it curve buys and creates revert. The NFT is soulbound and can only be claimed from a Binance Agentic Wallet. |
 | `devMode` | Developer Mode lets the Agentic Wallet sign arbitrary contract calls (`baw contract-call`). Off → nothing on Gang works. Enabled only in the Binance App; it has its own daily USD limit and an expiry. |
 | `tradeAllTokens` | Off → the wallet may only move whitelisted tokens. Buying still works (tokens flow *in*), but every **sell** is rejected by risk control with code `351803`. Enabled in the Binance App. |
