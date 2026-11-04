@@ -46,6 +46,9 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         bytes32[] tokens;
         /// @dev whether the vault state was read (the current implementation serves the vault mode)
         bool vault;
+        /// @dev per sampled token: a gated 打新 sale the CURRENT implementation doesn't trade through the entry (status
+        ///      3); its entry views (getTokenInfo, tryBuy) change on purpose with the upgrade to the 打新 entry
+        bool[] newFairEntry;
     }
 
     function run() external override returns (Stack memory s) {
@@ -88,18 +91,19 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         uint64 wantVersion = _wantVersion(impl, v0, init);
 
         // the upgrade in the simulation, as the owner sends it; checked; rolled back
-        Snapshot memory before = _snapshot(p, s, _servesVaultMode(proxy));
+        Snapshot memory before = _snapshot(p, s, _servesVaultMode(proxy), new bool[](0));
         uint256 snap = vm.snapshotState();
         vm.prank(upgrader);
         ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
         if (R.implementationOf(proxy) != impl) revert WiringCheck("upgrade: implementation slot");
         (uint64 v1, bool initializing) = R.initState(proxy);
         if (v1 != wantVersion || initializing) revert WiringCheck("upgrade: initialized version");
-        Snapshot memory afterUp = _snapshot(p, s, before.vault);
+        Snapshot memory afterUp = _snapshot(p, s, before.vault, before.newFairEntry);
         if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
         for (uint256 i; i < before.tokens.length; i++) {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
         }
+        _checkNewFairEntry(p, before.newFairEntry);
         // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
         // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
         _checkPad3(s, c, x);
@@ -178,7 +182,15 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     ///      review: Pad3VaultStore's namespace is not in the compiler's layout, so only real data shows a moved
     ///      member). `vault` is whether the CURRENT implementation serves the vault mode: the first upgrade to it has
     ///      no vault state to compare (the views don't exist before it), every later one compares it.
-    function _snapshot(GangLaunchpad3 p, Stack memory s, bool vault) internal view returns (Snapshot memory snap) {
+    ///      `newFairEntry` (empty before the upgrade, `before.newFairEntry` after it): the sampled 打新 sales whose entry
+    ///      views are left out of both snapshots — the first upgrade to the 打新 entry changes them on purpose (status
+    ///      3 → 1, the quote); their records and every other view are still compared, and `_checkNewFairEntry` checks
+    ///      them after. Once the current implementation trades them (status 1), nothing is left out.
+    function _snapshot(GangLaunchpad3 p, Stack memory s, bool vault, bool[] memory newFairEntry)
+        internal
+        view
+        returns (Snapshot memory snap)
+    {
         snap.vault = vault;
         address[] memory callers = _callers();
         bool[] memory listed = new bool[](callers.length);
@@ -207,9 +219,37 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         uint256 n = p.tokenCount();
         uint256 k = n < SAMPLE ? n : SAMPLE;
         snap.tokens = new bytes32[](k);
+        bool given = newFairEntry.length == k;
+        snap.newFairEntry = given ? newFairEntry : new bool[](k);
         for (uint256 i; i < k; i++) {
             address t = p.allTokens(n - 1 - i);
-            snap.tokens[i] = keccak256(abi.encode(_raw(p, t), _derived(p, t), vault ? _vaultState(p, t) : bytes("")));
+            if (!given) snap.newFairEntry[i] = _fairNotYetRouted(p, t);
+            snap.tokens[i] = keccak256(
+                abi.encode(_raw(p, t), _derived(p, t, snap.newFairEntry[i]), vault ? _vaultState(p, t) : bytes(""))
+            );
+        }
+    }
+
+    /// @dev A gated 打新 sale still minting that `p` reports as not traded through its entry (status 3).
+    function _fairNotYetRouted(GangLaunchpad3 p, address t) internal view returns (bool) {
+        if (p.kindOf(t) != 2) return false;
+        (,,,,,, bool launched,,, address gate,,,,) = p.sales(t);
+        if (launched || gate == address(0)) return false;
+        (uint8 status,,,,) = p.getTokenInfo(t);
+        return status == 3;
+    }
+
+    /// @dev After the upgrade, each sale `_fairNotYetRouted` found is traded through the entry (status 1).
+    function _checkNewFairEntry(GangLaunchpad3 p, bool[] memory newFairEntry) internal view {
+        uint256 n = p.tokenCount();
+        for (uint256 i; i < newFairEntry.length; i++) {
+            if (!newFairEntry[i]) continue;
+            address t = p.allTokens(n - 1 - i);
+            (uint8 status,,, uint256 feeBps, uint256 left) = p.getTokenInfo(t);
+            (,,,,, uint16 sold,, uint16 mintFeeBps,,, uint128 price,,,) = p.sales(t);
+            if (status != 1 || feeBps != mintFeeBps || left != (10_000 - uint256(sold)) * price) {
+                revert WiringCheck("upgrade: a gated fair-mint sale not traded through the entry");
+            }
         }
     }
 
@@ -234,9 +274,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     }
 
     /// @dev Each through a raw staticcall: a view that reverts for this kind of token records its revert data.
-    function _derived(GangLaunchpad3 p, address t) internal view returns (bytes memory d) {
+    /// @dev `skipEntry`: leave out the entry views (index 0 getTokenInfo, 5 tryBuy) — see `_snapshot`.
+    function _derived(GangLaunchpad3 p, address t, bool skipEntry) internal view returns (bytes memory d) {
         bytes[] memory calls = _derivedCalls(t);
         for (uint256 i; i < calls.length; i++) {
+            if (skipEntry && (i == 0 || i == 5)) continue;
             (bool ok, bytes memory ret) = address(p).staticcall(calls[i]);
             d = bytes.concat(d, abi.encode(ok, ret));
         }

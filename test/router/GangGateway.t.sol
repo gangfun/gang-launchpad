@@ -187,6 +187,11 @@ contract GangGatewayTest is GangFixture {
 
     /// @dev The aggregator entry under test: GangGateway as deployed (test/gang3/Pad3AsGateway.t.sol re-runs this
     ///      suite with GangLaunchpad 3.0's built-in entry forwarding to this pad instead).
+    /// @dev Whether the entry under test trades 打新 sales (GangLaunchpad 3.0's does; GangGateway doesn't).
+    function _tradesFair() internal view virtual returns (bool) {
+        return false;
+    }
+
     function _newGateway(address reg_) internal virtual returns (address) {
         stack = G.deploy(reg_, address(wbnb), owner, R.MAINNET_MIN_DELAY);
         return stack.proxy;
@@ -353,11 +358,18 @@ contract GangGatewayTest is GangFixture {
     function test_info_fairMintingThenLaunched() public {
         address t = _createFair(creator, address(0), 1);
         (uint8 status, address quote, address pair, uint256 feeBps, uint256 left) = gw.getTokenInfo(t);
-        assertEq(status, 3);
-        assertEq(feeBps, 0);
+        if (_tradesFair()) {
+            // 3.0's entry: a gated sale is tradable (1), with its mint fee and what is left of the raise
+            assertEq(status, 1);
+            assertEq(feeBps, 100);
+            assertEq(left, 9_999 * 0.001 ether);
+        } else {
+            assertEq(status, 3);
+            assertEq(feeBps, 0);
+            assertEq(left, 0);
+        }
         assertEq(quote, address(0));
         assertEq(pair, address(0));
-        assertEq(left, 0);
         _fill(t);
         (status,, pair, feeBps,) = gw.getTokenInfo(t);
         assertEq(status, 2);
@@ -553,7 +565,8 @@ contract GangGatewayTest is GangFixture {
         address fair = _createFair(creator, address(0), 1);
         address fake = address(new LookAlikeToken(address(pad)));
         address[3] memory bad = [fair, fake, address(quoteTok)];
-        for (uint256 i; i < bad.length; i++) {
+        // GangLaunchpad 3.0's entry trades a gated 打新 sale (test/gang3/Pad3FairEntry.t.sol): only the other two
+        for (uint256 i = _tradesFair() ? 1 : 0; i < bad.length; i++) {
             vm.prank(alice, alice);
             vm.expectRevert(IGangGateway.NotCurveToken.selector);
             gw.buyTokenAMAP{value: 0.01 ether}(bad[i], alice, 0.01 ether, 0);

@@ -76,12 +76,13 @@ interface IGangLaunchpad3 {
     error NotWhitelisted();
     /// @notice `setCaller(caller, true)` on an address without code, or an EIP-7702-delegated EOA.
     error NotAContract();
-    /// @notice Not a token the aggregator entry trades now (not a Gang token, a 打新 token, graduated / launched, a
-    ///         launched 铸币飞轮 token: any sell or a buy without post-launch minting).
+    /// @notice Not a token the aggregator entry trades now (not a Gang token, graduated / launched — a launched 打新
+    ///         sale included —, a launched 铸币飞轮 token: any sell or a buy without post-launch minting).
     error NotCurveToken();
-    /// @notice 铸币飞轮 buy: `funds` does not pay for one share.
+    /// @notice 打新 / 铸币飞轮 buy: `funds` does not pay for one share (its price plus the mint fee).
     error FundsTooLow();
-    /// @notice 铸币飞轮 sell: `amount` is 0 or not whole shares.
+    /// @notice 打新 / 铸币飞轮 sell: `amount` is 0 or not whole shares (打新: 50,000 tokens a share; 铸币飞轮: the
+    ///         token's pad's TOKENS_PER_SHARE).
     error NotWholeShares();
     /// @notice `feeRate` above MAX_FEE_RATE (500 = 5%).
     error FeeRateTooHigh();

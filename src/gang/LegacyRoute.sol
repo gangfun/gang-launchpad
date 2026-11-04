@@ -10,10 +10,31 @@ import {IGangLaunchpad3} from "./interfaces/IGangLaunchpad3.sol";
 import {IFlywheelPad} from "../flywheel/interfaces/IFlywheelPad.sol";
 import {IGangGatewayPad, IGangGatewayFlywheel} from "../router/GangGateway.sol";
 
+/// @dev What LegacyRoute calls for a 打新 sale (kind 2) of GangLaunchpad 1.0 / 2.0: their router entry points, as
+///      deployed (`mintFor` pulls exactly cost + fee from the router, no refund; `withdrawFor` pulls the trader's
+///      tokens with the allowance the trader gave the router and pays the router).
+interface IERC721Balance {
+    function balanceOf(address owner) external view returns (uint256);
+}
+
+interface IGangFairPad {
+    function previewMint(address token, address user, uint256 shares)
+        external
+        view
+        returns (uint256 accepted, uint256 cost, uint256 fee);
+    function mintFor(address trader, address token, uint256 shares, uint256 minShares)
+        external
+        returns (uint256 accepted);
+    function withdrawFor(address trader, address token, uint256 shares, uint256 minPayout)
+        external
+        returns (uint256 payout);
+    function exitFeeBpsOf(address token) external view returns (uint256);
+}
+
 /// @title LegacyRoute — GangLaunchpad 3.0's aggregator entry for tokens of the pads before it
 /// @notice External library, delegatecalled by GangLaunchpad3: GangGateway's logic (V2, AUDIT-BRIEF §25–§26) for the
-///         tokens of the other pads GangPadRegistry trusts (1.0, 2.0, the vault pad: kind 1 curves; 铸币飞轮 V1 / V2:
-///         kind 3), with 3.0 as the listed router on those pads (each pad's `setRouter(3.0, true)`). Running on the
+///         tokens of the other pads GangPadRegistry trusts (1.0, 2.0, the vault pad: kind 1 curves; 1.0 / 2.0: kind 2
+///         打新 sales, gated ones, before launch; 铸币飞轮 V1 / V2: kind 3), with 3.0 as the listed router on those pads (each pad's `setRouter(3.0, true)`). Running on the
 ///         pad, it spends only what the caller paid in for the trade: the pad wraps / pulls the funds first and
 ///         checks afterwards that its own balance of the quote is back where it was (EscrowMoved), so a forwarded
 ///         trade never reaches the escrow of 3.0's own tokens. Every rule of the old pads stays theirs (price, fee,
@@ -34,6 +55,9 @@ library LegacyRoute {
     uint8 internal constant STATUS_CURVE = 1;
     uint8 internal constant STATUS_POOL = 2;
     uint8 internal constant STATUS_MINTING = 3;
+    /// @dev 1.0 / 2.0 打新: 10,000 shares of 50,000 tokens (FairLogic; the same in both, read on chain)
+    uint256 internal constant FAIR_TOTAL_SHARES = 10_000;
+    uint256 internal constant FAIR_TOKENS_PER_SHARE = 50_000 ether;
 
     // ---------------------------------------------------------------- views (GangGateway's)
     /// @notice getTokenInfo for a token of another registered pad; the quote as the token's own (WBNB stays WBNB).
@@ -51,9 +75,12 @@ library LegacyRoute {
             return (STATUS_CURVE, q, address(0), PROTOCOL_FEE_BPS, gradAmt - realQuote);
         }
         if (kind == KIND_FAIR) {
-            (,,,, address q,, bool launched,,,,, address p,,) = IGangGatewayPad(pad).sales(token);
+            (,,,, address q, uint16 sold, bool launched, uint16 mintFeeBps,, address gate, uint128 price, address p,,) =
+                IGangGatewayPad(pad).sales(token);
             if (launched) return (STATUS_POOL, q, p, 0, 0);
-            return (STATUS_MINTING, q, address(0), 0, 0);
+            // gated: tradable through 3.0 (its `mintFor` / `withdrawFor`), as 3.0's own sales; ungated stays 3 (A-2)
+            if (gate == address(0)) return (STATUS_MINTING, q, address(0), 0, 0);
+            return (STATUS_CURVE, q, address(0), mintFeeBps, (FAIR_TOTAL_SHARES - sold) * price);
         }
         if (kind == KIND_FLY) {
             IGangGatewayFlywheel f = IGangGatewayFlywheel(pad);
@@ -64,18 +91,24 @@ library LegacyRoute {
     }
 
     /// @notice tryBuy's estimates for a token of another registered pad (all 0 when the buy would revert).
+    ///         `byShares`: a 打新 / 铸币飞轮 buy fills whole shares, spending `estimatedCost` (≤ funds) exactly.
     function tryBuy(IGangPadRegistry registry, address token, address trader, uint256 funds)
         external
         view
-        returns (address quote, uint256 estimatedAmount, uint256 estimatedCost, uint256 estimatedFee)
+        returns (address quote, uint256 estimatedAmount, uint256 estimatedCost, uint256 estimatedFee, bool byShares)
     {
         uint8 status;
         (status, quote,,,) = info(registry, token);
         (address pad, uint8 kind) = registry.lookup(token);
-        if (status == STATUS_NONE) return (quote, 0, 0, 0);
+        if (status == STATUS_NONE) return (quote, 0, 0, 0, false);
+        byShares = kind != KIND_CURVE;
         if (kind == KIND_FLY) {
             (, estimatedAmount, estimatedCost, estimatedFee) =
                 _flyQuote(IGangGatewayFlywheel(pad), token, trader, funds);
+        } else if (kind == KIND_FAIR) {
+            if (status == STATUS_CURVE) {
+                (estimatedAmount, estimatedCost, estimatedFee) = _fairQuote(pad, token, trader, funds);
+            }
         } else if (status == STATUS_CURVE) {
             IGangGatewayPad p = IGangGatewayPad(pad);
             if (p.routers(address(this)) && p.agentGateEnabled()) {
@@ -103,6 +136,13 @@ library LegacyRoute {
             uint256 principal = shares * s.basePrice;
             fee = (principal * f.exitFeeBpsOf(token)) / BPS;
             funds = principal - fee;
+        } else if (kind == KIND_FAIR) {
+            (,,,,, uint16 sold,,,,, uint128 price,,,) = IGangGatewayPad(pad).sales(token);
+            uint256 shares = _fairShares(amount);
+            if (shares == 0 || shares > sold) return (quote, 0, 0);
+            uint256 principal = shares * price;
+            fee = (principal * IGangFairPad(pad).exitFeeBpsOf(token)) / BPS;
+            funds = principal - fee;
         } else {
             (funds, fee) = registry.previewSell(token, address(0), amount);
         }
@@ -122,6 +162,10 @@ library LegacyRoute {
             IFlywheelPad.Sale memory s = IGangGatewayFlywheel(pad).sales(token);
             if (s.launched && !s.postMint) revert IGangLaunchpad3.NotCurveToken();
             quote = s.quote;
+        } else if (kind == KIND_FAIR) {
+            bool launched;
+            (,,,, quote,, launched,,,,,,,) = IGangGatewayPad(pad).sales(token);
+            if (launched) revert IGangLaunchpad3.NotCurveToken();
         } else {
             revert IGangLaunchpad3.NotCurveToken();
         }
@@ -137,6 +181,8 @@ library LegacyRoute {
         uint256 tokensBefore = IERC20(token).balanceOf(to);
         if (kind == KIND_FLY) {
             fundsUsed = _flyBuy(IGangGatewayFlywheel(p), token, to, funds, minAmount);
+        } else if (kind == KIND_FAIR) {
+            fundsUsed = _fairBuy(p, token, to, funds, minAmount);
         } else {
             IGangGatewayPad pad = IGangGatewayPad(p);
             (, address q,,,,,,,,,,) = pad.curves(token);
@@ -171,6 +217,16 @@ library LegacyRoute {
             quote = IERC20(s.quote);
             base = quote.balanceOf(address(this));
             f.withdrawFor(from, token, shares, 0);
+        } else if (kind == KIND_FAIR) {
+            (,,,, address q,, bool launched,,, address gate,,,,) = IGangGatewayPad(p).sales(token);
+            if (launched) revert IGangLaunchpad3.NotCurveToken();
+            // the entry trades no ungated sale either way (status 3), as 3.0's own
+            if (gate == address(0)) revert IGangLaunchpad.RouterNeedsGate();
+            uint256 shares = _fairShares(amount);
+            if (shares == 0) revert IGangLaunchpad3.NotWholeShares();
+            quote = IERC20(q);
+            base = quote.balanceOf(address(this));
+            IGangFairPad(p).withdrawFor(from, token, shares, 0);
         } else if (kind == KIND_CURVE) {
             IGangGatewayPad pad = IGangGatewayPad(p);
             (, address q,,,,, bool graduated,,,,,) = pad.curves(token);
@@ -183,6 +239,66 @@ library LegacyRoute {
         }
         funds = quote.balanceOf(address(this)) - base;
         emit IGangLaunchpad3.Routed(token, p, from, false, funds, amount);
+    }
+
+    // ---------------------------------------------------------------- internal: 1.0 / 2.0 打新 (kind 2)
+    /// @dev The most whole shares `funds` pays for (share price plus mint fee), minted for `to` through the old pad's
+    ///      `mintFor` (it pulls exactly cost + fee from this pad); the unspent part goes back to `to`.
+    function _fairBuy(address p, address token, address to, uint256 funds, uint256 minAmount)
+        private
+        returns (uint256 fundsUsed)
+    {
+        (,,,, address q,,, uint16 mintFeeBps,, address gate, uint128 price,,,) = IGangGatewayPad(p).sales(token);
+        // A-2 here too, not only in the older pad's `mintFor`
+        if (gate == address(0)) revert IGangLaunchpad.RouterNeedsGate();
+        uint256 shares = _fairSharesFor(price, mintFeeBps, funds);
+        if (shares == 0) revert IGangLaunchpad3.FundsTooLow();
+        IERC20 quote = IERC20(q);
+        uint256 before = quote.balanceOf(address(this));
+        quote.forceApprove(p, funds);
+        IGangFairPad(p).mintFor(to, token, shares, Math.ceilDiv(minAmount, FAIR_TOKENS_PER_SHARE));
+        quote.forceApprove(p, 0);
+        fundsUsed = before - quote.balanceOf(address(this));
+        if (funds > fundsUsed) quote.safeTransfer(to, funds - fundsUsed);
+    }
+
+    /// @dev `_fairBuy`'s quote: the old pad's own `previewMint` for the whole shares `funds` pays for (it applies the
+    ///      cap and the last-fill cut); 0s for an unlisted 3.0 or a non-Agent (previewMint does not check the gate).
+    ///      Called for a gated sale only (`info` status 1).
+    function _fairQuote(address p, address token, address trader, uint256 funds)
+        private
+        view
+        returns (uint256 amountOut, uint256 cost, uint256 fee)
+    {
+        if (!IGangGatewayPad(p).routers(address(this))) return (0, 0, 0);
+        (,,,,,,, uint16 mintFeeBps,, address gate, uint128 price,,,) = IGangGatewayPad(p).sales(token);
+        // `trader` = 0: a fresh Agent wallet (the fill checks the Agent); a gate that reverts reads as "no"
+        if (trader != address(0)) {
+            try IERC721Balance(gate).balanceOf(trader) returns (uint256 n) {
+                if (n == 0) return (0, 0, 0);
+            } catch {
+                return (0, 0, 0);
+            }
+        }
+        uint256 want = _fairSharesFor(price, mintFeeBps, funds);
+        if (want == 0) return (0, 0, 0);
+        uint256 shares;
+        (shares, cost, fee) = IGangFairPad(p).previewMint(token, trader, want);
+        if (shares == 0) return (0, 0, 0);
+        return (shares * FAIR_TOKENS_PER_SHARE, cost + fee, fee);
+    }
+
+    function _fairSharesFor(uint256 price, uint256 mintFeeBps, uint256 funds) private pure returns (uint256 n) {
+        if (funds > type(uint128).max) funds = type(uint128).max;
+        n = (funds * BPS) / (price * (BPS + mintFeeBps));
+        if (n > FAIR_TOTAL_SHARES) n = FAIR_TOTAL_SHARES;
+        uint256 next = (n + 1) * price;
+        if (n < FAIR_TOTAL_SHARES && next + (next * mintFeeBps) / BPS <= funds) n++;
+    }
+
+    function _fairShares(uint256 amount) private pure returns (uint256) {
+        if (amount == 0 || amount % FAIR_TOKENS_PER_SHARE != 0) return 0;
+        return amount / FAIR_TOKENS_PER_SHARE;
     }
 
     // ---------------------------------------------------------------- internal: 铸币飞轮 (kind 3), as GangGateway V2

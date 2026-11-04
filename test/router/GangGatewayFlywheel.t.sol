@@ -87,7 +87,13 @@ contract GangGatewayFlywheelTest is FlywheelFixture {
         assertEq(tm, address(gw));
         assertEq(q, address(0), "BNB quote");
         assertEq(approval, 0);
-        assertEq(msgValue, amount == 0 ? 0 : funds);
+        // GangLaunchpad 3.0's entry: exactly the whole shares' cost to send (audit 2C M1); GangGateway: the funds
+        assertEq(msgValue, amount == 0 ? 0 : (_exactShareCost() ? cost : funds));
+    }
+
+    /// @dev Whether the entry under test reports a share buy's exact cost as the value to send (3.0's does).
+    function _exactShareCost() internal view virtual returns (bool) {
+        return false;
     }
 
     function _trySell(address t, uint256 amount) internal view returns (uint256 funds, uint256 fee) {
