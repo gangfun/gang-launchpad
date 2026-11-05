@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -119,6 +119,7 @@ contract Pad3ModulesForkTest is Test {
                 assertEq(R.implementationOf(PAD3), impl);
             }
         }
+        console.log("3.0 implementation under test", R.implementationOf(PAD3));
 
         if (!live) _guards();
 

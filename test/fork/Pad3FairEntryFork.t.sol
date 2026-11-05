@@ -53,9 +53,6 @@ contract Pad3FairEntryForkTest is Test {
             vm.skip(true);
             return;
         }
-        // under gas metering the upgrade script's run ends in OutOfGas at any gas limit, on this file's base commit too
-        // (cause not tracked down); paused, it completes. This test doesn't measure gas.
-        vm.pauseGasMetering();
         vm.createSelectFork(rpc);
         uint256 pk = uint256(keccak256("GangLaunchpad 3.0 fair-entry fork test: throwaway, never funded"));
         vm.deal(vm.addr(pk), 1 ether);

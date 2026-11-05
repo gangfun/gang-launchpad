@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
+import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
@@ -169,6 +173,16 @@ contract Pad3CutoverForkTest is Test {
         }
         vm.createSelectFork(rpc);
         vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        // PAD3_FORK_THIS_BUILD: this build's implementation, as the Safe would upgrade to it. Otherwise: the live one.
+        if (vm.envOr("PAD3_FORK_THIS_BUILD", false)) {
+            Pad3Impl.Deps memory d = Pad3Impl.depsOf(p);
+            (, Pad3Impl.FlyDeps memory fd) = Pad3Impl.flyDepsOf(p);
+            address impl = Pad3Impl.implWith(d, Pad3Impl.module(d, fd));
+            vm.prank(SAFE);
+            ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
+            assertEq(R.implementationOf(PAD3), impl);
+        }
+        console.log("3.0 implementation under test", R.implementationOf(PAD3));
 
         address curve1 = _liveCurve(PAD_1);
         address curve2 = _liveCurve(PAD_2);

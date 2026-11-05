@@ -6,6 +6,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
 import {FlyUpgradeHarness, Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
+import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../../src/gang/Pad3Module.sol";
@@ -60,8 +61,6 @@ contract Pad3PromoteUpgradeForkTest is Test {
             vm.skip(true);
             return false;
         }
-        // under gas metering the upgrade script's run ends in OutOfGas at any gas limit (Pad3VaultUpgradeFork says more)
-        vm.pauseGasMetering();
         vm.createSelectFork(rpc);
         // the view doesn't exist before the upgrade
         (bool ok, bytes memory ret) = PAD3.staticcall(abi.encodeCall(Pad3Module.promoteOf, (p.allTokens(0))));
@@ -73,7 +72,7 @@ contract Pad3PromoteUpgradeForkTest is Test {
         _env(pk);
         (FlyUpgradeHarness h, UpgradeGangLaunchpad3.Stack memory st) = Pad3LiveUpgrade.check();
         address impl = Pad3LiveUpgrade.execute(h, st, SAFE);
-        assertEq(impl, h.deployedImpl());
+        assertEq(R.implementationOf(PAD3), impl, "the proxy runs this build");
 
         (uint16 liveShare,) = pm.promoteOf(p.allTokens(0));
         assertEq(liveShare, 0, "a live token has no terms");
@@ -160,12 +159,14 @@ contract Pad3PromoteUpgradeForkTest is Test {
         uint256 got = pm.claimPromoterFee(t, promoter);
         assertEq(got, owed);
         assertEq(wbnb.balanceOf(promoter), owed);
+        uint256 keptNow = p.creatorFeeOf(t);
         vm.prank(creator);
-        p.claimCreatorFee(t, creator);
+        assertEq(p.claimCreatorFee(t, creator), keptNow);
+        assertEq(wbnb.balanceOf(creator), keptNow);
         assertEq(address(p).balance, 0, "no BNB stays on the pad");
     }
 
-    /// @dev The real Agent ID registry, not the mock: both the buyer and the promoter need one.
+    /// @dev The real Agent ID registry, not the mock: a wallet without one can't buy.
     function test_fork_promote_realAgentGate() public {
         if (!_upgrade()) return;
         address t = _create(address(0), address(0), _noTax());
@@ -179,8 +180,42 @@ contract Pad3PromoteUpgradeForkTest is Test {
         assertFalse(pm.canBind(t, address(0), promoter), "no wallet: the real registry would revert");
     }
 
-    /// @dev Through the live GangRouter: a bound wallet's buy pays; its sell as the router makes it (`sellFor`) pays; the
-    ///      router can't name a promoter.
+    /// @dev The real registry with real holders (live tokens' creators): a promoter without an Agent ID is ignored and the
+    ///      buy goes on; with both holding one, the wallet is bound and the promoter earns.
+    function test_fork_promote_realAgentHolders() public {
+        if (!_upgrade()) return;
+        address t = _create(address(0), address(0), _noTax());
+        vm.clearMockedCalls();
+        address a;
+        address b;
+        uint256 n = p.tokenCount();
+        for (uint256 i = 1; i < n && b == address(0); i++) {
+            (address c,,,,,,,,,,,) = p.curves(p.allTokens(i));
+            if (c == address(0) || c == creator || c == a) continue;
+            if (IERC721(M.AGENT_ID_REGISTRY).balanceOf(c) == 0) continue;
+            if (a == address(0)) a = c;
+            else b = c;
+        }
+        assertTrue(a != address(0) && b != address(0), "two real holders");
+        assertFalse(pm.canBind(t, a, promoter), "a promoter without an Agent ID");
+        assertTrue(pm.canBind(t, a, b), "both hold one");
+        vm.deal(a, 1 ether);
+        vm.deal(b, 1 ether);
+        vm.prank(b, b);
+        pm.buyWithPromoter{value: GROSS}(t, GROSS, 0, promoter);
+        (address none,, bool traded) = pm.bindingOf(t, b);
+        assertEq(none, address(0), "ignored");
+        assertTrue(traded, "the buy went on");
+        assertGt(IERC20(t).balanceOf(b), 0);
+        vm.prank(a, a);
+        pm.buyWithPromoter{value: GROSS}(t, GROSS, 0, b);
+        (address bound,,) = pm.bindingOf(t, a);
+        assertEq(bound, b);
+        assertEq(pm.promoterFeeOf(t, b), _cut(GROSS));
+    }
+
+    /// @dev A bound wallet's buy through the live GangRouter pays. The router has no sell entry, so `sellFor` is called
+    ///      from its address. It can't name a promoter.
     function test_fork_promote_liveRouter() public {
         if (!_upgrade()) return;
         address t = _create(address(0), address(0), _noTax());
@@ -208,7 +243,7 @@ contract Pad3PromoteUpgradeForkTest is Test {
     }
 
     /// @dev Into a real Pancake pair: a buy naming a promoter crosses the line; what's owed stays claimable; the buy after
-    ///      it is refused. Same trades on a plain token graduate the same.
+    ///      it is refused.
     function test_fork_promote_graduation() public {
         if (!_upgrade()) return;
         address t = _create(address(0), address(0), _noTax());
@@ -233,9 +268,9 @@ contract Pad3PromoteUpgradeForkTest is Test {
 
         uint256 owed = pm.promoterFeeOf(t, promoter);
         assertGt(owed, _cut(GROSS));
-        assertEq(
-            wbnb.balanceOf(PAD3), padBefore + p.creatorFeeOf(t) + owed + _dust(padBefore, t, owed), "only fees stay"
-        );
+        // only the fees stay, and the graduation cut's known dust (a wei or two)
+        uint256 d = wbnb.balanceOf(PAD3) - padBefore - p.creatorFeeOf(t) - owed;
+        assertLe(d, 2, "only fees stay");
         address late = _agent();
         assertFalse(pm.canBind(t, late, promoter));
         vm.prank(late, late);
@@ -244,8 +279,10 @@ contract Pad3PromoteUpgradeForkTest is Test {
 
         vm.prank(promoter);
         assertEq(pm.claimPromoterFee(t, promoter), owed);
+        uint256 kept = p.creatorFeeOf(t);
         vm.prank(creator);
-        p.claimCreatorFee(t, creator);
+        assertEq(p.claimCreatorFee(t, creator), kept);
+        assertEq(wbnb.balanceOf(PAD3), padBefore + d, "after the claims, only the dust");
     }
 
     /// @dev USDT quote: pulled with the wallet's allowance, the claim in USDT, the pad's USDT exactly its books.
@@ -314,12 +351,6 @@ contract Pad3PromoteUpgradeForkTest is Test {
     function _agent() internal returns (address a) {
         a = makeAddr(string.concat("promote-fork-agent-", vm.toString(_n++)));
         vm.deal(a, 10 ether);
-    }
-
-    /// @dev The known graduation-cut dust (at most a wei or two per graduation), measured.
-    function _dust(uint256 padBefore, address t, uint256 owed) internal view returns (uint256 d) {
-        d = wbnb.balanceOf(PAD3) - padBefore - p.creatorFeeOf(t) - owed;
-        require(d <= 2, "more than dust stays on the pad");
     }
 
     function _env(uint256 pk) internal {

@@ -52,9 +52,6 @@ contract Pad3FlyUpgradeForkTest is Test {
             vm.skip(true);
             return;
         }
-        // under gas metering the upgrade script's run ends in OutOfGas at any gas limit, on this file's base commit too
-        // (cause not tracked down); paused, it completes. This test doesn't measure gas.
-        vm.pauseGasMetering();
         vm.createSelectFork(rpc);
         uint256 pk = uint256(keccak256("GangLaunchpad 3.0 fly-mode fork test: throwaway, never funded"));
         vm.deal(vm.addr(pk), 1 ether);
@@ -62,7 +59,10 @@ contract Pad3FlyUpgradeForkTest is Test {
         _env(pk);
 
         FlyUpgradeHarness h = new FlyUpgradeHarness();
+        // the script's checks don't fit in BSC's block gas limit as one call of a test: see Pad3LiveUpgrade.check
+        vm.pauseGasMetering();
         UpgradeGangLaunchpad3.Stack memory s = h.run();
+        vm.resumeGasMetering();
         Pad3Impl.FlyDeps memory f = h.fly();
         assertEq(f.flyTokenDeployer, M.FLYWHEEL_TOKEN_DEPLOYER);
         FlywheelTaxHandler handler = FlywheelTaxHandler(f.flyTaxHandler);
@@ -75,7 +75,9 @@ contract Pad3FlyUpgradeForkTest is Test {
         vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(f.flyVaultCore));
         uint256 nonce = vm.getNonce(vm.addr(pk));
         FlyUpgradeHarness h2 = new FlyUpgradeHarness();
+        vm.pauseGasMetering();
         h2.run();
+        vm.resumeGasMetering();
         assertEq(vm.getNonce(vm.addr(pk)), nonce, "the re-run deploys nothing");
         Pad3Impl.FlyDeps memory f2 = h2.fly();
         assertEq(abi.encode(f2), abi.encode(f), "same dependencies");
