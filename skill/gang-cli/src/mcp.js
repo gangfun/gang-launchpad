@@ -146,13 +146,14 @@ export const TOOLS = [
     'Build a buy preview (curve, or the PancakeSwap pool once graduated). Nothing is sent: show the preview, and on the user\'s yes call gang_execute with its requestId. amount = what to pay, in the token\'s quote.',
     {
       token: ADDR, amount: AMOUNT, slippage: { type: 'number', minimum: 0, maximum: 50 }, follow: { ...HASH, description: 'Note tx to follow' }, ...NOTE, ref: REF,
+      promoter: { ...ADDR, description: 'Promoter of a token made with --promote: binds this wallet to it for good, on its first buy of the token, on the curve. Only the promoter the user gave' },
       useWbnb: { type: 'boolean', description: 'Curve buy of a WBNB-quoted token: pay WBNB instead of BNB' },
       useQuote: { type: 'boolean', description: 'Pool buy of a WBNB-quoted token: pay WBNB' },
       payBnb: { type: 'boolean', description: 'Pool buy of a token quoted in another token: pay BNB (BNB -> quote -> token)' },
       testnet: TESTNET,
     },
     (a) => ['buy', '--token', a.token, '--amount', String(a.amount), ...flag('slippage', a.slippage), ...flag('follow', a.follow),
-      ...noteFlags(a), ...flag('ref', a.ref), ...bool('use-wbnb', a.useWbnb), ...bool('use-quote', a.useQuote), ...bool('pay-bnb', a.payBnb),
+      ...noteFlags(a), ...flag('ref', a.ref), ...flag('promoter', a.promoter), ...bool('use-wbnb', a.useWbnb), ...bool('use-quote', a.useQuote), ...bool('pay-bnb', a.payBnb),
       ...bool('testnet', a.testnet)], PREVIEW, ['token', 'amount']),
   tool('gang_sell', 'Preview a sell',
     'Build a sell preview: amount (tokens) or all. Nothing is sent before gang_execute. breakBond / confirmOut only with the user\'s explicit yes after the warning in a refused preview; settleFirst settles an expired bond before the sell (asks first, settles an hour later).',
@@ -178,7 +179,7 @@ export const TOOLS = [
     { hash: HASH, pending: { type: 'boolean', description: 'Find the txs of trades approved in the Binance App (no hash needed)' }, testnet: TESTNET },
     (a) => (a.pending ? ['tx', '--pending'] : ['tx', '--hash', a.hash, ...bool('testnet', a.testnet)]), PREVIEW),
   tool('gang_cli', 'Other gang commands',
-    'Every other gang command, its flags as separate items (gang_help lists them all): create (V3; create --fair = fair mint; create --fly = Mint Flywheel; launch in one command with --dev-buy / --bond / --buyback / --split / --lp, several of the last three = one combined recipient), mint (--ref <inviter> on a Mint Flywheel token), withdraw, claim, release, fly open-early|launch|invite, quote, list, upload-logo, bond post|topup|raise-hold|extend|status|start|report|settle|refund|burn|tx, buyback status|set|set-payee|apply|bind|release|split|sweep, split status|distribute|release|set-payee|bind, lp status|set|set-payee|apply|bind|release|split|sweep|add, combo status|distribute|release|set-payee|bind|chunk, creator-fee [--token] [--claim [--to]] (GangLaunchpad 2.0 / 3.0: 70% of the curve fee, kept for the creator), v3 income, version; the flags no other tool takes (--calldata, --from, …) too. E.g. ["create","--name","My Token","--symbol","MYT","--logo","/Users/me/avatar.png"], ["bond","status","--token","0x…"]. Local files are read by this server: absolute paths, or --logo-uri <image URL>. Writes only preview, as above. execute / watch / help have their own tools.',
+    'Every other gang command, its flags as separate items (gang_help lists them all): create (V3; create --fair = fair mint; create --fly = Mint Flywheel; launch in one command with --dev-buy / --bond / --buyback / --split / --lp, several of the last three = one combined recipient), mint (--ref <inviter> on a Mint Flywheel token), promote status|earnings|claim|claim-pool|activate|work|sweep|bind|reclaim|release-dev (create --promote; gang_buy promoter), withdraw, claim, release, fly open-early|launch|invite, quote, list, upload-logo, bond post|topup|raise-hold|extend|status|start|report|settle|refund|burn|tx, buyback status|set|set-payee|apply|bind|release|split|sweep, split status|distribute|release|set-payee|bind, lp status|set|set-payee|apply|bind|release|split|sweep|add, combo status|distribute|release|set-payee|bind|chunk, creator-fee [--token] [--claim [--to]] (GangLaunchpad 2.0 / 3.0: 70% of the curve fee, kept for the creator), v3 income, version; the flags no other tool takes (--calldata, --from, …) too. E.g. ["create","--name","My Token","--symbol","MYT","--logo","/Users/me/avatar.png"], ["bond","status","--token","0x…"]. Local files are read by this server: absolute paths, or --logo-uri <image URL>. Writes only preview, as above. execute / watch / help have their own tools.',
     { args: { type: 'array', items: { type: 'string' }, minItems: 1 } }, (a) => a.args, { readOnlyHint: false, destructiveHint: false, openWorldHint: true }, ['args']),
 ]
 const BY_NAME = new Map(TOOLS.map((t) => [t.name, t]))

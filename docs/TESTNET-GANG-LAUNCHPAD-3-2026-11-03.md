@@ -218,3 +218,11 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 先发布一个错误的 root 并由 owner `veto`，再用同一区块发布正确的 root；`--check` 不带 `--prev` 从头复算，和链上一致。
 - 第一次 `work` 回滚 `PushStarved`：forge 按模拟用量估 gas，不够。这是预期行为，见规格 §6；之后用 `--gas-estimate-multiplier 500` 成功。
 - 争议期是真实的 2 天，所以领取在本地分叉上验证：争议期内领取回滚，到期后推广人和 dev 都领到准确金额，模块清零；第二期 `--prev` 结算、发布、`--check` 和领取都正确。真实链上的领取要等争议期结束。
+
+## CLI 0.31.0 的推广分成（2026-11-05）
+
+用 `gang … --testnet --calldata` 生成交易，再用 `cast send` 发到测试网（`baw` 不支持测试网）：
+
+- 带税发币 [`0x85895787e6D6c6BBB52C04B35b538FEE5EA7546E`](https://testnet.bscscan.com/address/0x85895787e6D6c6BBB52C04B35b538FEE5EA7546E)：`--promote` 依次走完克隆模块 [`0x7d16Ff6E27122e671B2D487Bf8ebd12850746A80`](https://testnet.bscscan.com/address/0x7d16Ff6E27122e671B2D487Bf8ebd12850746A80)、建币、`bind`；`gang buy --promoter` 用 BNB 买入并绑定，`gang promote claim` 领到准确金额。
+- 无税、其他计价币 [`0xEaCe59BEaE31B89975c84Af6F573CcF9C98763Ea`](https://testnet.bscscan.com/address/0xEaCe59BEaE31B89975c84Af6F573CcF9C98763Ea)：只有内盘分成，走授权后买入，在同一计价币里领取。
+- `gang promote claim-pool`（激活 root、领取、拒绝错误金额、手动给 `--cumulative` 和 `--proof`）只在本地分叉上验证，用假的 gang.fun 接口；真实链上的领取要等验收模块的争议期结束。
