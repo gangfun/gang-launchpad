@@ -34,6 +34,9 @@ const WBNB_MAINNET = '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c'
 const ROUTERS_MAINNET = [
   '0xec9717e5c68b9f18fa76d3961c9cd7e67b5e61e7', // GangRouter of 3.0
   '0x10ed43c718714eb63d5aa57b78b54704e256024e', // Pancake V2
+  '0x13f4ea83d0bd40e75c8222255bc855a974568dd4', // Pancake Smart Router: PancakeSwap's site may route through these three
+  '0xd9c500dff816a1da21a48a732d3498bf09dc9aeb', // Pancake Universal Router
+  '0x1a0a18ac4becddbd6389559687d1a73d8927e416', // Pancake Universal Router, earlier deployment
   '0x1de460f363af910f51726def188f9004276bf4bc', // the aggregator's three routers (docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md)
   '0xdb97fc3329ed1939012d56eceaef00be1c0cdff5',
   '0x3508dca95a64c9378cb07ef6f40553a50905372a',
