@@ -751,6 +751,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
             );
             console.log(string.concat("gang:", vm.toString(s.pad), "@", vm.toString(s.padBlock)));
             console.log("indexer: TradeV1 / TokenVersionSet are new; Buy / Sell / Created as 2.0");
+            console.log("indexer: PromoteSet / PromoterBound / PromoterFeeAccrued / PromoterFeeClaimed: promoter share");
         }
         console.log("PENDING: the handler's recipient listings (partners) are not copied; the Safe lists them");
         console.log("PENDING: modules (GangBond, Buyback / Split / LP / Combo factories + a GangHandlerAdmin) for 3.0");

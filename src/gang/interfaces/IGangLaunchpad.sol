@@ -131,7 +131,8 @@ interface IGangLaunchpad {
         uint256 quoteOut,
         uint256 realQuote
     );
-    /// @notice The creator's part of one curve trade's 1% fee (`CREATOR_FEE_SHARE_BPS` of it), kept for the creator.
+    /// @notice The creator's part of one curve trade's 1% fee (`CREATOR_FEE_SHARE_BPS` of it, less a bound promoter's
+    ///         part on 3.0's tokens with a promoter share), kept for the creator.
     event CreatorFeeAccrued(address indexed token, address indexed creator, uint256 amount);
     /// @notice The creator took everything kept for it on `token`, in the token's quote.
     event CreatorFeeClaimed(address indexed token, address indexed creator, address indexed to, uint256 amount);

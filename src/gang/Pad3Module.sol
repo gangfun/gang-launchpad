@@ -9,12 +9,14 @@ import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "./interfaces/IGangLaunchpad3.sol";
 import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
+import {IGangPromote} from "./interfaces/IGangPromote.sol";
 import {IGangPadToken, IGangPadHandler} from "./interfaces/IGangPadDeps.sol";
 import {PadCommon} from "./PadCommon.sol";
 import {CurveLogic3 as CurveLogic} from "./CurveLogic3.sol";
 import {FairLogic} from "./FairLogic.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {Pad3FlyStore} from "./Pad3FlyStore.sol";
+import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
 ///        address) and the pad's off-chain views (moved out of the pad for its 24 KB limit)
@@ -28,18 +30,28 @@ import {Pad3FlyStore} from "./Pad3FlyStore.sol";
 ///         1% wallet cap (the pad's `_lockedOf`), a release is not capped. A token's own vault never trades it on the
 ///         curve (the pad's `_checkCurveTrader`), and an address ever listed as a vault never becomes a router (the
 ///         pad's `setRouter`). Unlike GangVaultLaunchpad, the other creates stay open: 3.0 serves every mode.
+///         Also the promoter share's entries (docs/SPEC-PROMOTER-SHARE-2026-11-04.md): the split itself is CurveLogic3's.
 /// @dev STORAGE: slots 0–2 are OZ Ownable / Ownable2Step / ReentrancyGuard (the pad's `onlyOwner` and `nonReentrant`
 ///      act on the proxy's), then a mirror of GangLaunchpad3's variables in its order (only some are used here), which
 ///      test/gang3/GangLaunchpad3Layout.t.sol checks slot by slot against the pad's layout. Vault state is in
 ///      Pad3VaultStore's namespace. The dependencies are this module's own immutables, set to the pad's (the deploy
 ///      and upgrade scripts check they are equal).
-contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2Step, ReentrancyGuard {
+interface IWBNBDeposit {
+    function deposit() external payable;
+}
+
+contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangPromote, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
     uint8 internal constant KIND_FLY = 3;
     /// @notice Must equal GangLaunchpad3.TOKEN_VERSION (the scripts and tests check it).
     uint8 public constant TOKEN_VERSION = 1;
+    /// @notice The most of the creator's fee a promoter can get. A promoter thus earns at most 0.35% of a trade that pays
+    ///         1%: trading under your own link always costs more than it earns.
+    uint16 public constant MAX_PROMOTE_BPS = 5_000;
+    uint32 public constant MIN_PROMOTE_WINDOW = 7 days;
+    uint32 public constant MAX_PROMOTE_WINDOW = 90 days;
 
     // ---------------------------------------------------------------- mirror of GangLaunchpad3's layout (slot 3 on)
     Config internal _config;
@@ -191,7 +203,41 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
         if (msg.sender != v.vaultCreator[vault]) revert NotVaultCreator();
         delete v.vaultCreator[vault];
         emit VaultCreatorSet(vault, address(0));
-        // GangLaunchpad3._createCurve, line for line (test/gang3/Pad3Vault.t.sol compares the records)
+        token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
+        v.vaultOf[token] = vault;
+        emit VaultBound(token, vault);
+    }
+
+    /// @inheritdoc IGangPromote
+    function createWithPromote(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPool,
+        TaxConfig calldata tax,
+        uint256 gradBnb,
+        uint16 shareBps,
+        uint32 window
+    ) external nonReentrant returns (address token) {
+        if (shareBps == 0 || shareBps > MAX_PROMOTE_BPS || window < MIN_PROMOTE_WINDOW || window > MAX_PROMOTE_WINDOW) revert BadPromoteTerms();
+        token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
+        Pad3PromoteStore.layout().termsOf[token] = Pad3PromoteStore.Terms(shareBps, window);
+        emit PromoteSet(token, shareBps, window);
+    }
+
+    /// @dev GangLaunchpad3._createCurve, line for line (test/gang3/Pad3Vault.t.sol compares the records)
+    function _createCurve(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPool,
+        TaxConfig calldata tax,
+        uint256 gradBnb
+    ) private returns (address token) {
         token = CurveLogic.create(
             _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb
         );
@@ -201,8 +247,98 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, Ownable2S
         emit TokenVersionSet(token, TOKEN_VERSION);
         logoURIOf[token] = logoURI;
         allTokens.push(token);
-        v.vaultOf[token] = vault;
-        emit VaultBound(token, vault);
+    }
+
+    // ---------------------------------------------------------------- promoter share
+    /// @inheritdoc IGangPromote
+    /// @dev GangLaunchpad3.buyTokenAMAP's curve branch, with the binding first so the first trade already pays. Sent by
+    ///      the wallet itself: a binding is for good and takes part of the creator's fee, so no contract (one a wallet was
+    ///      talked into calling, or an open route of a listed one) ever names a promoter for it (audit L-1).
+    function buyWithPromoter(address token, uint256 funds, uint256 minAmount, address promoter)
+        external
+        payable
+        nonReentrant
+        returns (uint256 amountOut, uint256 fundsUsed)
+    {
+        address to = msg.sender;
+        if (to != tx.origin) revert TraderNotOrigin();
+        if (kindOf[token] != KIND_CURVE) revert NotCurveToken();
+        Curve storage cv = curves[token];
+        if (cv.graduated) revert NotCurveToken();
+        if (!_config.agentGateEnabled) revert RouterNeedsGate();
+        Pad3VaultStore.Layout storage v = Pad3VaultStore.layout();
+        if (to == v.vaultOf[token]) revert VaultCannotTrade();
+        IERC20 quote = IERC20(cv.quote);
+        _payIn(address(quote), funds);
+        if (_bindable(token, to, promoter)) {
+            Pad3PromoteStore.layout().bindingOf[token][to] =
+                Pad3PromoteStore.Binding(promoter, uint40(block.timestamp), true);
+            emit PromoterBound(token, to, promoter);
+        }
+        uint256 toBefore = quote.balanceOf(to);
+        amountOut = CurveLogic.buy(
+            _config, curves, creatorFeeOf, _deps(), to, token, funds, minAmount, v.lockedOf[token][to], true
+        );
+        fundsUsed = funds - (quote.balanceOf(to) - toBefore);
+        emit GatewayBuy(token, to, msg.sender, fundsUsed, amountOut);
+    }
+
+    /// @inheritdoc IGangPromote
+    function claimPromoterFee(address token, address to) external nonReentrant returns (uint256 amount) {
+        if (to == address(0) || to == address(this)) revert ZeroAddress();
+        Pad3PromoteStore.Layout storage l = Pad3PromoteStore.layout();
+        amount = l.feeOf[token][msg.sender];
+        if (amount == 0) revert ZeroAmount();
+        l.feeOf[token][msg.sender] = 0;
+        IERC20(curves[token].quote).safeTransfer(to, amount);
+        emit PromoterFeeClaimed(token, msg.sender, to, amount);
+    }
+
+    /// @inheritdoc IGangPromote
+    function promoteOf(address token) external view returns (uint16 shareBps, uint32 window) {
+        Pad3PromoteStore.Terms memory t = Pad3PromoteStore.layout().termsOf[token];
+        return (t.shareBps, t.window);
+    }
+
+    /// @inheritdoc IGangPromote
+    function bindingOf(address token, address wallet)
+        external
+        view
+        returns (address promoter, uint40 boundAt, bool traded)
+    {
+        Pad3PromoteStore.Binding memory b = Pad3PromoteStore.layout().bindingOf[token][wallet];
+        return (b.promoter, b.boundAt, b.traded);
+    }
+
+    /// @inheritdoc IGangPromote
+    function promoterFeeOf(address token, address promoter) external view returns (uint256) {
+        return Pad3PromoteStore.layout().feeOf[token][promoter];
+    }
+
+    /// @inheritdoc IGangPromote
+    function canBind(address token, address wallet, address promoter) external view returns (bool) {
+        return wallet != address(0) && _config.agentGateEnabled && !curves[token].graduated
+            && PadCommon.isAgent(_config, wallet) && _bindable(token, wallet, promoter);
+    }
+
+    /// @dev Bindings are for good, so this is the only way in: never a wallet that has traded the token, never the
+    ///      wallet itself or the creator as its promoter, and the promoter holds an Agent ID (the gate, when it's on).
+    function _bindable(address token, address wallet, address promoter) private view returns (bool) {
+        Pad3PromoteStore.Layout storage l = Pad3PromoteStore.layout();
+        return l.termsOf[token].shareBps != 0 && !l.bindingOf[token][wallet].traded && promoter != address(0)
+            && promoter != wallet && promoter != curves[token].creator && PadCommon.isAgent(_config, promoter);
+    }
+
+    /// @dev GangLaunchpad3._payIn: `funds` of `quote` into the pad, as WBNB from msg.value (== funds), else pulled exactly
+    ///      from msg.sender (a fee-on-transfer quote arrives short: FeeOnTransferQuote).
+    function _payIn(address quote, uint256 funds) private {
+        if (quote == wbnb) {
+            if (msg.value != funds) revert BadMsgValue();
+            IWBNBDeposit(wbnb).deposit{value: funds}();
+        } else {
+            if (msg.value != 0) revert BadMsgValue();
+            PadCommon.pullExact(quote, funds);
+        }
     }
 
     // ---------------------------------------------------------------- vault entries
