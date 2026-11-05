@@ -36,7 +36,7 @@ export const PROMOTE_PAD_ABI = parseAbi([
   'error BadPromoteTerms()', 'error TraderNotOrigin()', 'error NotCurveToken()', 'error BadMsgValue()', 'error ZeroAmount()',
   'event PromoteSet(address indexed token, uint16 shareBps, uint32 window)',
   'event PromoterBound(address indexed token, address indexed wallet, address indexed promoter)',
-  'event PromoterFeeAccrued(address indexed token, address indexed promoter, uint256 amount)',
+  'event PromoterFeeAccrued(address indexed token, address indexed promoter, address indexed wallet, uint256 amount)',
   'event PromoterFeeClaimed(address indexed token, address indexed promoter, address indexed to, uint256 amount)',
 ])
 

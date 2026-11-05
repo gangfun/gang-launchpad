@@ -8,10 +8,10 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { cloneCode, provenAmount, formatBinding, formatPool, leafOf, parsePromote, poolOf, promoteLine, verifyProof, wantsPoolModule, whyNoBind } from '../src/promote.js'
+import { cloneCode, provenAmount, PROMOTE_PAD_ABI, formatBinding, formatPool, leafOf, parsePromote, poolOf, promoteLine, verifyProof, wantsPoolModule, whyNoBind } from '../src/promote.js'
 import { isLaunch } from '../src/launch.js'
 import { unknownFlagError, CREATE_ACCEPTS } from '../src/flags.js'
-import { zeroAddress } from 'viem'
+import { toEventSignature, zeroAddress } from 'viem'
 
 const A = '0x1111111111111111111111111111111111111111'
 const B = '0x2222222222222222222222222222222222222222'
@@ -127,6 +127,13 @@ assert.equal(await poolOf(read, async () => undefined, A, FACTORY), null, 'a wal
 assert.equal(await poolOf(read, async () => cloneCode(IMPL), zeroAddress, FACTORY), null)
 assert.equal(await poolOf(read, async () => cloneCode(IMPL), A, null), null, 'no factory known')
 await assert.rejects(poolOf(read, async () => { throw new Error('rpc') }, A, FACTORY), /rpc/, 'an RPC error is not "not a module"')
+
+// ---- gang tx finds events by their hash: these are the contracts' signatures (src/gang/interfaces/IGangPromote.sol)
+const events = Object.fromEntries(PROMOTE_PAD_ABI.filter((x) => x.type === 'event').map((x) => [x.name, toEventSignature(x)]))
+assert.equal(events.PromoteSet, 'PromoteSet(address,uint16,uint32)')
+assert.equal(events.PromoterBound, 'PromoterBound(address,address,address)')
+assert.equal(events.PromoterFeeAccrued, 'PromoterFeeAccrued(address,address,address,uint256)')
+assert.equal(events.PromoterFeeClaimed, 'PromoterFeeClaimed(address,address,address,uint256)')
 
 // ---- refused before any RPC
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
