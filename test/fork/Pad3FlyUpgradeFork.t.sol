@@ -52,6 +52,9 @@ contract Pad3FlyUpgradeForkTest is Test {
             vm.skip(true);
             return;
         }
+        // under gas metering the upgrade script's run ends in OutOfGas at any gas limit, on this file's base commit too
+        // (cause not tracked down); paused, it completes. This test doesn't measure gas.
+        vm.pauseGasMetering();
         vm.createSelectFork(rpc);
         uint256 pk = uint256(keccak256("GangLaunchpad 3.0 fly-mode fork test: throwaway, never funded"));
         vm.deal(vm.addr(pk), 1 ether);
@@ -77,7 +80,8 @@ contract Pad3FlyUpgradeForkTest is Test {
         Pad3Impl.FlyDeps memory f2 = h2.fly();
         assertEq(abi.encode(f2), abi.encode(f), "same dependencies");
         (address[] memory to, bytes[] memory data) = h2.prep(s, M.KEEPER, SAFE);
-        assertEq(to.length, 6, "handler launchpad + keeper, deployer, bucket, vault core + operator");
+        // handler launchpad + keeper, deployer, bucket, vault core + operator: all done by the fly-mode upgrade
+        assertEq(to.length, 0, "the live wiring is done");
 
         vm.startPrank(SAFE);
         for (uint256 i; i < to.length; i++) {

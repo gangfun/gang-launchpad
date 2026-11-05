@@ -83,4 +83,5 @@ function canBind(address token, address wallet, address promoter) view returns (
 - 状态放在 ERC-7201 命名空间 `gang.pad3.promote`（`Pad3PromoteStore`），不动 pad 的顺序布局。`test/gang3/Pad3Promote.t.sol` 锁定槽位和成员位置。
 - 升级脚本比对最新 25 个币的条款。绑定和收益没法从 pad 列举，更老的币也不在样本里：有带推广分成的币之后，用 `PAD3_PROMOTE_PROBES` 传入币和钱包（来自 `PromoterBound` 日志）。样本里有这种币却没传，或者传的钱包没有绑定，脚本会打印警告，不会拦下升级。
 - 已有的币没有条款（`shareBps == 0`），这次升级不改变它们的任何规则，每笔交易只多一次存储读取。
+- `IGangLaunchpad.sol` 的源码（含注释）不能动：模块工厂的源码树里有它，改一个字元数据哈希就变，模块脚本和线上工厂的代码比对会失败。所以 `CreatorFeeAccrued` 的新含义写在 §4 和 `IGangPromote.sol`，不写进那个文件。
 - `TOKEN_VERSION` 不变：推广分成是发币时的可选项，不改变价格和手续费，和金库模式、飞轮模式的做法一致。

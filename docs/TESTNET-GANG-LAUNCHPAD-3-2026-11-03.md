@@ -197,3 +197,5 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 打新入口验收（`OLD_PADS` 同上）：21 笔，`broadcast/Pad3FairEntryTestnetAcceptance.s.sol/97/run-1793819875246.json`
 - 铸币飞轮验收：9 笔，`broadcast/Pad3FlyTestnetAcceptance.s.sol/97/run-1793819963405.json`
 - 金库验收（`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔，`broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793820045884.json`
+
+这次升级之后，源码只撤回了 `IGangLaunchpad.sol` 里的一句注释（模块工厂的源码树里有它，见推广分成规格 §6），并在 `IGangPromote.sol` 补了一句注释。合约逻辑没变，但测试网上的实现和最终源码差元数据哈希。

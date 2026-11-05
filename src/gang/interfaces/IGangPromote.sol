@@ -12,6 +12,7 @@ interface IGangPromote {
     /// @notice `wallet`'s first trade of `token` named `promoter`, for good.
     event PromoterBound(address indexed token, address indexed wallet, address indexed promoter);
     /// @notice A curve trade by `wallet` earned `promoter` this much, out of the creator's fee, in the token's quote.
+    ///         That trade's `CreatorFeeAccrued` is what the creator got after this.
     event PromoterFeeAccrued(address indexed token, address indexed promoter, address indexed wallet, uint256 amount);
     event PromoterFeeClaimed(address indexed token, address indexed promoter, address indexed to, uint256 amount);
 
