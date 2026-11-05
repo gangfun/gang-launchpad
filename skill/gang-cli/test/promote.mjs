@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { cloneCode, provenAmount, PROMOTE_PAD_ABI, formatBinding, formatPool, leafOf, parsePromote, poolOf, promoteLine, verifyProof, wantsPoolModule, whyNoBind } from '../src/promote.js'
+import { checkPromoter, cloneCode, firstBuyWarning, promoteField, promoteTermsOf, provenAmount, PROMOTE_PAD_ABI, formatBinding, formatPool, leafOf, parsePromote, poolOf, promoteLine, verifyProof, wantsPoolModule, whyNoBind } from '../src/promote.js'
 import { isLaunch } from '../src/launch.js'
 import { unknownFlagError, CREATE_ACCEPTS } from '../src/flags.js'
 import { toEventSignature, zeroAddress } from 'viem'
@@ -171,6 +171,37 @@ for (const typo of [['--promoter=' + A], ['--promotor', A], ['--promote', A], ['
 refused(['buy', '--token', A, '--amount', '1', '--from', A, '--testnet', '--yes'], /not a flag of a buy/)
 refused([...base, '--promote', '10', '--buy-tax', '3', '--sell-tax', '3', '--dividend', '150'], /--dividend must be/)
 refused(['follow', `0x${'12'.repeat(32)}`, '--amount', '1', '--promoter', A, '--testnet'], /gang buy only/)
+// a dash a chat app changed, one hyphen, or no hyphen: no parser sees these, so they must not become a plain buy
+for (const word of ['-promoter', '\u2014promoter', '\u2013promoter', '\u2014\u2014promoter', '\u2212promoter', '-p', 'promoter', 'Promoter=' + A]) {
+  refused(['buy', '--token', A, '--amount', '1', '--from', A, '--testnet', word, A], /is not a flag: flags start with two plain hyphens/)
+}
 refused([...base, '--fly', '--promote', '10'], /for V3 curve tokens/)
+
+// ---- an RPC error is not "no terms": that answer would send a buyer to a plain buy, which can never bind
+const rpcDown = Object.assign(new Error('HTTP 429'), { walk: () => null })
+const reverted = Object.assign(new Error('execution reverted'), { walk: (f) => (f({ code: 3 }) ? { code: 3 } : null) })
+const ctxFailing = (e) => ({ pad: A, gen: '3.0', read: async () => { throw e } })
+const T0 = `0x${'cd'.repeat(20)}`
+{
+  const down = await checkPromoter(ctxFailing(rpcDown), { token: T0, me: A, raw: A, creator: T0 })
+  assert.match(down.refuse, /could not read the promoter terms \(RPC error\).*don't switch to a plain gang buy/)
+  assert.equal(down.retry, 'same command again')
+  const none = await checkPromoter(ctxFailing(reverted), { token: T0, me: A, raw: A, creator: T0 })
+  assert.match(none.refuse, /has no promoter share/)
+  assert.equal(none.retry, undefined)
+  await assert.rejects(promoteTermsOf(ctxFailing(rpcDown), T0), /HTTP 429/)
+  assert.equal(await promoteTermsOf(ctxFailing(reverted), T0), null)
+  assert.match((await promoteField(ctxFailing(rpcDown), T0)).error, /doesn't mean there are none/)
+  assert.equal(await promoteField(ctxFailing(reverted), T0), null)
+}
+// ---- a plain first buy on a token with terms warns; nothing else does
+{
+  const reads = (share, traded) => ({ pad: A, read: async (_a, _abi, fn) => (fn === 'promoteOf' ? [share, 86400n] : [ZERO, 0n, traded]) })
+  const ZERO = `0x${'00'.repeat(20)}`
+  assert.match(await firstBuyWarning(reads(2000n, false), T0, A), /can never bind later.*gang promote buy --promoter/)
+  assert.equal(await firstBuyWarning(reads(2000n, true), T0, A), null)
+  assert.equal(await firstBuyWarning(reads(0n, false), T0, A), null)
+  assert.equal(await firstBuyWarning(ctxFailing(rpcDown), T0, A), null)
+}
 
 console.log('promote: ok')

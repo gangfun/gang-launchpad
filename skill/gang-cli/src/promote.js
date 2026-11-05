@@ -194,7 +194,7 @@ export function wantsPoolModule(kind, flag, opt) {
 /** What a --promote create says it does. `pool`: the token's recipient is a promoter pool module. Pure. */
 export function promoteLine({ shareBps, windowDays, pool, taxed, dividendPct = 0 }) {
   const pct = shareBps / 100
-  const curve = `${pct}% of your creator fee goes to the promoter of each bound wallet, on that wallet's curve trades for ${windowDays} days after it binds; you keep the rest. Fixed for good. A wallet binds only by its first buy, sent directly with gang buy --promoter (never through a router or aggregator)`
+  const curve = `${pct}% of your creator fee goes to the promoter of each bound wallet, on that wallet's curve trades for ${windowDays} days after it binds; you keep the rest. Fixed for good. A wallet binds only by its first buy, sent directly with gang promote buy --promoter (never through a router or aggregator)`
   if (pool) {
     const onTax = (pct * (100 - dividendPct)) / 100
     return `${curve}. After graduation the promoter also earns ${pct}% of the recipient's part of those wallets' pool tax (about ${onTax}% of the tax left after the platform's part): the module escrows ${pct}% of each arrival and pushes the rest to you, and a settler posts who gets what, with a 2-day dispute window. What the escrow holds for trades with no promoter is yours too, but only once you claim it: gang promote claim-pool. A trade counts for the promoter only if the bound wallet itself moves the tokens, or calls a listed router directly: tokens moved to another address first, or sold through an unlisted contract, don't count; nor does tax still unsold when escrow ends. Escrow ends about ${windowDays + 7} days after graduation (counted from the first split that sees it). If the settler is silent for 30 days after graduation you can reclaim what no root allocated, which closes the module. The module can't be combined with --buyback / --lp / --split`
@@ -294,7 +294,11 @@ export function whyNoBind({ me, promoter, creator, shareBps, boundPromoter, trad
   return null
 }
 
-/** Reads what --promoter needs; { promoter, refuse? } with the promoter checksummed. `ctx` is on the token's pad. */
+// a timeout or a 429 says nothing about the token: reading it as "no terms" would send a buyer to a plain buy, which can never bind
+const UNREAD_TERMS = 'could not read the promoter terms (RPC error). Nothing was built. Run the same command again; don\'t switch to a plain gang buy: a first buy without a promoter can never bind later'
+const isMissingRead = (e) => !!revertOf(e) || !!e?.walk?.((x) => x?.name === 'ContractFunctionZeroDataError')
+
+/** Reads what --promoter needs; { promoter, refuse?, retry? } with the promoter checksummed. `ctx` is on the token's pad. */
 export async function checkPromoter(ctx, { token, me, raw, creator }) {
   const promoter = getAddress(raw)
   let shareBps, b, can, agent
@@ -305,24 +309,44 @@ export async function checkPromoter(ctx, { token, me, raw, creator }) {
       ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'canBind', [token, me, promoter]),
       ctx.read(ctx.pad, PAD_READS, 'isAgent', [promoter]),
     ])
-  } catch {
+  } catch (e) {
+    if (!isMissingRead(e)) return { promoter, refuse: UNREAD_TERMS, retry: 'same command again' }
     return { promoter, refuse: `GangLaunchpad ${ctx.gen ?? ctx.pad} has no promoter share (only a 3.0 pad upgraded for it does)` }
   }
   const refuse = whyNoBind({ me, promoter, creator, shareBps, boundPromoter: b[0], traded: b[2], promoterIsAgent: agent, canBind: can })
   return { promoter, ...(refuse && { refuse }) }
 }
 
-/** { sharePct, windowDays } of a token (0 share: none), null when the pad has no promoter share. */
+/** { sharePct, windowDays } of a token (0 share: none), null when the pad has no promoter share. Throws on an RPC error. */
 export async function promoteTermsOf(ctx, token) {
   try {
     const [shareBps, window] = await ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoteOf', [token])
     return { shareBps: Number(shareBps), sharePct: Number(shareBps) / 100, windowDays: Number(window) / DAY }
+  } catch (e) {
+    if (isMissingRead(e)) return null
+    throw e
+  }
+}
+
+/**
+ * For a plain curve buy: the wallet's first trade of a token with promoter terms is its only chance to bind. Advice on a
+ * preview, so an unread answer just says nothing.
+ */
+export async function firstBuyWarning(ctx, token, me) {
+  try {
+    const [[shareBps], b] = await Promise.all([
+      ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoteOf', [token]),
+      ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'bindingOf', [token, me]),
+    ])
+    if (Number(shareBps) === 0 || b[2]) return null
+    return `this token has a promoter share and this is this wallet's first trade of it: without a promoter it can never bind later. If the user came from an invite link (…?promoter=0x…), build this buy with gang promote buy --promoter <that address> instead`
   } catch { return null }
 }
 
 /** For gang info / status: the token's promoter terms and whether they reach the pool. null without terms. */
 export async function promoteField(ctx, token, { recipient, dividendPct = 0, testnet } = {}) {
-  const t = await promoteTermsOf(ctx, token)
+  let t
+  try { t = await promoteTermsOf(ctx, token) } catch { return { error: 'could not read the promoter terms (RPC error): this doesn\'t mean there are none', retry: 'same command again' } }
   if (!t || t.shareBps === 0) return null
   const pool = await poolOf(ctx.read, (a) => ctx.client.getCode({ address: a }), recipient, poolFactoryAddress(testnet)).catch(() => null)
   const live = !!pool && pool.token?.toLowerCase() === token.toLowerCase() && !pool.closed
@@ -380,7 +404,8 @@ async function curveEarnings(ctx, who) {
 
 /** Entry for `gang promote <sub>`. io: { opt, flag, out, fail, summarize } from index.js. */
 export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
-  if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
+  // buy runs in index.js, on the path of gang buy
+  if (!SUBS.includes(sub) || sub === 'buy') return fail(USAGE, { got: sub ?? null })
   const testnet = flag('testnet')
   const rawOnly = flag('calldata')
   const tn = testnet ? ' --testnet' : ''
@@ -478,7 +503,10 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
 
   if (sub === 'status') {
     if (!token && !s) return fail('not a promoter pool module of this CLI\'s factory', { module, factory })
-    const t = token ? await promoteTermsOf(ctx, token) : null
+    let t = null
+    if (token) {
+      try { t = await promoteTermsOf(ctx, token) } catch (e) { return fail('could not read the promoter terms (RPC error)', { token, detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' }) }
+    }
     if (token && !t) return fail(`GangLaunchpad ${ctx.gen ?? ctx.pad} has no promoter share (only a 3.0 pad upgraded for it does)`, { token })
     const who = flag('from') || flag('wallet') ? (opt('wallet') ?? opt('from')) : (() => { try { return me() } catch { return null } })()
     const wallet = isAddress(who ?? '') ? getAddress(who) : null
@@ -507,7 +535,9 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
       const done = await ctx.read(s.module, POOL_ABI, 'claimed', [wallet])
       const a = await apiOr(`/promote-pool/proof?${new URLSearchParams({ module: s.module, account: wallet })}`)
       // gang.fun's amount counts only with a proof of the root on chain; a bad answer costs this part, not the chain's data
-      const active = a.active && provenAmount(s.root, wallet, a.active)
+      // a root past its dispute window that nobody activated yet is in effect for gang.fun, and claim-pool activates it first
+      const due = s.pendingRoot !== NO_ROOT && Number(s.pendingActiveAt) <= now
+      const active = a.active && (provenAmount(s.root, wallet, a.active) ?? (due ? provenAmount(s.pendingRoot, wallet, a.active) : null))
       const pendingAmount = /^\d+$/.test(String(a.pending?.cumulative ?? '')) ? BigInt(a.pending.cumulative) : null
       res.poolClaim = a.error
         ? { claimed: await f(done), error: `gang.fun pool data unavailable (${a.error})` }

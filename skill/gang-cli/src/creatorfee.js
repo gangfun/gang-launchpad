@@ -119,7 +119,7 @@ export async function curveCreatorFee(ctx, token, { creator, quote }, net = '') 
   }
   const padGen = ctx.gen ?? (share == null ? '1.0' : '2.0')
   if (share == null) return { padGen, creatorFee: null }
-  const terms = await promoteTermsOf(ctx, token)
+  const terms = await promoteTermsOf(ctx, token).catch(() => null)
   return {
     padGen,
     creatorFee: {

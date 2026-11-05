@@ -5,7 +5,7 @@ import { UA } from './version.js'
 import { walletFor } from './fair.js'
 import { atTokenPad, CREATOR_FEE_ABI, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, tokenVaultOf, VAULT_GEN, VAULT_NO_BOND, vaultGenOf, vaultModeOf } from './gangpad.js'
 import { createNote, curveCreatorFee } from './creatorfee.js'
-import { checkPromoter, DEFAULT_WINDOW_DAYS, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
+import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
 import { splitterOf } from './buyback.js'
@@ -641,7 +641,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const raw_ = opt('promoter')
       if (!isAddress(raw_ ?? '') || raw_ === zeroAddress) fail('--promoter must be the promoter\'s 0x address', { got: raw_ ?? null })
       const bind = await checkPromoter(ctx, { token, me, raw: raw_, creator: c.creator })
-      if (bind.refuse) fail(bind.refuse, { token, promoter: bind.promoter })
+      if (bind.refuse) fail(bind.refuse, { token, promoter: bind.promoter, ...(bind.retry && { retry: bind.retry }) })
       const wbnbQuoted = c.quote.toLowerCase() === String(ctx.wbnb).toLowerCase()
       if (wbnbQuoted && flag('use-wbnb')) fail('--use-wbnb can\'t go with --promoter: a WBNB-quoted buy naming a promoter pays native BNB')
       if (wbnbQuoted) {
@@ -666,6 +666,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     }
     // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet; a cap / graduation
     // refund comes back from the pad to this wallet as WBNB, not BNB)
+    const bindWarning = await firstBuyWarning(ctx, token, me)
+    const warned = bindWarning ? { promoteWarning: bindWarning } : {}
     if (viaRouter(ctx, c.quote, flag)) {
       const native = await ctx.client.getBalance({ address: me })
       if (native < quoteIn + GAS_RESERVE) {
@@ -678,7 +680,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const minOut = minOf(sim.result, slippage)
       const data = encodeFunctionData({ abi: GANG_ROUTER_ABI, functionName: 'v3BuyBNB', args: [token, minOut, routerDeadline()] })
       return out(notes.step(ctx, { from: me, to: ctx.router, data, value: quoteIn }, {
-        ...(await extra(sim.result, minOut, 'WBNB (not BNB)')), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct,
+        ...(await extra(sim.result, minOut, 'WBNB (not BNB)')), via: 'router', curveFeePct: (await feesOf(ctx)).curveFeePct, ...warned,
         note: 'paid in BNB through GangRouter; spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap or the graduation cut the excess comes back to this wallet as WBNB (not BNB)',
       }, 'buy', await priced(sim.result)))
     }
@@ -688,7 +690,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (sim.failed) return out({ success: false, step: 'buy', ...sim.failed })
     const minOut = minOf(sim.result, slippage)
     return out(notes.step(ctx, { from: me, to: ctx.pad, data: encodeFunctionData({ abi: PAD_ABI, functionName: 'buy', args: [token, quoteIn, minOut] }) }, {
-      ...(await extra(sim.result, minOut)), curveFeePct: (await feesOf(ctx)).curveFeePct,
+      ...(await extra(sim.result, minOut)), curveFeePct: (await feesOf(ctx)).curveFeePct, ...warned,
       note: 'spend includes the 1% curve fee (no tax on the curve; the buy tax applies only in the pool after graduation); at the 1% wallet cap the excess is refunded',
     }, 'buy', await priced(sim.result)))
   }

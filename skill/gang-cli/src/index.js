@@ -250,7 +250,12 @@ const followSkipped = (follow) =>
  * to bind, for good.
  */
 function checkPromoterTypo() {
-  for (const a of process.argv.slice(2)) {
+  const argv = process.argv.slice(2)
+  for (const [i, a] of argv.entries()) {
+    // -promoter, —promoter (phones and chat apps turn -- into a dash), promoter: no flag parser sees these, so they'd drop silently
+    if (!/^--[A-Za-z]/.test(a) && !['--note', '--ref'].includes(argv[i - 1]) && (/^[-\u2010-\u2015\u2212]+[A-Za-z]/.test(a) || /^promot/i.test(a))) {
+      fail(`${a} is not a flag: flags start with two plain hyphens, like --promoter <addr>. Nothing was built: a first buy without a promoter can never bind later`)
+    }
     if (!/^--[A-Za-z]/.test(a) || a === '--promoter') continue
     const name = a.slice(2).split('=')[0]
     if (a.startsWith('--promoter=') || suggestFlag(name, ['promoter']) === 'promoter' || /promo|referr/i.test(name)) {
@@ -338,7 +343,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          --ref (buy / mint / follow, 0.26.0+): who invited this wallet (address or .ai handle,
                                          from the invite link the user gave). Attached only when this is the wallet's first
                                          Gang trade; the result's ref says whether it was. 铸币飞轮: the mint's own inviter
-                                         --promoter (buy, V3 curve on 3.0, 0.32.0+; also gang promote buy): the promoter of a token made with --promote.
+                                         --promoter (buy, V3 curve on 3.0, 0.32.0+): the promoter of a token made with --promote. In anything passed on to
+                                         others write gang promote buy: an older CLI answers that with its help, but builds gang buy --promoter as a plain buy.
                                          It binds this wallet for good, by its first trade of the token, and only on a buy
                                          sent directly from the wallet. Same price and fee for you; refused when it can't bind.
                                          Not --ref: --ref is gang.fun's invite credit, --promoter a share on chain
