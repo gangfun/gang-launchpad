@@ -101,12 +101,18 @@ try {
     // the host's name: only when known, and only as a short slug
     assert.equal(clientOf('Claude Code'), 'claude-code')
     assert.equal(clientOf('cursor-vscode'), 'cursor-vscode')
-    assert.equal(clientOf(' My_Agent 2.0! '), 'my-agent-2-0')
-    assert.equal(clientOf('x'.repeat(40)).length, 24)
+    assert.equal(clientOf(' My_Agent 2 '), 'my-agent-2')
+    assert.equal(clientOf('a-'), 'a')
     assert.equal(clientOf(''), '')
+    assert.equal(clientOf('   '), '')
     assert.equal(clientOf(undefined), '')
-    assert.equal(clientOf('***'), '')
-    assert.equal(clientOf('中文'), '')
+    assert.equal(clientOf({ toString: 1 }), '')
+    // never a shortened copy of something that may identify someone
+    for (const raw of [`0x${'7c'.repeat(20)}`, '7c7a1b45dc1c13af', 'james@example.com', '/Users/james/agent', 'james-macbook-pro.local',
+      'sk-abc123def456ghi789jkl012mno', 'sk-abc123def456', 'x'.repeat(25), '***', '中文', 'a\nb', '-ab']) {
+      assert.equal(clientOf(raw), 'other', raw)
+    }
+    assert.equal(clientOf('x'.repeat(24)), 'x'.repeat(24))
     assert.ok(!('cl' in eventOf(['buy'])))
     process.env.GANG_CLIENT = 'Claude Code'
     assert.equal(eventOf(['buy']).cl, 'claude-code')

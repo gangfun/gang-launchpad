@@ -919,9 +919,9 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (accepted === 0n) fail('no shares available to this wallet now', quota)
     const minTokensOut = minOf(tokensOut, slippage)
     const maxSpent = paid + fee
-    const data = tagged(bnb
+    const call = bnb
       ? encodeFunctionData({ abi: FLY_PAD_ABI, functionName: 'mintPostWithBnb', args: [token, accepted, minTokensOut, referrer] })
-      : encodeFunctionData({ abi: FLY_PAD_ABI, functionName: 'mintPost', args: [token, accepted, minTokensOut, maxSpent, referrer] }))
+      : encodeFunctionData({ abi: FLY_PAD_ABI, functionName: 'mintPost', args: [token, accepted, minTokensOut, maxSpent, referrer] })
     const extra = {
       step: 'mint', kind: 'fly', phase: 'post-launch', function: bnb ? 'mintPostWithBnb' : 'mintPost', token, shares: Number(accepted),
       ...(Number(accepted) < want && { truncatedFrom: want, ...quota }),
@@ -933,7 +933,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (!ok) {
       // the preview says no: the same call, simulated, names the rule (a BNB sale: BNB lent for the simulation only). Only
       // a rule of the pad / handler / token counts: a quote-token revert (no allowance yet) says nothing about the rule
-      const dry = await dryRun(ctx, who, ctx.pad, data, bnb ? maxSpent : 0n, bnb)
+      const dry = await dryRun(ctx, who, ctx.pad, call, bnb ? maxSpent : 0n, bnb)
       const r = dry?.reverted && HINTS[dry.error] ? dry : null
       // no rule from the simulation (e.g. it stopped at the quote transfer): the pad's rules read as gang info does,
       // and what is left when none applies is this wallet's own pace
@@ -949,6 +949,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     if (bnb) {
       const native = await ctx.client.getBalance({ address: who })
       if (native < maxSpent + GAS_RESERVE) fail('not enough BNB for this mint (native BNB must also cover gas)', { haveBnb: formatUnits(native, 18), needBnb: formatUnits(maxSpent, 18), hint: 'add --use-wbnb to pay from WBNB' })
+      const data = tagged(call)
       const dry = await dryRun(ctx, who, ctx.pad, data, maxSpent)
       if (dry) return out({ success: false, ...extra, ...dry })
       const tx = { from: who, to: ctx.pad, data, value: maxSpent }
@@ -957,6 +958,7 @@ export async function runFly(sub, { opt, flag, out, fail, summarize, resolveLogo
     }
     const pre = await fund(ctx, { me: who, token: sale.quote, need: maxSpent, spender: ctx.pad, sym: sale.quoteSymbol }, rawOnly, summarize)
     if (pre) return out(pre)
+    const data = tagged(call)
     const dry = await dryRun(ctx, who, ctx.pad, data)
     if (dry) return out({ success: false, ...extra, ...dry })
     const tx = { from: who, to: ctx.pad, data }

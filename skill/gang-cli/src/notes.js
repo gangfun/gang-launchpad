@@ -179,7 +179,7 @@ export function readTool(input) {
   return TOOL_ID.test(id) ? id : null
 }
 
-// what GANG_TOOL did on this run, shown on its result (only once a write step carried it, or would have)
+// what GANG_TOOL did on this run, shown on its result (only once a write step was built with it)
 let toolState = null
 export const toolInfo = () => toolState
 

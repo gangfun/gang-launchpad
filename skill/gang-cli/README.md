@@ -343,7 +343,8 @@ Each command adds one event:
 - the command name (and subcommand), the names of the flags given (never their values);
 - whether it succeeded, and if not, a short error code (`NO_AGENT_ID`, `DEV_MODE_OFF`, a Binance risk code, `USAGE`…);
 - for `gang preflight`, which checks passed;
-- the agent host's name, when known (0.31.0+): the MCP client's own name (such as `claude-code`), or `GANG_CLIENT`.
+- the agent host's name, when known (0.31.0+): the MCP client's own name (such as `claude-code`), or `GANG_CLIENT`. Only a
+  short name made of letters, digits, spaces, `-` and `_` goes out; anything else is sent as `other`.
 
 The only id is a random one made on first use (`~/.gang/install-id`). No wallet address, token, amount, note text or
 error message is sent. Events queue in `~/.gang/events.ndjson` and are posted to `GANG_API` + `/t` at most once a minute by
@@ -352,7 +353,7 @@ a background process, so a command never waits on it. `GANG_TELEMETRY=0` (or `DO
 ## Tool id
 
 Building a tool on the CLI? Set `GANG_TOOL` (0.31.0+) to an id of 2–12 characters (`a-z`, `0-9`, `-`, not starting with
-`-`). Mainnet creates, curve trades and 铸币飞轮 mints and withdraws then carry `"gang" 06 + id` at the end of their calldata,
+`-`). Mainnet creates, curve trades, and 打新 and 铸币飞轮 mints and withdraws then carry `"gang" 06 + id` at the end of their calldata,
 in the same way as notes and invites; the contracts ignore it. The result shows `tool: { attached, id }`. A bad id never
 stops a trade: it goes untagged and `tool` says why.
 
@@ -361,4 +362,4 @@ The tag is public and anyone can write any id, so it counts usage and proves not
 
 ## Version
 
-`0.30.1` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.31.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

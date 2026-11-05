@@ -291,7 +291,8 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 - 命令名（和子命令）、用到的参数名（不含参数值）；
 - 是否成功；失败时带一个简短的错误码（`NO_AGENT_ID`、`DEV_MODE_OFF`、币安风控码、`USAGE` 等）；
 - `gang preflight` 另记各项检查是否通过；
-- Agent 客户端名称（已知时，0.31.0+）：MCP 客户端自己的名称（如 `claude-code`），或 `GANG_CLIENT`。
+- Agent 客户端名称（已知时，0.31.0+）：MCP 客户端自己的名称（如 `claude-code`），或 `GANG_CLIENT`。只发送由字母、数字、空格、`-` 和 `_`
+  组成的短名称，其他内容一律记为 `other`。
 
 唯一的标识是首次使用时随机生成的 ID（`~/.gang/install-id`）。不发送钱包地址、代币、金额、附言内容和报错原文。
 事件先存在 `~/.gang/events.ndjson`，由后台进程最多每分钟一次发到 `GANG_API` + `/t`，命令本身不会等它。
@@ -300,11 +301,11 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 ## 工具 ID
 
 如果你在 CLI 上开发工具，可以把 `GANG_TOOL`（0.31.0+）设为 2–12 个字符的 ID（`a-z`、`0-9`、`-`，不能以 `-` 开头）。之后主网的发币、
-曲线交易，以及铸币飞轮的 mint 和退出，都会在 calldata 末尾带上 `"gang" 06 + ID`，和 notes、邀请标记的做法相同，合约会忽略它。结果里会显示
+曲线交易，以及打新和铸币飞轮的 mint 和退出，都会在 calldata 末尾带上 `"gang" 06 + ID`，和 notes、邀请标记的做法相同，合约会忽略它。结果里会显示
 `tool: { attached, id }`。ID 不合法不会影响交易：这笔交易不带标记，`tool` 里会说明原因。
 
 这个标记是公开的，任何人都能写任意 ID，所以只用于统计使用量，不能证明交易是谁发的。不设置 `GANG_TOOL` 就不会附加任何内容。
 
 ## 版本
 
-`0.30.1` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.31.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

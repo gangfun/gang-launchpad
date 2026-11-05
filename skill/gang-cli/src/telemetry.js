@@ -71,10 +71,16 @@ export function codeOf(o = {}) {
   return 'ERROR'
 }
 
-/** A host's name as the events carry it: lower-case a-z 0-9 -, at most 24 characters; '' when nothing is left. */
+/**
+ * A host's name as the events carry it: a slug of a-z 0-9 -, at most 24 characters. Only what looks like a product's name
+ * goes out: anything else (an address, an email, a path, a hostname, a key: other characters, too long, a long hex run)
+ * is 'other', never a shortened copy. '' when there is no name.
+ */
 export function clientOf(raw = process.env.GANG_CLIENT) {
-  const s = String(raw ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 24).replace(/^-+|-+$/g, '')
-  return NAME.test(s) ? s : ''
+  if (typeof raw !== 'string' || !raw.trim()) return ''
+  const s = raw.trim()
+  if (!/^[A-Za-z][A-Za-z0-9 _-]{0,23}$/.test(s) || /[0-9a-f]{12}/i.test(s)) return 'other'
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '')
 }
 
 /** The event for one command (argv after `gang`) and its JSON result. */

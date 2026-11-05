@@ -50,7 +50,8 @@ let refTag = '', refInfo = null
 // the first result of a run is also counted (anonymously, telemetry.js) unless GANG_TELEMETRY=0
 const out = (o) => {
   if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refInfo }
-  if (toolInfo() && o && typeof o === 'object' && !('tool' in o)) o = { ...o, tool: toolInfo() }
+  // a failed result built no tx, so it claims no tag; a bad id is always said
+  if (toolInfo() && o && typeof o === 'object' && !('tool' in o) && (o.success !== false || !toolInfo().attached)) o = { ...o, tool: toolInfo() }
   record(args, o)
   console.log(JSON.stringify(update ? { ...o, update } : o, (_, v) => (typeof v === 'bigint' ? v.toString() : v), 2))
 }
