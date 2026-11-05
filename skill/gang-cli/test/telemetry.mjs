@@ -7,7 +7,7 @@
  *   node skill/gang-cli/test/telemetry.mjs
  */
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createServer } from 'node:http'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -54,7 +54,7 @@ process.env.GANG_TELEMETRY_DIR = join(dir, 'gang')
 process.env.GANG_TRENDING_CACHE = join(dir, 'gang', 'trending.json')
 delete process.env.GANG_TELEMETRY
 delete process.env.DO_NOT_TRACK
-const { codeOf, eventOf, installId } = await import('../src/telemetry.js')
+const { clientOf, codeOf, eventOf, installId } = await import('../src/telemetry.js')
 const { trendingBlock } = await import('../src/trending.js')
 
 // a fake baw: `wallet address` answers $FAKE_WALLET, everything else (and an unset FAKE_WALLET) fails like a signed-out baw
@@ -98,6 +98,25 @@ try {
 
     assert.deepEqual([eventOf(['fly', 'mint', '--token', tok(2)]).c, eventOf(['fly', 'mint']).s], ['fly', 'mint'])
     assert.equal(eventOf(['buy', 'mint']).s, '') // only commands with subcommands keep the second word
+    // the host's name: only when known, and only as a short slug
+    assert.equal(clientOf('Claude Code'), 'claude-code')
+    assert.equal(clientOf('cursor-vscode'), 'cursor-vscode')
+    assert.equal(clientOf(' My_Agent 2 '), 'my-agent-2')
+    assert.equal(clientOf('a-'), 'a')
+    assert.equal(clientOf(''), '')
+    assert.equal(clientOf('   '), '')
+    assert.equal(clientOf(undefined), '')
+    assert.equal(clientOf({ toString: 1 }), '')
+    // never a shortened copy of something that may identify someone
+    for (const raw of [`0x${'ab'.repeat(20)}`, 'abababababababab', 'alice@example.com', '/Users/alice/agent', 'alice-laptop.local',
+      'sk-abc123def456ghi789jkl012mno', 'sk-abc123def456', 'x'.repeat(25), '***', '中文', 'a\nb', '-ab']) {
+      assert.equal(clientOf(raw), 'other', raw)
+    }
+    assert.equal(clientOf('x'.repeat(24)), 'x'.repeat(24))
+    assert.ok(!('cl' in eventOf(['buy'])))
+    process.env.GANG_CLIENT = 'Claude Code'
+    assert.equal(eventOf(['buy']).cl, 'claude-code')
+    delete process.env.GANG_CLIENT
     assert.equal(eventOf([tok(3)]).c, 'other') // an address typed as the command never goes out
     assert.equal(eventOf(['fly', tok(3)]).s, '')
     assert.equal(eventOf([]).c, 'other')
@@ -157,6 +176,28 @@ try {
     await run(['version'])
     assert.ok(await waitFor(() => posts.length === 2), 'second flush posted')
     assert.deepEqual(posts[1].body.e.map((e) => e.c), ['version', 'list', 'version'])
+  }
+
+  // --- `gang mcp`: its tools' events carry the MCP client's name, unless the user set GANG_CLIENT ---
+  {
+    const queue = join(dir, 'gang', 'events.ndjson')
+    const viaMcp = async (extra) => {
+      rmSync(queue, { force: true })
+      writeFileSync(join(dir, 'gang', 'events.flush'), '') // flushed just now: the events stay in the queue to read
+      const child = spawn(process.execPath, [CLI, 'mcp'], { env: env(extra), stdio: ['pipe', 'pipe', 'inherit'] })
+      const send = (id, method, params) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`)
+      let got = 0
+      child.stdout.on('data', (d) => { got += String(d).split('\n').filter(Boolean).length })
+      send(1, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'Claude Code', version: '1' } })
+      assert.ok(await waitFor(() => got >= 1), 'initialized')
+      send(2, 'tools/call', { name: 'gang_cli', arguments: { args: ['version'] } })
+      assert.ok(await waitFor(() => got >= 2), 'tool answered')
+      child.stdin.end()
+      return readFileSync(queue, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).find((e) => e.c === 'version')
+    }
+    assert.equal((await viaMcp({})).cl, 'claude-code')
+    assert.equal((await viaMcp({ GANG_CLIENT: 'my host' })).cl, 'my-host')
+    rmSync(queue, { force: true })
   }
 
   // --- GANG_TELEMETRY=0 / DO_NOT_TRACK=1: nothing queued, nothing posted ---
