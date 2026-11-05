@@ -223,7 +223,7 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 
 用 `gang … --testnet --calldata` 生成交易，再用 `cast send` 发到测试网（`baw` 不支持测试网）：
 
-这里的买入用的是 `gang buy --promoter`，当时还没有 `gang promote buy`。后者和它走同一段构建代码，生成的 `buyWithPromoter` 只在本地分叉上发送过。
+下面的买入用的是 `gang buy --promoter`。之后加的 `gang promote buy` 也生成并发送过一笔：[`0xba7ea172…`](https://testnet.bscscan.com/tx/0xba7ea172590f33966c8263619e2c98dd112b17931cc69a38071949d8f0f474d4)，日志里有 `PromoterBound`。
 
 - 带税发币 [`0x85895787e6D6c6BBB52C04B35b538FEE5EA7546E`](https://testnet.bscscan.com/address/0x85895787e6D6c6BBB52C04B35b538FEE5EA7546E)：`--promote` 依次走完克隆模块 [`0x7d16Ff6E27122e671B2D487Bf8ebd12850746A80`](https://testnet.bscscan.com/address/0x7d16Ff6E27122e671B2D487Bf8ebd12850746A80)、建币、`bind`；`gang buy --promoter` 用 BNB 买入并绑定，`gang promote claim` 领到准确金额。
 - 无税、其他计价币 [`0xEaCe59BEaE31B89975c84Af6F573CcF9C98763Ea`](https://testnet.bscscan.com/address/0xEaCe59BEaE31B89975c84Af6F573CcF9C98763Ea)：只有内盘分成，走授权后买入，在同一计价币里领取。
