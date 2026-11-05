@@ -139,6 +139,26 @@ try {
     assert.equal(lower(args[0]), lower(pad), `${name} pad: the spender`)
   }
 
+  // GANG_TOOL: the trade carries the tag and says so; a setup step carries neither; a bad id leaves the trade untagged
+  {
+    const TAG = '67616e6706776174636865720000000000' // "gang" 06 + "watcher", zero-padded
+    process.env.GANG_TOOL = 'watcher'
+    const buy = await gang('buy', '--token', ON_FIRST, '--amount', '0.01')
+    assert.deepEqual(buy.tool, { attached: true, id: 'watcher' })
+    assert.match(lastPreview(), new RegExp(`${TAG}\\b`))
+    const setup = await gang('sell', '--token', ON_FIRST, '--amount', '1')
+    assert.equal(setup.tool, undefined, 'an approve carries no tag')
+    assert.ok(!lastPreview().includes('67616e6706'))
+    process.env.GANG_TOOL = 'BAD ID'
+    const bad = await gang('buy', '--token', ON_FIRST, '--amount', '0.01')
+    assert.equal(bad.success, true)
+    assert.equal(bad.tool.attached, false)
+    assert.ok(!lastPreview().includes('67616e6706'))
+    delete process.env.GANG_TOOL
+    assert.equal((await gang('buy', '--token', ON_FIRST, '--amount', '0.01')).tool, undefined)
+    assert.ok(!lastPreview().includes('67616e6706'))
+  }
+
   const graduated = await gang('info', '--token', GRADUATED)
   assert.equal(graduated.graduated, true)
   assert.equal(graduated.priceBnb, 5e-6, "a graduated token's price comes from its pool")
