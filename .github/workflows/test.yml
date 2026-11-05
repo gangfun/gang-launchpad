@@ -73,3 +73,17 @@ jobs:
             exit 1
           fi
           echo "OK: no 127.0.0.1:8787 in web/dist"
+
+  registry-identity:
+    name: MCP Registry identity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Verify registry identity
+        run: node scripts/mcp-registry-identity.mjs
