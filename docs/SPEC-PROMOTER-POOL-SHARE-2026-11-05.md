@@ -54,7 +54,7 @@
 
 **独立复算。** 用 `--check` 且不带 `--prev`，从 `Bound` 全量重放。root 只承诺累计金额，别人给的 `--prev` 可能带着改过的队列。
 
-**router 清单（BSC）。** 3.0 的 GangRouter `0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7`、Pancake V2 `0x10ED43C718714eb63d5aA57B78B54704E256024E`，以及 3.0 白名单里的三个聚合器 router（见 `docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md`）。清单之外的合约转发时，`tx.from` 不算，这样 bundler 或订单 filler 这类替别人发交易的地址，绑定了也蹭不到别人的税。一个模块全程用同一份清单，换清单会算出不同的 root，脚本发现不一致会退出。
+**router 清单（BSC）。** 3.0 的 GangRouter `0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7`、Pancake V2 `0x10ED43C718714eb63d5aA57B78B54704E256024E`、Smart Router `0x13f4EA83D0bd40E75C8222255bc855a974568Dd4`、Universal Router `0xd9C500DfF816a1Da21A48A732d3498Bf09dc9AEB` 和 `0x1A0A18AC4BECDDbd6389559687d1A73d8927E416`（PancakeSwap 网站可能走这三个），以及 3.0 白名单里的三个聚合器 router（见 `docs/MAINNET-GANG-LAUNCHPAD-3-2026-11-03.md`）。清单之外的合约转发时，`tx.from` 不算，这样 bundler 或订单 filler 这类替别人发交易的地址，绑定了也蹭不到别人的税。一个模块全程用同一份清单，换清单会算出不同的 root，脚本发现不一致会退出。
 
 用先进先出按实际卖出所得分配，不需要价格预言机：税是分批卖出的，代币本身没有区别，先进先出是约定的记账方式。代价是税款卖出比交易晚，推广人要等这笔税卖出才有收入；有效期按交易时间算，所以有效期内的交易在到期后卖出仍然算，直到托管结束。
 
