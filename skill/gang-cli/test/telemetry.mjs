@@ -108,7 +108,7 @@ try {
     assert.equal(clientOf(undefined), '')
     assert.equal(clientOf({ toString: 1 }), '')
     // never a shortened copy of something that may identify someone
-    for (const raw of [`0x${'7c'.repeat(20)}`, '7c7a1b45dc1c13af', 'james@example.com', '/Users/james/agent', 'james-macbook-pro.local',
+    for (const raw of [`0x${'ab'.repeat(20)}`, 'abababababababab', 'alice@example.com', '/Users/alice/agent', 'alice-laptop.local',
       'sk-abc123def456ghi789jkl012mno', 'sk-abc123def456', 'x'.repeat(25), '***', '中文', 'a\nb', '-ab']) {
       assert.equal(clientOf(raw), 'other', raw)
     }

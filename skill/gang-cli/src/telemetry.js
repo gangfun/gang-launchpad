@@ -73,8 +73,9 @@ export function codeOf(o = {}) {
 
 /**
  * A host's name as the events carry it: a slug of a-z 0-9 -, at most 24 characters. Only what looks like a product's name
- * goes out: anything else (an address, an email, a path, a hostname, a key: other characters, too long, a long hex run)
- * is 'other', never a shortened copy. '' when there is no name.
+ * goes out: anything else (a full address, an email, a path, a dotted hostname, a long key: other characters, too long, a
+ * long hex run) is 'other', never a shortened copy. '' when there is no name. These rules can't tell a person's name from
+ * a product's: a host that sends one as its own name sends it here too.
  */
 export function clientOf(raw = process.env.GANG_CLIENT) {
   if (typeof raw !== 'string' || !raw.trim()) return ''
