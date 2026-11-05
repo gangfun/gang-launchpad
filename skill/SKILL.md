@@ -146,5 +146,5 @@ its `retry` says (often the same read command, or `gang tx --hash …` for a not
 have been sent. Common: `NO_AGENT_ID` (claim a .ai Agent ID, [preflight.md](references/preflight.md)), risk-control code
 `351803` on a sell (`tradeAllTokens` off), an expired preview (build a new one).
 
-The CLI sends anonymous usage counts (command and flag names, success, an error code; a random install id, no wallet,
-token or amount). If the user asks to turn them off: `GANG_TELEMETRY=0`.
+The CLI sends anonymous usage counts (command and flag names, success, an error code, the agent host's name; a random
+install id, no wallet, token or amount). If the user asks to turn them off: `GANG_TELEMETRY=0`.
