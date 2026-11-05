@@ -197,7 +197,7 @@ export function promoteLine({ shareBps, windowDays, pool, taxed, dividendPct = 0
   const curve = `${pct}% of your creator fee goes to the promoter of each bound wallet, on that wallet's curve trades for ${windowDays} days after it binds; you keep the rest. Fixed for good. A wallet binds only by its first buy, sent directly with gang buy --promoter (never through a router or aggregator)`
   if (pool) {
     const onTax = (pct * (100 - dividendPct)) / 100
-    return `${curve}. After graduation the promoter also earns ${pct}% of the recipient's part of those wallets' pool tax (about ${onTax}% of the tax left after the platform's part): the module escrows ${pct}% of each arrival and pushes the rest to you, and a settler posts who gets what, with a 2-day dispute window. Escrow ends about ${windowDays + 7} days after graduation (counted from the first split that sees it). If the settler is silent for 30 days after graduation you can reclaim what no root allocated, which closes the module. The module can't be combined with --buyback / --lp / --split`
+    return `${curve}. After graduation the promoter also earns ${pct}% of the recipient's part of those wallets' pool tax (about ${onTax}% of the tax left after the platform's part): the module escrows ${pct}% of each arrival and pushes the rest to you, and a settler posts who gets what, with a 2-day dispute window. What the escrow holds for trades with no promoter is yours too, but only once you claim it: gang promote claim-pool. A trade counts for the promoter only if the bound wallet itself moves the tokens, or calls a listed router directly: tokens moved to another address first, or sold through an unlisted contract, don't count; nor does tax still unsold when escrow ends. Escrow ends about ${windowDays + 7} days after graduation (counted from the first split that sees it). If the settler is silent for 30 days after graduation you can reclaim what no root allocated, which closes the module. The module can't be combined with --buyback / --lp / --split`
   }
   if (taxed && dividendPct === 100) return `${curve}. Curve only: all of this token's tax goes to holders, so there is no recipient's part to share`
   return `${curve}. Curve only: ${taxed ? 'this token\'s tax goes to another recipient, so promoters earn nothing from its pool tax (a token has one recipient: to share it, launch with no --recipient, --buyback, --lp or --split)' : 'an untaxed token has no pool tax to share'}`
@@ -333,7 +333,7 @@ export async function promoteField(ctx, token, { recipient, dividendPct = 0, tes
   }
 }
 
-const SUBS = ['status', 'earnings', 'claim', 'claim-pool', 'activate', 'work', 'bind', 'reclaim', 'release-dev', 'sweep']
+const SUBS = ['buy', 'status', 'earnings', 'claim', 'claim-pool', 'activate', 'work', 'bind', 'reclaim', 'release-dev', 'sweep']
 const USAGE = `usage: gang promote ${SUBS.join('|')} [--token <addr> | --module <addr>] [--to <addr>] [--from <wallet>] [--testnet] — see gang help`
 
 function promoteCtx(testnet) {
@@ -413,7 +413,7 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
         module: m.module, token: c.token, quote: await ctx.read(c.quote, SYMBOL_ABI, 'symbol').catch(() => c.quote),
         allocated: await units(ctx, c.quote, total), claimed: await units(ctx, c.quote, done),
         claimable: await units(ctx, c.quote, total > done ? total - done : 0n),
-        ...(/^\d+$/.test(String(m.pendingCumulative ?? '')) && { inDisputeWindow: await units(ctx, c.quote, BigInt(m.pendingCumulative)) }),
+        ...(/^\d+$/.test(String(m.pendingCumulative ?? '')) && { totalOnceInEffect: await units(ctx, c.quote, BigInt(m.pendingCumulative)) }),
         next: `gang promote claim-pool --module ${m.module}${tn}`,
       })
     }
@@ -515,7 +515,7 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
           claimed: await f(done),
           ...(active !== null && active !== undefined && { allocated: await f(active), ...(active > done && { next: `gang promote claim-pool ${ref}` }) }),
           ...(a.active && active === null && { warning: 'gang.fun\'s amount does not match the root on chain: not shown. Try again shortly' }),
-          ...(pendingAmount !== null && { inDisputeWindow: await f(pendingAmount), inDisputeWindowNote: 'from gang.fun, unchecked: it counts once the root takes effect', activeAt: iso(a.pending.activeAt) }),
+          ...(pendingAmount !== null && { totalOnceInEffect: await f(pendingAmount), totalOnceInEffectNote: 'this account\'s whole total under the root in its dispute window, not an addition; from gang.fun, unchecked', activeAt: iso(a.pending.activeAt) }),
         }
     }
     return out(res)
@@ -608,7 +608,7 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
       return fail('no root in effect names this account yet', {
         module: s.module, account,
         ...(s.root !== NO_ROOT && { hint: `if a root should name this account, gang.fun may be behind: try again, or recompute it from chain logs and give --cumulative and --proof` }),
-        ...(/^\d+$/.test(String(a.pending?.cumulative ?? '')) && { inDisputeWindow: await f(BigInt(a.pending.cumulative)), activeAt: iso(a.pending.activeAt), hint: 'claim after the dispute window' }),
+        ...(/^\d+$/.test(String(a.pending?.cumulative ?? '')) && { totalOnceInEffect: await f(BigInt(a.pending.cumulative)), activeAt: iso(a.pending.activeAt), hint: 'claim after the dispute window' }),
       })
     }
     if (provenAmount(s.root, account, a.active) === null) {

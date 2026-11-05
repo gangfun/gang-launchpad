@@ -72,7 +72,7 @@ gang info --token <addr>                     # one token, any pad (gang token is
 gang status --token <addr>                   # my position: balance; V3 dividend / 打新 reward, sellable; poolSellAll
 gang portfolio [--from <addr>]               # every holding: balance, value, cost / unrealized, claimable, USD; bonds; creator fees (2.0 / 3.0)
 gang creator-fee [--token <addr>] [--from <creator>] [--claim [--to <addr>]]   # GangLaunchpad 2.0 / 3.0: 70% of the 1% curve fee, the creator's
-gang create … --promote 20 [--promote-days 30]   # V3 on 3.0 (0.31.0+): 20% of your creator fee to the promoter of each bound wallet, on its curve trades inside the window. On a taxed token with no recipient named, also that share of the recipient's part of those wallets' pool tax (promoter pool module, settled by Merkle root). Fixed for good
+gang create … --promote 20 [--promote-days 30]   # V3 on 3.0 (0.32.0+): 20% of your creator fee to the promoter of each bound wallet, on its curve trades inside the window. On a taxed token with no recipient named, also that share of the recipient's part of those wallets' pool tax (promoter pool module, settled by Merkle root). Fixed for good
 gang buy --token 0x… --amount <n> --promoter 0x…   # binds this wallet to the promoter, by its first trade of the token, on the curve only, sent directly from the wallet. Same price and fee for you. Not --ref (gang.fun's invite credit)
 gang promote status|earnings|claim|claim-pool|activate|work|sweep|bind|reclaim|release-dev --token 0x… (or --module 0x…)   # terms, binding, what can be claimed; claim-pool checks gang.fun's proof against the root on chain. reclaim (the dev, after 30 days of settler silence) closes the module for good
 gang quote --token <addr> --amount <n>       # V2 / Soft / U / S curve only (Soft: BNB; V2: quote ERC-20, LaunchpadV2.sol math)
@@ -366,4 +366,4 @@ The tag is public and anyone can write any id, so it counts usage and proves not
 
 ## Version
 
-`0.31.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.32.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

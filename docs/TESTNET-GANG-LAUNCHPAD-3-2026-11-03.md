@@ -219,7 +219,7 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 第一次 `work` 回滚 `PushStarved`：forge 按模拟用量估 gas，不够。这是预期行为，见规格 §6；之后用 `--gas-estimate-multiplier 500` 成功。
 - 争议期是真实的 2 天，所以领取在本地分叉上验证：争议期内领取回滚，到期后推广人和 dev 都领到准确金额，模块清零；第二期 `--prev` 结算、发布、`--check` 和领取都正确。真实链上的领取要等争议期结束。
 
-## CLI 0.31.0 的推广分成（2026-11-05）
+## CLI 0.32.0 的推广分成（2026-11-05）
 
 用 `gang … --testnet --calldata` 生成交易，再用 `cast send` 发到测试网（`baw` 不支持测试网）：
 

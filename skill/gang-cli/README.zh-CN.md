@@ -62,7 +62,7 @@ gang info --token <addr>                     # 任意内盘的一个币（gang t
 gang status --token <addr>                   # 我的持仓：余额；V3 分红 / 打新奖励、还能卖多少；poolSellAll
 gang portfolio [--from <addr>]               # 全部持仓：余额、价值、成本 / 浮盈、可领、美元；押金；creator 分成（2.0 / 3.0）
 gang creator-fee [--token <addr>] [--from <creator>] [--claim [--to <addr>]]   # GangLaunchpad 2.0 / 3.0：内盘 1% 手续费的 70% 归 creator
-gang create … --promote 20 [--promote-days 30]   # 3.0 的 V3（0.31.0+）：绑定钱包在有效期内的内盘交易，creator 分成的 20% 归它的推广人。带税且没指定接收方时，这些钱包的池子税里，接收方那部分也按这个比例分给推广人（外盘分成模块，按 Merkle root 结算）。发币后不能改
+gang create … --promote 20 [--promote-days 30]   # 3.0 的 V3（0.32.0+）：绑定钱包在有效期内的内盘交易，creator 分成的 20% 归它的推广人。带税且没指定接收方时，这些钱包的池子税里，接收方那部分也按这个比例分给推广人（外盘分成模块，按 Merkle root 结算）。发币后不能改
 gang buy --token 0x… --amount <n> --promoter 0x…   # 把这个钱包绑定到推广人：只在它第一次交易这个币时绑定，只限内盘，必须由钱包直接发送。价格和手续费不变。和 --ref（gang.fun 的邀请记录）不是一回事
 gang promote status|earnings|claim|claim-pool|activate|work|sweep|bind|reclaim|release-dev --token 0x…（或 --module 0x…）   # 条款、绑定、可领金额；claim-pool 会用链上的 root 核对 gang.fun 给的证明。reclaim（dev，结算方沉默 30 天后）会永久关闭模块
 gang quote --token <addr> --amount <n>       # 只算 V2 / Soft / U / S 内盘（Soft：BNB；V2：报价币 ERC-20）
@@ -312,4 +312,4 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 
 ## 版本
 
-`0.31.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.32.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

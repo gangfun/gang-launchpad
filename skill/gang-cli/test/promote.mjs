@@ -53,6 +53,8 @@ const line = promoteLine({ shareBps: 2000, windowDays: 30, pool: true, taxed: tr
 assert.match(line, /about 10% of the tax/)
 assert.match(line, /Escrow ends about 37 days after graduation/)
 assert.match(line, /reclaim/)
+assert.match(line, /only once you claim it/)
+assert.match(line, /unlisted contract/)
 assert.match(promoteLine({ shareBps: 2000, windowDays: 30, pool: false, taxed: true, dividendPct: 100 }), /all of this token's tax goes to holders/)
 
 // ---- a --promoter that can't bind: the pad would go on with the buy and drop it
@@ -148,6 +150,8 @@ const refused = (a, re) => {
 }
 refused(['promote'], /usage: gang promote/)
 refused(['promote', 'nope'], /usage: gang promote/)
+refused(['promote', 'buy', '--token', A, '--amount', '1', '--from', A, '--testnet'], /needs --promoter/)
+refused(['promote', 'buy', '--token', A, '--amount', '1', '--from', A, '--testnet', '--promotor', A], /needs --promoter/)
 refused(['promote', 'status', '--token', 'nope', '--testnet'], /--token must be a V3 token address/)
 refused(['promote', 'status', '--token', A, '--module', B, '--testnet'], /not both/)
 refused(['promote', 'claim', '--module', B, '--testnet', '--from', A], /needs --token/)

@@ -658,7 +658,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     if (lps) done.lp = lps
     const cs = await comboState()
     if (cs) done.combo = cs
-    if (plan.splitter && isPromote) done.promote = { module: plan.splitter, next: `gang promote status --token ${token}${testnet ? ' --testnet' : ''}` }
+    if (plan.splitter && isPromote) done.promote = { module: plan.splitter, next: `gang promote status --token ${token}${testnet ? ' --testnet' : ''}`, note: `your part of the pool tax comes two ways: pushed to you at once, and what the escrow holds for trades with no promoter, which stays in the module until you claim it: gang promote claim-pool --token ${token}${testnet ? ' --testnet' : ''}` }
     // 2.0: where the creator fee of a V3 token is claimed (and that a module does not get it)
     const share = kind === 'v3' ? await creatorFeeShareOf({ chainId: net.chainId, pad: net.pad, read }).catch(() => null) : null
     if (share != null) {

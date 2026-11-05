@@ -338,7 +338,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          --ref (buy / mint / follow, 0.26.0+): who invited this wallet (address or .ai handle,
                                          from the invite link the user gave). Attached only when this is the wallet's first
                                          Gang trade; the result's ref says whether it was. 铸币飞轮: the mint's own inviter
-                                         --promoter (buy, V3 curve on 3.0, 0.31.0+): the promoter of a token made with --promote.
+                                         --promoter (buy, V3 curve on 3.0, 0.32.0+; also gang promote buy): the promoter of a token made with --promote.
                                          It binds this wallet for good, by its first trade of the token, and only on a buy
                                          sent directly from the wallet. Same price and fee for you; refused when it can't bind.
                                          Not --ref: --ref is gang.fun's invite credit, --promoter a share on chain
@@ -502,13 +502,15 @@ creator, less any promoter share the creator set, before and after graduation, n
                                          The fee is the creator's own: never the tax recipient's or a buy-back / split / LP
                                          module's. gang info / status (the creator's) and gang portfolio show it too
 
-PROMOTER SHARE (GangLaunchpad 3.0, 0.31.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TESTNET_PROMOTE_POOL_FACTORY):
+PROMOTER SHARE (GangLaunchpad 3.0, 0.32.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TESTNET_PROMOTE_POOL_FACTORY):
   gang create … --promote <0.01-50> [--promote-days <7-90, default 30>]
                                          that % of your creator fee goes to the promoter of each bound wallet, on its curve
                                          trades inside the window; fixed for good. On a taxed token with no --recipient,
                                          --buyback, --lp or --split, the launch also makes the recipient a promoter pool
                                          module (clone, create, bind: re-run after each): the same % of the recipient's part
                                          of those wallets' pool tax. Name a recipient to keep the share on the curve
+  gang promote buy --token <addr> --amount <n> --promoter <addr>
+                                         gang buy --promoter, in the form an older CLI refuses instead of buying without binding
   gang promote status --token <addr> [--wallet <addr>]
                                          terms, the wallet's binding and curve share, the pool module, roots, what it can claim
   gang promote earnings [--from <addr>]  every 3.0 token with a curve share to claim (read on chain) and pool income (gang.fun)
@@ -1372,6 +1374,12 @@ async function main() {
     case 'mcp':
       return runMcp()
     case 'promote':
+      // gang buy with --promoter required. Links and docs give this form: a CLI older than the promoter share refuses it,
+      // while it would ignore --promoter on gang buy and spend the wallet's only chance to bind on a plain first buy
+      if (args[1] === 'buy') {
+        if (!flag('promoter')) fail('gang promote buy needs --promoter <addr>; a buy with no promoter is gang buy')
+        return routed('buy')
+      }
       return runPromote(args[1], { opt, flag, out, fail, summarize: summarizePreview })
     case 'creator-fee':
       return runCreatorFee({ opt, flag, out, fail, summarize: summarizePreview })

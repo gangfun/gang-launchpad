@@ -601,7 +601,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       // graduated: buy in the PancakeSwap pool through GangRouter (the buy tax applies; no Agent gate, no wallet cap)
       if (!c.pair) return fail('the pad marks this token graduated but has no PancakeSwap pair on record: nothing to trade it on', { token })
       if (notes.following) fail('--follow only counts on curve buys before graduation; this token trades on PancakeSwap now', { pair: c.pair })
-      if (flag('promoter')) fail('--promoter binds on the curve only, and this token has graduated: a wallet that was bound on the curve keeps paying its promoter here on its own', { token })
+      if (flag('promoter')) fail('--promoter binds on the curve only, and this token has graduated: on a token with a pool share, a wallet bound on the curve keeps counting for its promoter here, inside its window', { token })
       if (!flag('amount') && !flag('bnb')) fail('--amount <quote (or BNB) to spend> required')
       const raw = parseAmount(fail, flag('amount') ? 'amount' : 'bnb', opt('amount') ?? opt('bnb'))
       return out(await poolTrade(ctx, {
@@ -661,7 +661,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const data = encodeFunctionData({ abi: PROMOTE_PAD_ABI, functionName: 'buyWithPromoter', args: [token, quoteIn, minOut, bind.promoter] })
       return out(notes.step(ctx, { from: me, to: ctx.pad, data, ...(value > 0n && { value }) }, {
         ...(await extra(tokensOut, minOut, wbnbQuoted ? 'WBNB (not BNB)' : c.quoteSymbol)), curveFeePct: (await feesOf(ctx)).curveFeePct, promoter: bind.promoter,
-        note: 'binds this wallet to the promoter for good, by its first trade of this token, sent directly from the wallet. You pay the same price and fee: the promoter\'s part comes out of the creator\'s fee, and after graduation, on a token with a pool share, out of the tax recipient\'s part',
+        note: 'binds this wallet to the promoter for good, by its first trade of this token, sent directly from the wallet. You pay the same price and fee: the promoter\'s part comes out of the creator\'s fee, and after graduation, on a token with a pool share and inside the window, out of the tax recipient\'s part. Pool trades count only if this wallet itself moves the tokens or calls a listed router directly: tokens moved to another address first, or sold through an unlisted contract, don\'t',
       }, 'buy', await priced(tokensOut)))
     }
     // WBNB-quoted: pay native BNB through the router in one tx (it wraps; tokens land in this wallet; a cap / graduation
