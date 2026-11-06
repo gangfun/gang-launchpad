@@ -136,3 +136,7 @@ curl -N 'https://gang.fun/api/stream'     # 推送行情事件
 ## 示例
 
 [`examples/`](https://github.com/gangfun/cli/tree/main/examples) 里有可以直接拿来改的程序：测试网第一笔交易、Telegram 监控和交易前风险检查。
+
+## 接下来
+
+[生态方案](https://github.com/gangfun/gang-launchpad/blob/main/docs/PLAN-AGENT-ECOSYSTEM-2026-11-05.md)写了我们接下来要为开发者做什么。有意见可以提 issue。
