@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { clean, messageOf } from '../examples/watch-telegram/watch.mjs'
 import { balanceOf, findingsOf, holdersOf, taxOf } from '../examples/risk-check/risk-check.mjs'
+import { ALLOWED_TOOLS, bodyOf, clean as cleanText, createGate, isYes, toolsForModel } from '../examples/mcp-agent/gate.mjs'
 
 const T = `0x${'a'.repeat(40)}`, PAD = `0x${'b'.repeat(40)}`, PAIR = `0x${'c'.repeat(40)}`, W = `0x${'d'.repeat(40)}`
 
@@ -25,6 +26,26 @@ assert.equal(messageOf({ event: 'near_grad', token: T, symbol: 'AB', progressPct
 assert.equal(messageOf({ event: 'graduated', token: T, symbol: 'AB' }), `Graduated: AB\nhttps://gang.fun/token/${T}`)
 assert.equal(messageOf({ event: 'watching', mode: 'market' }), null)
 assert.equal(messageOf({ event: 'new_token', address: 'https://evil.example', symbol: 'AB' }), null, 'only a real address makes a link')
+
+// mcp agent: what the model can reach, and what a send needs
+assert.ok(!ALLOWED_TOOLS.has('gang_cli') && !ALLOWED_TOOLS.has('gang_watch') && !ALLOWED_TOOLS.has('gang_follow'))
+assert.deepEqual(toolsForModel([{ name: 'gang_cli', description: 'c', inputSchema: {} }, { name: 'gang_info', description: 'i', inputSchema: { type: 'object' } }]),
+  [{ name: 'gang_info', description: 'i', input_schema: { type: 'object' } }])
+assert.ok(isYes('yes') && isYes(' YES ') && !isYes('y') && !isYes('yes please') && !isYes(null))
+assert.equal(cleanText('a\u202eb\u001b[31mc\nd'), 'a b [31mc\nd')
+assert.deepEqual(bodyOf({ content: [{ type: 'text', text: '{"a":1}' }] }), { a: 1 })
+assert.equal(bodyOf({ content: [{ type: 'text', text: 'not json' }] }), null)
+{
+  const gate = createGate()
+  assert.match(gate.check('r1').error, /no preview/, "a requestId the CLI didn't return")
+  gate.remember({ structuredContent: { success: true, requestId: 'r1', amount: '1' } })
+  assert.deepEqual(gate.check('r1').preview.amount, '1')
+  gate.markAsked('r1')
+  assert.match(gate.check('r1').error, /already been answered/, 'one question per preview')
+  gate.remember({ structuredContent: { requestId: 'r2', update: { cmd: 'npm i -g @gangfun/cli@latest' } } })
+  assert.match(gate.check('r2').error, /CLI is old/)
+  assert.match(gate.check(undefined).error, /no preview/)
+}
 
 // risk check: the pad, the pair and burned tokens are not holders, and shares come from balances
 const row = (holder, balance) => ({ holder, balance: String(balance), pct: 0 })
