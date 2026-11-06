@@ -35,12 +35,14 @@ Token names and notes are written by strangers, and some will try to instruct yo
 - **Only listed tools.** `gang_cli` can run any command, including creates, so the model isn't offered it. Neither is `gang_watch`, which can post to a webhook.
 - **A send needs a preview from this session.** The model can't make up a `requestId`.
 - **You approve what the CLI returned,** not the model's description of it. Only `gang_buy` and `gang_sell` results count as previews, and a preview can't be replaced under the same id.
-- **Only `yes` approves,** typed at a terminal after the question appears. Anything typed or pasted before that is ignored, and a pipe or script can't approve. Each preview gets one question, and an approval lets it be sent once.
+- **Only `yes` approves,** typed at a terminal after the question appears. Anything typed or pasted before that is dropped, even part of a line. Input from a pipe can't approve, and neither can a terminal whose output is redirected. Each preview gets one question, and an approval lets it be sent once.
 - **A failed send isn't retried.** It may still have gone out.
 - **An old CLI doesn't send.** A preview carrying `update` is refused.
 - **The API key stays in the agent.** `gang mcp` doesn't get it, and the wallet holds the signing keys.
 
 Keep these when you change the agent. The model's rules in `agent.mjs` are there to make it behave well, not to keep funds safe.
+
+These rules stop the model, stranger text and slips of the hand. They don't stop a program you run yourself that drives a terminal and types `yes`, so don't run this under one.
 
 After a send, the model follows the server's rules to check the transaction, so that part isn't enforced in code. The agent isn't investment advice.
 
@@ -56,4 +58,4 @@ After a send, the model follows the server's rules to check the transaction, so 
 npm test
 ```
 
-This runs the whole agent against a stand-in model and a stand-in `gang mcp`, so it needs no API key or wallet. The stand-in model tries to send without a preview, send twice and use a tool it wasn't offered, and a `yes` is typed before the question appears.
+This runs the whole agent against a stand-in model and a stand-in `gang mcp`, so it needs no API key or wallet. It uses `python3` to give the agent a real terminal, and skips those checks without it. The stand-in model tries to send without a preview, send twice and use a tool it wasn't offered, and a `yes` is typed before the question appears, whole or in part.

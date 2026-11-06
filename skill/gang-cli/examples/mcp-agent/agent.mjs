@@ -24,12 +24,14 @@ To send a preview, call gang_execute. This program then shows the person the pre
 
 /**
  * Lines from the terminal or a pipe, null once input has ended. confirm() only hears what's typed after its question is on
- * screen: the wait for the model is long, and a yes typed or pasted during it must not approve a preview nobody has seen.
+ * screen: the wait for the model is long, and a yes typed or pasted during it, whole or part of a line, must not approve a
+ * preview nobody has seen. In terminal mode readline holds the unfinished line, so it can be dropped too.
  */
-function linesFrom(input) {
+function linesFrom(input, output) {
+  const terminal = Boolean(input.isTTY && output.isTTY) // the person must see the question as well as answer it
+  const rl = createInterface({ input, output, terminal })
   const queue = []
   let waiting = null, ended = false
-  const rl = createInterface({ input })
   rl.on('line', (line) => {
     if (waiting) { waiting(line); waiting = null } else queue.push(line)
   })
@@ -37,21 +39,26 @@ function linesFrom(input) {
     ended = true
     if (waiting) { waiting(null); waiting = null }
   })
+  rl.on('SIGINT', () => { rl.close(); process.exit(130) }) // a send already under way may still go out
   const next = () => (queue.length ? Promise.resolve(queue.shift()) : ended ? Promise.resolve(null) : new Promise((ok) => { waiting = ok }))
+  const forget = () => { queue.length = 0; rl.line = ''; rl.cursor = 0 }
+  const show = (prompt) => { if (!ended) { rl.setPrompt(prompt); rl.prompt() } }
   return {
     ask(prompt) {
-      process.stdout.write(prompt)
+      show(prompt)
       return next()
     },
-    /** null when there's no person at a terminal to ask: a pipe or a script can't approve a send. */
+    /** null when there's no terminal to ask on: a pipe can't approve a send, and neither can someone who can't see the question. */
     async confirm(prompt) {
-      if (!input.isTTY) return null
-      queue.length = 0
-      process.stdout.write(prompt)
+      if (!terminal || ended) return null
+      forget()
+      show(prompt)
       await new Promise((ok) => { setTimeout(ok, SETTLE_MS) })
-      queue.length = 0
+      forget()
+      show(prompt) // redraws the line, without what was just dropped
       return next()
     },
+    close: () => { if (!ended) rl.close() },
   }
 }
 
@@ -116,7 +123,7 @@ async function respond(claude, request, messages, tools) {
 }
 
 async function main() {
-  const { ask, confirm } = linesFrom(process.stdin)
+  const { ask, confirm, close } = linesFrom(process.stdin, process.stdout)
   // the API key stays here: the CLI doesn't need it. GANG_TOOL, if set, passes through and tags your mainnet trades
   const env = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => !k.startsWith('ANTHROPIC_') && v !== undefined))
   const mcp = new Client({ name: 'gang-example-agent', version: '1.0.0' })
@@ -155,6 +162,7 @@ async function main() {
     else throw e
     process.exitCode = 1
   } finally {
+    close() // before leaving: it hands the terminal back
     await mcp.close()
     process.stdin.destroy()
   }

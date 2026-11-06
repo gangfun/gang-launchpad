@@ -5,7 +5,7 @@
  *   npm test
  */
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -36,9 +36,33 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 `)
 chmodSync(gang, 0o755)
 
-// makes the piped input look like a terminal, for the runs that test what a person at one can do
-const asTerminal = join(dir, 'as-terminal.mjs')
-writeFileSync(asTerminal, 'process.stdin.isTTY = true\n')
+// gives the agent a real terminal: it reads our stdin and writes to the terminal's input, and passes the output back
+const relay = join(dir, 'terminal.py')
+writeFileSync(relay, `import os, pty, select, sys
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[1], sys.argv[1:])
+os.set_blocking(fd, False)
+inputs = [0, fd]
+status = None
+while status is None:
+    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+        status = 0
+    for ready in select.select(inputs, [], [], 0.05)[0]:
+        try:
+            data = os.read(ready, 4096)
+            if ready == fd:
+                os.write(1, data)
+            elif data:
+                os.write(fd, data)
+            else:
+                inputs.remove(0)
+                os.write(fd, b'\\x04') # our input ended: Ctrl-D, as a person would
+        except (BlockingIOError, OSError):
+            pass
+`)
+const hasPython = spawnSync('python3', ['-c', 'import pty, os; os.waitstatus_to_exitcode'], { stdio: 'ignore' }).status === 0
+const AGENT = fileURLToPath(new URL('agent.mjs', import.meta.url))
 
 const QUESTION = 'Type yes to send: '
 const use = (name, input) => ({ type: 'tool_use', id: `t${Math.random()}`.replace('.', ''), name, input })
@@ -47,7 +71,7 @@ const done = (text) => step([{ type: 'text', text }], 'end_turn')
 const pause = (ms) => new Promise((ok) => { setTimeout(ok, ms) })
 
 /** The agent against a stand-in Claude that answers each request with the next line of the script. */
-async function session(script, { terminal, person }) {
+async function session(script, { terminal, redirectTo, person }) {
   writeFileSync(calls, '')
   const requests = []
   const api = createServer((req, res) => {
@@ -60,10 +84,13 @@ async function session(script, { terminal, person }) {
     })
   })
   await new Promise((ok) => { api.listen(0, '127.0.0.1', ok) })
-  const agent = spawn(process.execPath, [...(terminal ? ['--import', asTerminal] : []), fileURLToPath(new URL('agent.mjs', import.meta.url))], {
+  const command = redirectTo ? ['python3', relay, 'sh', '-c', `exec "$0" "$1" > "$2"`, process.execPath, AGENT, redirectTo]
+    : terminal ? ['python3', relay, process.execPath, AGENT] : [process.execPath, AGENT]
+  const agent = spawn(command[0], command.slice(1), {
     env: { ...process.env, GANG_BIN: gang, ANTHROPIC_API_KEY: 'stub-key', ANTHROPIC_BASE_URL: `http://127.0.0.1:${api.address().port}` },
     stdio: ['pipe', 'pipe', 'inherit'],
   })
+  const closed = new Promise((ok) => { agent.on('close', ok) }) // it can end before the person does
   let out = ''
   agent.stdout.on('data', (d) => { out += d })
   const waitFor = async (text, from = 0) => {
@@ -74,51 +101,63 @@ async function session(script, { terminal, person }) {
     throw new Error(`no "${text}" in:\n${out}`)
   }
   await person({ agent, waitFor, seen: () => out.length })
+  agent.stdin.on('error', () => {})
   agent.stdin.end()
-  const code = await new Promise((ok) => { agent.on('close', ok) })
+  const code = await closed
   api.close()
   return { code, out, requests, log: readFileSync(calls, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) }
 }
 
-// at a terminal: reads, attempts to get around the gate, a yes typed too early, a no, then a real yes
-{
+const buy = (id, text) => [step([use('gang_buy', { id })]), step([use('gang_execute', { requestId: id })]), done(text)]
+
+// at a real terminal: reads, attempts to get around the gate, every kind of early yes, a no, then a real yes
+if (hasPython) {
   const { code, out, requests, log } = await session([
     step([use('gang_info', { token: 'x' })]),
     step([use('gang_execute', { requestId: 'never-previewed' })]),
     step([use('gang_execute', { requestId: 'from-a-read' })]),
     step([use('gang_cli', { args: ['create'] })]),
     step([use('gang_buy', { id: 'r1' })]),
-    step([use('gang_execute', { requestId: 'r1' })]), // a yes was typed before this appeared, then the person answers y
+    step([use('gang_execute', { requestId: 'r1' })]),
     step([use('gang_execute', { requestId: 'r1' })]), // asking again doesn't ask the person again
-    done('Nothing sent.'),
-    step([use('gang_buy', { id: 'r2' })]),
-    step([use('gang_execute', { requestId: 'r2' })]),
-    step([use('gang_execute', { requestId: 'r2' })]),
+    done('Round 1.'),
+    ...buy('r2', 'Round 2.'),
+    ...buy('r3', 'Round 3.'),
+    step([use('gang_buy', { id: 'r4' })]),
+    step([use('gang_execute', { requestId: 'r4' })]),
+    step([use('gang_execute', { requestId: 'r4' })]),
     done('Sent \u001b[31mdone.'),
   ], {
     terminal: true,
     person: async ({ agent, waitFor, seen }) => {
+      const round = async (typedAhead, atQuestion, end) => {
+        const mark = seen()
+        agent.stdin.write(`buy\n${typedAhead}`) // typed while the model is working
+        await waitFor(QUESTION, mark)
+        await pause(800)
+        assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), `an early "${typedAhead}" approves nothing`)
+        agent.stdin.write(atQuestion)
+        await waitFor(end, mark)
+      }
       await waitFor('> ')
-      agent.stdin.write('buy some\nyes\n') // typed ahead, while the model is working
-      await waitFor(QUESTION)
-      agent.stdin.write('yes\n') // too soon after the question to have read it
-      await pause(800)
-      assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), 'an early yes approves nothing')
-      agent.stdin.write('y\n') // not the word itself
-      await waitFor('Nothing sent.')
+      await round('yes\n', 'y\n', 'Round 1.') // a whole line early, then not the word itself
+      await round('ye', 's\n', 'Round 2.') // half of it early: the rest alone isn't yes
+      await round('yes', '\n', 'Round 3.') // all but Enter early
+      // a yes inside the moment after the question counts as early too; a real one after that sends
       const mark = seen()
-      agent.stdin.write('buy again\n')
+      agent.stdin.write('buy\n')
       await waitFor(QUESTION, mark)
+      agent.stdin.write('yes\n')
       await pause(800)
+      assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), 'a yes too soon to have read the question approves nothing')
       agent.stdin.write('yes\n')
       await waitFor('Sent', mark)
     },
   })
   assert.equal(code, 0)
-  assert.deepEqual(log.map((c) => c.name), ['gang_info', 'gang_buy', 'gang_buy', 'gang_execute'], 'only the approved preview was sent, once, and gang_cli never ran')
-  assert.deepEqual(log[3].args, { requestId: 'r2' })
+  assert.deepEqual(log.map((c) => c.name), ['gang_info', 'gang_buy', 'gang_buy', 'gang_buy', 'gang_buy', 'gang_execute'], 'only the approved preview was sent, once, and gang_cli never ran')
+  assert.deepEqual(log[5].args, { requestId: 'r4' })
   assert.ok(log.every((c) => c.key === null), "the CLI doesn't get the API key")
-  assert.equal(out.split(QUESTION).length - 1, 2, 'one question per preview')
   assert.match(out, /Send result: .*0xabc/, 'the hash is printed by the program, not left to the model')
 
   // what the model is offered, and what it's told
@@ -132,10 +171,46 @@ async function session(script, { terminal, person }) {
   assert.match(refused, /the person said no/)
   assert.match(refused, /already been answered/)
 
-  // the terminal: no direction or escape characters from a token or the model
-  assert.ok(!out.includes('‮') && !out.includes('\u001b'), 'clean output')
+  // the terminal: direction and escape characters from a token or the model don't reach it (readline's own moves do)
+  assert.ok(!out.includes('\u202e') && !out.includes('\u001b[31m'), 'clean output')
   assert.match(out, /EVIL/, 'the person sees the preview')
 }
+
+// Ctrl-D with an early yes on the line, then Ctrl-D at the question: leaving isn't approving
+if (hasPython) {
+  const { code, log } = await session(buy('r1', 'Nothing sent.'), {
+    terminal: true,
+    person: async ({ agent, waitFor }) => {
+      await waitFor('> ')
+      agent.stdin.write('buy\nyes\u0004')
+      await waitFor(QUESTION)
+      await pause(800)
+      agent.stdin.write('\u0004')
+      await pause(300)
+    },
+  })
+  assert.equal(code, 0)
+  assert.deepEqual(log.map((c) => c.name), ['gang_buy'], 'no send')
+}
+
+// a terminal whose output goes to a file: nobody can see the question, so a yes approves nothing
+if (hasPython) {
+  const file = join(dir, 'out.txt')
+  const { code, log } = await session(buy('r1', 'Nothing sent.'), {
+    redirectTo: file,
+    person: async ({ agent }) => {
+      await pause(1500)
+      agent.stdin.write('buy\nyes\n')
+      await pause(2000)
+      agent.stdin.write('yes\n')
+      await pause(300)
+    },
+  })
+  assert.equal(code, 0)
+  assert.deepEqual(log.map((c) => c.name), ['gang_buy'], 'no send')
+  assert.match(readFileSync(file, 'utf8'), /No terminal to ask on/)
+}
+if (!hasPython) console.log('skipped the terminal checks: no python3')
 
 // a pipe can't approve, whatever it writes
 {
