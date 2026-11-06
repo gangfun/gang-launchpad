@@ -5,13 +5,18 @@ A trading assistant for the terminal, to use as a template. Claude reads the mar
 ```bash
 npm i -g @gangfun/cli @binance/agentic-wallet
 gang preflight                     # signed in, Developer Mode, Trade all tokens, Agent ID
+git clone https://github.com/gangfun/cli && cd cli/examples/mcp-agent
 npm install
 export ANTHROPIC_API_KEY=…
-export GANG_TOOL=my-tool           # optional: tags your mainnet trades with your tool's id
+export GANG_TOOL=<your-id>         # optional: pick your own id, and it tags your mainnet trades
 node agent.mjs
 ```
 
-You can read market data without a wallet, but buying or selling needs one. It runs on mainnet, so its trades are real and use real funds. Claude API calls cost money too.
+Before you run it:
+
+- **Real funds:** you can read market data without a wallet, but buying or selling needs one. It runs on mainnet, so trades are real.
+- **Public notes:** the model writes a note with a trade by default. A note is public and permanent, and you can read it in the preview before you approve.
+- **API costs:** Claude API calls are billed to you, and one thing you ask can take up to 25 of them. See Anthropic's pricing for the rates.
 
 ```text
 > what's close to graduating?
@@ -29,8 +34,8 @@ Token names and notes are written by strangers, and some will try to instruct yo
 
 - **Only listed tools.** `gang_cli` can run any command, including creates, so the model isn't offered it. Neither is `gang_watch`, which can post to a webhook.
 - **A send needs a preview from this session.** The model can't make up a `requestId`.
-- **You approve what the CLI returned,** not the model's description of it.
-- **Only `yes` approves,** typed at the terminal. Each preview gets one question, and an approval lets it be sent once.
+- **You approve what the CLI returned,** not the model's description of it. Only `gang_buy` and `gang_sell` results count as previews, and a preview can't be replaced under the same id.
+- **Only `yes` approves,** typed at a terminal after the question appears. Anything typed or pasted before that is ignored, and a pipe or script can't approve. Each preview gets one question, and an approval lets it be sent once.
 - **A failed send isn't retried.** It may still have gone out.
 - **An old CLI doesn't send.** A preview carrying `update` is refused.
 - **The API key stays in the agent.** `gang mcp` doesn't get it, and the wallet holds the signing keys.
@@ -43,7 +48,7 @@ After a send, the model follows the server's rules to check the transaction, so 
 
 - **Tools:** change `ALLOWED_TOOLS` in `gate.mjs`. Check each new tool's risk in `gang capabilities` first.
 - **Job:** change `RULES` in `agent.mjs`.
-- **Model:** set `GANG_AGENT_MODEL`. To use another provider, change `respond()` in `agent.mjs`, and keep `gate.mjs` as it is.
+- **Model:** set `GANG_AGENT_MODEL`. Some models need different request fields, so check `request` in `agent.mjs`. To use another provider, change `respond()` in `agent.mjs`, and keep `gate.mjs` as it is.
 
 ## Test it
 
@@ -51,4 +56,4 @@ After a send, the model follows the server's rules to check the transaction, so 
 npm test
 ```
 
-This runs the whole agent against a stand-in model and a stand-in `gang mcp`, so it needs no API key or wallet. The stand-in model tries to send without a preview, send twice and use a tool it wasn't offered.
+This runs the whole agent against a stand-in model and a stand-in `gang mcp`, so it needs no API key or wallet. The stand-in model tries to send without a preview, send twice and use a tool it wasn't offered, and a `yes` is typed before the question appears.

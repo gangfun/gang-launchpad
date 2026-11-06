@@ -26,15 +26,20 @@ export function bodyOf(result) {
   try { return JSON.parse(result?.content?.find((c) => c.type === 'text')?.text) } catch { return null }
 }
 
+/** The tools whose results are previews. A requestId anywhere else isn't one. */
+export const PREVIEW_TOOLS = new Set(['gang_buy', 'gang_sell'])
+
 /** The previews seen in this session, and which have been sent. */
 export function createGate() {
   const previews = new Map()
   const asked = new Set()
   return {
     /** Keep a tool's preview, so that what the person approves is what the CLI returned, not the model's account of it. */
-    remember(result) {
+    remember(tool, result) {
+      if (!PREVIEW_TOOLS.has(tool)) return
       const body = bodyOf(result)
-      if (typeof body?.requestId === 'string' && body.requestId) previews.set(body.requestId, body)
+      // the first one stays: what the person sees can't be swapped later under the same id
+      if (typeof body?.requestId === 'string' && body.requestId && !previews.has(body.requestId)) previews.set(body.requestId, body)
     },
     /** May this go to the person? An error says why not; a preview is shown to them. */
     check(requestId) {
