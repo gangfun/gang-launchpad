@@ -296,7 +296,8 @@ export function whyNoBind({ me, promoter, creator, shareBps, boundPromoter, trad
 
 // a timeout or a 429 says nothing about the token: reading it as "no terms" would send a buyer to a plain buy, which can never bind
 const UNREAD_TERMS = 'could not read the promoter terms (RPC error). Nothing was built. Run the same command again; don\'t switch to a plain gang buy: a first buy without a promoter can never bind later'
-const isMissingRead = (e) => !!revertOf(e) || !!e?.walk?.((x) => x?.name === 'ContractFunctionZeroDataError')
+// only a revert: a node that is behind can answer an eth_call with empty data for a pad that has the function
+export const isMissingRead = (e) => !!revertOf(e)
 
 /** Reads what --promoter needs; { promoter, refuse?, retry? } with the promoter checksummed. `ctx` is on the token's pad. */
 export async function checkPromoter(ctx, { token, me, raw, creator }) {
@@ -480,7 +481,10 @@ export async function runPromote(sub, { opt, flag, out, fail, summarize }) {
   if (sub === 'claim') {
     const who = me()
     const to = toArg()
-    const owed = await ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoterFeeOf', [token, who]).catch(() => null)
+    const owed = await ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoterFeeOf', [token, who]).catch((e) => {
+      if (isMissingRead(e)) return null
+      return fail('could not read the promoter share (RPC error)', { token, detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' })
+    })
     if (owed === null) return fail(`GangLaunchpad ${ctx.gen ?? ctx.pad} has no promoter share (only a 3.0 pad upgraded for it does)`, { token })
     if (owed === 0n) return fail('this wallet has no curve share to claim on this token', { token, wallet: who, hint: `pool income is claimed with gang promote claim-pool ${ref}` })
     const sim = await simulatePool(ctx.client, who, ctx.pad, PROMOTE_PAD_ABI, 'claimPromoterFee', [token, to])

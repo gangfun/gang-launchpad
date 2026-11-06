@@ -253,7 +253,8 @@ function checkPromoterTypo() {
   const argv = process.argv.slice(2)
   for (const [i, a] of argv.entries()) {
     // -promoter, —promoter (phones and chat apps turn -- into a dash), promoter: no flag parser sees these, so they'd drop silently
-    if (!/^--[A-Za-z]/.test(a) && !['--note', '--ref'].includes(argv[i - 1]) && (/^[-\u2010-\u2015\u2212]+[A-Za-z]/.test(a) || /^promot/i.test(a))) {
+    // argv[0] is the command itself: gang promote buy
+    if (i > 0 && !/^--[A-Za-z]/.test(a) && !['--note', '--ref'].includes(argv[i - 1]) && (/^[-\u2010-\u2015\u2212]+[A-Za-z]/.test(a) || /^promot/i.test(a))) {
       fail(`${a} is not a flag: flags start with two plain hyphens, like --promoter <addr>. Nothing was built: a first buy without a promoter can never bind later`)
     }
     if (!/^--[A-Za-z]/.test(a) || a === '--promoter') continue

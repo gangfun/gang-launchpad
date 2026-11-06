@@ -5,7 +5,7 @@ import { UA } from './version.js'
 import { walletFor } from './fair.js'
 import { atTokenPad, CREATOR_FEE_ABI, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, tokenVaultOf, VAULT_GEN, VAULT_NO_BOND, vaultGenOf, vaultModeOf } from './gangpad.js'
 import { createNote, curveCreatorFee } from './creatorfee.js'
-import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
+import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
 import { bondGuard } from './bond.js'
 import { splitterOf } from './buyback.js'
@@ -540,7 +540,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       return fail('cannot price the graduation target in this quote', revertOf(e) || { detail: e.shortMessage || e.message })
     }
     if (promote) {
-      try { await ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoteOf', [zeroAddress]) } catch {
+      try { await ctx.read(ctx.pad, PROMOTE_PAD_ABI, 'promoteOf', [zeroAddress]) } catch (e) {
+        if (!isMissingRead(e)) fail('could not check the pad for a promoter share (RPC error)', { pad: ctx.pad, retry: 'same command again' })
         fail(`GangLaunchpad ${ctx.gen ?? ctx.pad} has no promoter share yet: drop --promote`, { pad: ctx.pad })
       }
     }

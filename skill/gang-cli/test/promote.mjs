@@ -176,6 +176,19 @@ for (const word of ['-promoter', '\u2014promoter', '\u2013promoter', '\u2014\u20
   refused(['buy', '--token', A, '--amount', '1', '--from', A, '--testnet', word, A], /is not a flag: flags start with two plain hyphens/)
 }
 refused([...base, '--fly', '--promote', '10'], /for V3 curve tokens/)
+// ---- the invite's own command gets past the flag checks, by the CLI and through MCP's argument list; a dead node stops it after
+{
+  const dead = (...a) => {
+    const r = spawnSync(process.execPath, [CLI, ...a], { encoding: 'utf8', env: { ...process.env, GANG_TELEMETRY: '0', GANG_UPDATE_CHECK: '0', GANG_TESTNET_RPC_URL: 'http://127.0.0.1:1' } })
+    return JSON.parse(r.stdout)
+  }
+  for (const cmd of [['promote', 'buy'], ['buy']]) {
+    const o = dead(...cmd, '--token', A, '--amount', '1', '--promoter', A, '--from', A, '--testnet', '--note', 'Promoted by a friend', '--ref', 'promoter.ai')
+    assert.equal(o.success, false)
+    assert.match(String(o.error), /RPC error/, JSON.stringify(o))
+    assert.doesNotMatch(String(o.error), /is not a flag|did you mean/)
+  }
+}
 
 // ---- an RPC error is not "no terms": that answer would send a buyer to a plain buy, which can never bind
 const rpcDown = Object.assign(new Error('HTTP 429'), { walk: () => null })
