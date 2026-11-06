@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { clean, messageOf } from '../examples/watch-telegram/watch.mjs'
 import { balanceOf, findingsOf, holdersOf, taxOf } from '../examples/risk-check/risk-check.mjs'
-import { ALLOWED_TOOLS, approves, bodyOf, clean as cleanText, createGate, newCode, toolsForModel } from '../examples/mcp-agent/gate.mjs'
+import { ALLOWED_TOOLS, approves, bodyOf, clean as cleanText, createGate, newCode, summaryOf, toolsForModel } from '../examples/mcp-agent/gate.mjs'
 
 const T = `0x${'a'.repeat(40)}`, PAD = `0x${'b'.repeat(40)}`, PAIR = `0x${'c'.repeat(40)}`, W = `0x${'d'.repeat(40)}`
 
@@ -33,6 +33,7 @@ assert.deepEqual(toolsForModel([{ name: 'gang_cli', description: 'c', inputSchem
   [{ name: 'gang_info', description: 'i', input_schema: { type: 'object' } }])
 assert.ok(approves('4821', '4821') && approves(' 4821 ', '4821') && !approves('yes', '4821') && !approves('48211', '4821') && !approves('ye4821', '4821') && !approves(null, '4821') && !approves('', '4821'))
 assert.match(newCode(), /^[0-9]{4}$/)
+assert.equal(summaryOf({ step: 'buy', spend: '1', quote: 'A\u202eB\nC', risks: [] }), '{"step":"buy","spend":"1","quote":"A B\\nC"}')
 assert.ok(new Set(Array.from({ length: 50 }, newCode)).size > 1, 'the code changes')
 assert.equal(cleanText('a\u202eb\u001b[31mc\nd'), 'a b [31mc\nd')
 assert.deepEqual(bodyOf({ content: [{ type: 'text', text: '{"a":1}' }] }), { a: 1 })

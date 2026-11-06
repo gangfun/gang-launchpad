@@ -56,6 +56,12 @@ export function createGate() {
   }
 }
 
+/** The fields that say what a trade does, for one line beside the question: a long preview scrolls off a small screen. */
+export function summaryOf(preview) {
+  const keys = ['step', 'token', 'spend', 'amount', 'payWith', 'quote', 'receive', 'expectTokens', 'minOut', 'minTokensOut']
+  return clean(JSON.stringify(Object.fromEntries(keys.filter((k) => preview[k] != null).map((k) => [k, preview[k]])))).replace(/\n/g, ' ')
+}
+
 /** A new code for each question. Nothing typed before it's shown can approve a send, and the model never sees it. */
 export const newCode = () => String(randomInt(1000, 10000))
 

@@ -11,7 +11,7 @@ import { createInterface } from 'node:readline'
 import Anthropic from '@anthropic-ai/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { ALLOWED_TOOLS, approves, bodyOf, clean, createGate, newCode, toolsForModel } from './gate.mjs'
+import { ALLOWED_TOOLS, approves, bodyOf, clean, createGate, newCode, summaryOf, toolsForModel } from './gate.mjs'
 
 const MODEL = process.env.GANG_AGENT_MODEL || 'claude-opus-5-5'
 const MAX_STEPS = 25 // model calls per thing you ask
@@ -65,6 +65,7 @@ async function runTool(block, { mcp, gate, confirm }) {
     if (error) return fail(error)
     gate.markAsked(id)
     console.log(`\nPreview from the CLI. Names and notes in it are written by strangers.\n${clean(JSON.stringify(preview, null, 2))}`)
+    console.log(`\nIn short: ${summaryOf(preview)}`)
     const code = newCode() // never goes to the model
     const answer = await confirm(`Send this transaction? Type ${code} to send, anything else cancels: `)
     if (answer === null) console.log('No terminal to ask on, so nothing was sent.')
