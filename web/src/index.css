@@ -64,6 +64,28 @@ button { cursor: pointer; }
 
 /* ---------- hero ---------- */
 .hero { padding: 48px 0 32px; }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 300px); gap: 24px; align-items: stretch; margin-bottom: 8px; }
+.hero-main { min-width: 0; }
+.hero-aside {
+  background: #000; border: 2px solid var(--line-2); box-shadow: 4px 4px 0 var(--line-2);
+  display: flex; align-items: center; justify-content: center; padding: 20px 16px; min-height: 200px;
+}
+.hero-agent-counter { text-align: center; width: 100%; }
+.hero-agent-counter__live {
+  display: inline-block; width: 8px; height: 8px; margin-bottom: 12px;
+  background: var(--green); box-shadow: 0 0 0 2px rgba(14, 203, 129, .25);
+  animation: agent-pulse 2s ease-in-out infinite;
+}
+@keyframes agent-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(.92); } }
+.hero-agent-counter__label {
+  font-size: 11px; line-height: 16px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-2); margin-bottom: 10px;
+}
+.hero-agent-counter__num {
+  font-family: var(--px); font-size: 48px; line-height: 52px; color: var(--yellow);
+  font-variant-numeric: tabular-nums; margin-bottom: 8px;
+}
+.hero-agent-counter__hint { font-size: 11px; line-height: 16px; color: var(--text-3); max-width: 240px; margin: 0 auto; }
 .hero .tag { display: inline-block; font-size: 12px; text-transform: uppercase; color: var(--yellow); margin-bottom: 14px; }
 .hero h1 { font-size: 36px; line-height: 48px; max-width: 820px; margin-bottom: 12px; }
 .hero h1 em { color: var(--yellow); font-style: normal; }
@@ -281,6 +303,9 @@ td.r, th.r { text-align: right; }
 
   /* hero rhythm */
   .hero { padding: 22px 0 16px; }
+  .hero-grid { grid-template-columns: 1fr; gap: 16px; }
+  .hero-aside { min-height: 160px; padding: 16px 12px; box-shadow: 2px 2px 0 var(--line-2); }
+  .hero-agent-counter__num { font-size: 36px; line-height: 40px; }
   .hero h1 { font-size: 24px; line-height: 32px; margin-bottom: 10px; }
   .hero .tag { margin-bottom: 10px; }
   .hero-lines { margin-bottom: 14px; }
