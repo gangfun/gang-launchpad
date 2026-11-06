@@ -62,8 +62,8 @@ gang info --token <addr>                     # 任意内盘的一个币（gang t
 gang status --token <addr>                   # 我的持仓：余额；V3 分红 / 打新奖励、还能卖多少；poolSellAll
 gang portfolio [--from <addr>]               # 全部持仓：余额、价值、成本 / 浮盈、可领、美元；押金；creator 分成（2.0 / 3.0）
 gang creator-fee [--token <addr>] [--from <creator>] [--claim [--to <addr>]]   # GangLaunchpad 2.0 / 3.0：内盘 1% 手续费的 70% 归 creator
-gang create … --promote 20 [--promote-days 30]   # 3.0 的 V3（0.32.0+）：绑定钱包在有效期内的内盘交易，creator 分成的 20% 归它的推广人。带税且没指定接收方时，这些钱包的池子税里，接收方那部分也按这个比例分给推广人（外盘分成模块，按 Merkle root 结算）。发币后不能改
-gang promote buy --token 0x… --amount <n> --promoter 0x…   # 把这个钱包绑定到推广人：只在它第一次交易这个币时绑定，只限内盘，必须由钱包直接发送。价格和手续费不变。和 --ref（gang.fun 的邀请记录）不是一回事。在 0.32.0+ 上等同于 gang buy --promoter，但旧版 CLI 对它只打印帮助，而 gang buy --promoter 在旧版上会变成一笔再也无法绑定的普通买入
+gang create … --promote 20 [--promote-days 30]   # 3.0 的 V3（0.34.0+）：绑定钱包在有效期内的内盘交易，creator 分成的 20% 归它的推广人。带税且没指定接收方时，这些钱包的池子税里，接收方那部分也按这个比例分给推广人（外盘分成模块，按 Merkle root 结算）。发币后不能改
+gang promote buy --token 0x… --amount <n> --promoter 0x…   # 把这个钱包绑定到推广人：只在它第一次交易这个币时绑定，只限内盘，必须由钱包直接发送。价格和手续费不变。和 --ref（gang.fun 的邀请记录）不是一回事。在 0.34.0+ 上等同于 gang buy --promoter，但旧版 CLI 对它只打印帮助，而 gang buy --promoter 在旧版上会变成一笔再也无法绑定的普通买入
 gang promote status|earnings|claim|claim-pool|activate|work|sweep|bind|reclaim|release-dev --token 0x…（或 --module 0x…）   # 条款、绑定、可领金额；claim-pool 会用链上的 root 核对 gang.fun 给的证明。reclaim（dev，结算方沉默 30 天后）会永久关闭模块
 gang quote --token <addr> --amount <n>       # 只算 V2 / Soft / U / S 内盘（Soft：BNB；V2：报价币 ERC-20）
 gang buy --token <addr> --amount <n> [--slippage 1] [--follow <附言 tx>] [--note "<理由>" [--conf 0-100] [--reveal-after 1-72h]]
@@ -310,6 +310,10 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 
 这个标记是公开的，任何人都能写任意 ID，所以只用于统计使用量，不能证明交易是谁发的。不设置 `GANG_TOOL` 就不会附加任何内容。
 
+## 在 Gang 上开发
+
+[DEVELOPERS.zh-CN.md](DEVELOPERS.zh-CN.md) 包含测试网第一笔交易、JSON 和失败代码约定，以及安全规则。`gang capabilities`（0.33.0+）以 JSON 列出所有工具和命令。[`examples/`](https://github.com/gangfun/cli/tree/main/examples) 里有可以直接拿来改的程序。
+
 ## 版本
 
-`0.32.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.34.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

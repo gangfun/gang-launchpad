@@ -34,7 +34,7 @@ import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
 import { V2_ABI } from './abi.js'
 import { runMcp } from './mcp.js'
 import { portfolio } from './portfolio.js'
-import { record } from './telemetry.js'
+import { codeOf, record } from './telemetry.js'
 import { trending, trendingBlock, TRENDING_NOTE } from './trending.js'
 import { shareFor } from './share.js'
 import { BUY_ACCEPTS, CREATE_ACCEPTS, FAIR_CREATE_FLAGS, LINK_FLAGS, suggestFlag, V3_CREATE_FLAGS, unknownFlagError } from './flags.js'
@@ -50,6 +50,11 @@ let update = null
 let refTag = '', refInfo = null
 // the first result of a run is also counted (anonymously, telemetry.js) unless GANG_TELEMETRY=0
 const out = (o) => {
+  // a program branches on code; error is for people and its wording can change
+  if (o && typeof o === 'object' && o.success === false) {
+    process.exitCode = 1 // fail() exits 1 too: a refused send can't look like a success to a script
+    if (!o.code) o = { ...o, code: codeOf(o) }
+  }
   if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refInfo }
   // a failed result built no tx, so it claims no tag; a bad id is always said
   if (toolInfo() && o && typeof o === 'object' && !('tool' in o) && (o.success !== false || !toolInfo().attached)) o = { ...o, tool: toolInfo() }
@@ -60,7 +65,7 @@ const out = (o) => {
 const fail = (msg, extra = {}) => {
   if (cmd === 'watch') {
     record(args, { success: false, error: msg, ...extra })
-    console.log(JSON.stringify({ event: 'error', fatal: true, success: false, error: msg, ...extra }))
+    console.log(JSON.stringify({ event: 'error', fatal: true, success: false, error: msg, code: codeOf({ error: msg, ...extra }), ...extra }))
   } else out({ success: false, error: msg, ...extra })
   process.exit(1)
 }
@@ -275,6 +280,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
 <addr> reads / builds for that wallet (V2 / Soft: graduated tokens only).
 
   gang version                           this CLI's version (also --version, -v); no wallet needed
+  gang capabilities                      every MCP tool and command as JSON: inputs, read or write, risk, whether it needs the user's yes
   gang mcp                               serve these commands as an MCP server on stdio (Claude Desktop / Code, Cursor, …):
                                          gang_help (this text + the rules), reads, watch, buy / sell / follow previews,
                                          execute, and gang_cli for every other command
@@ -344,7 +350,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          --ref (buy / mint / follow, 0.26.0+): who invited this wallet (address or .ai handle,
                                          from the invite link the user gave). Attached only when this is the wallet's first
                                          Gang trade; the result's ref says whether it was. 铸币飞轮: the mint's own inviter
-                                         --promoter (buy, V3 curve on 3.0, 0.32.0+): the promoter of a token made with --promote. In anything passed on to
+                                         --promoter (buy, V3 curve on 3.0, 0.34.0+): the promoter of a token made with --promote. In anything passed on to
                                          others write gang promote buy: an older CLI answers that with its help, but builds gang buy --promoter as a plain buy.
                                          It binds this wallet for good, by its first trade of the token, and only on a buy
                                          sent directly from the wallet. Same price and fee for you; refused when it can't bind.
@@ -509,7 +515,7 @@ creator, less any promoter share the creator set, before and after graduation, n
                                          The fee is the creator's own: never the tax recipient's or a buy-back / split / LP
                                          module's. gang info / status (the creator's) and gang portfolio show it too
 
-PROMOTER SHARE (GangLaunchpad 3.0, 0.32.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TESTNET_PROMOTE_POOL_FACTORY):
+PROMOTER SHARE (GangLaunchpad 3.0, 0.34.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TESTNET_PROMOTE_POOL_FACTORY):
   gang create … --promote <0.01-50> [--promote-days <7-90, default 30>]
                                          that % of your creator fee goes to the promoter of each bound wallet, on its curve
                                          trades inside the window; fixed for good. On a taxed token with no --recipient,
@@ -527,11 +533,11 @@ PROMOTER SHARE (GangLaunchpad 3.0, 0.32.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TES
                                          claim pool income against the root in effect. The proof comes from gang.fun and is
                                          checked against the root on chain; or give your own, recomputed from chain logs
                                          (scripts/promote-settle in gang-launchpad). A root takes effect 2 days after it is posted
-  gang promote activate|work|sweep (--token <addr> | --module <addr>) [--asset <addr>]
+  gang promote activate | gang promote work | gang promote sweep (--token <addr> | --module <addr>) [--asset <addr>]
                                          anyone: put a root in effect once its window is over / split what arrived (the wallet
                                          must estimate the gas) / send another asset's balance to the dev
   gang promote bind --token <addr>       anyone, once, before graduation (the launch does it)
-  gang promote reclaim|release-dev (--token <addr> | --module <addr>) [--to <addr>]
+  gang promote reclaim | gang promote release-dev (--token <addr> | --module <addr>) [--to <addr>]
                                          the dev: reclaim what no root allocated, after 30 days of settler silence once the token
                                          has graduated, which closes the module FOR GOOD / send what a failed push left
 
@@ -1405,6 +1411,8 @@ async function main() {
     case 'combo':
       await refuseFly('a combined recipient')
       return runCombo(args[1], { opt, flag, out, fail, summarize: summarizePreview })
+    case 'capabilities':
+      return out((await import('./capabilities.js')).capabilities())
     case 'version':
     case '--version':
     case '-v':
@@ -1732,7 +1740,7 @@ async function main() {
         ...(share && { share }),
         next: pending
           ? 'Ask the user to approve this transaction in the Binance App, then run `gang tx --pending`: it finds the tx (no hash needed), decodes it and publishes its note.'
-          : (d.txHash ? `gang tx --hash ${d.txHash}` : undefined),
+          : (d.txHash ? `gang tx --hash ${d.txHash}` : 'No tx hash and nothing pending: do not count this as sent. Read status, and check the balance before trying again.'),
       })
     }
     case 'tx': {
@@ -1754,7 +1762,7 @@ async function main() {
       return out(await txReport(hash))
     }
     default:
-      console.log(HELP); process.exit(cmd ? 1 : 0)
+      console.log(HELP); process.exit(!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help' ? 0 : 1)
   }
 }
 
