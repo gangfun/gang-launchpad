@@ -12,7 +12,7 @@ English: [DEVELOPERS.md](DEVELOPERS.md)
 | 用程序交易或发币 | [`gang` CLI](#把-cli-当接口用) | 一个钱包（见下文） |
 | 让 AI 客户端交易或发币 | `gang mcp`（MCP 服务） | 同一个钱包 |
 
-`gang capabilities` 以 JSON 列出所有工具和命令：参数、读还是写、风险等级，以及是否需要用户确认。`riskIf` 标出会提高风险的参数（如 `breakBond`）。旧名称（`gang v3 buy`、`gang fly list`）是别名。
+`gang capabilities` 以 JSON 列出所有工具和命令：读还是写、风险等级，以及是否需要用户确认。工具还会列出参数；命令的参数见 `gang --help`。`riskIf` 标出会提高风险的参数（如 `breakBond`）。旧名称（`gang v3 buy`、`gang fly list`）是别名。
 
 ## 第一笔交易（测试网）
 
@@ -32,7 +32,7 @@ cast send --chain 97 --private-key $TEST_PRIVATE_KEY --legacy --gas-price 100000
   0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a 'register()'
 ```
 
-生成发币交易。`--calldata` 只打印交易，不会发送：
+生成发币交易。`--calldata` 只打印交易，不会签名或发送。但发币仍会把名称、简介、链接和 logo 上传到 gang.fun，所以请用测试内容：
 
 ```bash
 gang create --name "First Trade" --symbol FIRST --testnet --calldata --from $TEST_WALLET > create.json
@@ -45,7 +45,7 @@ gang create --name "First Trade" --symbol FIRST --testnet --calldata --from $TES
 ### 测试网有什么不同
 
 - 币安 Agentic Wallet 不一定能在测试网签名，所以用 `--calldata` 和你自己的测试私钥。`gang execute` 用于主网。
-- 每条命令都要加 `--testnet`。`gang info`、`status`、`create`、`buy`、`sell`、`mint`、`withdraw` 和 `tx` 支持这个参数。
+- 每条命令都要加 `--testnet`。`gang info`、`status`、`create`、`buy`、`sell`、`mint`、`withdraw` 和 `tx` 支持这个参数。不支持的命令可能会忽略它，读到的是主网数据。
 - 公开 API、`gang hot`、`gang watch` 和 `gang portfolio` 只覆盖主网，所以要自己记下创建的代币地址，或用 `gang fly list --testnet` 列出测试网的飞轮发售。
 - notes 和工具标记只在主网生效。
 
@@ -86,8 +86,8 @@ gang execute --request-id <id>         发送
 | `error` | 失败时给人看的说明，措辞可能变化，不要解析 | 字段稳定，文字不稳定 |
 | `requestId` | 预览结果，传给 `gang execute` | 是 |
 | `step` | 预览结果，说明这是哪一笔交易 | 是 |
-| `txHash`、`status`、`pendingConfirmation` | `gang execute` 的结果 | 是 |
-| `tx` | 加 `--calldata` 时输出：`{ chainId, to, data, value }`，没有 `steps` 时发送它 | 是 |
+| `txHash`、`status`、`pendingConfirmation` | `gang execute` 的结果。既没有 `txHash` 也没有 `pendingConfirmation` 时，即使 `success: true`，也不要当作已发送：先看 `status`，再查余额，然后才考虑重试 | 是 |
+| `tx` | 加 `--calldata` 时输出：`{ chainId, from, to, data, value }`，没有 `steps` 时发送它。带 `gas` 时，用它作为 gas limit | 是 |
 | `steps[]` | 加 `--calldata` 且需要多笔交易时输出：`{ step, tx }` 列表，按顺序发送。此时 `tx` 只是第一笔 | 是 |
 | `issues[].code`、`issues[].fix` | `gang preflight` 的结果 | 是 |
 | `next` | 建议的下一条命令，给人和 Agent 看，不要解析 | 字段稳定，文字不稳定 |

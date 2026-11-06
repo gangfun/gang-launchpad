@@ -65,8 +65,11 @@ export function holdersOf({ items, source, provider, complete }, info) {
   return wallets.length ? { wallets, total: wallets.reduce((a, h) => a + h.balance, 0), complete } : null
 }
 
-/** Pool tax in either shape: V3 and a launched 打新 flat, Mint Flywheel under tax. */
-export const taxOf = (info) => ({ buy: Number(info.buyTaxPct ?? info.tax?.buyPct ?? 0), sell: Number(info.sellTaxPct ?? info.tax?.sellPct ?? 0) })
+/** Pool tax in either shape: V3 and a launched 打新 flat, Mint Flywheel under tax. null: gang info gave no figure, which isn't the same as no tax. */
+export const taxOf = (info) => {
+  const num = (v) => (v == null ? null : Number(v))
+  return { buy: num(info.buyTaxPct ?? info.tax?.buyPct), sell: num(info.sellTaxPct ?? info.tax?.sellPct) }
+}
 
 /** The creator's balance from gang status: flat, raw wei (V2 / Soft: myBalance is formatted, with commas), or under position (Mint Flywheel; 打新 says what its shares hold). */
 export const balanceOf = (status) => {
@@ -77,14 +80,18 @@ export const balanceOf = (status) => {
 
 /**
  * The checks, from what was read. info: gang info. holders: holdersOf's answer or null. creatorBalance: tokens or null.
- * record: the creator's API record or null. → findings, worst first.
+ * record: the creator's API record, null when there is none, undefined when it couldn't be read. → findings, worst first.
  */
 export function findingsOf({ info, holders, creatorBalance, record }) {
   const out = []
   const add = (level, check, detail) => out.push({ level, check, detail })
   const { buy, sell } = taxOf(info)
-  if (buy >= HIGH_TAX || sell >= HIGH_TAX) add('warn', 'tax', `pool tax is at the top of the range: buy ${buy}%, sell ${sell}%`)
-  else if (buy || sell) add('info', 'tax', `pool tax: buy ${buy}%, sell ${sell}%`)
+  if (buy == null && sell == null) {
+    // Soft and an untaxed V2 token have no tax; anything else may have one that gang info doesn't show
+    if (info.kind !== 'soft' && info.taxed !== false) add('unknown', 'tax', 'no tax figure from gang info: check the token page')
+  }
+  else if (buy >= HIGH_TAX || sell >= HIGH_TAX) add('warn', 'tax', `pool tax is at the top of the range: buy ${buy ?? '?'}%, sell ${sell ?? '?'}%`)
+  else if (buy || sell) add('info', 'tax', `pool tax: buy ${buy ?? '?'}%, sell ${sell ?? '?'}%`)
   if (info.recipient && !info.recipientLabel) {
     add('info', 'tax-recipient', `the tax goes to ${info.recipient}${info.recipientIsCreator ? ', the creator' : ''}, not a listed module`)
   }
@@ -102,7 +109,8 @@ export function findingsOf({ info, holders, creatorBalance, record }) {
     if (creatorBalance != null && share(creatorBalance) >= CREATOR_WARN) add('warn', 'creator-holding', `the creator holds ${share(creatorBalance).toFixed(1)}% of the tokens in wallets`)
   }
   if (creatorBalance == null) add('unknown', 'creator-holding', "couldn't read the creator's balance")
-  if (!record) add('unknown', 'creator-history', 'no record of the creator on gang.fun')
+  if (record === undefined) add('unknown', 'creator-history', "couldn't read the creator's record from gang.fun")
+  else if (!record) add('unknown', 'creator-history', 'no record of the creator on gang.fun')
   else {
     const n = record.launch?.count ?? 0, g = record.launch?.graduated ?? 0
     if (n <= 1) add('info', 'creator-history', n ? 'this is the only token the creator has launched' : 'gang.fun shows no launches by the creator')
@@ -118,7 +126,7 @@ async function check(token) {
   const [list, status, record] = await Promise.all([
     path ? holderList(path, token).catch(() => null) : null,
     info.creator ? gang('status', '--token', token, '--from', info.creator).catch(() => null) : null,
-    info.creator ? api(`agents/${info.creator}`).catch(() => null) : null,
+    info.creator ? api(`agents/${info.creator}`).catch(() => undefined) : null,
   ])
   return {
     success: true, token, kind: info.kind, inPool: !!(info.graduated ?? info.launched), link: `https://gang.fun/token/${token}`,

@@ -12,7 +12,7 @@ Build agents, tools and new ways to use [gang.fun](https://gang.fun), the agent-
 | Trade or launch from a program | [`gang` CLI](#the-cli-as-an-interface) | A wallet (below) |
 | Let an AI host trade or launch | `gang mcp`, an MCP server | The same wallet |
 
-`gang capabilities` lists every tool and command as JSON: inputs, read or write, risk level, and whether it needs the user's yes. `riskIf` names inputs that raise the risk, such as `breakBond`. Older names (`gang v3 buy`, `gang fly list`) are aliases.
+`gang capabilities` lists every tool and command as JSON: read or write, risk level, and whether it needs the user's yes. Tools also list their inputs; for a command's flags, see `gang --help`. `riskIf` names inputs that raise the risk, such as `breakBond`. Older names (`gang v3 buy`, `gang fly list`) are aliases.
 
 ## Your first trade (testnet)
 
@@ -32,7 +32,7 @@ cast send --chain 97 --private-key $TEST_PRIVATE_KEY --legacy --gas-price 100000
   0x24D0A2106AC3Ebf7d770d19f4aF0a5149ebe5B2a 'register()'
 ```
 
-Build a create. `--calldata` prints the transaction instead of sending anything:
+Build a create. `--calldata` prints the transaction instead of signing or sending it. A create still uploads its name, description, links and logo to gang.fun, so use test values:
 
 ```bash
 gang create --name "First Trade" --symbol FIRST --testnet --calldata --from $TEST_WALLET > create.json
@@ -45,7 +45,7 @@ Sign and send it with `cast send --chain 97 --private-key $TEST_PRIVATE_KEY --le
 ### How testnet differs
 
 - The Binance Agentic Wallet may not sign on testnet, so use `--calldata` and your own test key. `gang execute` is for mainnet.
-- Use `--testnet` on each command. `gang info`, `status`, `create`, `buy`, `sell`, `mint`, `withdraw` and `tx` take it.
+- Use `--testnet` on each command. `gang info`, `status`, `create`, `buy`, `sell`, `mint`, `withdraw` and `tx` take it. A command that doesn't take it may ignore the flag and read mainnet.
 - The public API, `gang hot`, `gang watch` and `gang portfolio` cover mainnet only. Keep the token addresses you create, or list testnet sales with `gang fly list --testnet`.
 - Notes and tool tags are mainnet only.
 
@@ -86,8 +86,8 @@ Each command prints one JSON object on stdout. The exceptions: `gang watch` prin
 | `error` | On a failure: a message for people. Its wording can change, so don't parse it | Field yes, text no |
 | `requestId` | On a preview: pass it to `gang execute` | Yes |
 | `step` | On a preview: which transaction this is | Yes |
-| `txHash`, `status`, `pendingConfirmation` | On `gang execute` | Yes |
-| `tx` | With `--calldata`: `{ chainId, to, data, value }`, to send when there is no `steps` | Yes |
+| `txHash`, `status`, `pendingConfirmation` | On `gang execute`. With neither `txHash` nor `pendingConfirmation`, even on `success: true`, don't count the trade as sent: read `status`, and check your balance before trying again | Yes |
+| `tx` | With `--calldata`: `{ chainId, from, to, data, value }`, to send when there is no `steps`. When it has `gas`, use that as the gas limit | Yes |
 | `steps[]` | With `--calldata`, when it takes several transactions: `{ step, tx }` items to send in order. `tx` is then only the first | Yes |
 | `issues[].code`, `issues[].fix` | On `gang preflight` | Yes |
 | `next` | A command to try next, for people and agents. Don't parse it | Field yes, text no |

@@ -1671,7 +1671,7 @@ async function main() {
         ...(share && { share }),
         next: pending
           ? 'Ask the user to approve this transaction in the Binance App, then run `gang tx --pending`: it finds the tx (no hash needed), decodes it and publishes its note.'
-          : (d.txHash ? `gang tx --hash ${d.txHash}` : undefined),
+          : (d.txHash ? `gang tx --hash ${d.txHash}` : 'No tx hash and nothing pending: do not count this as sent. Read status, and check the balance before trying again.'),
       })
     }
     case 'tx': {

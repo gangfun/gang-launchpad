@@ -52,7 +52,7 @@ const levels = (o) => Object.fromEntries(findings(o).map((f) => [f.check, f.leve
 assert.equal(levels({ info: { buyTaxPct: 5 } }).tax, 'warn', 'the top of the range can fire')
 assert.equal(levels({ info: { buyTaxPct: 4, sellTaxPct: 4 } }).tax, 'info')
 assert.equal(levels({ info: { tax: { buyPct: 1, sellPct: 2 } } }).tax, 'info')
-assert.equal(levels({}).tax, undefined, 'untaxed says nothing')
+assert.equal(levels({ info: { buyTaxPct: 0, sellTaxPct: 0 } }).tax, undefined, 'untaxed says nothing')
 assert.equal(levels({}).holders, 'warn')
 assert.equal(levels({})['largest-holder'], 'warn')
 const spread = { wallets: Array.from({ length: 100 }, (_, i) => ({ holder: W + i, balance: 1 })), total: 100, complete: true }
@@ -65,6 +65,14 @@ assert.equal(levels({ creatorBalance: 300 })['creator-holding'], 'warn')
 assert.equal(levels({ creatorBalance: null })['creator-holding'], 'unknown')
 assert.equal(levels({ record: { launch: { count: 9, graduated: 0 } } })['creator-history'], 'warn')
 assert.equal(levels({ record: null })['creator-history'], 'unknown')
+assert.match(findings({ record: undefined }).find((f) => f.check === 'creator-history').detail, /couldn't read/, 'a failed read is not the same as no record')
+// no tax figure is not the same as no tax
+assert.deepEqual(taxOf({}), { buy: null, sell: null })
+assert.equal(levels({ info: { kind: 'v2', taxed: true } }).tax, 'unknown')
+assert.equal(levels({ info: { kind: 'fair' } }).tax, 'unknown')
+assert.equal(levels({ info: { kind: 'soft' } }).tax, undefined)
+assert.equal(levels({ info: { kind: 'v2', taxed: false } }).tax, undefined)
+assert.equal(levels({ info: { kind: 'v3', buyTaxPct: 0, sellTaxPct: 0 } }).tax, undefined)
 assert.equal(findingsOf({ info: { buyTaxPct: 5 }, holders: null, creatorBalance: null, record: null })[0].level, 'warn', 'worst first')
 
 // the programs, with a stand-in gang
