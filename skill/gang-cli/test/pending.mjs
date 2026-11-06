@@ -5,7 +5,7 @@
  *   node skill/gang-cli/test/pending.mjs
  */
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -88,9 +88,16 @@ esac
 `)
     chmodSync(join(bin, 'baw'), 0o755)
     const cli = fileURLToPath(new URL('../src/index.js', import.meta.url))
-    const run = (args, status = 'SUCCESS') => JSON.parse(execFileSync(process.execPath, [cli, ...args], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_STATUS: status, GANG_UPDATE_CHECK: '0' }, encoding: 'utf8',
-    }))
+    let lastExit
+    const run = (args, status = 'SUCCESS') => {
+      const r = spawnSync(process.execPath, [cli, ...args], {
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_STATUS: status, GANG_UPDATE_CHECK: '0' }, encoding: 'utf8',
+      })
+      lastExit = r.status
+      const o = JSON.parse(r.stdout)
+      if (o.success !== false) assert.equal(r.status, 0, 'a success exits 0')
+      return o
+    }
 
     // a setup step / bond preview (no kind): no "no note" reminder; a trade preview without a note: the reminder
     rememberPreview('step-1', { print: 'x', chainId: '56' })
@@ -101,6 +108,7 @@ esac
     // a refusal from baw: error is its message (text, like every gang error), its code next to it, a hint for a known one
     assert.deepEqual(run(['execute', '--request-id', 'expired-1']),
       { success: false, error: 'Preview has expired. Please run preview again.', code: 351806, errorName: 'SERVICE_ERROR' })
+    assert.equal(lastExit, 1, 'a refused send exits 1: a script can\'t take it for a success')
     const risk = run(['execute', '--request-id', 'risk-1'])
     assert.deepEqual([risk.success, risk.error, risk.code], [false, 'Rejected by risk control', 351803])
     assert.match(risk.hint, /Trade all tokens is off/)
