@@ -8,11 +8,21 @@ const get = (p) => fetch(`${API}${p}`).then((r) => { if (!r.ok) throw new Error(
 export const api = {
   stats: () => get('/stats'),
   tokens: (sort, { limit = 24, offset = 0 } = {}) => get(`/tokens?sort=${encodeURIComponent(sort)}&limit=${limit}&offset=${offset}`),
+  stockTokens: ({ limit = 50, offset = 0 } = {}) => get(`/stocks/tokens?limit=${limit}&offset=${offset}`),
   token: (a) => get(`/tokens/${a}`),
   trades: (a, { limit = 30, offset = 0, side = 'all', sort = 'ts_desc' } = {}) => get(`/tokens/${a}/trades?limit=${limit}&offset=${offset}&side=${encodeURIComponent(side)}&sort=${encodeURIComponent(sort)}`),
   holders: (a, { limit = 50, offset = 0 } = {}) => get(`/tokens/${a}/holders?limit=${limit}&offset=${offset}`),
   candles: (a, res) => get(`/tokens/${a}/candles?res=${res}`),
   search: (q) => get(`/search?q=${encodeURIComponent(q)}`),
+  /** Test-bake: off-chain logo on indexer (see docs/TOKEN_LOGO_METADATA.md). */
+  setTokenLogo: (address, imageDataUrl) => fetch(`${API}/tokens/${address.toLowerCase()}/logo`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ image: imageDataUrl }),
+  }).then((r) => {
+    if (!r.ok) throw new Error(`${r.status}`)
+    return r.json()
+  }),
 }
 export const short = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '')
 export const ago = (ts) => { if (!ts) return '—'; const s = Math.max(1, Math.floor(Date.now() / 1000 - ts)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d` }

@@ -39,10 +39,10 @@ npx skills add binance/binance-skills-hub/skills/binance-web3/binance-agentic-wa
 # 2) Gang skill
 npx skills add gangfun/gang-launchpad/skill
 
-# 3) 安装 Gang CLI（GitHub Packages，不上 npmjs）
-npm i -g @gangfun/cli@0.1.3 --registry=https://npm.pkg.github.com   # 得到命令: gang
-# 需要带 read:packages 的 GitHub token 写在 ~/.npmrc — 见 cli README
-# 备选（不需要 Packages token）: npm i -g github:gangfun/cli
+# 3) 安装 Gang CLI（公共 npm）
+npm i -g @gangfun/cli          # 或钉死：npm i -g @gangfun/cli@0.1.4
+# 得到命令: gang · https://www.npmjs.com/package/@gangfun/cli
+# 备选：npm i -g github:gangfun/cli
 ```
 
 用 `baw` 登录一次（按提示打开 App 配对链接 / 输入配对码）。
