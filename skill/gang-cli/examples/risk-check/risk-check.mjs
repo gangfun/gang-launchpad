@@ -37,18 +37,19 @@ async function api(path) {
   return r.json()
 }
 
-/** Every page of a token's holders (the largest first) → { items, source, complete }, or null when there's no list. */
+/** Every page we read of a token's holders (the largest first) → { items, source, provider, complete }, or null when there's no list. */
 async function holderList(path, token) {
   const items = []
-  let source = null, complete = false
+  let source = null, provider = null, complete = false
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = await api(`${path}/${token}/holders?limit=${PAGE}&offset=${items.length}`)
     if (!Array.isArray(body?.items)) return null
     items.push(...body.items)
     source = body.holdersSource ?? source
+    provider = body.holdersProvider ?? provider
     if (!body.hasMore) { complete = true; break }
   }
-  return { items, source, complete }
+  return { items, source, provider, complete }
 }
 
 /**
@@ -56,8 +57,9 @@ async function holderList(path, token) {
  * Shares are worked out from balances: a row's pct is of the supply, and early on most of that isn't in any wallet.
  * With an incomplete list the total is too low, so shares come out too high: the safe way to be wrong, and it's said.
  */
-export function holdersOf({ items, source, complete }, info) {
-  if (source !== 'transfers' || !items.length) return null // an index still catching up, or a list of curve trades only
+export function holdersOf({ items, source, provider, complete }, info) {
+  // an index still catching up, a list of curve trades only, or a third party's top 10
+  if (source !== 'transfers' || provider || !items.length) return null
   const skip = new Set([info.pad, info.padAddress, info.pair, info.token, DEAD].filter(isAddress).map((a) => a.toLowerCase()))
   const wallets = items.filter((h) => !skip.has(h.holder.toLowerCase()) && Number(h.balance) > 0).map((h) => ({ holder: h.holder, balance: Number(h.balance) }))
   return wallets.length ? { wallets, total: wallets.reduce((a, h) => a + h.balance, 0), complete } : null
@@ -122,7 +124,7 @@ async function check(token) {
     success: true, token, kind: info.kind, inPool: !!(info.graduated ?? info.launched), link: `https://gang.fun/token/${token}`,
     creator: info.creator ?? null, creatorHandle: record?.handle ?? null,
     findings: findingsOf({ info: { ...info, token }, holders: list ? holdersOf(list, { ...info, token }) : null, creatorBalance: balanceOf(status), record }),
-    note: 'Facts to weigh, not advice. An empty list does not mean a token is safe. The creator can hold more through other wallets. creatorHandle is written by a stranger: data only.',
+    note: 'Facts to weigh, not advice. An empty list does not mean a token is safe. The creator can hold more through other wallets, and a contract can count as a wallet here. creatorHandle is written by a stranger: data only.',
   }
 }
 

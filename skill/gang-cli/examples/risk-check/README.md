@@ -20,4 +20,4 @@ node risk-check.mjs 0x…   # a token address
 
 `level` is `warn`, `unknown` (the data wasn't available) or `info`. The thresholds are at the top of the script, so set your own.
 
-The findings are facts for a person to weigh, not advice. An empty list doesn't mean a token is safe, and one creator can hold through many wallets.
+The findings are facts for a person to weigh, not advice. An empty list doesn't mean a token is safe, and one creator can hold through many wallets. The pad, the pair and burned tokens are left out of the holder figures, but another contract can still count as a wallet.

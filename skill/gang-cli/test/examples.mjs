@@ -34,6 +34,7 @@ assert.deepEqual(held.wallets.map((h) => h.holder), [W, `0x${'e'.repeat(40)}`])
 assert.equal(held.total, 400)
 assert.equal(holdersOf({ items: [], source: 'transfers', complete: true }, {}), null, 'an empty list is not 0% concentration')
 assert.equal(holdersOf({ items, source: 'curve_trades', complete: true }, {}), null, 'a partial source is unknown')
+assert.equal(holdersOf({ items, source: 'transfers', provider: 'someone', complete: true }, {}), null, "a third party's top 10 is not the whole list")
 assert.equal(holdersOf({ items: [row(PAD, 5), row(W, 5)], source: 'transfers', complete: true }, { pad: 'v2', padAddress: PAD }).wallets.length, 1, 'V2 / Soft: pad is a name, padAddress the address')
 
 // each kind's real field names
