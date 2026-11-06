@@ -176,6 +176,7 @@ for (const word of ['-promoter', '\u2014promoter', '\u2013promoter', '\u2014\u20
   refused(['buy', '--token', A, '--amount', '1', '--from', A, '--testnet', word, A], /is not a flag: flags start with two plain hyphens/)
 }
 refused([...base, '--fly', '--promote', '10'], /for V3 curve tokens/)
+assert.doesNotMatch(String(run('buy', '--token', A, '--amount', '1', '--from', A, '--testnet', '--promoter', 'promoter.ai').error), /is not a flag/)
 // ---- the invite's own command gets past the flag checks, by the CLI and through MCP's argument list; a dead node stops it after
 {
   const dead = (...a) => {
