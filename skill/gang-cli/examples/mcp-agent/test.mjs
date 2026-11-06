@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const dir = mkdtempSync(join(tmpdir(), 'gang-agent-'))
+process.on('exit', () => { rmSync(dir, { recursive: true, force: true }) })
 const calls = join(dir, 'calls.log')
 
 // a stand-in `gang mcp`: speaks MCP over stdio, writes each tool call to a file, and answers a buy with a preview
@@ -46,8 +47,9 @@ os.set_blocking(fd, False)
 inputs = [0, fd]
 status = None
 while status is None:
-    if os.waitpid(pid, os.WNOHANG)[0] == pid:
-        status = 0
+    done, raw = os.waitpid(pid, os.WNOHANG)
+    if done == pid:
+        status = os.waitstatus_to_exitcode(raw)
     for ready in select.select(inputs, [], [], 0.05)[0]:
         try:
             data = os.read(ready, 4096)
@@ -60,11 +62,12 @@ while status is None:
                 os.write(fd, b'\\x04') # our input ended: Ctrl-D, as a person would
         except (BlockingIOError, OSError):
             pass
+sys.exit(status)
 `)
 const hasPython = spawnSync('python3', ['-c', 'import pty, os; os.waitstatus_to_exitcode'], { stdio: 'ignore' }).status === 0
 const AGENT = fileURLToPath(new URL('agent.mjs', import.meta.url))
 
-const QUESTION = 'Type yes to send: '
+const QUESTION = 'anything else cancels: '
 const use = (name, input) => ({ type: 'tool_use', id: `t${Math.random()}`.replace('.', ''), name, input })
 const step = (content, stop_reason = 'tool_use') => ({ id: 'm', type: 'message', role: 'assistant', model: 'stub', content, stop_reason, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } })
 const done = (text) => step([{ type: 'text', text }], 'end_turn')
@@ -91,6 +94,7 @@ async function session(script, { terminal, redirectTo, person }) {
     stdio: ['pipe', 'pipe', 'inherit'],
   })
   const closed = new Promise((ok) => { agent.on('close', ok) }) // it can end before the person does
+  process.on('exit', () => { agent.kill() })
   let out = ''
   agent.stdout.on('data', (d) => { out += d })
   const waitFor = async (text, from = 0) => {
@@ -100,7 +104,7 @@ async function session(script, { terminal, redirectTo, person }) {
     }
     throw new Error(`no "${text}" in:\n${out}`)
   }
-  await person({ agent, waitFor, seen: () => out.length })
+  await person({ agent, waitFor, seen: () => out.length, output: () => out })
   agent.stdin.on('error', () => {})
   agent.stdin.end()
   const code = await closed
@@ -109,8 +113,9 @@ async function session(script, { terminal, redirectTo, person }) {
 }
 
 const buy = (id, text) => [step([use('gang_buy', { id })]), step([use('gang_execute', { requestId: id })]), done(text)]
+const codeIn = (out, from) => /Type ([0-9]{4}) to send/.exec(out.slice(from))?.[1]
 
-// at a real terminal: reads, attempts to get around the gate, every kind of early yes, a no, then a real yes
+// at a real terminal: reads, attempts to get around the gate, every kind of early answer, a no, then the real code
 if (hasPython) {
   const { code, out, requests, log } = await session([
     step([use('gang_info', { token: 'x' })]),
@@ -129,28 +134,27 @@ if (hasPython) {
     done('Sent \u001b[31mdone.'),
   ], {
     terminal: true,
-    person: async ({ agent, waitFor, seen }) => {
-      const round = async (typedAhead, atQuestion, end) => {
+    person: async ({ agent, waitFor, seen, output }) => {
+      const noSend = () => assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), 'nothing sent yet')
+      const round = async (typedAhead, answer, end) => {
         const mark = seen()
         agent.stdin.write(`buy\n${typedAhead}`) // typed while the model is working
         await waitFor(QUESTION, mark)
-        await pause(800)
-        assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), `an early "${typedAhead}" approves nothing`)
-        agent.stdin.write(atQuestion)
+        await pause(100)
+        noSend()
+        agent.stdin.write(answer(codeIn(output(), mark)))
         await waitFor(end, mark)
+        noSend()
       }
       await waitFor('> ')
-      await round('yes\n', 'y\n', 'Round 1.') // a whole line early, then not the word itself
-      await round('ye', 's\n', 'Round 2.') // half of it early: the rest alone isn't yes
-      await round('yes', '\n', 'Round 3.') // all but Enter early
-      // a yes inside the moment after the question counts as early too; a real one after that sends
+      await round('yes\n', () => 'y\n', 'Round 1.') // a whole line early, then a wrong answer
+      await round('ye', (c) => `${c}\n`, 'Round 2.') // part of a line early: the code after it no longer matches
+      await round('yes', () => '\n', 'Round 3.') // an answer early, Enter at the question
       const mark = seen()
       agent.stdin.write('buy\n')
       await waitFor(QUESTION, mark)
-      agent.stdin.write('yes\n')
-      await pause(800)
-      assert.ok(!readFileSync(calls, 'utf8').includes('gang_execute'), 'a yes too soon to have read the question approves nothing')
-      agent.stdin.write('yes\n')
+      await pause(100)
+      agent.stdin.write(`${codeIn(output(), mark)}\n`)
       await waitFor('Sent', mark)
     },
   })
@@ -164,6 +168,10 @@ if (hasPython) {
   assert.deepEqual(requests[0].tools.map((t) => t.name), ['gang_info', 'gang_buy', 'gang_execute'], 'gang_cli and gang_watch are not offered')
   assert.match(requests[0].system, /server rules/)
   assert.equal(requests[0].model, 'claude-opus-5-5')
+  const sentToModel = JSON.stringify(requests)
+  const codes = [...out.matchAll(/Type ([0-9]{4}) to send/g)].map((m) => m[1])
+  assert.equal(codes.length, 4, 'one question per preview')
+  assert.ok(codes.every((c) => !sentToModel.includes(`"${c}"`) && !sentToModel.includes(`Type ${c}`)), 'the model never sees a code')
   const results = requests.flatMap((r) => r.messages).filter((m) => Array.isArray(m.content)).flatMap((m) => m.content).filter((b) => b.type === 'tool_result')
   const refused = results.filter((r) => r.is_error).map((r) => r.content).join(' ')
   assert.match(refused, /no preview with that requestId/)
@@ -171,12 +179,12 @@ if (hasPython) {
   assert.match(refused, /the person said no/)
   assert.match(refused, /already been answered/)
 
-  // the terminal: direction and escape characters from a token or the model don't reach it (readline's own moves do)
-  assert.ok(!out.includes('\u202e') && !out.includes('\u001b[31m'), 'clean output')
+  // the terminal: no direction or escape characters from a token or the model
+  assert.ok(!out.includes('\u202e') && !out.includes('\u001b'), 'clean output')
   assert.match(out, /EVIL/, 'the person sees the preview')
 }
 
-// Ctrl-D with an early yes on the line, then Ctrl-D at the question: leaving isn't approving
+// Ctrl-D with an early answer on the line, then Ctrl-D at the question: leaving isn't approving
 if (hasPython) {
   const { code, log } = await session(buy('r1', 'Nothing sent.'), {
     terminal: true,
@@ -184,7 +192,7 @@ if (hasPython) {
       await waitFor('> ')
       agent.stdin.write('buy\nyes\u0004')
       await waitFor(QUESTION)
-      await pause(800)
+      await pause(100)
       agent.stdin.write('\u0004')
       await pause(300)
     },
@@ -234,6 +242,5 @@ if (!hasPython) console.log('skipped the terminal checks: no python3')
   assert.ok(!out.includes(QUESTION), 'and no question')
 }
 
-rmSync(dir, { recursive: true, force: true })
 console.log('mcp-agent: ok')
 process.exit(0)

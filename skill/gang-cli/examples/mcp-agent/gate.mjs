@@ -1,7 +1,9 @@
 /**
  * What the model may do, decided in code rather than in a prompt: a token's name can try to talk the model into a trade,
- * so a send never depends on what the model says. No imports, so it can be tested with nothing installed.
+ * so a send never depends on what the model says. Nothing to install, so it can be tested on its own.
  */
+import { randomInt } from 'node:crypto'
+
 
 /**
  * The tools this agent offers the model. Add to the list on purpose: gang_cli runs any other command, including creates,
@@ -54,5 +56,8 @@ export function createGate() {
   }
 }
 
-/** Only the word itself approves a send. */
-export const isYes = (answer) => String(answer ?? '').trim().toLowerCase() === 'yes'
+/** A new code for each question. Nothing typed before it's shown can approve a send, and the model never sees it. */
+export const newCode = () => String(randomInt(1000, 10000))
+
+/** Only the code itself approves a send. */
+export const approves = (answer, code) => String(answer ?? '').trim() === code
