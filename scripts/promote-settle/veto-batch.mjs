@@ -46,6 +46,10 @@ const read = (address, abi, functionName) => client.readContract({ address, abi,
 
 const all = await read(factory, FACTORY, 'modules')
 const owner = await read(factory, FACTORY, 'owner')
+if (newSettler === owner) {
+  console.error('--new-settler can\'t be the factory owner: whoever posts a root must not be the one who can veto it')
+  process.exit(2)
+}
 const only = args.module ? new Set(args.module.split(',').map((a) => getAddress(a.trim()))) : null
 for (const m of only ?? []) {
   if (!all.includes(m)) {
