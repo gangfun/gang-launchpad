@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 0,
+  "meta": {
+    "name": "gang: allow the promoter pool factory",
+    "description": "GangHandlerAdmin 0xC833CEC2B283759003945C0Bf8C048aB1949Af76 setFactory(0xA633e499ADcD69A4F91dc83587096b2c1903167A, true)",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E"
+  },
+  "transactions": [
+    {
+      "to": "0xC833CEC2B283759003945C0Bf8C048aB1949Af76",
+      "value": "0",
+      "data": "0x71013c10000000000000000000000000a633e499adcd69a4f91dc83587096b2c1903167a0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}

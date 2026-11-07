@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 0,
+  "meta": {
+    "name": "gang: upgrade GangLaunchpad 3.0",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E"
+  },
+  "transactions": [
+    {
+      "to": "0xCe83Be827bf2B6bAFe0ca6d1320Dce965CE3df48",
+      "value": "0",
+      "data": "0x9623609d0000000000000000000000002bebed4be8c8f46c17776c71d7a6a45dbc5cab29000000000000000000000000b06db29008e8569f813e09991b7f76702856f7a400000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
