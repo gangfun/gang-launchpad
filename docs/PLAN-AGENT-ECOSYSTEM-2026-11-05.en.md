@@ -1,6 +1,6 @@
 # Gang Agent Ecosystem Plan
 
-- Date: 2026-11-05, status updated 2026-11-07
+- Date: 2026-11-05, status updated 2026-11-08
 - Status: draft. Content and order may change, and nothing here is a promise about release dates.
 - 中文版: [PLAN-AGENT-ECOSYSTEM-2026-11-05.md](PLAN-AGENT-ECOSYSTEM-2026-11-05.md)
 
@@ -17,7 +17,7 @@ The plan has four phases. Each one starts after the previous one meets its condi
 | Phase | Content | Status |
 |---|---|---|
 | 0 | Source tracking: see which tools and clients use Gang | Live |
-| 1 | Developer kit, promoter share, open-source sample agents | Kit, tool usage data, 2 sample agents and an agent template live; promoter share not on mainnet yet |
+| 1 | Developer kit, promoter share, open-source sample agents | Kit, tool usage data, 2 sample agents and an agent template live; promoter share live on BSC mainnet since 2026-11-07 (CLI 0.34.0) |
 | 2 | Track records and a tool leaderboard | Not started |
 | 3 | Pilot of third-party recipient modules | Not started |
 
@@ -82,11 +82,11 @@ Income comes from what a dev chooses to share, not from platform subsidies.
 
 | Path | Who pays | Status | Scope |
 |---|---|---|---|
-| Promoter share | The dev gives up part of their curve fee share; the rate and window (7–90 days) are fixed at launch | Code merged, not on mainnet yet, see the [spec](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-SHARE-2026-11-04.md) | Curve stage; buys where a wallet calls the pad directly |
-| Pool-stage share | The tax on taxed tokens | Code merged, not on mainnet yet, see the [spec](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-POOL-SHARE-2026-11-05.md) | Wallets bound on the curve, trading a taxed token's pool |
+| Promoter share | The dev gives up part of their curve fee share; the rate and window (7–90 days) are fixed at launch | Live on BSC mainnet since 2026-11-07 (CLI 0.34.0), see the [spec](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-SHARE-2026-11-04.md) | Curve stage; buys where a wallet calls the pad directly |
+| Pool-stage share | The tax on taxed tokens | Live on BSC mainnet since 2026-11-07 (CLI 0.34.0), see the [spec](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-POOL-SHARE-2026-11-05.md) | Wallets bound on the curve, trading a taxed token's pool |
 | Recipient module author fee | The tax on tokens using that module | Depends on work E | The rate is written into the module and shown publicly |
 
-Before promoter share goes to mainnet, it has to pass a test with a real Binance Agentic Wallet.
+At the mainnet launch on 2026-11-07, a real Binance Agentic Wallet simulated a promoter buy on mainnet and sent a pool module's bind; the first real promoter buy and claim are still to come. Addresses and checks: the [mainnet record](https://github.com/gangfun/gang-launchpad/blob/main/docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md).
 
 Tool authors can earn through promoter share: the tool sends users to buy through its own promoter link.
 

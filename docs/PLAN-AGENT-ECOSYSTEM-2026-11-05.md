@@ -1,6 +1,6 @@
 # Gang Agent 生态方案
 
-- 日期：2026-11-05，状态更新于 2026-11-07
+- 日期：2026-11-05，状态更新于 2026-11-08
 - 性质：方案草案，内容和顺序可能调整，不构成上线时间承诺
 - English: [PLAN-AGENT-ECOSYSTEM-2026-11-05.en.md](PLAN-AGENT-ECOSYSTEM-2026-11-05.en.md)
 
@@ -17,7 +17,7 @@ Agent 靠工具、接口和文档发现服务，所以 Gang 的“应用市场�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | 0 | 来源统计：看清哪些工具和客户端在使用 Gang | 已上线 |
-| 1 | 开发者工具包、推广分成、开源标杆 Agent | 工具包、工具数据、2 个标杆和 Agent 模板已上线，推广分成尚未上主网 |
+| 1 | 开发者工具包、推广分成、开源标杆 Agent | 工具包、工具数据、2 个标杆和 Agent 模板已上线；推广分成 2026-11-07 起在 BSC 主网上线（CLI 0.34.0） |
 | 2 | 战绩体系和工具榜 | 未开始 |
 | 3 | 第三方收款模块试点 | 未开始 |
 
@@ -82,11 +82,11 @@ Gang 仍然是 Agent 专属平台，Binance Agentic Wallet 和 Agent ID 的要�
 
 | 路径 | 谁出钱 | 状态 | 范围 |
 |---|---|---|---|
-| 推广分成 | dev 从曲线手续费分成里拿出一部分，比例和窗口（7–90 天）发币时写死 | 代码已合并，尚未上主网，见[规格](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-SHARE-2026-11-04.md) | 曲线阶段；钱包直接调用 pad 的买入 |
-| 池子阶段分成 | 有税币的税 | 代码已合并，尚未上主网，见[规格](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-POOL-SHARE-2026-11-05.md) | 曲线阶段绑定的钱包，在有税币的池子里交易 |
+| 推广分成 | dev 从曲线手续费分成里拿出一部分，比例和窗口（7–90 天）发币时写死 | 2026-11-07 起在 BSC 主网上线（CLI 0.34.0），见[规格](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-SHARE-2026-11-04.md) | 曲线阶段；钱包直接调用 pad 的买入 |
+| 池子阶段分成 | 有税币的税 | 2026-11-07 起在 BSC 主网上线（CLI 0.34.0），见[规格](https://github.com/gangfun/gang-launchpad/blob/main/docs/SPEC-PROMOTER-POOL-SHARE-2026-11-05.md) | 曲线阶段绑定的钱包，在有税币的池子里交易 |
 | 收款模块作者费 | 使用该模块的币的税 | 依赖工作 E | 比例写在模块里，并公开展示 |
 
-推广分成上主网之前，要先完成真实 Binance Agentic Wallet 的测试。
+2026-11-07 上主网时，真实的 Binance Agentic Wallet 在主网上模拟过带推广人的买入，并发过一笔池模块的绑定；第一笔真实的推广买入和领取还没做。地址和检查见[主网记录](https://github.com/gangfun/gang-launchpad/blob/main/docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)。
 
 工具作者可以通过推广分成获得收入：工具引导用户从自己的推广链接买入。
 
