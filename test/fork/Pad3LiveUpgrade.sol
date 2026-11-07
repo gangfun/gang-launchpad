@@ -45,7 +45,12 @@ library Pad3LiveUpgrade {
     function check() internal returns (FlyUpgradeHarness h, UpgradeGangLaunchpad3.Stack memory s) {
         h = new FlyUpgradeHarness();
         if (bytes(batchFile()).length != 0) return (h, s);
+        // `run` is one call here, more than BSC's 70M block gas limit, which forge's isolation applies to each call of
+        // a test, whatever --gas-limit says. It's the script's checks, not a transaction: the Safe's upgrade is a call
+        // of its own. So only this is unmetered, and the trades after it are metered as on chain.
+        VM.pauseGasMetering();
         s = h.run();
+        VM.resumeGasMetering();
     }
 
     /// @dev PAD3_FORK_BATCH: the Safe batch written for signing (a path in the repo). With it, `check` runs nothing and

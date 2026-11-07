@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
@@ -9,6 +9,8 @@ import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.s
 import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
+import {Pad3Impl} from "../../script/Pad3Impl.sol";
+import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {GangMainnetRefs as M} from "../../config/GangDeployRefs.sol";
 import {IGangPad} from "../../src/gang/interfaces/IGangPad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
@@ -57,7 +59,8 @@ interface IPad3ForkPair {
 ///         SPLIT_FACTORY / LP_FACTORY / COMBO_FACTORY / GANG_BOND) is only checked, nothing is left for the Safe, and
 ///         new clones of the live factories run; run it WITHOUT --libraries (the factories' code check compares whole
 ///         runtime code, metadata included, and --libraries changes it). Before a 3.0 upgrade (spec §6): live mode at
-///         the new build's commit with PAD3_FORK_IMPL = the deployed new implementation (the Safe's upgrade runs first).
+///         the new build's commit with PAD3_FORK_IMPL = the deployed new implementation (the Safe's upgrade runs first),
+///         or, before it's deployed, PAD3_FORK_THIS_BUILD=true: this build's implementation, made in the fork.
 /// @dev Needs BSC_RPC_URL (without it the test is skipped). Deploy mode also needs the live PoolCheck linked (the 3.0
 ///      phase-2 read-back pins it): --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 contract Pad3ModulesForkTest is Test {
@@ -102,11 +105,21 @@ contract Pad3ModulesForkTest is Test {
         if (bytes(Pad3LiveUpgrade.batchFile()).length != 0) {
             // the upgrade as the Safe signs it, with the listings the read-back expects
             Pad3LiveUpgrade.executeBatchFile(Pad3LiveUpgrade.batchFile(), M.OWNER_SAFE);
-        } else if (impl != address(0)) {
-            vm.prank(M.OWNER_SAFE);
-            ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
-            assertEq(R.implementationOf(PAD3), impl);
+        } else {
+            // not deployed yet: this build's implementation, made here over the live dependencies
+            if (impl == address(0) && vm.envOr("PAD3_FORK_THIS_BUILD", false)) {
+                GangLaunchpad3 cur = GangLaunchpad3(payable(PAD3));
+                Pad3Impl.Deps memory d = Pad3Impl.depsOf(cur);
+                (, Pad3Impl.FlyDeps memory f) = Pad3Impl.flyDepsOf(cur);
+                impl = Pad3Impl.implWith(d, Pad3Impl.module(d, f));
+            }
+            if (impl != address(0)) {
+                vm.prank(M.OWNER_SAFE);
+                ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), impl, "");
+                assertEq(R.implementationOf(PAD3), impl);
+            }
         }
+        console.log("3.0 implementation under test", R.implementationOf(PAD3));
 
         if (!live) _guards();
 

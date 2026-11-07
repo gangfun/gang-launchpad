@@ -186,7 +186,7 @@ contract Pad3VaultTest is VaultLaunchpadTest {
         assertFalse(ok);
     }
 
-    /// @dev Value sent with a module call reverts (every module function is non-payable).
+    /// @dev Value sent with a module call reverts (every module function but `buyWithPromoter` is non-payable).
     function test_fallback_moduleCallWithValueReverts() public {
         vm.deal(owner, 1 ether);
         vm.prank(owner);

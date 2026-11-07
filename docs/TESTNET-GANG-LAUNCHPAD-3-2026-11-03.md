@@ -174,3 +174,28 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 3.0 验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`）：29 笔，`broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793770589306.json`
 - 打新入口验收（`OLD_PADS` 同上）：21 笔，`broadcast/Pad3FairEntryTestnetAcceptance.s.sol/97/run-1793770678645.json`
 - 金库验收（`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔，`broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793770805959.json`
+
+## 第七次升级：推广分成
+
+规格见 `docs/SPEC-PROMOTER-SHARE-2026-11-04.md`。用 `script/UpgradeGangLaunchpad3.s.sol`（命令同上，另加 `PAD3_FLY_HANDLER`、`PAD3_FLY_VAULT_CORE`、`PAD3_FLY_TOKEN_DEPLOYER`，都是上一次升级的地址）：9 笔交易全部成功，记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/97/run-1793819517506.json`。
+
+- 新实现 [`0x25BB52143e2805BD4a7fb653Ba89f0C7eF907C85`](https://testnet.bscscan.com/address/0x25BB52143e2805BD4a7fb653Ba89f0C7eF907C85)，模块 [`0xA03aD2A58617aca65478D46c25B5920B50Af9078`](https://testnet.bscscan.com/address/0xA03aD2A58617aca65478D46c25B5920B50Af9078)，升级交易 [`0x2e8dfe7d…7c80`](https://testnet.bscscan.com/tx/0x2e8dfe7d3fc8b79e4c00615d4fed3fe41866c7e9f573aab967e078b494837c80)。
+- 模拟里比对了 25 个币的记录和计算结果，一致；实现合约和模块的代码都和参照逐字节一致。
+
+推广分成验收（`script/Pad3PromoteTestnetAcceptance.s.sol`）分四步，因为脚本内部的检查只在模拟里运行，上链后要单独读链：
+
+1. `run`：23 笔交易全部成功，`broadcast/Pad3PromoteTestnetAcceptance.s.sol/97/run-1793819585393.json`。分成币 [`0x8eC7B7fb5e92Ca5194c1238ad47BbA107a67B9F3`](https://testnet.bscscan.com/address/0x8eC7B7fb5e92Ca5194c1238ad47BbA107a67B9F3)（20%，7 天），普通币 [`0x021B934cBEbae1E6E8FBd3185b1a414f4e20de06`](https://testnet.bscscan.com/address/0x021B934cBEbae1E6E8FBd3185b1a414f4e20de06)。
+2. `verify`（只读）：条款、绑定、合约调用被拒（`TraderNotOrigin`）和手续费账本，读链核对都通过，账本和模拟逐 wei 一致：推广人 6,280,542,512,184 wei，creator 39,122,170,048,738 wei；普通币的 creator 拿到完整的 70%，即 7,000,000,000,000 wei。
+3. `claim` 和 `verifyClaim`（只读）：推广人和 creator 都领到了对应的金额，账本清零。
+4. `sweep`：一次性钱包的余额退回部署钱包。
+
+绑定的首次买入是 [`0x22b9f208…6a5f`](https://testnet.bscscan.com/tx/0x22b9f208a4f43d08043308f8cf5cd66b7d5b062199a90317ac397353e7d06a5f)。
+
+升级后重跑已有模式的验收，全部成功：
+
+- 3.0 验收（`OLD_PADS` 为 1.0 和 2.0，带 `GANG_GATEWAY`）：29 笔，`broadcast/GangLaunchpad3TestnetAcceptance.s.sol/97/run-1793819765911.json`
+- 打新入口验收（`OLD_PADS` 同上）：21 笔，`broadcast/Pad3FairEntryTestnetAcceptance.s.sol/97/run-1793819875246.json`
+- 铸币飞轮验收：9 笔，`broadcast/Pad3FlyTestnetAcceptance.s.sol/97/run-1793819963405.json`
+- 金库验收（`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔，`broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793820045884.json`
+
+这次升级之后，源码只撤回了 `IGangLaunchpad.sol` 里的一句注释（模块工厂的源码树里有它，见推广分成规格 §6），并在 `IGangPromote.sol` 补了一句注释。合约逻辑没变，但测试网上的实现和最终源码差元数据哈希。

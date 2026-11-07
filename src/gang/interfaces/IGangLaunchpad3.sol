@@ -14,7 +14,8 @@ interface IGangLaunchpad3 {
     ///        the curve paid out before its fee. A router fee is not here: it is GatewaySell's `routerFee`
     /// @param tokenAmount tokens bought / sold
     /// @param protocolFee the 1% (creatorFee + the platform's part)
-    /// @param creatorFee the creator's part of protocolFee, kept on the pad (`creatorFeeOf`)
+    /// @param creatorFee the creator's part of protocolFee, kept on the pad: `creatorFeeOf`, less a promoter's part on a
+    ///        token with a promoter share (`PromoterFeeAccrued`; `CreatorFeeAccrued` is what the creator itself got)
     /// @param postPrice the curve's marginal price after the trade, quote wei per 1e18 token wei
     /// @param realQuote the curve's quote after the trade (before a graduation this trade triggers)
     /// @param sold tokens sold by the curve after the trade

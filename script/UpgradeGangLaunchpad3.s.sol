@@ -37,13 +37,16 @@ import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 ///              before. This catches a moved variable or a struct member read in another place; two members of the
 ///              same type swapped can still slip past the raw bytes, and only the named views or the layout test see
 ///              it;
+///            - a token with a promoter share in that sample keeps its terms, and each pair in PAD3_PROMOTE_PROBES
+///              (token, wallet) its terms, binding and earnings: set it once tokens with a share exist, from their
+///              `PromoterBound` logs (the pad can't list them; test/gang3/Pad3Promote.t.sol pins the namespace);
 ///            - the whole phase-2 read-back of DeployGangLaunchpad3 passes on the upgraded proxy;
 ///            then it is rolled back. Testnet with the deploy wallet owning the ProxyAdmin: sent. Otherwise: printed as
 ///         a Safe batch. Run test/gang3/GangLaunchpad3Layout.t.sol against the new implementation too: it pins every
 ///         slot and struct member; this script checks real data only.
 /// @dev Env: as DeployGangLaunchpad3 phase 2 (DEPLOYER_PRIVATE_KEY, GANG_PAD = 1.0, GANG_PAD3, GANG_ROUTER3, OWNER,
 ///      KEEPER, GANG_GATEWAY, GANG_PAD_REGISTRY, CALLERS), plus PAD3_IMPL (optional), PAD3_INIT_CALL (optional
-///      calldata: the new implementation's reinitializer), PAD3_FLY_HANDLER / PAD3_FLY_TOKEN_DEPLOYER / PAD3_FLY_VAULT_CORE (optional; see
+///      calldata: the new implementation's reinitializer), PAD3_PROMOTE_PROBES (optional, above), PAD3_FLY_HANDLER / PAD3_FLY_TOKEN_DEPLOYER / PAD3_FLY_VAULT_CORE (optional; see
 ///      `_resolveFly`; testnet's first 铸币飞轮 upgrade needs the deployer). A later version replaces `_newImpl` with
 ///      its own contract. Mainnet broadcast needs GANG_MAINNET_OK=true (only the deployments are broadcast there; the
 ///      listings and the upgrade are the Safe's). A run that deploys prints no batch: re-run read-only with the
@@ -150,6 +153,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     function _simulate(Stack memory s, Cfg memory c, Ctx memory x, Up memory u) internal {
         GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
         Snapshot memory before = _snapshot(p, s, _servesVaultMode(s.pad), new bool[](0));
+        _warnNoPromoteProbes(p);
         uint256 snap = vm.snapshotState();
         _sendPrep(u.prepTo, u.prepCall, u.upgrader, true);
         vm.prank(u.upgrader);
@@ -386,6 +390,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         }
         snap.settings = keccak256(
             abi.encode(
+                _promoteProbes(p, _promoteProbeList()),
                 abi.encode(
                     p.owner(),
                     p.pendingOwner(),
@@ -416,7 +421,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
                     _raw(p, t),
                     _derived(p, t, snap.newFairEntry[i]),
                     vault ? _vaultState(p, t) : bytes(""),
-                    p.kindOf(t) == 3 ? _flyState(p, t) : bytes("")
+                    p.kindOf(t) == 3 ? _flyState(p, t) : bytes(""),
+                    _promoteState(p, t)
                 )
             );
         }
@@ -466,6 +472,63 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         address creator = f.sales(t).creator;
         (uint16 guardBps, uint32 twapWindow) = f.postRulesOf(t);
         return abi.encode(f.accounts(t, creator), f.owedDev(t), guardBps, twapWindow);
+    }
+
+    /// @dev A token with a promoter share: its terms. Empty for any other token, and before the first upgrade with the
+    ///      promoter share, so tokens without one hash the same across that upgrade; terms that move read as 0, and that
+    ///      shows. Bindings and earnings can't be listed from the pad: `_promoteProbes`.
+    function _promoteState(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
+        (bool ok, bytes memory ret) = address(p).staticcall(abi.encodeCall(Pad3Module.promoteOf, (t)));
+        if (!ok || ret.length != 64) return "";
+        (uint16 share,) = abi.decode(ret, (uint16, uint32));
+        return share == 0 ? bytes("") : ret;
+    }
+
+    /// @dev PAD3_PROMOTE_PROBES: token,wallet,token,wallet,… (from `PromoterBound` logs: older tokens beyond the sample
+    ///      too).
+    function _promoteProbeList() internal view virtual returns (address[] memory) {
+        return vm.envOr("PAD3_PROMOTE_PROBES", ",", new address[](0));
+    }
+
+    /// @dev Each probe's terms, the wallet's binding and what its promoter earned.
+    function _promoteProbes(GangLaunchpad3 p, address[] memory probes) internal view returns (bytes memory out) {
+        if (probes.length % 2 != 0) revert WiringCheck("PAD3_PROMOTE_PROBES: pairs of token,wallet");
+        if (probes.length != 0) {
+            (bool ok, bytes memory ret) = address(p).staticcall(abi.encodeCall(Pad3Module.promoteOf, (probes[0])));
+            if (!ok || ret.length != 64) revert WiringCheck("PAD3_PROMOTE_PROBES: this pad has no promoter share yet");
+        }
+        Pad3Module m = Pad3Module(payable(address(p)));
+        for (uint256 i; i < probes.length; i += 2) {
+            (address token, address wallet) = (probes[i], probes[i + 1]);
+            (address promoter, uint40 boundAt, bool traded) = m.bindingOf(token, wallet);
+            out = abi.encode(out, _promoteState(p, token), promoter, boundAt, traded, m.promoterFeeOf(token, promoter));
+        }
+    }
+
+    /// @dev Tokens with a promoter share in the sample and no probes: their bindings and earnings go unchecked. Said out
+    ///      loud, not refused (the first upgrades after the feature ships may have none worth probing).
+    function _warnNoPromoteProbes(GangLaunchpad3 p) internal view {
+        address[] memory probes = _promoteProbeList();
+        if (probes.length != 0) {
+            for (uint256 i; i < probes.length; i += 2) {
+                (address promoter,,) = Pad3Module(payable(address(p))).bindingOf(probes[i], probes[i + 1]);
+                if (promoter == address(0)) {
+                    console.log(
+                        "WARNING: PAD3_PROMOTE_PROBES names a wallet bound to nobody: it checks nothing", probes[i + 1]
+                    );
+                }
+            }
+            return;
+        }
+        uint256 n = p.tokenCount();
+        uint256 k = n < SAMPLE ? n : SAMPLE;
+        for (uint256 i; i < k; i++) {
+            if (_promoteState(p, p.allTokens(n - 1 - i)).length != 0) {
+                console.log("WARNING: tokens with a promoter share and no PAD3_PROMOTE_PROBES: bindings and earnings");
+                console.log("are not compared. Set it from the PromoterBound logs before the Safe signs.");
+                return;
+            }
+        }
     }
 
     function _raw(GangLaunchpad3 p, address t) internal view returns (bytes memory) {

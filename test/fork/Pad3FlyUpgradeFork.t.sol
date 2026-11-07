@@ -59,7 +59,10 @@ contract Pad3FlyUpgradeForkTest is Test {
         _env(pk);
 
         FlyUpgradeHarness h = new FlyUpgradeHarness();
+        // the script's checks don't fit in BSC's block gas limit as one call of a test: see Pad3LiveUpgrade.check
+        vm.pauseGasMetering();
         UpgradeGangLaunchpad3.Stack memory s = h.run();
+        vm.resumeGasMetering();
         Pad3Impl.FlyDeps memory f = h.fly();
         assertEq(f.flyTokenDeployer, M.FLYWHEEL_TOKEN_DEPLOYER);
         FlywheelTaxHandler handler = FlywheelTaxHandler(f.flyTaxHandler);
@@ -72,12 +75,15 @@ contract Pad3FlyUpgradeForkTest is Test {
         vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(f.flyVaultCore));
         uint256 nonce = vm.getNonce(vm.addr(pk));
         FlyUpgradeHarness h2 = new FlyUpgradeHarness();
+        vm.pauseGasMetering();
         h2.run();
+        vm.resumeGasMetering();
         assertEq(vm.getNonce(vm.addr(pk)), nonce, "the re-run deploys nothing");
         Pad3Impl.FlyDeps memory f2 = h2.fly();
         assertEq(abi.encode(f2), abi.encode(f), "same dependencies");
         (address[] memory to, bytes[] memory data) = h2.prep(s, M.KEEPER, SAFE);
-        assertEq(to.length, 6, "handler launchpad + keeper, deployer, bucket, vault core + operator");
+        // handler launchpad + keeper, deployer, bucket, vault core + operator: all done by the fly-mode upgrade
+        assertEq(to.length, 0, "the live wiring is done");
 
         vm.startPrank(SAFE);
         for (uint256 i; i < to.length; i++) {

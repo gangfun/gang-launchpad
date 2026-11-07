@@ -47,8 +47,8 @@ import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 ///      them before printing the Safe's upgrade). The reentrancy guard, router list and A-2 router checks are here, in
 ///      the wrappers, kept apart on purpose: `buyFor` needs the pad's gate on now, `mintFor` needs the sale's
 ///      snapshot gate set. Funds of one quote are shared by curves and sales on this one address; each path only ever
-///      moves its own token's escrow (curve: `realQuote` and `creatorFeeOf`; sale: sold × price; exit fees owed:
-///      `owedFee`).
+///      moves its own token's escrow (curve: `realQuote`, `creatorFeeOf` and promoters' fees, Pad3PromoteStore; sale:
+///      sold × price; exit fees owed: `owedFee`).
 ///      STORAGE LAYOUT (proxy storage, locked by test/gang3/GangLaunchpad3Layout.t.sol, struct members included).
 ///      Upgrade rule: append new variables after the last one; never reorder, retype or remove a variable or a struct
 ///      member, and never change the inheritance list. Ownable `_owner` (0), Ownable2Step `_pendingOwner` (1), ReentrancyGuard `_status` (2, 0 on a fresh proxy =
@@ -139,7 +139,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     /// @notice GangPadRegistry (proxy): where the aggregator entry finds the pad of a token that is not this pad's.
     IGangPadRegistry public immutable padRegistry;
     /// @notice Pad3Module: the vault mode (createWithVault, setVault, setVaultCreator, vaultLock, vaultRelease
-    ///         and their views), reached through `fallback`. Fixed per implementation: a new module ships as an upgrade.
+    ///         and their views) and the promoter share's entries, reached through `fallback`. Fixed per implementation: a new module ships as an upgrade.
     address public immutable module;
 
     // ---------------------------------------------------------------- storage
@@ -160,12 +160,14 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     mapping(address quote => uint256) public owedFee;
     /// @notice Every token of the pad, both kinds (see `kindOf`).
     address[] public allTokens;
-    /// @notice Curve tokens: the creator's part of the 1% fee, in the token's quote, not claimed yet.
+    /// @notice Curve tokens: the creator's part of the 1% fee (less a bound promoter's part, `Pad3Module`), in the
+    ///         token's quote, not claimed yet.
     mapping(address token => uint256) public creatorFeeOf;
     /// @notice The graduation target the creator picked, in BNB raised (0 = not a curve token of this pad).
     mapping(address token => uint256) public gradTargetOf;
     /// @notice The rule set `token` was created under (TOKEN_VERSION at its create; 0 = not a token of this pad).
-    ///         Fixed for good: an upgrade adds rules for new tokens only.
+    ///         Fixed for good: an upgrade adds rules for new tokens only. Options a create picks (a vault, a promoter
+    ///         share) don't change this number: read them with `vaultOf` / `promoteOf`.
     mapping(address token => uint8) public tokenVersionOf;
     /// @notice Contracts allowed to call `sellToken` for a seller other than themselves (aggregators' contracts,
     ///         listed by the owner after review; GangGateway's `isCaller`).
@@ -572,7 +574,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         if (msg.sender != wbnb) revert OnlyWbnb();
     }
 
-    /// @notice Every selector this implementation does not define (the vault mode, the off-chain views) runs in Pad3Module,
+    /// @notice Every selector this implementation does not define (the vault mode, the promoter share, the off-chain
+    ///         views) runs in Pad3Module,
     ///         delegatecalled: the proxy's storage, balance and msg.sender. An unknown selector reverts there; a value
     ///         sent to a non-payable module function reverts there too.
     fallback() external payable {

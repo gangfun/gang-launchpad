@@ -9,13 +9,15 @@ import {SharedDividendVault} from "../common/SharedDividendVault.sol";
 import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "./interfaces/IGangLaunchpad3.sol";
 import {IGangPadHandler, IGangPadToken, IGangTokenDeployer} from "./interfaces/IGangPadDeps.sol";
+import {IGangPromote} from "./interfaces/IGangPromote.sol";
 import {PadCommon} from "./PadCommon.sol";
+import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 
 /// @title CurveLogic3 — GangLaunchpad 3.0's bonding-curve path: CurveLogic (2.0) with the entries 3.0's own
 ///        aggregator interface needs, the curve's math and rules unchanged
 /// @notice External library, delegatecalled by GangLaunchpad3 (runs on the pad's storage, balance and msg.sender;
 ///         events come from the pad). Same create / buy / sell / graduation / creator fee as CurveLogic, line for
-///         line, with four additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
+///         line, with five additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
 ///         1. `buy(..., prepaid)`: the pad already holds `quoteIn` (native BNB it wrapped, or quote it pulled itself),
 ///            so the exact pull from msg.sender is skipped;
 ///         2. `sell(..., pull, payTo)`: whose allowance moves the tokens (PULL_CALLER: msg.sender's own, as 2.0's
@@ -23,6 +25,8 @@ import {PadCommon} from "./PadCommon.sol";
 ///            the pad, 3.0's four.meme-style `sellToken`) and who receives the quote (`payTo`);
 ///         3. `quoteBuy` / `quoteSell`: views of what a buy / sell would do now (the aggregator quotes);
 ///         4. `TradeV1` on every trade, with the creator's part of the fee and the price after the trade.
+///         5. the promoter share (docs/SPEC-PROMOTER-SHARE-2026-11-04.md): on a token that has one, a bound wallet's
+///            trades pay part of the creator's fee to its promoter; no other token, price or fee changes.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -294,7 +298,8 @@ library CurveLogic3 {
     }
 
     /// @dev No tax on the curve: the trade pays only `protocolFee`. The creator's 70% stays on the pad in
-    ///      `creatorFeeOf[token]` (pull: a creator that can't receive never blocks a trade); the platform's 30% goes to
+    ///      `creatorFeeOf[token]`, less a bound promoter's part (`_promoterCut`), in `Pad3PromoteStore.feeOf`
+    ///      (pull: a creator that can't receive never blocks a trade); the platform's 30% goes to
     ///      the PlatformFeeBucket (blocking). A dividend token's share still follows the trader's balance (blocking
     ///      write, as V2's taxed track), so the pool tax after graduation is credited to the right holders; nothing is
     ///      paid to holders or to the tax recipient here.
@@ -311,11 +316,30 @@ library CurveLogic3 {
             SharedDividendVault(d.dividendVault).setShare(token, account, IERC20(token).balanceOf(account));
         }
         creatorFee = (protocolFee * CREATOR_FEE_SHARE_BPS) / PadCommon.BPS;
-        if (creatorFee > 0) {
-            creatorFeeOf[token] += creatorFee;
-            emit IGangLaunchpad.CreatorFeeAccrued(token, cv.creator, creatorFee);
+        uint256 creatorKeeps = creatorFee - _promoterCut(token, account, creatorFee);
+        if (creatorKeeps > 0) {
+            creatorFeeOf[token] += creatorKeeps;
+            emit IGangLaunchpad.CreatorFeeAccrued(token, cv.creator, creatorKeeps);
         }
         PadCommon.toPlatform(d, quoteAddr, protocolFee - creatorFee);
+    }
+
+    /// @dev A token with a promoter share: books this trade as `wallet`'s (a wallet that has traded can't be bound any
+    ///      more) and, while its binding's window runs, moves the promoter's part of `creatorFee` to the promoter (pull,
+    ///      like the creator's: a promoter that can't receive never blocks a trade). Only ever out of the creator's
+    ///      fee; the platform's part, the price and what the trader pays or gets don't depend on it.
+    function _promoterCut(address token, address wallet, uint256 creatorFee) private returns (uint256 cut) {
+        Pad3PromoteStore.Layout storage l = Pad3PromoteStore.layout();
+        Pad3PromoteStore.Terms memory terms = l.termsOf[token];
+        if (terms.shareBps == 0) return 0;
+        Pad3PromoteStore.Binding storage b = l.bindingOf[token][wallet];
+        if (!b.traded) b.traded = true;
+        address promoter = b.promoter;
+        if (promoter == address(0) || block.timestamp >= uint256(b.boundAt) + terms.window) return 0;
+        cut = (creatorFee * terms.shareBps) / PadCommon.BPS;
+        if (cut == 0) return 0;
+        l.feeOf[token][promoter] += cut;
+        emit IGangPromote.PromoterFeeAccrued(token, promoter, wallet, cut);
     }
 
     /// @dev Pays `token`'s creator everything kept for it, in the curve's quote, to `to`. Before or after graduation.

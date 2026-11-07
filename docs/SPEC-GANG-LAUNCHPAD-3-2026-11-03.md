@@ -18,7 +18,7 @@
   - pad 设置（router、聚合器白名单、Agent 门槛等）：pad 自己的 owner（`Ownable2Step`），也是平台 Safe。
   - `renounceOwnership` 被禁用（`RenounceDisabled`），否则 pad 没有 owner 之后，被攻破的 router 或白名单调用者就再也撤不掉了。
 - **依赖地址**：报价币登记表、分红金库、平台费桶、税处理器、TokenDeployer、WBNB、GangPadRegistry，共 7 个，写在实现合约的 immutable 里，每笔交易的 gas 和 2.0 一样。每次升级，新实现必须带同样的 7 个地址；升级脚本会在打印 Safe 交易前逐个比对（§6）。
-- **每个币的规则版本**：`tokenVersionOf(token)` 记录这个币创建时的 `TOKEN_VERSION`（3.0 首版为 1），并发 `TokenVersionSet`。**升级不改已有币的规则**：曲线参数、毕业门槛、费率都按币固定；新规则只给新版本号的币用。
+- **每个币的规则版本**：`tokenVersionOf(token)` 记录这个币创建时的 `TOKEN_VERSION`（3.0 首版为 1），并发 `TokenVersionSet`。**升级不改已有币的规则**：曲线参数、毕业门槛、费率都按币固定；新规则只给新版本号的币用。发币时的选项（金库、推广分成）不改版本号，分别用 `vaultOf`、`promoteOf` 读。
 - **存储**：只能在最后追加新变量，不能重排、改类型或删除，继承列表也不能改。`test/gang3/GangLaunchpad3Layout.t.sol` 锁定了每个槽位，以及 `Config`、`Curve`、`Sale`、`Position` 每个结构体成员的位置。`Config` 内联在槽位 3–6，布局测试不允许再给它加成员，新设置要放进新变量。以后新增的状态建议放进 ERC-7201 命名空间结构体。
 - **事件只增不改**：2.0 的事件照发，签名不变；新信息用新事件（§4）。
 - **需要初始化的新版本**：把常量 `INIT_VERSION` 改为 n，`reinitializer(INIT_VERSION)` 和 `initVersion()` 都用这个常量；初始化调用必须和升级放在同一笔 `ProxyAdmin.upgradeAndCall` 里，否则中间可能被抢先调用。升级脚本会强制执行这一条。
@@ -83,7 +83,7 @@
 - **`TokenVersionSet(token, version)`**：每次创建时发。
 - **`TradeV1(token, trader, isBuy, quoteAmount, tokenAmount, protocolFee, creatorFee, postPrice, realQuote, sold)`**：每笔曲线交易都发，紧跟在 `Buy` / `Sell` 之后。
   - `quoteAmount`：买入是 pad 实际收下的金额（含手续费、不含退款，等于 `GatewayBuy.fundsUsed`）；卖出是曲线扣手续费前付出的金额；
-  - `protocolFee`：1% 手续费；`creatorFee`：其中归 creator 的部分，平台部分 = `protocolFee - creatorFee`；
+  - `protocolFee`：1% 手续费；`creatorFee`：其中归 creator 的部分（有推广分成的币上含推广人的部分，见 `docs/SPEC-PROMOTER-SHARE-2026-11-04.md`），平台部分 = `protocolFee - creatorFee`；
   - `postPrice`：成交后的边际价格（每 1e18 代币多少 quote wei）；`realQuote`、`sold`：成交后的曲线状态（触发毕业那笔记的是毕业前的值）；
   - 路由手续费不在这里，在 `GatewaySell.routerFee` 里。
 - **`GatewayBuy` / `GatewaySell`**：入口的每笔交易都发，签名和 GangGateway 相同（同一个 topic）。
