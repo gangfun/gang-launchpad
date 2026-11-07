@@ -199,3 +199,22 @@ GANG_PAD3_BLOCK=140496214 CALLERS=0xAA0fe2cbD9F9F077448aaBE0a4013142E63EC5cc \
 - 金库验收（`GANG_VAULT_PAD` = 3.0 代理，`GANG_VAULT_ROUTER` = 3.0 的 router）：25 笔，`broadcast/GangVaultLaunchpadTestnetAcceptance.s.sol/97/run-1793820045884.json`
 
 这次升级之后，源码只撤回了 `IGangLaunchpad.sol` 里的一句注释（模块工厂的源码树里有它，见推广分成规格 §6），并在 `IGangPromote.sol` 补了一句注释。合约逻辑没变，但测试网上的实现和最终源码差元数据哈希。
+
+## 推广分成延续到外盘（2026-11-05）
+
+规格：`docs/SPEC-PROMOTER-POOL-SHARE-2026-11-05.md`。部署在已升级的测试网 3.0 上：
+
+| 合约 | 地址 |
+|---|---|
+| GangPromotePoolModuleFactory | [`0x7a68A65d27591a21C44f91015F930422BA79F1c2`](https://testnet.bscscan.com/address/0x7a68A65d27591a21C44f91015F930422BA79F1c2) |
+| 模块实现 | [`0x2d31A432A3717fE6B9DB84d958091606CbD3BD16`](https://testnet.bscscan.com/address/0x2d31A432A3717fE6B9DB84d958091606CbD3BD16) |
+| 验收用的模块 | [`0x1E1b4c56334A5612E8097fDed18135f2745D33DC`](https://testnet.bscscan.com/address/0x1E1b4c56334A5612E8097fDed18135f2745D33DC) |
+| 验收用的代币 | [`0xa51C0F4dC49754C9F8aF535E52D342Ed357DdE9F`](https://testnet.bscscan.com/address/0xa51C0F4dC49754C9F8aF535E52D342Ed357DdE9F)（买税 2%、卖税 4%、分红 20%、分成 20%、有效期 7 天） |
+
+验收（`script/PromotePoolTestnetAcceptance.s.sol`）：
+
+- 真实 pad、handler 和 Pancake 交易对上，从建币、内盘绑定、毕业到外盘 2 笔买入和 6 笔卖出全部上链。
+- 结算：`scripts/promote-settle/settle.mjs` 对真实节点算出的金额，和另一份独立写的先进先出计算一致，精确到 wei。推广人 1231862562865088，dev 967934423293402，合计等于托管 2199796986158490。
+- 先发布一个错误的 root 并由 owner `veto`，再用同一区块发布正确的 root；`--check` 不带 `--prev` 从头复算，和链上一致。
+- 第一次 `work` 回滚 `PushStarved`：forge 按模拟用量估 gas，不够。这是预期行为，见规格 §6；之后用 `--gas-estimate-multiplier 500` 成功。
+- 争议期是真实的 2 天，所以领取在本地分叉上验证：争议期内领取回滚，到期后推广人和 dev 都领到准确金额，模块清零；第二期 `--prev` 结算、发布、`--check` 和领取都正确。真实链上的领取要等争议期结束。
