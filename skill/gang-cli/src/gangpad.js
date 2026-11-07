@@ -48,12 +48,16 @@ export const GANG_GENS = {
     // GangRouter, tax handler (owned by its GangHandlerAdmin 0xC833…Af76), GangBond and the four module factories, all
     // bound to this proxy (docs/MAINNET-GANG-LAUNCHPAD-3-MODULES-2026-11-03.md). Vault mode since the Safe's upgrade at
     // block 131454282 (implementation 0x88A4…028D, Pad3Module 0xa712…409A); vaultModeOf reads it from the pad. 铸币飞轮 mode
-    // and 打新 through the entry since 2026-11-04 (fly tax handler 0x7De9…3ba0, vault core 0x9d90…767E, deployer 0x2C95…072E)
+    // and 打新 through the entry since 2026-11-04 (fly tax handler 0x7De9…3ba0, vault core 0x9d90…767E, deployer 0x2C95…072E).
+    // Promoter share since the Safe's upgrade at block 132216700 (implementation 0xB06D…F7a4, Pad3Module 0x4E7E…bd6c)
     {
       gen: PAD3_GEN, pad: '0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29', router: '0xec9717E5C68b9F18fA76D3961C9Cd7e67b5E61e7',
       bond: '0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6', splitterFactory: '0xc1282e7Fd3DFa5e00e74E9EbF8c54fFfB5763194',
       splitFactory: '0x904D4498a9257E4d7638afEbB95A1162cB2171f2', lpFactory: '0x98C506F0F4762F9d1Ec96C27499CE8B7e5981752',
       comboFactory: '0x20188054dE31De844df205712768852BdeD3eA39',
+      // the pool side of the promoter share, 2026-11-07, block 132218466; the Safe allowed it on GangHandlerAdmin at block
+      // 132219892 (docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)
+      promotePoolFactory: '0xA633e499ADcD69A4F91dc83587096b2c1903167A',
     },
     // 2026-10-31, pad block 130874052: 2.0 with the creator fee and the graduation target the creator picks (the create
     // target until 3.0; its tokens trade and claim here); its own GangRouter, GangBond, buy-back factory
@@ -95,7 +99,7 @@ export const GANG_GENS = {
       bond: '0xa87727dc3CC28a44709649A22aDbD77287B99fc1', splitterFactory: '0x3533E63EF0386adfBC96227C50f1b82EEA18d110',
       splitFactory: '0xf8d4FA57FD65Bf16427Eef653518811fFa2606dc', lpFactory: '0x4A3aC160eAF4A2747046b119631988D5D8056B07',
       comboFactory: '0xdc1687961c8aAf5A0340c1A73b604cf3a2be543C',
-      // the pool side of the promoter share, 2026-11-05 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md); none on mainnet yet
+      // the pool side of the promoter share, 2026-11-05 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md)
       promotePoolFactory: '0x7a68A65d27591a21C44f91015F930422BA79F1c2',
     },
     // 2026-10-31, pad block 139940227: 2.0 with the graduation target the creator picks (GRAD_BNB_TIERS, createWithGradTarget;
