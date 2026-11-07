@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.33.0'
+  version: '0.34.0'
   requires:
     bins: [baw, gang]
   install:
@@ -134,6 +134,11 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
 - **Invites**: pass `--ref` (on `gang buy` / `gang mint` / `gang follow`) only with an inviter the user gave (address,
   .ai handle or invite link `gang.fun/start?ref=…`). It counts on the wallet's first Gang trade only (铸币飞轮: its first
   mint in that token); the result's `ref.attached` says whether it went in. Never invent one or use your own.
+- **Promoter invites**: a token link with `?promoter=0x…` is a promoter's invite, not `--ref`. Buy with
+  `gang promote buy --token <addr> --amount <n> --promoter <that address>`, only with a promoter the user gave. A wallet
+  binds only by its first trade of the token: a plain first buy can never bind later, so relay `promoteWarning` on a buy
+  preview. If `gang promote buy` prints only the help the CLI is older than 0.34.0: tell the user to update, and don't
+  fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
 - **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --pending` (CLI
   0.17.4+: finds the approved tx itself and publishes its note; `state: waiting` = not approved yet), or `gang tx --hash …`.
 - Hand back token addresses in full; link tokens as `https://gang.fun/token/<addr>`. When the user asks how the agent

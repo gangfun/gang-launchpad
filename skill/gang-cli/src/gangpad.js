@@ -11,10 +11,10 @@ import { bsc, bscTestnet } from 'viem/chains'
  *
  * Env (new name first; the old per-command names still work as aliases). The contracts set the create target (gangGens):
  *   mainnet: GANG_PAD (aliases GANG_V3_PAD / GANG_FAIR_PAD), GANG_ROUTER, GANG_BOND, GANG_SPLITTER_FACTORY,
- *            GANG_SPLIT_FACTORY, GANG_LP_FACTORY, GANG_RPC_URL
+ *            GANG_SPLIT_FACTORY, GANG_LP_FACTORY, GANG_PROMOTE_POOL_FACTORY, GANG_RPC_URL
  *   testnet: GANG_TESTNET_PAD (aliases GANG_V3_TESTNET_PAD / GANG_FAIR_TESTNET_PAD),
  *            GANG_TESTNET_ROUTER (alias GANG_ROUTER_TESTNET), GANG_TESTNET_BOND, GANG_TESTNET_SPLITTER_FACTORY,
- *            GANG_TESTNET_SPLIT_FACTORY, GANG_TESTNET_LP_FACTORY,
+ *            GANG_TESTNET_SPLIT_FACTORY, GANG_TESTNET_LP_FACTORY, GANG_TESTNET_PROMOTE_POOL_FACTORY,
  *            GANG_TESTNET_RPC_URL (aliases GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL)
  * An RPC variable takes one URL or a comma-separated list; set, it replaces the public nodes below.
  */
@@ -95,6 +95,8 @@ export const GANG_GENS = {
       bond: '0xa87727dc3CC28a44709649A22aDbD77287B99fc1', splitterFactory: '0x3533E63EF0386adfBC96227C50f1b82EEA18d110',
       splitFactory: '0xf8d4FA57FD65Bf16427Eef653518811fFa2606dc', lpFactory: '0x4A3aC160eAF4A2747046b119631988D5D8056B07',
       comboFactory: '0xdc1687961c8aAf5A0340c1A73b604cf3a2be543C',
+      // the pool side of the promoter share, 2026-11-05 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md); none on mainnet yet
+      promotePoolFactory: '0x7a68A65d27591a21C44f91015F930422BA79F1c2',
     },
     // 2026-10-31, pad block 139940227: 2.0 with the graduation target the creator picks (GRAD_BNB_TIERS, createWithGradTarget;
     // docs/SPEC-CURVE-GRAD-TARGET-2026-10-31.md), the create target until 3.0; buy-back factory buyback-burn-v4, split-v1,
@@ -130,18 +132,18 @@ export const GANG_GENS = {
   ],
 }
 // what a generation brings to a ctx (gen: '1.0' | '2.0' | PAD3_GEN | VAULT_GEN, null for a pad named by the env that this CLI does not know)
-const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory']
+const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory', 'promotePoolFactory']
 // the env names of each field, per network (new name first; the old per-command names still work as aliases)
 const GEN_ENV = {
   mainnet: {
     pad: ['GANG_PAD', 'GANG_V3_PAD', 'GANG_FAIR_PAD'], router: ['GANG_ROUTER'], bond: ['GANG_BOND'],
     splitterFactory: ['GANG_SPLITTER_FACTORY'], splitFactory: ['GANG_SPLIT_FACTORY'], lpFactory: ['GANG_LP_FACTORY'],
-    comboFactory: ['GANG_COMBO_FACTORY'],
+    comboFactory: ['GANG_COMBO_FACTORY'], promotePoolFactory: ['GANG_PROMOTE_POOL_FACTORY'],
   },
   testnet: {
     pad: ['GANG_TESTNET_PAD', 'GANG_V3_TESTNET_PAD', 'GANG_FAIR_TESTNET_PAD'], router: ['GANG_TESTNET_ROUTER', 'GANG_ROUTER_TESTNET'],
     bond: ['GANG_TESTNET_BOND'], splitterFactory: ['GANG_TESTNET_SPLITTER_FACTORY'], splitFactory: ['GANG_TESTNET_SPLIT_FACTORY'],
-    lpFactory: ['GANG_TESTNET_LP_FACTORY'], comboFactory: ['GANG_TESTNET_COMBO_FACTORY'],
+    lpFactory: ['GANG_TESTNET_LP_FACTORY'], comboFactory: ['GANG_TESTNET_COMBO_FACTORY'], promotePoolFactory: ['GANG_TESTNET_PROMOTE_POOL_FACTORY'],
   },
 }
 
