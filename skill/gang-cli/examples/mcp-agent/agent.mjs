@@ -153,6 +153,7 @@ async function main() {
     else if (e instanceof Anthropic.RateLimitError) console.error('Claude rate limit: try again shortly.')
     else if (e instanceof Anthropic.APIConnectionError) console.error("Can't reach Claude: check the network.")
     else if (e instanceof Anthropic.APIError) console.error(`Claude API error ${e.status}: ${e.message}`)
+    else if (/authentication method/.test(e.message)) console.error('No Claude API key: set ANTHROPIC_API_KEY.') // the SDK's check, before any request
     else throw e
     process.exitCode = 1
   } finally {

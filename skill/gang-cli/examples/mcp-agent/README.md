@@ -17,6 +17,7 @@ Before you run it:
 - **Real funds:** you can read market data without a wallet, but buying or selling needs one. It runs on mainnet, so trades are real.
 - **Public notes:** the model writes a note with a trade by default. A note is public and permanent, and you can read it in the preview before you approve.
 - **API costs:** Claude API calls are billed to you, and one thing you ask can take up to 25 of them. See Anthropic's pricing for the rates.
+- **Testing so far:** this version's tests use a stand-in model. It hasn't been run against the live Claude API or sent a real trade yet, so start with a question and then a small amount. If Claude rejects a request, check `request` in `agent.mjs`.
 
 ```text
 > what's close to graduating?

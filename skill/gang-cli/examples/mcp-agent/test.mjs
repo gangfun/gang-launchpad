@@ -243,5 +243,15 @@ if (!hasPython) console.log('skipped the terminal checks: no python3')
   assert.ok(!out.includes(QUESTION), 'and no question')
 }
 
+// no API key: it says what to set, and doesn't go on
+{
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('ANTHROPIC_')))
+  const { status, stderr } = spawnSync(process.execPath, [AGENT], {
+    input: 'hello\n', encoding: 'utf8', env: { ...env, HOME: dir, XDG_CONFIG_HOME: dir, GANG_BIN: gang },
+  })
+  assert.equal(status, 1)
+  assert.match(stderr, /set ANTHROPIC_API_KEY/)
+}
+
 console.log('mcp-agent: ok')
 process.exit(0)
