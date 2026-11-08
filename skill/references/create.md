@@ -79,6 +79,8 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --lp 70 [--lp-to 0x…]
 # V3 with buy-back + auto-liquidity + payees at once: clone the dev's combined recipient → create → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 20 --buyback 30 --lp 30 --split self:70,0xKol…:30
+# V3 with a capped take (0.35.0+): clone the dev's capped recipient → create → bind → (dev buy, bond)
+gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --tax-cap 20 --tax-cap-share 50 --after-cap buyback:70,lp:30
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
 ```
@@ -87,7 +89,7 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   curve fee is the creator's and how to claim it (`gang creator-fee`). With `--buyback` / `--split` / `--lp` (or a combined
   recipient) they also say it does not go through the module, and how to claim it into the module (`--to <module>`):
   tell the user both ([v3.md](v3.md#creator-fee-ganglaunchpad-20)).
-- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module`, `lp-splitter` or `combo-module` → `create` → `bind` → `dev-buy` →
+- **One tx per run.** Each run prints the next tx (`launch.stage`: `buyback-splitter`, `split-module`, `lp-splitter`, `combo-module` or `capped-module` → `create` → `bind` → `dev-buy` →
   `bond` → `done`, with wrap / approve steps between). Preview it, show it, get the OK, `gang execute`, then run **the
   very same command** again. Stop at `launch.stage: done`.
 - **Progress comes from the chain**: the run finds the token this wallet created with this symbol since the plan, then
@@ -130,4 +132,14 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   only move its own slot. Any other asset sent to it: the buy-back + LP share goes to 0xdead, the rest to the payees.
   Same quotes as `--buyback`. A launch keeps everything it began with (run it as it began, or `--restart`). Live on
   BSC mainnet and testnet.
+- **`--tax-cap <amount>`** (taxed V3, CLI 0.35.0+; not with `--buyback`, `--lp`, `--buyback-to`, `--lp-to` or `--recipient`):
+  the recipient becomes the dev's capped recipient ([v3.md](v3.md#capped-recipient---tax-cap)). `--tax-cap-share <pct>`
+  (default 100) of the recipient's part goes to the payees until they have been credited `--tax-cap` in all, counted in the
+  launch's quote with its own decimals (WBNB for a BNB launch, else `--quote`); the rest, and after the cap all of it, is
+  split by `--after-cap buyback:<pct>,lp:<pct>` (adding up to 100; default `buyback:100`) between buy-back-and-burn and
+  liquidity. `--split` names the payees (shares of the capped part; default: the dev alone). The preview gives the rough
+  pool volume at which the cap is reached. **Show the user the cap, every ratio and payee, and say it is permanent, and
+  what the cap does not cover**: the creator fee, the dev's own tokens (it is not a lock), the holders' dividend. Any
+  other asset sent to the module goes to 0xdead. Same quotes as `--buyback`. With `--promote`, the promoter share stays
+  on the curve. Built in on the BSC testnet; not on mainnet yet in this CLI version: a mainnet launch needs `GANG_CAPPED_FACTORY`.
 - `--note` goes on the create only; the buy and the bond carry none.
