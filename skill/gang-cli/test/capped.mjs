@@ -150,16 +150,17 @@ assert.equal(cappedLine({ cap: '20', symbol: 'WBNB', payBps: 5000, buybackOfRest
 assert.equal(cappedLine({ cap: '1', symbol: 'USDC', payBps: 10_000, buybackOfRestBps: 0, payees: [A], shares: [10_000] }),
   `until the payees have been credited 1 USDC in all: all of it to ${A}: 100% of it. From then on all of it: 0% buy-back and burn, 100% liquidity (LP to 0xdead)`)
 
-// ---- factory addresses: only the testnet 3.0 entry has one (mainnet not deployed yet), env overrides
+// ---- factory addresses: the 3.0 entries on both networks (2026-11-08), env overrides
 const TESTNET_3_CAPPED = '0xe3f61865d98993dd39c136Af19651C6F6686498A'
-assert.equal(MAINNET_CAPPED_FACTORY, null)
+const MAINNET_3_CAPPED = '0x294E901ecb66af280C1cDD26fD871601d89a2Dca'
+assert.equal(MAINNET_CAPPED_FACTORY, MAINNET_3_CAPPED)
 assert.equal(TESTNET_CAPPED_FACTORY, TESTNET_3_CAPPED)
 for (const net of ['mainnet', 'testnet']) {
   for (const [i, g] of GANG_GENS[net].entries()) {
-    assert.equal(g.cappedFactory, net === 'testnet' && i === 0 ? TESTNET_3_CAPPED : null, `${net} ${g.gen} ${g.pad}`)
+    assert.equal(g.cappedFactory, i === 0 ? (net === 'testnet' ? TESTNET_3_CAPPED : MAINNET_3_CAPPED) : null, `${net} ${g.gen} ${g.pad}`)
   }
 }
-assert.equal(cappedFactoryAddress(false), null)
+assert.equal(cappedFactoryAddress(false), MAINNET_3_CAPPED)
 assert.equal(cappedFactoryAddress(true), TESTNET_3_CAPPED)
 process.env.GANG_CAPPED_FACTORY = A
 assert.equal(cappedFactoryAddress(false), A)
@@ -351,8 +352,7 @@ const refused = (args, re, env = {}) => {
 const F = { GANG_TESTNET_CAPPED_FACTORY: t(0xfac), GANG_CAPPED_FACTORY: t(0xfac) } // past the not-deployed check
 const base = ['create', '--name', 'C', '--symbol', 'C', '--from', ME, '--testnet']
 const taxed = [...base, '--buy-tax', '2', '--sell-tax', '3']
-// (the testnet has one built in since 2026-11-08; mainnet not yet)
-refused(['create', '--name', 'C', '--symbol', 'C', '--from', ME, '--buy-tax', '2', '--sell-tax', '2', '--tax-cap', '20'], /not deployed on BSC mainnet in this CLI version: set GANG_CAPPED_FACTORY/)
+// (both networks have one built in since 2026-11-08)
 refused([...base, '--tax-cap', '20'], /--tax-cap \(a capped tax recipient\) needs a taxed token: add --buy-tax and --sell-tax/, F)
 refused([...base, '--buy-tax', '0', '--sell-tax', '0', '--tax-cap', '20'], /needs a taxed token/, F)
 refused([...base, '--buy-tax', '2', '--sell-tax', '6', '--tax-cap', '20'], /needs a taxed token: add --buy-tax and --sell-tax, each 1–5/, F)
