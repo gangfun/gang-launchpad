@@ -493,7 +493,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          dividend.
                                          PERMANENT: the cap, its quote, the ratios, payees and shares can never change; a payee
                                          can only move its own slot (gang capped set-payee). Any other asset sent to it goes
-                                         to 0xdead in full. Not with --buyback / --lp / --buyback-to / --lp-to / --recipient;
+                                         to 0xdead in full when distributed (one that can't be sent there stays in the
+                                         module). Not with --buyback / --lp / --buyback-to / --lp-to / --recipient;
                                          with --promote the promoter share stays on the curve. Steps: clone your capped
                                          recipient (GangCappedSplitterFactory; listed in the same tx) → create → bind → the
                                          rest of the launch. Quote: WBNB (default), GANG or one listed in the pad's
@@ -699,6 +700,7 @@ CAPPED (a V3 token whose recipient is a capped recipient, capped-v1, 0.35.0+; GA
   gang capped distribute --token <addr> [--asset <addr>|wbnb]
                                          anyone, once bound: the bound quote (default) is split as the tax is (the payees'
                                          part never above what is left of the cap); any other asset goes to 0xdead in full
+                                         (BURNED, paid to nobody; one that can't be sent there stays in the module)
   gang capped release --token <addr> [--index <i>] [--max <amount>]
                                          anyone: push a slot what a failed push left owed (bound quote only; --index = the
                                          contract's 0-based slot, default your own slot or the only one owed)
@@ -1288,7 +1290,7 @@ function create() {
     return runFair('create', { ...PAD_IO, notes: padNotes('fair', 'create') })
   }
   const wrong = FAIR_CREATE_FLAGS.find(flag)
-  if (wrong) fail(`--${wrong} is a 打新 (fair-mint) setting: add --fair to create a sale (gang create --fair …)`)
+  if (wrong) fail(`--${wrong} is a 打新 (fair-mint) setting: add --fair to create a sale (gang create --fair …)`, wrong === 'cap' ? { hint: 'to cap what the payees take from a V3 token\'s tax, use --tax-cap <amount> (a capped recipient)' } : {})
   if (isLaunch('v3', flag, opt)) return runLaunch('v3', LAUNCH_DEPS)
   return runV3('create', { ...PAD_IO, notes: padNotes('v3', 'create') })
 }

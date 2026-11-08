@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,6 +66,12 @@ assert.match(capUnits('0.0000001', 6, 'USDC').error, /USDC has 6 decimals, 0.000
 assert.match(capUnits('0', 18).error, /above 0/)
 assert.match(capUnits('0.000', 18).error, /above 0/)
 for (const x of ['-1', 'abc', '', undefined, '1e3', '--split']) assert.match(capUnits(x, 18).error, /--tax-cap must be a positive amount/, String(x))
+// before the quote is read: the form only; any number of decimals passes (the quote decides), a figure past 30 digits never
+assert.deepEqual(capUnits('20.123456789012345678901234567890'), { ok: true })
+assert.match(capUnits('0.00').error, /above 0/)
+assert.match(capUnits('1'.repeat(31)).error, /--tax-cap is far too large/)
+assert.match(capUnits('1'.repeat(31), 18).error, /far too large/)
+assert.deepEqual(capUnits('9'.repeat(30), 18), { amount: BigInt('9'.repeat(30)) * E18 })
 
 // ---- the spec: payees default to you, --split shares are of the capped part
 const one = parseCappedSpec({}, ME)
@@ -138,7 +144,7 @@ assert.equal(capVolume({ capAmount: 20n * E6, decimals: 6, symbol: 'USDC', buyTa
 // ---- the texts a launch preview and status carry
 assert.match(PERMANENT_NOTE, /^PERMANENT: the cap, its quote, .*nobody \(not you, not the platform\) can change them later; a payee can only move its own slot .*gang capped set-payee\), which leaves the cap as it is$/)
 assert.match(COVERAGE_NOTE, /only this recipient's part of the pool tax.*creator's share of the curve fee .*gang creator-fee.*dev's own tokens .*not a lock.*holders' dividend/)
-assert.match(OTHER_ASSETS_NOTE, /all of it goes to 0xdead, never to the payees/)
+assert.match(OTHER_ASSETS_NOTE, /all of it goes to 0xdead when it is distributed .*never to the payees; one that cannot be sent there stays in the module$/)
 assert.equal(cappedLine({ cap: '20', symbol: 'WBNB', payBps: 5000, buybackOfRestBps: 7000, payees: [ME_C, A], shares: [7000, 3000] }),
   `until the payees have been credited 20 WBNB in all: 50% to ${ME_C}: 70% of it, ${A}: 30% of it; the rest 70% buy-back and burn, 30% liquidity (LP to 0xdead). From then on all of it: 70% buy-back and burn, 30% liquidity (LP to 0xdead)`)
 assert.equal(cappedLine({ cap: '1', symbol: 'USDC', payBps: 10_000, buybackOfRestBps: 0, payees: [A], shares: [10_000] }),
@@ -195,11 +201,11 @@ assert.deepEqual(s.unsplitGoes, { toPayees: '0.5', toBuyback: '1.05', toLp: '0.4
 assert.deepEqual(s.nextChunk, { kind: 'buy-back', quoteIn: '0.1', tokensBurned: '5000' })
 assert.deepEqual(s.keeper, { servesQuote: true, due: true, plan: decodeWorkPlan(enc(1, 4950n * E18)) })
 assert.equal(s.quoteSymbol, 'USDC')
-assert.deepEqual(s.assets, [{ asset: USDC, symbol: 'USDC', boundQuote: true, undistributed: '2', owedTotal: '0', splitBy: 'keeper (or anyone, gang capped distribute)' }])
+assert.deepEqual(s.assets, [{ asset: USDC, symbol: 'USDC', boundQuote: true, undistributed: '2', owedTotal: '0', splitBy: 'the keeper (the quote is one it serves) or anyone: gang capped distribute' }])
 assert.deepEqual(s.next, [`gang capped chunk ${REF}`])
 assert.match(s.note, /^PERMANENT: /)
 assert.match(s.note, /19\.5 of the 20 USDC cap credited to the payees so far \(97\.5%\), 0\.5 left/)
-assert.match(s.note, /The keeper serves this quote \(USDC\)/)
+assert.match(s.note, /The quote \(USDC\) is one the keeper serves: where the keeper runs capped-v1 it does the chunks and pays the payees \(once/)
 assert.match(s.note, /owed to that slot \(it counts against the cap already\)/)
 assert.equal(s.covers, COVERAGE_NOTE)
 assert.match(s.parts.untilCap, /^50% of each tax payment .* exactly what is left of it$/)
@@ -211,6 +217,9 @@ const done = formatCapped(raw({ paidTotal: 20n * E6, unsplit: 10n * E6 }), REF)
 assert.deepEqual([done.cap.reached, done.cap.left, done.cap.progressPct, done.split.now], [true, '0', 100, 'afterCap'])
 assert.deepEqual(done.unsplitGoes, { toPayees: '0', toBuyback: '7', toLp: '3' })
 assert.match(done.note, /The cap is reached: the payees were credited 20 USDC in all/)
+// after the cap the keeper line no longer promises the payees anything
+assert.match(done.note, /where the keeper runs capped-v1 it does the chunks; anyone can do it at any time/)
+assert.doesNotMatch(done.note, /pays the payees/)
 // progress floors (never shows 100% before the cap is reached)
 assert.equal(formatCapped(raw({ paidTotal: 20n * E6 - 1n }), REF).cap.progressPct, 99.99)
 assert.equal(formatCapped(raw({ paidTotal: 20n * E6 - 1n }), REF).cap.reached, false)
@@ -231,8 +240,13 @@ assert.deepEqual(owing.assets[0].owed, [{ index: 1, payee: A, amount: '3' }])
 assert.equal(owing.assets[1].splitBy, 'hand: gang capped distribute (anyone): all of it to 0xdead, never to the payees')
 assert.equal(owing.unsplitGoes, undefined)
 assert.deepEqual(owing.next, [
-  `gang capped release ${REF} --asset ${USDC} --index 1`, `gang capped distribute ${REF} --asset ${STRAY}`, `gang capped chunk ${REF}`,
+  `gang capped release ${REF} --asset ${USDC} --index 1`,
+  `gang capped distribute ${REF} --asset ${STRAY} (BURNS all of it: sends it to 0xdead, paid to nobody; only if that is wanted)`,
+  `gang capped chunk ${REF}`,
 ])
+// unlike combo, the stray asset's entry says it burns
+assert.equal(owing.assets[1].burns, true)
+assert.equal(owing.assets[0].burns, undefined)
 
 // a quote the keeper doesn't serve: manual
 const manual = formatCapped(raw({ keeperServesQuote: false, work: [false, 0n] }), REF)
@@ -289,13 +303,19 @@ const dist = { topics: encodeEventTopics({ abi: cappedAbi, eventName: 'Distribut
 assert.deepEqual(decodeEventLog({ abi: cappedAbi, ...dist }).args, { asset: getAddress(STRAY), incoming: 10n, toDead: 10n })
 
 // ---- creator fee into the module: its quote counts against the cap, another one is burned
-assert.match(payOutCmd('capped-v1', M), /^gang capped distribute --module .* splits it as the tax: the payees' part \(counted against the cap\)/)
+assert.match(payOutCmd('capped-v1', M), /^gang capped distribute --module .* splits it as the tax: the payees' part is pushed and counted against the cap \(so it only uses the cap up sooner\)/)
 assert.match(payOutCmd('capped-v1', M, '', { asset: WBNB, assetSymbol: 'WBNB' }), /sends ALL of it to 0xdead: WBNB is not the module's quote, so it is burned/)
 assert.match(claimToModule({ moduleType: 'capped-v1', at: M, bound: USDC, quote: WBNB, quoteSymbol: 'WBNB', boundSymbol: 'USDC' }).warning, /quote is USDC, this fee is in WBNB: .* a fee claimed there is burned/)
 assert.match(claimToModule({ moduleType: 'capped-v1', at: M, bound: zeroAddress, quote: WBNB, capQuote: USDC, capSymbol: 'USDC', quoteSymbol: 'WBNB' }).warning, /quote is USDC, .* burned/)
 assert.match(claimToModule({ moduleType: 'capped-v1', at: M, bound: zeroAddress, quote: USDC, capQuote: USDC }).warning, /not bound to a token yet/)
 assert.equal(claimToModule({ moduleType: 'capped-v1', at: M, bound: USDC, quote: USDC }).warning, null)
-assert.match(notThroughModule('capped recipient', { token: T, at: M, kind: 'capped' }), /gang capped distribute --module .*The cap does not limit this fee/)
+// the fee itself is never capped; claimed into the module it is split as tax (said in that order)
+assert.match(notThroughModule('capped recipient', { token: T, at: M, kind: 'capped' }), /^This creator fee is yours.*after graduation\. The cap never limits it: it covers only the recipient's part of the pool tax\. To put it into the capped recipient anyway, claim it there: .*gang capped distribute --module .*counted against the cap \(so it only uses the cap up sooner\)/)
+// capQuote unread on an unbound module: warn that a fee in another quote may be burned (never silent)
+const unread = claimToModule({ moduleType: 'capped-v1', at: M, bound: zeroAddress, quote: WBNB, capQuote: null, quoteSymbol: 'WBNB' })
+assert.match(unread.warning, /could not read the capped recipient's quote \(capQuote\): if it is not WBNB, this fee's quote, a fee claimed there is burned .*gang capped status --module /)
+assert.match(claimToModule({ moduleType: 'capped-v1', at: M, bound: null, quote: WBNB, quoteSymbol: 'WBNB' }).warning, /could not read the capped recipient's quote/)
+assert.match(claimToModule({ moduleType: 'combo-v1', at: M, bound: zeroAddress, quote: WBNB }).warning, /not bound to a token yet/) // others as before
 
 // ---- a capped launch takes only the quotes the keeper serves (BadQuote): the same rule as every module
 const GANG = '0x0c6302401aa5325c2e36f170f52c00b1d220b405'
@@ -310,6 +330,9 @@ assert.equal(await untrustedBuybackQuote(fakeRead, net56, GANG, 'capped'), null)
 assert.equal(await untrustedBuybackQuote(fakeRead, net97, WBNB, 'capped'), null)
 assert.equal(await untrustedBuybackQuote(fakeRead, net97, LISTED, 'capped'), null)
 const unlisted = await untrustedBuybackQuote(fakeRead, net97, Q, 'capped')
+const failingRead = async () => { throw new Error('rpc down') }
+assert.match((await untrustedBuybackQuote(failingRead, net97, Q, 'capped')).error, /check the --tax-cap quote: try again/)
+assert.match((await untrustedBuybackQuote(failingRead, net97, Q, 'combo')).error, /check the --buyback \/ --lp \/ --split quote: try again/)
 assert.match(unlisted.error, /^--tax-cap \(a capped recipient\) needs WBNB, GANG or a quote listed/)
 assert.match(unlisted.hint, /launch without --tax-cap/)
 
@@ -359,7 +382,8 @@ refused(['capped', 'status', '--token', A, '--module', B, '--testnet'], /not bot
 refused(['capped', 'bind', '--module', B, '--testnet'], /needs --token/)
 // plain --cap is untouched: the 打新 per-wallet cap, refused on a V3 create and on a 铸币飞轮 one as before
 refused(['create', '--fair', '--name', 'C', '--symbol', 'C', '--from', ME, '--testnet', '--cap', '7'], /--cap must be a number between 0.25 and 1/)
-refused([...base, '--cap', '20'], /^--cap is a 打新 \(fair-mint\) setting: add --fair to create a sale \(gang create --fair …\)/, F)
+const v3cap = refused([...base, '--cap', '20'], /^--cap is a 打新 \(fair-mint\) setting: add --fair to create a sale \(gang create --fair …\)$/, F)
+assert.match(v3cap.hint, /use --tax-cap <amount>/)
 refused([...taxed, '--cap', '20'], /^--cap is a 打新 \(fair-mint\) setting/, F)
 refused(['create', '--fly', '--name', 'C', '--symbol', 'C', '--cap', '20'], /^--cap is 打新's: a 铸币飞轮 sale has a quota per wallet, --quota <5-100> \(\+ --invite-bonus\)$/)
 
@@ -389,13 +413,17 @@ const NODE_ABI = parseAbi([
   'function keeperServes(address) view returns (bool)', 'function undistributed(address) view returns (uint256)',
   'function owedTotal(address) view returns (uint256)', 'function owedOf(address, uint256) view returns (uint256)',
   'function curves(address) view returns (address, address, uint128, uint128, uint128, uint128, bool, uint16, uint16, uint16, address, address)',
+  'function balanceOf(address) view returns (uint256)', 'function bind(address token)',
 ])
 const SEL = new Map(NODE_ABI.map((x) => [toFunctionSelector(x), x.name]))
 const created_ = [] // the create args the node was asked to simulate
 let world = {}
+const Q2 = t(0xc2) // another 6-decimal quote (USDT here)
 const value = (to, fn, args) => ({
   quoteRegistry: () => REG, isQuoted: () => args[0].toLowerCase() === USDC.toLowerCase(),
-  symbol: () => (to.toLowerCase() === USDC.toLowerCase() ? 'USDC' : 'WBNB'), decimals: () => (to.toLowerCase() === USDC.toLowerCase() ? 6 : 18),
+  symbol: () => ({ [USDC.toLowerCase()]: 'USDC', [Q2.toLowerCase()]: 'USDT' }[to.toLowerCase()] ?? 'WBNB'),
+  decimals: () => ([USDC, Q2].some((q) => q.toLowerCase() === to.toLowerCase()) ? 6 : 18),
+  balanceOf: () => 0n, bind: () => undefined,
   predict: () => MODULE, PLATFORM_TAX_BPS: () => 50n, tokenCount: () => 7n,
   create: () => { created_.push(args); return MODULE },
   pad: () => GANG_GENS.testnet[0].pad, moduleType: () => stringToHex(CAPPED_TYPE, { size: 32 }), dev: () => ME,
@@ -417,6 +445,7 @@ const server = createServer((req, res) => {
       if (b.method !== 'eth_call') return { error: { code: -32601, message: `unexpected ${b.method}` } }
       const { to, data } = b.params[0]
       const fn = SEL.get(data.slice(0, 10))
+      if (fn === 'decimals' && world.decimalsFail) return { error: { code: -32603, message: 'node hiccup' } }
       if (!fn) return { error: { code: 3, message: 'execution reverted', data: '0x' } }
       const { args } = decodeFunctionData({ abi: NODE_ABI, data })
       return { result: encodeFunctionResult({ abi: NODE_ABI, functionName: fn, result: value(to, fn, args ?? []) }) }
@@ -472,6 +501,43 @@ try {
   assert.match(other.error, /this launch's capped recipient pays until the payees have been credited 20 USDC .* not what --tax-cap \/ --tax-cap-share \/ --split \/ --after-cap say/)
   const wbnbNow = await gang(...launch.filter((x, i) => x !== '--quote' && launch[i - 1] !== '--quote'))
   assert.match(wbnbNow.error, /counts its cap in USDC, not in WBNB: run it again with --quote/)
+  // N-3: another quote is said first, before the cap's form in that quote
+  const usdt = await gang(...launch.map((x) => (x === USDC ? Q2 : x === '20' ? '20.0000001' : x)))
+  assert.match(usdt.error, /counts its cap in USDC, not in USDT: run it again with --quote/)
+  // L-2: a failed decimals read is retried, never a false mismatch pointing at --restart
+  world = { decimalsFail: true }
+  const flaky = await gang(...launch)
+  assert.equal(flaky.success, false)
+  assert.match(flaky.error, /could not read the capped recipient's cap or its quote's decimals/)
+  assert.equal(flaky.retry, 'same command again')
+  assert.doesNotMatch(JSON.stringify(flaky), /--restart/)
+  world = {}
+  // "20" and "20.000000" are the same cap in raw units: past the check, on to the create (which this fake node can't serve)
+  assert.doesNotMatch(String((await gang(...launch.map((x) => (x === '20' ? '20.000000' : x)))).error), /not what --tax-cap|counts its cap/)
+
+  // L-1: after the create (the plan holds the token), changed terms are still refused, and the bind shows the cap
+  const [planFile] = readdirSync(LAUNCH_DIR)
+  const plan = JSON.parse(readFileSync(join(LAUNCH_DIR, planFile), 'utf8'))
+  assert.equal(plan.module, 'capped')
+  writeFileSync(join(LAUNCH_DIR, planFile), JSON.stringify({ ...plan, startCount: '6', token: TOKEN }))
+  const after = await gang(...launch.map((x) => (x === '20' ? '10' : x)))
+  assert.equal(after.success, false)
+  assert.match(after.error, /this launch's capped recipient pays until the payees have been credited 20 USDC .* not what --tax-cap/)
+  const afterShare = await gang(...launch.map((x) => (x === '50' ? '60' : x)))
+  assert.match(afterShare.error, /not what --tax-cap \/ --tax-cap-share/)
+  const bind = await gang(...launch)
+  assert.equal(bind.success, true, JSON.stringify(bind))
+  assert.equal(bind.step, 'bind')
+  assert.equal(bind.launch.stage, 'bind')
+  assert.deepEqual([bind.cap.amount, bind.cap.symbol, bind.cap.paid, bind.payPct], ['20', 'USDC', '0', 50])
+  assert.deepEqual([bind.untilCap, bind.afterCap], [{ payeesPct: 50, buybackPct: 35, lpPct: 15 }, { payeesPct: 0, buybackPct: 70, lpPct: 30 }])
+  assert.deepEqual(bind.payees.map((p) => [p.payee, p.pctOfPayees]), [[ME_C, 70], [A, 30]])
+  assert.equal(bind.covers, COVERAGE_NOTE)
+  assert.match(bind.note, /^ties the capped recipient to this token for good: .*What it holds, fixed for good: until the payees have been credited 20 USDC in all: 50% to /)
+  // left out, the flags no longer decide anything: the plan's module is bound as it is, and the preview says what it holds
+  const bare = await gang('create', '--name', 'Capped', '--symbol', 'CAP', '--from', ME, '--buy-tax', '3', '--sell-tax', '3', '--dividend', '40', '--quote', USDC, '--calldata', '--dev-buy', '0.1')
+  assert.equal(bare.step, 'bind', JSON.stringify(bare))
+  assert.equal(bare.cap.amount, '20')
 
   // gang capped status --module: the bound module, 6 decimals, the waiting quote crossing the cap
   world = { token: TOKEN, paid: 195n * E6 / 10n, unsplit: 2n * E6 }

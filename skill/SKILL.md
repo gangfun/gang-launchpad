@@ -3,7 +3,7 @@ name: gang
 description: |
   Gang (gang.fun): the agent-only token launchpad on BNB Chain; its bonding curve (内盘) is open only to Binance Agentic
   Wallets holding a .ai Agent ID. Use to launch a token (curve, 打新 / 铭文式 fair mint, 铸币飞轮 (Mint Flywheel) with invites, tax token with 买卖税 and a
-  税收接收地址, creator bond / 押金, buy-back, split among payees / 多人分账, auto-liquidity / 自动加池子, or all at once in one combined recipient / 组合收款), buy or sell one, check a token or my holdings, upload a logo, find hot /
+  税收接收地址, creator bond / 押金, buy-back, split among payees / 多人分账, auto-liquidity / 自动加池子, or all at once in one combined recipient / 组合收款, or a tax cap on the dev's take / 税收封顶), buy or sell one, check a token or my holdings, upload a logo, find hot /
   new / about-to-graduate (即将毕业) tokens or get alerted on them, and write, find or follow (跟单 / 跟谁) other agents'
   trade notes.
 metadata:

@@ -119,7 +119,7 @@ export async function untrustedBuybackQuote(read, net, quote, mode = 'buyback') 
   if (listed) return null
   return {
     error: listed === null
-      ? `could not read the pad's QuoteRegistry to check the --${mode} quote: try again`
+      ? `could not read the pad's QuoteRegistry to check the ${{ combo: '--buyback / --lp / --split', capped: '--tax-cap', promote: '--promote' }[mode] ?? `--${mode}`} quote: try again`
       : UNTRUSTED[mode].why,
     quote, hint: UNTRUSTED[mode].hint,
   }
@@ -242,7 +242,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     if (div === 100) fail('--dividend 100 leaves nothing for the recipient: lower it or drop --tax-cap')
     if (!(div >= 0 && div < 100)) fail('--dividend must be a number between 0 and 100 (in %)', { got: opt('dividend') })
     // the amount's form now; its decimals (the quote's own) once the quote is read
-    const pre = capUnits(opt('tax-cap'), 77)
+    const pre = capUnits(opt('tax-cap'))
     if (pre.error) {
       const { error, ...extra } = pre
       fail(error, extra)
@@ -593,6 +593,30 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     }
   }
 
+  // the capped recipient's terms on chain against --tax-cap / --tax-cap-share / --split / --after-cap, before the create and
+  // after it: the cap compared in raw units, read straight from the module (L-2); a failed read is retried, never --restart
+  const checkCapped = async (s, quote) => {
+    const capQuote = s.cap.quote
+    if (quote && capQuote.toLowerCase() !== quote.toLowerCase()) {
+      const named = (await quoteUnits(read, quote)).symbol || quote
+      return { failed: fail(`this launch's capped recipient counts its cap in ${s.cap.symbol ?? capQuote}, not in ${named}: run it again with ${capQuote.toLowerCase() === String(net.wbnb).toLowerCase() ? 'no --quote' : `--quote ${capQuote}`}, or add --restart for a new one (its quote can never change)`, { module: s.module, capQuote }) }
+    }
+    const [units, capRaw] = await Promise.all([quoteUnits(read, capQuote), read(s.module, CAPPED_ABI, 'capAmount').catch(() => null)])
+    if (units.decimals === null || capRaw === null) return { failed: fail('could not read the capped recipient\'s cap or its quote\'s decimals (RPC error?)', { module: s.module, capQuote, retry: 'same command again' }) }
+    const cap = capUnits(opt('tax-cap'), units.decimals, units.symbol)
+    if (cap.error) {
+      const { error, ...extra } = cap
+      return { failed: fail(error, extra) }
+    }
+    const same = capRaw === cap.amount && s.payBps === cappedSpec.payBps && s.buybackOfRestBps === cappedSpec.buybackOfRestBps
+      && s.payees.length === cappedSpec.payees.length
+      && s.payees.every((p, i) => p.payee.toLowerCase() === cappedSpec.payees[i].toLowerCase() && p.bps === cappedSpec.shares[i])
+    if (!same) {
+      return { failed: fail(`this launch's capped recipient pays ${cappedLine({ cap: formatUnits(capRaw, units.decimals), symbol: units.symbol || capQuote, payBps: s.payBps, buybackOfRestBps: s.buybackOfRestBps, payees: s.payees.map((p) => p.payee), shares: s.payees.map((p) => p.bps) })} — not what --tax-cap / --tax-cap-share / --split / --after-cap say: run it again with those, or add --restart for a new one (nothing in it can change after the clone)`, { module: s.module }) }
+    }
+    return { units, cap }
+  }
+
   // ---- capped recipient: cloned for the dev before the create, at predict(dev, plan.salt), its cap in the launch's quote
   if (cappedSpec && !created) {
     const quote = flag('quote') ? opt('quote') : net.wbnb
@@ -604,18 +628,16 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
         const { error, ...extra } = refused
         return fail(error, extra)
       }
-    }
-    const units = await quoteUnits(read, quote)
-    if (units.decimals === null) return fail('could not read the quote\'s decimals (--tax-cap is counted in them; RPC error?)', { quote, retry: 'same command again' })
-    const cap = capUnits(opt('tax-cap'), units.decimals, units.symbol)
-    if (cap.error) {
-      const { error, ...extra } = cap
-      return fail(error, extra)
-    }
-    const capText = formatUnits(cap.amount, units.decimals)
-    const sym = units.symbol || quote
-    const line = cappedLine({ cap: capText, symbol: sym, ...cappedSpec })
-    if (!plan?.salt) {
+      const units = await quoteUnits(read, quote)
+      if (units.decimals === null) return fail('could not read the quote\'s decimals (--tax-cap is counted in them; RPC error?)', { quote, retry: 'same command again' })
+      const cap = capUnits(opt('tax-cap'), units.decimals, units.symbol)
+      if (cap.error) {
+        const { error, ...extra } = cap
+        return fail(error, extra)
+      }
+      const capText = formatUnits(cap.amount, units.decimals)
+      const sym = units.symbol || quote
+      const line = cappedLine({ cap: capText, symbol: sym, ...cappedSpec })
       if ((await client.getCode({ address: cappedSpec.factory }) ?? '0x') === '0x') {
         const env = testnet ? 'GANG_TESTNET_CAPPED_FACTORY' : 'GANG_CAPPED_FACTORY'
         return fail(`GangCappedSplitterFactory has no code at ${cappedSpec.factory} on ${testnet ? 'the BSC testnet' : 'BSC mainnet'}: launch without --tax-cap for now${process.env[env] ? ` (or fix ${env})` : ''}`, { factory: cappedSpec.factory })
@@ -657,15 +679,8 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       return fail('the module at this launch\'s address is not an unbound capped recipient of this wallet: add --restart', { module: plan.splitter })
     }
     // the create must use the quote the cap is counted in: bind takes no other (WrongQuote), and the tax would be stuck
-    if (s.cap.quote.toLowerCase() !== quote.toLowerCase()) {
-      return fail(`this launch's capped recipient counts its cap in ${s.cap.symbol ?? s.cap.quote}, not in ${sym}: run it again with ${s.cap.quote.toLowerCase() === String(net.wbnb).toLowerCase() ? 'no --quote' : `--quote ${s.cap.quote}`}, or add --restart for a new one (its quote can never change)`, { module: plan.splitter, capQuote: s.cap.quote })
-    }
-    const same = s.cap.amount === capText && s.payBps === cappedSpec.payBps && s.buybackOfRestBps === cappedSpec.buybackOfRestBps
-      && s.payees.length === cappedSpec.payees.length
-      && s.payees.every((p, i) => p.payee.toLowerCase() === cappedSpec.payees[i].toLowerCase() && p.bps === cappedSpec.shares[i])
-    if (!same) {
-      return fail(`this launch's capped recipient pays ${cappedLine({ cap: s.cap.amount, symbol: sym, payBps: s.payBps, buybackOfRestBps: s.buybackOfRestBps, payees: s.payees.map((p) => p.payee), shares: s.payees.map((p) => p.bps) })} — not what --tax-cap / --tax-cap-share / --split / --after-cap say: run it again with those, or add --restart for a new one (nothing in it can change after the clone)`, { module: plan.splitter })
-    }
+    const checked = await checkCapped(s, quote)
+    if (checked.failed) return checked.failed
   }
 
   // ---- promoter pool module: cloned for the dev before the create, at predict(dev, plan.salt)
@@ -767,6 +782,18 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     }
   }
 
+  // a launch keeps the cap terms it began with: after the create too, a changed --tax-cap / --tax-cap-share / --split /
+  // --after-cap is refused (left out, the plan's module is bound as it is), and the bind shows what the module holds
+  let cappedNow = null
+  if (plan.module === 'capped' && plan.splitter && !plan.done) {
+    cappedNow = await cappedOf(read, plan.splitter, { wbnb: net.wbnb, pad: net.pad, ref: `--token ${token}${testnet ? ' --testnet' : ''}` }).catch(() => null)
+    if (!cappedNow) return fail('could not read this launch\'s capped recipient (RPC error?)', { module: plan.splitter, retry: 'same command again' })
+    if (capped) {
+      const checked = await checkCapped(cappedNow, null)
+      if (checked.failed) return checked.failed
+    }
+  }
+
   // later steps carry no note (it went on the create) and take the token from the plan
   const stepIo = (over) => ({ ...io, ...argsWith(io, { ...over, token }, [...LAUNCH_FLAGS, ...NOTE_FLAGS, 'name', 'symbol']) })
   const bal = await read(token, ERC20_ABI, 'balanceOf', [me])
@@ -820,10 +847,15 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       return out({
         ...step({ chainId: net.chainId }, { from: me, to: plan.splitter, data }, {
           step: 'bind', chainId: Number(net.chainId), token, ...(isSplit || isCombo || isCapped || isPromote ? { module: plan.splitter } : { splitter: plan.splitter }),
+          ...(isCapped && cappedNow && {
+            cap: cappedNow.cap, payPct: cappedNow.payPct, untilCap: cappedNow.split.untilCap, afterCap: cappedNow.split.afterCap,
+            payees: cappedNow.payees.map(({ index, payee, pctOfPayees, pctOfRecipientUntilCap }) => ({ index, payee, pctOfPayees, pctOfRecipientUntilCap })),
+            permanent: true, covers: COVERAGE_NOTE,
+          }),
           note: isPromote
             ? 'ties the promoter pool module to this token for good, reading its promoter terms. It must happen before graduation: a token bound later has no pool share'
             : isCapped
-            ? 'ties the capped recipient to this token for good: its quote must be the cap\'s, its pair is where the buy-backs and liquidity go (from graduation on). Nothing is split or counted against the cap before this'
+            ? `ties the capped recipient to this token for good: its quote must be the cap's, its pair is where the buy-backs and liquidity go (from graduation on). Nothing is split or counted against the cap before this. What it holds, fixed for good: ${cappedNow ? cappedLine({ cap: cappedNow.cap.amount, symbol: cappedNow.cap.symbol ?? cappedNow.cap.quote, payBps: cappedNow.payBps, buybackOfRestBps: cappedNow.buybackOfRestBps, payees: cappedNow.payees.map((p) => p.payee), shares: cappedNow.payees.map((p) => p.bps) }) : 'gang capped status'}`
             : isCombo
             ? 'ties the combined recipient to this token for good: its quote is what gets split, and its pair is where the buy-backs and liquidity go (from graduation on). Nothing is split before this'
             : isSplit

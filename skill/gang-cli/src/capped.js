@@ -158,7 +158,7 @@ export const cappedNotDeployed = (testnet) => (testnet
 
 export const PERMANENT_NOTE = 'PERMANENT: the cap, its quote, the payees\' %, the buy-back / liquidity split, the payees and their shares are fixed for good — nobody (not you, not the platform) can change them later; a payee can only move its own slot to another address (gang capped set-payee), which leaves the cap as it is'
 export const COVERAGE_NOTE = 'The cap covers only this recipient\'s part of the pool tax. It does not cover the creator\'s share of the curve fee (kept on the pad and claimed apart: gang creator-fee), nor the dev\'s own tokens (it is not a lock: the dev can still hold or sell them), nor the holders\' dividend (fixed at the create, the same before and after the cap)'
-export const OTHER_ASSETS_NOTE = 'any other asset sent to it (not the token\'s quote) cannot count against the cap: all of it goes to 0xdead, never to the payees (gang capped distribute --asset <addr>; one that cannot be sent there stays in the module)'
+export const OTHER_ASSETS_NOTE = 'any other asset sent to it (not the token\'s quote) cannot count against the cap: all of it goes to 0xdead when it is distributed (gang capped distribute --asset <addr>, anyone), never to the payees; one that cannot be sent there stays in the module'
 
 // ---- the launch's flags
 
@@ -199,14 +199,22 @@ export function parseCapShare(raw) {
   return { payBps: bps }
 }
 
-/** --tax-cap's text → its amount in the quote's smallest unit (`decimals`: the quote's own) or { error }. */
+/**
+ * --tax-cap's text → its amount in the quote's smallest unit (`decimals`: the quote's own) or { error }. Without
+ * `decimals` (the quote not read yet) only its form is checked: { ok: true }.
+ */
 export function capUnits(text, decimals, symbol) {
   const s = String(text ?? '').trim()
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(s)) return { error: '--tax-cap must be a positive amount of the token\'s quote (e.g. 20): the most the payees ever get, in all', got: text ?? null }
-  const frac = (s.split('.')[1] ?? '').replace(/0+$/, '')
-  if (frac.length > decimals) return { error: `--tax-cap: ${symbol ?? 'the quote'} has ${decimals} decimals, ${s} has more`, got: text }
+  const [whole, frac = ''] = s.split('.')
+  if (!/[1-9]/.test(s)) return { error: '--tax-cap must be above 0', got: text }
+  // no quote has supply anywhere near this: a figure this long is a typo, and above 2^256 it can't be sent at all
+  if (whole.replace(/^0+/, '').length > 30) return { error: '--tax-cap is far too large (more than 30 digits before the point): give the cap in whole units of the quote, e.g. 20', got: text }
+  if (decimals == null) return { ok: true }
+  if (frac.replace(/0+$/, '').length > decimals) return { error: `--tax-cap: ${symbol ?? 'the quote'} has ${decimals} decimals, ${s} has more`, got: text }
   const amount = parseUnits(s, decimals)
   if (amount === 0n) return { error: '--tax-cap must be above 0', got: text }
+  if (amount > maxUint256) return { error: '--tax-cap is far too large for this quote', got: text }
   return { amount }
 }
 
@@ -368,15 +376,22 @@ export function formatCapped(raw, ref) {
     const owed = owedTotal > 0n && a.owed
       ? a.owed.map((x, index) => ({ index, payee: raw.payees[index], amount: f(x) })).filter((_, i) => a.owed[i] > 0n) : []
     const byKeeper = isQuote(a.asset) && raw.keeperServesQuote
+    // unlike combo-v1, distributing another asset burns it: say so wherever the command is offered
+    const burns = !!token && !isQuote(a.asset) && undistributed > 0n
     assets.push({
       asset: a.asset, symbol: a.symbol ?? null, ...(isQuote(a.asset) && { boundQuote: true }),
       undistributed: f(undistributed), owedTotal: f(owedTotal), ...(owed.length && { owed }),
       splitBy: !token ? 'nobody until bound (distribute reverts NotBound)'
-        : byKeeper ? 'keeper (or anyone, gang capped distribute)'
+        : byKeeper ? 'the keeper (the quote is one it serves) or anyone: gang capped distribute'
           : isQuote(a.asset) ? 'hand: gang capped distribute (anyone)'
             : 'hand: gang capped distribute (anyone): all of it to 0xdead, never to the payees',
+      ...(burns && { burns: true }),
     })
-    if (token && undistributed > 0n && !byKeeper) next.push(`gang capped distribute ${ref} --asset ${a.asset}`)
+    if (token && undistributed > 0n && !byKeeper) {
+      next.push(burns
+        ? `gang capped distribute ${ref} --asset ${a.asset} (BURNS all of it: sends it to 0xdead, paid to nobody; only if that is wanted)`
+        : `gang capped distribute ${ref} --asset ${a.asset}`)
+    }
     for (const o of owed) next.push(`gang capped release ${ref} --asset ${a.asset} --index ${o.index}`)
   }
   if (!token) next.unshift(String(ref ?? '').startsWith('--token ') ? `gang capped bind ${ref}` : 'gang capped bind --token <the token>')
@@ -387,7 +402,7 @@ export function formatCapped(raw, ref) {
   const keeperLine = distribution === 'unbound'
     ? 'Not bound to a token yet: nothing is split, paid, bought back or added until gang capped bind --token <the token>'
     : distribution === 'keeper'
-      ? `The keeper serves this quote (${sym}): it runs the chunks and pays the payees (once their part reaches 0.05% of the pair's quote reserve, or after a day once it reaches 1/100 of that); anyone can do it sooner (gang capped chunk / gang capped distribute)`
+      ? `The quote (${sym}) is one the keeper serves: where the keeper runs capped-v1 it does the chunks${reached ? '' : ' and pays the payees (once their part reaches 0.05% of the pair\'s quote reserve, or after a day once it reaches 1/100 of that)'}; anyone can do it at any time (gang capped chunk / gang capped distribute)`
       : `The keeper does not serve this quote (${sym}): everything is manual — gang capped chunk and gang capped distribute (anyone)`
   const capLine = reached
     ? `The cap is reached: the payees were credited ${fq(capAmount)} ${sym} in all, and every payment now goes to the buy-back and liquidity`

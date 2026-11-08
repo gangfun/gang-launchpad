@@ -75,7 +75,7 @@ export function payOutCmd(moduleType, at, net = '', { asset, assetSymbol } = {})
   if (base === 'gang capped') {
     return asset
       ? `${base} distribute ${m} --asset ${asset}${net} (anyone) sends ALL of it to 0xdead: ${assetSymbol ?? 'this asset'} is not the module's quote, so it is burned, paid to nobody`
-      : `${base} distribute ${m}${net} (anyone) then splits it as the tax: the payees' part (counted against the cap) pushed, the rest set aside for buy-back and liquidity`
+      : `${base} distribute ${m}${net} (anyone) then splits it as the tax: the payees' part is pushed and counted against the cap (so it only uses the cap up sooner), the rest set aside for buy-back and liquidity`
   }
   // a fee in another quote than the module's own: split / distribute of the bound quote never moves it
   if (asset) {
@@ -99,6 +99,10 @@ export function claimToModule({ moduleType, at, net = '', bound, quote, quoteSym
   const payOut = payOutCmd(moduleType, at, net, (other && !unbound) || burned ? { asset: quote, assetSymbol: quoteSymbol } : {})
   if (!payOut) return { payOut: null, warning: null }
   if (burned) return { payOut, warning: `the capped recipient's quote is ${(unbound ? capSymbol : boundSymbol) ?? (unbound ? capQuote : bound)}, this fee is in ${quoteSymbol ?? quote}: it sends any other asset to 0xdead in full, so a fee claimed there is burned` }
+  // its quote unknown (capQuote() unread): never stay silent about a burn that may follow
+  if (moduleType === 'capped-v1' && unbound && !capQuote) {
+    return { payOut, warning: `could not read the capped recipient's quote (capQuote): if it is not ${quoteSymbol ?? quote}, this fee's quote, a fee claimed there is burned (it sends any other asset to 0xdead in full). Check gang capped status --module ${at ?? '<module>'}${net} first` }
+  }
   if (unbound) return { payOut, warning: 'the module is not bound to a token yet: it pays this out only once it is bound (its launch binds it)' }
   if (!other) return { payOut, warning: null }
   return {
@@ -111,9 +115,10 @@ const LAUNCH_TYPES = { buyback: 'buyback-burn-v4', lp: 'lp-burn-v1', split: 'spl
 /** Added to the create's note when the tax recipient is one of the dev's modules (`module`: its name; `kind`: buyback | lp | split | combo | capped). */
 export const notThroughModule = (module, { token, at, net = '', kind } = {}) =>
   `This creator fee is yours, the creating wallet's: it does not go through the ${module}, which gets only the recipient's part of the pool tax after graduation.`
+  // capped: the fee kept (or claimed anywhere else) is never limited by the cap; claimed into the module it is split as tax
+  + (kind === 'capped' ? ' The cap never limits it: it covers only the recipient\'s part of the pool tax.' : '')
   + (at ? ` To put it into the ${module} anyway, claim it there: gang creator-fee --token ${token ?? '<token>'}${net} --claim --to ${at}` : '')
   + (at && kind && LAUNCH_TYPES[kind] ? `; ${payOutCmd(LAUNCH_TYPES[kind], at, net)}` : '')
-  + (kind === 'capped' ? '. The cap does not limit this fee: it covers only the recipient\'s part of the pool tax' : '')
 
 /**
  * The creator fee of a V3 curve `token` on ctx.pad (ctx already on the token's generation) for info / status:
