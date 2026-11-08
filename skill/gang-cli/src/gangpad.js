@@ -55,8 +55,9 @@ export const GANG_GENS = {
       bond: '0x830b38F695Ca1bCbdD313CD5AA5943e2125Be9D6', splitterFactory: '0xc1282e7Fd3DFa5e00e74E9EbF8c54fFfB5763194',
       splitFactory: '0x904D4498a9257E4d7638afEbB95A1162cB2171f2', lpFactory: '0x98C506F0F4762F9d1Ec96C27499CE8B7e5981752',
       comboFactory: '0x20188054dE31De844df205712768852BdeD3eA39',
-      // capped-v1 (GangCappedSplitterFactory): not deployed yet; GANG_CAPPED_FACTORY sets it
-      cappedFactory: null,
+      // capped-v1, 2026-11-08, block 132418984; the Safe allowed it on GangHandlerAdmin at block 132420220
+      // (docs/MAINNET-CAPPED-MODULE-2026-11-08.md)
+      cappedFactory: '0x294E901ecb66af280C1cDD26fD871601d89a2Dca',
       // the pool side of the promoter share, 2026-11-07, block 132218466; the Safe allowed it on GangHandlerAdmin at block
       // 132219892 (docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)
       promotePoolFactory: '0xA633e499ADcD69A4F91dc83587096b2c1903167A',

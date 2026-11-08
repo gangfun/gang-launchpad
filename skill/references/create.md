@@ -141,5 +141,5 @@ gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --
   pool volume at which the cap is reached. **Show the user the cap, every ratio and payee, and say it is permanent, and
   what the cap does not cover**: the creator fee, the dev's own tokens (it is not a lock), the holders' dividend. Any
   other asset sent to the module goes to 0xdead when distributed (one that can't be sent there stays in it). Same quotes as `--buyback`. With `--promote`, the promoter share stays
-  on the curve. Built in on the BSC testnet; not on mainnet yet in this CLI version: a mainnet launch needs `GANG_CAPPED_FACTORY`.
+  on the curve. Live on BSC mainnet and the testnet (built in).
 - `--note` goes on the create only; the buy and the bond carry none.
