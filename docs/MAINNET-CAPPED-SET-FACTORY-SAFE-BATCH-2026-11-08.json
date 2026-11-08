@@ -1,0 +1,20 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 0,
+  "meta": {
+    "name": "gang: allow the capped recipient factory",
+    "description": "GangHandlerAdmin 0xC833CEC2B283759003945C0Bf8C048aB1949Af76 setFactory(0x294E901ecb66af280C1cDD26fD871601d89a2Dca, true)",
+    "txBuilderVersion": "1.16.5",
+    "createdFromSafeAddress": "0x2866369F7acEFC9760bdE7779362fae5cD68B41E"
+  },
+  "transactions": [
+    {
+      "to": "0xC833CEC2B283759003945C0Bf8C048aB1949Af76",
+      "value": "0",
+      "data": "0x71013c10000000000000000000000000294e901ecb66af280c1cdd26fd871601d89a2dca0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": null,
+      "contractInputsValues": null
+    }
+  ]
+}
