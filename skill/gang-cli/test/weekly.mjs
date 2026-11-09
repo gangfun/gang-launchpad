@@ -270,16 +270,23 @@ try {
   assert.equal(r.success, false)
 
   // trending: the event row first, with its note; a list that only has the event is not "empty"
-  trendingBody = { at: now, tokens: [], calls: [], event: { kind: 'weekly-launch', issue: ISSUE, number: 1, status: 'featured', symbol: 'MCAT', launchAt: now - 60, until: now + 7 * 86400, token: { address: `0x${'11'.repeat(20)}`, symbol: 'MCAT', progressPct: 3 } } }
+  // the overlap: next week's teaser (newest first) and this week's featured pick, plus a malformed row left out
+  trendingBody = { at: now, tokens: [], calls: [], events: [
+    { kind: 'weekly-launch', issue: '2026-11-20', number: 2, status: 'teaser', symbol: 'NEXT', launchAt: now + 86400, until: null, token: null },
+    { kind: 'weekly-launch', issue: ISSUE, number: 1, status: 'featured', symbol: 'MCAT', launchAt: now - 6 * 86400, until: now + 86400, token: { address: `0x${'11'.repeat(20)}`, symbol: 'MCAT', progressPct: 3 } },
+    { kind: 'other' },
+  ] }
   r = await run(['trending'], { withBaw: false })
   assert.equal(r.success, true)
-  assert.equal(Object.keys(r)[2], 'event', 'event comes right after at')
-  assert.equal(r.event.token.address, `0x${'11'.repeat(20)}`)
-  assert.equal(r.event.note, WEEKLY_NOTE)
+  assert.equal(Object.keys(r)[2], 'events', 'events come right after at')
+  assert.deepEqual(r.events.map((e) => e.issue), ['2026-11-20', ISSUE])
+  assert.equal(r.events[1].token.address, `0x${'11'.repeat(20)}`)
+  assert.equal(r.events[0].token, null)
+  assert.equal(r.events[0].note, WEEKLY_NOTE)
   assert.equal(r.empty, undefined)
   trendingBody = { at: now, tokens: [], calls: [] }
   r = await run(['trending'], { withBaw: false })
-  assert.equal(r.event, undefined)
+  assert.equal(r.events, undefined)
   assert.ok(r.empty)
 
   console.log('weekly: ok')

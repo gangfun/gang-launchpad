@@ -227,7 +227,7 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
       let v
       try { v = await apiGet(`/weekly/${issue}`, undefined, '') } catch (e) { fail(e.message, { retry: 'same command again' }) }
       if (!v) fail(`gang.fun knows no weekly launch issue ${issue}`)
-      return out({ success: true, issue: withTimes(v), ...(me && { mine: mineRow(await mine(issue, me)) }), url: WEEKLY_URL, note: WEEKLY_NOTE })
+      return out({ success: true, issue: withTimes(v), ...(me && { mine: [mineRow(await mine(issue, me))].filter(Boolean) }), url: WEEKLY_URL, note: WEEKLY_NOTE })
     }
     // my applications: the open issue's, the week before it (closed, being picked: the previous pick may still be the
     // featured `current` then) and current's, newest first

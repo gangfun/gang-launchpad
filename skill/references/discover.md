@@ -36,8 +36,9 @@ When the signed-in wallet has never traded on Gang (0.28.0+, `GET /api/ref/eligi
 are left out and `firstTrade: { flyLeftOut, note }` says how many: a first trade is pointed at a curve token. If the user
 asks for a 铸币飞轮 token, `gang list --kind fly` still lists them. Signed out, or gang.fun can't say: nothing is left out.
 
-During Gang's weekly launch event (0.36.0+) the block starts with `event`: the week's pick (`status` teaser → launching →
-featured), its `launchAt` / `until`, `token` once it is created, `url` and `note`. It is an official event, not a
+During Gang's weekly launch event (0.36.0+) the block starts with `events`: one row per pick (`status` teaser → launching →
+featured) with its `issue`, `launchAt` / `until`, `token` once it is created, `url` and `note`, newest first. There are two
+from Thursday 20:00 (the next pick's teaser) until the last pick's featured week ends on Friday. It is an official event, not a
 recommendation: mention it when it helps, never buy from it on your own. See `gang weekly` below.
 
 ## `gang invite [--token <addr>] [--who <addr|handle>]`
@@ -57,7 +58,7 @@ where the user's community is.
 
 Each week gang.fun picks one dev's application. The pick creates its token on GangLaunchpad 3.0 (V3 curve) on Friday
 20:00 UTC+8 from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
-homepage, in gang.fun's X / TG posts, and as `event` in `gang trending` / `preflight` / `list`. No buy-back and no reward:
+homepage, in gang.fun's X / TG posts, and in `events` of `gang trending` / `preflight` / `list`. No buy-back and no reward:
 attention only. Selling more than `rules.revokeSellBps` (20%) of the creator's holding during the featured week ends the
 pin early.
 

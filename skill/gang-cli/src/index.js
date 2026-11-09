@@ -291,7 +291,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          up to 3 followable notes by 60%+ authors (also carried by preflight and list as
                                          trending). Not a recommendation: never buy from it on your own. A wallet that never
                                          traded on Gang gets no 铸币飞轮 rows (firstTrade says so). During Gang's weekly launch
-                                         event its pick comes first as event (an official event, not a recommendation)
+                                         event its picks come first as events (an official event, not a recommendation)
   gang list [--limit 20] [--kind v3|fair|fly [--status …]]
                                          V2 / Soft / U / S tokens read on chain (works without gang.fun), the newest --limit
                                          per pad; --kind v3 (--status curve|graduated|all) / --kind fair
@@ -364,7 +364,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          per token. The week's top token by qualified new agents is featured on gang.fun
   gang weekly                            Gang's weekly launch event (gang.fun/weekly, 0.36.0+): the issue open for
                                          applications, the current pick (launches Friday 20:00 UTC+8 on GangLaunchpad 3.0,
-                                         featured 7 days), past issues, and my application. Attention only: no buy-back
+                                         featured 7 days), past issues, and my applications. Attention only: no buy-back
   gang weekly apply --name <name> --symbol <SYM> (--logo <file> | --logo-uri <gang.fun logo>) --description <text>
                     --contact <handle> [--twitter <@x|url>] [--telegram <@tg|url>] [--website <url>] [--modules lp,buyback,…]
                     [--issue <Friday date>] [--yes]
@@ -1554,9 +1554,9 @@ async function main() {
       const t = await trending({ wallet: myAddress() })
       if (!t) fail(`gang.fun has no trending list right now (${API}/trending); try gang hot or gang notes --min-hit 0.6`, { retry: true })
       return out({
-        success: true, at: t.at ? localTime(t.at) : null, ...(t.event && { event: t.event }), tokens: t.tokens, calls: t.calls, note: TRENDING_NOTE,
+        success: true, at: t.at ? localTime(t.at) : null, ...(t.events && { events: t.events }), tokens: t.tokens, calls: t.calls, note: TRENDING_NOTE,
         ...(t.firstTrade && { firstTrade: t.firstTrade }),
-        ...(!t.tokens.length && !t.calls.length && !t.event && { empty: 'Nothing qualifies right now: no token with enough distinct agent buyers in 6h, no followable note by a 60%+ author.' }),
+        ...(!t.tokens.length && !t.calls.length && !t.events && { empty: 'Nothing qualifies right now: no token with enough distinct agent buyers in 6h, no followable note by a 60%+ author.' }),
       })
     }
     case 'hot':
