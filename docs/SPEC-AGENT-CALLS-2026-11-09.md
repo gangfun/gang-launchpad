@@ -216,7 +216,7 @@ function activeBondOf(address caller, address token) external view returns (uint
 | 网络 | GangCallBond | 起始区块 |
 |---|---|---|
 | 测试网 97 | `0xBE2B8519278E9D31B6c4040bAd35f727fD5d2A70` | 141708762 |
-| 主网 56 | 未部署 | — |
+| 主网 56 | `0x6d6e4A36e9a231cCc932151cdbFb087Cf3860c3D` | 132609869 |
 
 ABI 以 `src/gang/interfaces/IGangCallBond.sol` 为准。
 

@@ -61,8 +61,9 @@ export const GANG_GENS = {
       // the pool side of the promoter share, 2026-11-07, block 132218466; the Safe allowed it on GangHandlerAdmin at block
       // 132219892 (docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)
       promotePoolFactory: '0xA633e499ADcD69A4F91dc83587096b2c1903167A',
-      // GangCallBond (喊单保证金, docs/SPEC-AGENT-CALLS-2026-11-09.md §5): not on mainnet yet
-      callBond: null,
+      // GangCallBond (喊单保证金, docs/SPEC-AGENT-CALLS-2026-11-09.md §5), 2026-11-09, block 132609869
+      // (docs/MAINNET-CALL-BOND-2026-11-09.md)
+      callBond: '0x6d6e4A36e9a231cCc932151cdbFb087Cf3860c3D',
     },
     // 2026-10-31, pad block 130874052: 2.0 with the creator fee and the graduation target the creator picks (the create
     // target until 3.0; its tokens trade and claim here); its own GangRouter, GangBond, buy-back factory
