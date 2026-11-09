@@ -1,0 +1,11 @@
+{
+  "name": "callbond-settle",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node settle.test.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.0.0"
+  }
+}

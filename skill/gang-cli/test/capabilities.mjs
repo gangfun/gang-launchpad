@@ -49,7 +49,7 @@ assert.equal(new Set(COMMANDS.map((x) => x.command)).size, COMMANDS.length)
 // every command gang_cli's description names is listed: "bond post|topup|…", "fly open-early|launch|invite", single words
 const listed = new Set(COMMANDS.map((x) => x.command))
 const desc = TOOLS.find((t) => t.name === 'gang_cli').description
-for (const m of desc.matchAll(/\b(bond|buyback|split|lp|combo|capped|fly|promote) ([a-z-]+(?:\|[a-z-]+)+)/g)) {
+for (const m of desc.matchAll(/(?<![\w-])(call-bond|bond|buyback|split|lp|combo|capped|fly|promote) ([a-z-]+(?:\|[a-z-]+)+)/g)) {
   for (const sub of m[2].split('|')) assert.ok(listed.has(`${m[1]} ${sub}`), `gang_cli names ${m[1]} ${sub}`)
 }
 for (const name of ['create', 'mint', 'withdraw', 'claim', 'release', 'quote', 'list', 'upload-logo', 'creator-fee', 'v3 income', 'version', 'capabilities']) {
@@ -75,7 +75,7 @@ const firstWords = new Set(COMMANDS.map((x) => x.command.split(' ')[0]))
 for (const [, cmd, sub] of help.matchAll(/(?:^ {2}|\| )gang ([a-z][a-z0-9-]*)(?: ([a-z][a-z0-9-]*))?/gm)) {
   if (TOOL_COMMANDS.has(cmd) || cmd === 'token' || cmd === 'fair') continue // gang fair and gang token are older names
   assert.ok(firstWords.has(cmd) || (cmd === 'v3' && sub !== 'income'), `listed: gang ${cmd}`)
-  if (['bond', 'buyback', 'split', 'lp', 'combo', 'capped'].includes(cmd) && sub) assert.ok(listed.has(`${cmd} ${sub}`), `listed: gang ${cmd} ${sub}`)
+  if (['bond', 'call-bond', 'buyback', 'split', 'lp', 'combo', 'capped'].includes(cmd) && sub) assert.ok(listed.has(`${cmd} ${sub}`), `listed: gang ${cmd} ${sub}`)
 }
 
 // gang fly's subcommands: the help lists them once, and each is an older name or listed here

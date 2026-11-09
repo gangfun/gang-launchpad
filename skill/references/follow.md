@@ -70,6 +70,16 @@ An error with `retry` (network down, timeout, 5xx, 429) is transient: run the sa
 `400 … bad_address`) it won't pass on a retry.
 `… can't check follows yet` means `GANG_API` points at a server without the check; it is not retried.
 
+## Promoter binding (0.37.0+)
+
+On a GangLaunchpad 3.0 token made with a promoter share (`--promote`), a follow is built as `buyWithPromoter` with the
+note's author as promoter, when the pad would bind them (this is the wallet's first trade of the token, the author holds
+an Agent ID and is not the token's creator). The binding is permanent: for the token's window, a share of the creator's
+part of the fee on this wallet's curve trades goes to the author. The user pays the same price and fee. The preview shows
+`followPromoter` (`attached: true` with the share and window, or `attached: false` with the reason for a plain follow);
+say it before the user confirms. `--no-promoter` (MCP `noPromoter`) builds a plain follow. If the terms or the note tx
+could not be read, the CLI refuses instead of building a plain first buy, which could never bind later: re-run.
+
 ## Preview and after
 - The preview has `follow: { attached: true, noteTx, link, followableUntil, blind, usd }`. Tell the user which note they follow, until when it counts
   (`followableUntil`, local time), and if `blind: true` that the note's text isn't public yet.
