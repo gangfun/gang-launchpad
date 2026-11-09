@@ -82,7 +82,7 @@ for (const bad of ['0%', '101%', 'half', '-1', '1e3']) assert.throws(() => parse
 
 // ---- addresses: built in on testnet, not on mainnet; the env overrides
 assert.equal(callBondAddress(true), '0xBE2B8519278E9D31B6c4040bAd35f727fD5d2A70')
-assert.equal(callBondAddress(false), null)
+assert.equal(callBondAddress(false), '0x6d6e4A36e9a231cCc932151cdbFb087Cf3860c3D')
 assert.equal(GANG_GENS.testnet[0].callBond, '0xBE2B8519278E9D31B6c4040bAd35f727fD5d2A70')
 
 // ---- the sell guard against a running call bond (a mock 3.0 ctx on the testnet pad)
