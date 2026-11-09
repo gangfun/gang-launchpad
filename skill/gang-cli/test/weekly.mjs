@@ -47,6 +47,7 @@ assert.equal(canonical('中'), '"中"')
   assert.equal(joinSignature(rs, '01'), `0x${rs}1c`)
   assert.equal(joinSignature(`${rs}1c`, null), `0x${rs}1c`)
   assert.throws(() => joinSignature('', '00'))
+  assert.throws(() => joinSignature(rs, undefined), /recovery/)
   assert.throws(() => joinSignature(rs, '05'))
 }
 assert.equal(normalizeTelegram('@gang_fun'), 'https://t.me/gang_fun')
@@ -63,6 +64,11 @@ assert.throws(() => normalizeTelegram('https://evil.com/gang'), /bad_telegram/)
   assert.throws(() => applicationFields(io({ ...base, modules: 'lp,rocket' })), /modules knows/)
   assert.throws(() => applicationFields(io({ ...base, name: 'x'.repeat(33) })), /name is at most 32/)
   assert.throws(() => applicationFields(io({ ...base, symbol: 'TOO LONG' })), /symbol/)
+  assert.throws(() => applicationFields(io({ ...base, symbol: '$MOON' })), /symbol/)
+  assert.equal(applicationFields(io({ ...base, symbol: '月猫' })).symbol, '月猫')
+  assert.throws(() => applicationFields(io({ ...base, name: 'a\nb' })), /name/)
+  assert.throws(() => applicationFields(io({ ...base, contact: '@a\u0007' })), /contact/)
+  assert.throws(() => applicationFields(io({ ...base, website: 'http://moon.xyz' })), /https/)
   assert.throws(() => applicationFields(io({ ...base, contact: undefined })), /contact is required/)
   assert.throws(() => applicationFields(io({ ...base, twitter: 'https://evil.com/x' })), (e) => e.field === 'twitter')
   assert.equal(applicationFields(io({ ...base, name: '月'.repeat(32) })).name.length, 32, 'characters, not bytes')
@@ -160,7 +166,9 @@ try {
   r = await run(APPLY)
   assert.equal(r.success, true)
   assert.equal(r.preview, true)
-  assert.equal(r.application.wallet, acct.address)
+  assert.equal(r.application.wallet, acct.address.toLowerCase())
+  assert.equal(r.application.logo, `ipfs://${CID}`)
+  assert.match(r.confirm, /^gang weekly apply .*'Moon Cat'.* --yes$/)
   assert.equal(r.application.x, 'https://x.com/mooncat')
   assert.deepEqual(r.application.modules, ['lp', 'buyback'])
   assert.ok(r.terms.some((t) => t.includes('20%')))
@@ -202,19 +210,43 @@ try {
   assert.equal(r.success, false); assert.match(r.error, /does not take --x/)
   r = await run([...APPLY, '--keep-logo-uri'])
   assert.equal(r.success, false)
+  r = await run([...APPLY.slice(0, 6), '--logo', join(dir, 'missing.png'), ...APPLY.slice(8)])
+  assert.equal(r.success, false); assert.equal(r.field, 'logo'); assert.match(r.error, /no file/)
+  r = await run([...APPLY, '--logo', join(dir, 'sign.mjs')])
+  assert.equal(r.success, false); assert.match(r.error, /not both/)
   r = await run(APPLY, { withBaw: false })
   assert.equal(r.success, false); assert.match(r.error, /sign in to baw/)
   r = await run([...APPLY, '--issue', 'friday'])
   assert.equal(r.success, false); assert.match(r.error, /--issue/)
-  const sent = posted.length
+  assert.equal(posted.length, 2, 'nothing refused above reached gang.fun')
 
-  // withdraw: needs an application; preview, then --yes signs WeeklyWithdraw
+  // a refused field comes back as USAGE with gang.fun's own code and field
+  applyAnswer = { status: 400, body: { error: 'bad_field', field: 'symbol', message: 'bad symbol' } }
+  r = await run([...APPLY, '--yes'])
+  assert.equal(r.code, 'USAGE'); assert.equal(r.apiCode, 'bad_field'); assert.equal(r.field, 'symbol')
+  applyAnswer = { status: 200, body: { ok: true, issue: ISSUE, status: 'pending', replaced: true } }
+
+  // once applications closed, gang weekly still shows the application of the issue being picked
+  weekly = { ...board(), apply: { ...board().apply, issue: '2026-11-20', number: 2 }, current: { issue: ISSUE, number: 1, status: 'selecting', launchAt: now + 86400 } }
+  application = { issue: ISSUE, wallet: acct.address.toLowerCase(), status: 'pending', submittedAt: now, symbol: 'MCAT' }
+  r = await run(['weekly'])
+  assert.equal(r.mineCurrent.issue, ISSUE)
+  application = null
+  weekly = board()
+
+  // withdraw: refused once closed; needs an application; preview, then --yes signs WeeklyWithdraw
+  weekly = board(false)
+  r = await run(['weekly', 'withdraw', '--yes'])
+  assert.equal(r.success, false); assert.match(r.error, /closed/)
+  weekly = board()
   r = await run(['weekly', 'withdraw'])
   assert.equal(r.success, false); assert.match(r.error, /no application/)
   application = { issue: ISSUE, wallet: acct.address.toLowerCase(), status: 'pending', submittedAt: now, symbol: 'MCAT' }
+  const before = posted.length
   r = await run(['weekly', 'withdraw'])
   assert.equal(r.preview, true)
-  assert.equal(posted.length, sent)
+  assert.match(r.confirm, /^gang weekly withdraw --yes$/)
+  assert.equal(posted.length, before)
   r = await run(['weekly', 'withdraw', '--yes'])
   assert.equal(r.status, 'withdrawn')
   const w = posted.at(-1)

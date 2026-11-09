@@ -107,7 +107,9 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
 ## Hard rules
 
 - **Preview → show → confirm → execute.** Every write first prints a preview; show it, get the user's OK, then
-  `gang execute`. Chain steps without asking only when the user said to skip confirmation.
+  `gang execute`. Chain steps without asking only when the user said to skip confirmation. `gang weekly apply` /
+  `withdraw` are the exception: with `--yes` they sign (no transaction) and submit at once, so add `--yes` only after the
+  user's OK on their preview, and apply only with the name, symbol, logo, links, description and contact the user gave.
 - **Setup steps.** A preview may be a `step: wrap-bnb | approve-quote | approve` first: execute it, wait for it to
   land, then run **the same command again** for the real step.
 - **Write a note by default** on every buy / sell / mint / withdraw (one line: what you saw, why now) and every create

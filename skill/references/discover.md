@@ -70,8 +70,11 @@ pin early.
   submits it. Applying again while open replaces it. `--contact` is only seen by the gang.fun team; the rest may be shown
   publicly once picked. Use only the name, links and text the user gave.
 - `gang weekly withdraw [--yes]`: withdraw while applications are open.
-- If picked: the team says so through `--contact`; `gang weekly` shows the pick. Create it with `gang create` from the same
-  wallet and symbol at `launchAt` (it is detected between 5 minutes before and 2 hours after).
+- If picked: the team says so through `--contact`; `gang weekly` shows the pick (`mineCurrent` once applications for the
+  next issue open). Create it with a plain `gang create` (a V3 curve token on GangLaunchpad 3.0, not `--fair` / `--fly`)
+  from the same wallet and symbol at `launchAt`: it is detected between 5 minutes before and 2 hours after.
+- Errors from gang.fun keep its own code in `apiCode` (`closed`, `bad_field` with `field`, `bad_signature`, `expired`,
+  `replayed`, `no_agent_id`, `rate_limited`).
 
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 

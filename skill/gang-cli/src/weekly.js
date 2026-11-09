@@ -11,6 +11,7 @@
  * The application is signed as EIP-712 typed data (domain "gang.fun weekly launch", chainId 56) by the baw wallet, which
  * proves the wallet applying is the one that will create. Its `contact` is only seen by the gang.fun team.
  */
+import { statSync } from 'node:fs'
 import { keccak256, toBytes } from 'viem'
 import { API, get as apiGet } from './discover.js'
 import { baw, bawAddress, bawFailed, bawStatus } from './baw.js'
@@ -23,7 +24,7 @@ export const WEEKLY_NOTE = "Gang's official weekly launch event, not a recommend
 export const WEEKLY_URL = 'https://gang.fun/weekly'
 export const WEEKLY_MODULES = ['buyback', 'lp', 'split', 'combo', 'capped', 'bond', 'dividend', 'promote', 'tax']
 export const APPLY_FLAGS = ['name', 'symbol', 'logo', 'logo-file', 'file-logo', 'logo-uri', 'description', 'contact',
-  'twitter', 'telegram', 'website', 'modules', 'issue', 'yes']
+  'twitter', 'telegram', 'website', 'modules', 'issue', 'yes', 'keep-logo-uri']
 
 export const WEEKLY_DOMAIN = { name: 'gang.fun weekly launch', version: '1', chainId: 56 }
 const DOMAIN_TYPE = [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }]
@@ -60,7 +61,9 @@ export function joinSignature(sig, recovery) {
     if (/^[0-9a-fA-F]{130}$/.test(rs)) return `0x${rs}`
     throw new Error('baw returned no signature')
   }
-  const rec = Number.parseInt(String(recovery ?? '0'), 16)
+  // without the recovery byte half the signatures would be wrong: refuse rather than guess
+  if (recovery == null || !/^(?:0x)?[0-9a-fA-F]{1,2}$/.test(String(recovery))) throw new Error('baw returned a signature without its recovery byte')
+  const rec = Number.parseInt(String(recovery).replace(/^0x/, ''), 16)
   if (!(rec >= 0 && rec <= 1) && !(rec === 27 || rec === 28)) throw new Error(`baw returned an unknown signature recovery ${recovery}`)
   return `0x${rs}${(rec >= 27 ? rec : 27 + rec).toString(16)}`
 }
@@ -101,6 +104,9 @@ export function normalizeTelegram(raw) {
 }
 
 const chars = (s) => [...String(s ?? '')].length
+// what gang.fun takes (its weekly.js): a symbol of letters, digits and CJK / kana / hangul; no control characters in name / contact
+export const SYMBOL_RE = /^[A-Za-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+$/u
+const CTRL_RE = /[\u0000-\u001f\u007f]/
 
 /**
  * The application's fields from the flags (without wallet / issue / logo), or throws Error('bad_field: …').
@@ -114,10 +120,11 @@ export function applicationFields({ opt, flag }) {
     if (v == null || String(v).startsWith('--') || !String(v).trim()) throw bad(name, 'is required')
     return String(v).trim()
   }
-  const name = need('name'); if (chars(name) > 32) throw bad('name', 'is at most 32 characters')
-  const symbol = need('symbol'); if (chars(symbol) > 12 || /\s/.test(symbol)) throw bad('symbol', 'is at most 12 characters, no spaces')
+  const name = need('name'); if (chars(name) > 32 || CTRL_RE.test(name)) throw bad('name', 'is at most 32 characters, on one line')
+  const symbol = need('symbol')
+  if (chars(symbol) > 12 || !SYMBOL_RE.test(symbol)) throw bad('symbol', 'is at most 12 letters or digits (CJK, kana and hangul too), no spaces or signs')
   const description = need('description'); if (chars(description) > 500) throw bad('description', 'is at most 500 characters')
-  const contact = need('contact'); if (chars(contact) > 64) throw bad('contact', 'is at most 64 characters')
+  const contact = need('contact'); if (chars(contact) > 64 || CTRL_RE.test(contact)) throw bad('contact', 'is at most 64 characters, on one line')
   const f = { name, symbol, description, contact }
   const link = (flagName, norm) => {
     const v = val(flagName)
@@ -127,7 +134,9 @@ export function applicationFields({ opt, flag }) {
   }
   const x = link('twitter', normalizeTwitter); if (x) f.x = x
   const tg = link('telegram', normalizeTelegram); if (tg) f.tg = tg
-  const website = link('website', normalizeWebsite); if (website) f.website = website
+  const website = link('website', normalizeWebsite)
+  if (website && !website.startsWith('https://')) throw bad('website', 'must be an https link')
+  if (website) f.website = website
   if (flag('modules')) {
     const raw = opt('modules')
     if (raw == null || raw.startsWith('--')) throw bad('modules', `needs a list, e.g. lp,buyback (from ${WEEKLY_MODULES.join(', ')})`)
@@ -156,7 +165,7 @@ export function eventRow(e) {
     kind: 'weekly-launch', issue: e.issue, number: e.number ?? null, status: e.status ?? null,
     name: e.name ?? null, symbol: e.symbol ?? null, creatorHandle: e.creatorHandle ?? null,
     launchAt: e.launchAt ?? null, until: e.until ?? null,
-    token: e.token?.address ? { address: e.token.address, symbol: e.token.symbol ?? e.symbol ?? null, progressPct: e.token.progressPct ?? null } : null,
+    token: /^0x[0-9a-fA-F]{40}$/.test(e.token?.address ?? '') ? { address: e.token.address, symbol: e.token.symbol ?? e.symbol ?? null, progressPct: e.token.progressPct ?? null } : null,
     url: WEEKLY_URL, note: WEEKLY_NOTE,
   })
 }
@@ -181,35 +190,52 @@ async function post(path, body) {
 }
 
 const SIGN_IN = 'sign in to baw (baw auth signin): the application is signed by the wallet that will create the token'
+const LOGO_FLAGS = ['logo', 'logo-file', 'file-logo']
+// gang.fun's refusal → the CLI's code (DEVELOPERS.md): a bad field is the command's fault, the rest is state; apiCode keeps it
+const API_CODES = { bad_field: 'USAGE', no_agent_id: 'NO_AGENT_ID', rate_limited: 'NETWORK' }
 
 /** runWeekly(sub, io): io = { opt, flag, out, fail, resolveLogo } from index.js. */
 export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
   const signedIn = () => { try { return bawStatus() === 'CONNECTED' } catch { return false } }
   const wallet = () => { try { return bawAddress() } catch (e) { return fail(`${SIGN_IN} (${e.message})`) } }
+  const refused = (e) => fail(e.message, {
+    ...(e.apiCode && { apiCode: e.apiCode, code: API_CODES[e.apiCode] || 'ERROR' }), ...(e.field && { field: e.field }),
+    ...(e.retryable && { retry: 'same command again' }),
+  })
   const board = async () => {
     let b
     try { b = await apiGet('/weekly', undefined, '') } catch (e) { fail(e.message, { retry: 'same command again' }) }
     if (!b) fail(`gang.fun has no weekly launch event yet (${API}/weekly)`, { retry: 'later' })
     return b
   }
-  const issueArg = (b) => {
+  const issueOf = (b) => {
     const i = flag('issue') ? opt('issue') : b.apply?.issue
     if (!i || !ISSUE_RE.test(i)) fail('--issue takes the issue\'s Friday date, e.g. 2026-11-13', { got: i ?? null })
     return i
   }
   const mine = async (issue, w) => {
-    if (!w) return null
+    if (!w || !issue) return null
     try { return await apiGet(`/weekly/application?${new URLSearchParams({ issue, wallet: w.toLowerCase() })}`, undefined, '') } catch { return null }
   }
+  const mineRow = (my) => (my ? { issue: my.issue, status: my.status, symbol: my.symbol, submittedAtLocal: localTime(my.submittedAt) } : null)
 
   if (sub === undefined || sub === 'status' || sub.startsWith('--')) {
     const b = await board()
     const me = signedIn() ? wallet() : null
-    const my = b.apply?.issue && me ? await mine(b.apply.issue, me) : null
+    if (flag('issue')) {
+      const issue = issueOf(b)
+      let v
+      try { v = await apiGet(`/weekly/${issue}`, undefined, '') } catch (e) { fail(e.message, { retry: 'same command again' }) }
+      if (!v) fail(`gang.fun knows no weekly launch issue ${issue}`)
+      return out({ success: true, issue: withTimes(v), ...(me && { mine: mineRow(await mine(issue, me)) }), url: WEEKLY_URL, note: WEEKLY_NOTE })
+    }
+    // the open issue's application, and (once applications closed) the one of the issue being picked / featured
+    const cur = b.current?.issue && b.current.issue !== b.apply?.issue ? b.current.issue : null
+    const [my, myCur] = me ? await Promise.all([mine(b.apply?.issue, me), mine(cur, me)]) : [null, null]
     return out({
       success: true,
       apply: withTimes(b.apply), current: withTimes(b.current), past: (b.past || []).map(withTimes), rules: b.rules ?? null,
-      ...(me && { mine: my ? { issue: my.issue, status: my.status, symbol: my.symbol, submittedAtLocal: localTime(my.submittedAt) } : null }),
+      ...(me && { mine: mineRow(my) }), ...(me && cur && { mineCurrent: mineRow(myCur) }),
       url: WEEKLY_URL, note: WEEKLY_NOTE,
       next: b.apply?.open ? 'gang weekly apply --name … --symbol … --logo ./logo.png --description "…" --contact @you  (preview; add --yes to sign and submit)' : null,
     })
@@ -218,32 +244,43 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
   if (sub === 'apply') {
     const unknown = Object.keys(Object.fromEntries(process.argv.slice(4).filter((a) => a.startsWith('--')).map((a) => [a.slice(2), 1])))
       .filter((f) => !APPLY_FLAGS.includes(f))
-    if (unknown.length) fail(`gang weekly apply does not take --${unknown[0]} (it takes --${APPLY_FLAGS.join(', --')})`)
-    if (flag('keep-logo-uri')) fail('--keep-logo-uri: the logo must be on gang.fun (gang upload-logo, or --logo ./file.png)')
+    if (unknown.length) fail(`gang weekly apply does not take --${unknown[0]} (it takes --${APPLY_FLAGS.filter((f) => f !== 'keep-logo-uri').join(', --')})`)
+    if (flag('keep-logo-uri')) fail('--keep-logo-uri: the logo must be on gang.fun (--logo ./file.png, or --logo-uri with a gang upload-logo URL or another image URL, which is copied to gang.fun)')
     let fields
-    try { fields = applicationFields({ opt, flag }) } catch (e) { fail(e.message, e.field ? { field: e.field } : {}) }
-    if (!flag('logo') && !flag('logo-file') && !flag('file-logo') && !flag('logo-uri')) fail('bad_field: --logo ./file.png (or --logo-uri <gang.fun logo URL>) is required', { field: 'logo' })
+    try { fields = applicationFields({ opt, flag }) } catch (e) { fail(e.message, { code: 'USAGE', ...(e.field && { field: e.field }) }) }
+    // the logo: exactly one of a local file or a URL, checked here so the preview can't promise what --yes then refuses
+    const files = LOGO_FLAGS.filter((f) => flag(f))
+    if (!files.length && !flag('logo-uri')) fail('bad_field: --logo ./file.png (or --logo-uri <image URL>) is required', { code: 'USAGE', field: 'logo' })
+    if (files.length > 1 || (files.length && flag('logo-uri'))) fail('use either --logo <file> or --logo-uri <URL>, not both', { code: 'USAGE', field: 'logo' })
+    const logoArg = files.length ? opt(files[0]) : opt('logo-uri')
+    if (logoArg == null || logoArg.startsWith('--') || !logoArg.trim()) fail(`--${files[0] || 'logo-uri'} needs a value`, { code: 'USAGE', field: 'logo' })
+    if (files.length) {
+      try { if (!statSync(logoArg).isFile()) throw new Error('not a file') } catch { fail(`--${files[0]}: no file at ${logoArg}`, { code: 'USAGE', field: 'logo' }) }
+    } else if (!ipfsCid(logoArg) && !/^https?:\/\//i.test(logoArg)) {
+      fail('--logo-uri takes a gang.fun logo (ipfs://<cid> or its cdn.gang.fun URL) or an http(s) image URL to copy there', { code: 'USAGE', field: 'logo' })
+    }
     const b = await board()
-    const issue = issueArg(b)
+    const issue = issueOf(b)
     const open = b.apply?.issue === issue && b.apply.open
     if (!open) fail(`applications for ${issue} are not open${b.apply?.issue ? ` (open next: ${b.apply.issue}, ${localTime(b.apply.opensAt)} – ${localTime(b.apply.closesAt)})` : ''}`, { apply: withTimes(b.apply) })
     if (!signedIn()) fail(SIGN_IN)
     // gang.fun refuses a wallet without an Agent ID (no_agent_id); the create gate checks it again at launch
     const w = wallet()
     const rules = b.rules ?? {}
-    const preview = {
-      issue, number: b.apply.number ?? null, wallet: w, ...fields, logo: flag('logo-uri') ? opt('logo-uri') : (opt('logo') || opt('logo-file') || opt('file-logo')),
-    }
     const terms = [
-      `If picked, launch it on ${rules.pad || 'GangLaunchpad 3.0 V3 curve'} from ${w} with symbol ${fields.symbol} on ${localTime(b.apply.launchAt) ?? 'Friday 20:00 UTC+8'} (gang create …).`,
+      `If picked, launch it with gang create (a V3 curve token on ${rules.pad || 'GangLaunchpad 3.0'}, not --fair / --fly) from ${w} with symbol ${fields.symbol} at ${localTime(b.apply.launchAt) ?? 'Friday 20:00 UTC+8'}.`,
       `The pin is withdrawn early if the creator sells more than ${((rules.revokeSellBps ?? 2000) / 100).toFixed(0)}% of their holding during the 7-day featured week.`,
       'No buy-back and no reward: the event pays in attention (gang.fun homepage, X / TG posts, the CLI trending row).',
-      'Only the gang.fun team sees --contact; everything else may be shown publicly once picked.',
+      'Only the gang.fun team sees contact; everything else may be shown publicly once picked.',
     ]
     if (!flag('yes')) {
       return out({
-        success: true, preview: true, application: preview, terms, url: WEEKLY_URL,
-        note: 'Nothing was signed or sent. Show this to the user; only on their OK run the same command with --yes (it uploads a local logo, signs with the Agent wallet and submits). Re-applying replaces the earlier application while applications are open.',
+        success: true, preview: true, issue, number: b.apply.number ?? null,
+        // what --yes signs and sends, but the logo: a local file / another host's image becomes ipfs://<cid> on upload
+        application: { issue, wallet: w.toLowerCase(), ...fields, logo: ipfsCid(logoArg) ? ipfsUri(ipfsCid(logoArg)) : logoArg },
+        ...(!ipfsCid(logoArg) && { logoNote: `${files.length ? 'the file' : 'the image'} is uploaded to gang.fun with --yes; the application carries its ipfs://<cid>` }),
+        terms, confirm: `${['gang', ...process.argv.slice(2)].map(shellWord).join(' ')} --yes`, url: WEEKLY_URL,
+        note: 'Nothing was signed or sent. Show this to the user; only on their OK run confirm (it uploads the logo, signs with the Agent wallet, no transaction, and submits). Applying again while open replaces the earlier application.',
       })
     }
     const logo = await resolveLogo()
@@ -256,36 +293,43 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
       signature = bawSignTyped(w, typedData('WeeklyApply', { wallet: w, issue, digest: applicationDigest(application), expires }))
     } catch (e) { fail(e.message, e.retryable ? { retry: 'same command again' } : {}) }
     let r
-    try { r = await post('/weekly/apply', { application, expires, signature }) } catch (e) {
-      fail(e.message, { ...(e.apiCode && { apiCode: e.apiCode }), ...(e.field && { field: e.field }), ...(e.retryable && { retry: 'same command again' }) })
-    }
+    try { r = await post('/weekly/apply', { application, expires, signature }) } catch (e) { refused(e) }
     return out({
-      success: true, issue, status: r.status ?? 'pending', replaced: !!r.replaced, application: { ...application, logoUrl: logo.upload?.url ?? null },
+      success: true, issue, status: r.status ?? 'pending', replaced: !!r.replaced, application,
       ...(logo.uploaded && { logoUploaded: logo.upload?.url ?? true }),
-      note: 'Submitted. The team picks one application on Thursday 12:00 UTC+8 and contacts the pick; the pick goes public Thursday 20:00. Check with gang weekly.',
+      note: `Submitted. The team picks one application on ${localTime((b.apply.launchAt ?? 0) - 32 * 3600) ?? 'Thursday 12:00 UTC+8'} and contacts the pick; the pick goes public 24 hours before the launch. gang weekly shows this application (as mine, then as mineCurrent once applications close).`,
       url: WEEKLY_URL,
     })
   }
 
   if (sub === 'withdraw') {
     const b = await board()
-    const issue = issueArg(b)
+    const issue = issueOf(b)
+    if (!(b.apply?.issue === issue && b.apply.open)) fail(`applications for ${issue} are closed: an application can only be withdrawn while they are open`)
     if (!signedIn()) fail(SIGN_IN)
     const w = wallet()
     const my = await mine(issue, w)
     if (!my) fail(`no application from ${w} for ${issue}`)
+    if (my.status === 'withdrawn') fail(`the application from ${w} for ${issue} is already withdrawn`)
     if (!flag('yes')) {
-      return out({ success: true, preview: true, withdraw: { issue, wallet: w, status: my.status, symbol: my.symbol }, note: 'Nothing was signed or sent. On the user\'s OK run the same command with --yes.' })
+      return out({
+        success: true, preview: true, withdraw: { issue, wallet: w.toLowerCase(), status: my.status, symbol: my.symbol },
+        confirm: `${['gang', ...process.argv.slice(2)].map(shellWord).join(' ')} --yes`,
+        note: 'Nothing was signed or sent. On the user\'s OK run confirm.',
+      })
     }
     const expires = Math.floor(Date.now() / 1000) + SIGN_TTL_S
     let signature
     try { signature = bawSignTyped(w, typedData('WeeklyWithdraw', { wallet: w, issue, expires })) } catch (e) { fail(e.message, e.retryable ? { retry: 'same command again' } : {}) }
     let r
-    try { r = await post('/weekly/withdraw', { issue, wallet: w.toLowerCase(), expires, signature }) } catch (e) {
-      fail(e.message, { ...(e.apiCode && { apiCode: e.apiCode }), ...(e.retryable && { retry: 'same command again' }) })
-    }
+    try { r = await post('/weekly/withdraw', { issue, wallet: w.toLowerCase(), expires, signature }) } catch (e) { refused(e) }
     return out({ success: true, issue, status: r.status ?? 'withdrawn' })
   }
 
   fail(`unknown gang weekly command: ${sub} (gang weekly | gang weekly apply … | gang weekly withdraw)`)
+}
+
+/** A word as a POSIX shell reads it back: plain words as they are, the rest in single quotes. */
+function shellWord(w) {
+  return /^[A-Za-z0-9_./:@,=+-]+$/.test(w) ? w : `'${String(w).replace(/'/g, `'\\''`)}'`
 }
