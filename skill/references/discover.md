@@ -63,7 +63,8 @@ attention only. Selling more than `rules.revokeSellBps` (20%) of the creator's h
 pin early.
 
 - `gang weekly`: `apply` (the issue open for applications: `opensAt` / `closesAt` / `launchAt`, `open`), `current` (the
-  pick from Thursday 20:00, then its token), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
+  pick from Thursday 20:00, then its token), `live` (every issue in teaser / launching / featured, newest first: two
+  from Thursday 20:00 until the last pick's featured week ends), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
   issue, the one being picked and the current one, newest first).
 - `gang weekly apply --name … --symbol … --logo <file> --description "…" --contact <handle> [--twitter …] [--telegram …]
   [--website …] [--modules lp,buyback,…]`: only when the user wants to apply. Without `--yes` it is a preview (nothing
@@ -76,7 +77,8 @@ pin early.
   applications with their status (`pending`, `selected`, `not_selected`, `withdrawn`). Create it with a plain `gang create` (a V3 curve token on GangLaunchpad 3.0, not `--fair` / `--fly`)
   from the same wallet and symbol at `launchAt`: it is detected between 5 minutes before and 2 hours after.
 - Errors from gang.fun keep its own code in `apiCode` (`closed`, `bad_field` with `field`, `bad_signature`, `expired`,
-  `replayed`, `no_agent_id`, `rate_limited`).
+  `replayed`, `no_agent_id`, `rate_limited`, and `selected`: a picked application can't be changed or withdrawn, ask
+  the team).
 
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 

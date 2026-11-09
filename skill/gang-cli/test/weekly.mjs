@@ -69,6 +69,10 @@ assert.throws(() => normalizeTelegram('https://evil.com/gang'), /bad_telegram/)
   assert.throws(() => applicationFields(io({ ...base, name: 'a\nb' })), /name/)
   assert.throws(() => applicationFields(io({ ...base, contact: '@a\u0007' })), /contact/)
   assert.throws(() => applicationFields(io({ ...base, website: 'http://moon.xyz' })), /https/)
+  assert.throws(() => applicationFields(io({ ...base, name: 'A\u202Eevil' })), /name/)
+  assert.throws(() => applicationFields(io({ ...base, description: 'ok\u0000' })), /description/)
+  assert.throws(() => applicationFields(io({ ...base, contact: '@a\u200b' })), /contact/)
+  assert.equal(applicationFields(io({ ...base, description: 'line 1\nline 2\tok' })).description, 'line 1\nline 2\tok')
   assert.throws(() => applicationFields(io({ ...base, contact: undefined })), /contact is required/)
   assert.throws(() => applicationFields(io({ ...base, twitter: 'https://evil.com/x' })), (e) => e.field === 'twitter')
   assert.equal(applicationFields(io({ ...base, name: '月'.repeat(32) })).name.length, 32, 'characters, not bytes')
@@ -239,6 +243,11 @@ try {
   applications = { '2026-11-20': row('2026-11-20', 'pending'), [ISSUE]: row(ISSUE, 'not_selected') }
   r = await run(['weekly'])
   assert.deepEqual(r.mine.map((m) => [m.issue, m.status]), [['2026-11-20', 'pending'], [ISSUE, 'not_selected']])
+  assert.deepEqual(r.live.map((v) => v.issue), [ISSUE], 'no live list from the server: current when it is live')
+  weekly = { ...weekly, live: [{ issue: '2026-11-20', number: 2, status: 'teaser', launchAt: now + 86400 }, { issue: ISSUE, number: 1, status: 'featured', launchAt: now - 6 * 86400 }] }
+  r = await run(['weekly'])
+  assert.deepEqual(r.live.map((v) => [v.issue, v.status]), [['2026-11-20', 'teaser'], [ISSUE, 'featured']])
+  assert.ok(r.live[0].launchAtLocal)
   applications = {}
   weekly = board()
 

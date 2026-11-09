@@ -107,6 +107,10 @@ const chars = (s) => [...String(s ?? '')].length
 // what gang.fun takes (its weekly.js): a symbol of letters, digits and CJK / kana / hangul; no control characters in name / contact
 export const SYMBOL_RE = /^[A-Za-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+$/u
 const CTRL_RE = /[\u0000-\u001f\u007f]/
+// zero-width and bidi override / isolate characters: refused everywhere (they can disguise text in gang.fun's posts)
+const HIDDEN_RE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/
+// the description may span lines and use tabs, nothing else below U+0020
+const DESC_CTRL_RE = /[\u0000-\u0008\u000b-\u001f\u007f]/
 
 /**
  * The application's fields from the flags (without wallet / issue / logo), or throws Error('bad_field: …').
@@ -120,11 +124,12 @@ export function applicationFields({ opt, flag }) {
     if (v == null || String(v).startsWith('--') || !String(v).trim()) throw bad(name, 'is required')
     return String(v).trim()
   }
-  const name = need('name'); if (chars(name) > 32 || CTRL_RE.test(name)) throw bad('name', 'is at most 32 characters, on one line')
+  const name = need('name'); if (chars(name) > 32 || CTRL_RE.test(name) || HIDDEN_RE.test(name)) throw bad('name', 'is at most 32 characters, on one line, no invisible characters')
   const symbol = need('symbol')
   if (chars(symbol) > 12 || !SYMBOL_RE.test(symbol)) throw bad('symbol', 'is at most 12 letters or digits (CJK, kana and hangul too), no spaces or signs')
-  const description = need('description'); if (chars(description) > 500) throw bad('description', 'is at most 500 characters')
-  const contact = need('contact'); if (chars(contact) > 64 || CTRL_RE.test(contact)) throw bad('contact', 'is at most 64 characters, on one line')
+  const description = need('description')
+  if (chars(description) > 500 || DESC_CTRL_RE.test(description) || HIDDEN_RE.test(description)) throw bad('description', 'is at most 500 characters, no control or invisible characters')
+  const contact = need('contact'); if (chars(contact) > 64 || CTRL_RE.test(contact) || HIDDEN_RE.test(contact)) throw bad('contact', 'is at most 64 characters, on one line, no invisible characters')
   const f = { name, symbol, description, contact }
   const link = (flagName, norm) => {
     const v = val(flagName)
@@ -231,12 +236,14 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
     }
     // my applications: the open issue's, the week before it (closed, being picked: the previous pick may still be the
     // featured `current` then) and current's, newest first
-    const issues = [...new Set([b.apply?.issue, weekBefore(b.apply?.issue), b.current?.issue].filter((i) => ISSUE_RE.test(i ?? '')))]
+    const live = Array.isArray(b.live) ? b.live : b.current && ['teaser', 'launching', 'featured'].includes(b.current.status) ? [b.current] : []
+    const issues = [...new Set([b.apply?.issue, weekBefore(b.apply?.issue), b.current?.issue, ...live.map((v) => v?.issue)].filter((i) => ISSUE_RE.test(i ?? '')))]
       .sort().reverse()
     const mineRows = me ? (await Promise.all(issues.map((i) => mine(i, me)))).filter(Boolean).map(mineRow) : []
     return out({
       success: true,
-      apply: withTimes(b.apply), current: withTimes(b.current), past: (b.past || []).map(withTimes), rules: b.rules ?? null,
+      // live: every issue in teaser / launching / featured, newest first (two from Thursday 20:00 until the last pick's week ends)
+      apply: withTimes(b.apply), current: withTimes(b.current), live: live.map(withTimes), past: (b.past || []).map(withTimes), rules: b.rules ?? null,
       ...(me && { mine: mineRows }),
       url: WEEKLY_URL, note: WEEKLY_NOTE,
       next: b.apply?.open ? 'gang weekly apply --name … --symbol … --logo ./logo.png --description "…" --contact @you  (preview; add --yes to sign and submit)' : null,
