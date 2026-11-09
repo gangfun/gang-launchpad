@@ -25,6 +25,7 @@
 - `pad()`、`wbnb()`、`quote1..3()`、`owner()`、`settler()` 与上表一致；`pendingOwner()` 为 0；`bondCount()` 为 0。
 - 运行时代码 9,766 字节，与本地编译结果长度相同；不同的字节只在构造时写入的 immutable 地址位置。
 - 带 `GANG_CALL_BOND` 只读重跑部署脚本：接线检查全部通过。
+- BscScan 源码验证通过（2026-11-09，编译器 v0.8.28，optimizer 200 runs，via-IR）。
 
 ## 主网 fork 测试（`test/fork/CallBondMainnetFork.t.sol`）
 
@@ -38,6 +39,5 @@
 
 ## 还没做
 
-- BscScan 源码验证（需要 API key）。
 - 正式环境的举报 keeper、到期结算和赔付任务：服务端已部署（v1.2.90），但没配置合约地址，所以都没有运行。配置前要给结算方和 keeper 钱包各充少量 BNB 作 gas。
 - CLI 0.37.0 发版：本 PR 把主网地址写进 CLI，发版在服务端任务启动之后。
