@@ -58,8 +58,8 @@ where the user's community is.
 
 Each week gang.fun picks one dev's application. The pick creates its token on GangLaunchpad 3.0 (V3 curve) on Friday
 20:00 UTC+8 from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
-homepage, in gang.fun's X / TG posts, and in `events` of `gang trending` / `preflight` / `list`. No buy-back and no reward:
-attention only. Selling more than `rules.revokeSellBps` (20%) of the creator's holding during the featured week ends the
+homepage, in gang.fun's X / TG posts, and in `events` of `gang trending` / `preflight` / `list`. Being picked is not an
+endorsement or investment advice. Selling more than `rules.revokeSellBps` (20%) of the creator's holding during the featured week ends the
 pin early.
 
 - `gang weekly`: `apply` (the issue open for applications: `opensAt` / `closesAt` / `launchAt`, `open`), `current` (the
