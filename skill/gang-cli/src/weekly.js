@@ -108,7 +108,7 @@ const chars = (s) => [...String(s ?? '')].length
 export const SYMBOL_RE = /^[A-Za-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+$/u
 const CTRL_RE = /[\u0000-\u001f\u007f]/
 // zero-width and bidi override / isolate characters: refused everywhere (they can disguise text in gang.fun's posts)
-const HIDDEN_RE = /[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/
+const HIDDEN_RE = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/
 // the description may span lines and use tabs, nothing else below U+0020
 const DESC_CTRL_RE = /[\u0000-\u0008\u000b-\u001f\u007f]/
 
@@ -127,7 +127,8 @@ export function applicationFields({ opt, flag }) {
   const name = need('name'); if (chars(name) > 32 || CTRL_RE.test(name) || HIDDEN_RE.test(name)) throw bad('name', 'is at most 32 characters, on one line, no invisible characters')
   const symbol = need('symbol')
   if (chars(symbol) > 12 || !SYMBOL_RE.test(symbol)) throw bad('symbol', 'is at most 12 letters or digits (CJK, kana and hangul too), no spaces or signs')
-  const description = need('description')
+  // Windows line ends (a file, some agents) are plain newlines: the digest covers what is sent, so this is safe
+  const description = need('description').replace(/\r\n?/g, '\n')
   if (chars(description) > 500 || DESC_CTRL_RE.test(description) || HIDDEN_RE.test(description)) throw bad('description', 'is at most 500 characters, no control or invisible characters')
   const contact = need('contact'); if (chars(contact) > 64 || CTRL_RE.test(contact) || HIDDEN_RE.test(contact)) throw bad('contact', 'is at most 64 characters, on one line, no invisible characters')
   const f = { name, symbol, description, contact }
