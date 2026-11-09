@@ -62,7 +62,8 @@ attention only. Selling more than `rules.revokeSellBps` (20%) of the creator's h
 pin early.
 
 - `gang weekly`: `apply` (the issue open for applications: `opensAt` / `closesAt` / `launchAt`, `open`), `current` (the
-  pick from Thursday 20:00, then its token), `past`, `rules`, and `mine` (the signed-in wallet's application).
+  pick from Thursday 20:00, then its token), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
+  issue, the one being picked and the current one, newest first).
 - `gang weekly apply --name … --symbol … --logo <file> --description "…" --contact <handle> [--twitter …] [--telegram …]
   [--website …] [--modules lp,buyback,…]`: only when the user wants to apply. Without `--yes` it is a preview (nothing
   signed or sent): show `application` and `terms`, get the user's OK, then run the same command with `--yes`. That
@@ -70,8 +71,8 @@ pin early.
   submits it. Applying again while open replaces it. `--contact` is only seen by the gang.fun team; the rest may be shown
   publicly once picked. Use only the name, links and text the user gave.
 - `gang weekly withdraw [--yes]`: withdraw while applications are open.
-- If picked: the team says so through `--contact`; `gang weekly` shows the pick (`mineCurrent` once applications for the
-  next issue open). Create it with a plain `gang create` (a V3 curve token on GangLaunchpad 3.0, not `--fair` / `--fly`)
+- If picked: the team says so through `--contact`; `gang weekly` shows the pick, and `mine` lists this wallet's recent
+  applications with their status (`pending`, `selected`, `not_selected`, `withdrawn`). Create it with a plain `gang create` (a V3 curve token on GangLaunchpad 3.0, not `--fair` / `--fly`)
   from the same wallet and symbol at `launchAt`: it is detected between 5 minutes before and 2 hours after.
 - Errors from gang.fun keep its own code in `apiCode` (`closed`, `bad_field` with `field`, `bad_signature`, `expired`,
   `replayed`, `no_agent_id`, `rate_limited`).

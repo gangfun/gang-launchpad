@@ -16,7 +16,7 @@ import { keccak256, toBytes } from 'viem'
 import { API, get as apiGet } from './discover.js'
 import { baw, bawAddress, bawFailed, bawStatus } from './baw.js'
 import { localTime } from './follow.js'
-import { ipfsCid, ipfsUri } from './logo.js'
+import { cdnUrl, checkGangLogo, ipfsCid, ipfsUri } from './logo.js'
 import { normalizeTwitter, normalizeWebsite } from './links.js'
 import { UA } from './version.js'
 
@@ -229,13 +229,15 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
       if (!v) fail(`gang.fun knows no weekly launch issue ${issue}`)
       return out({ success: true, issue: withTimes(v), ...(me && { mine: mineRow(await mine(issue, me)) }), url: WEEKLY_URL, note: WEEKLY_NOTE })
     }
-    // the open issue's application, and (once applications closed) the one of the issue being picked / featured
-    const cur = b.current?.issue && b.current.issue !== b.apply?.issue ? b.current.issue : null
-    const [my, myCur] = me ? await Promise.all([mine(b.apply?.issue, me), mine(cur, me)]) : [null, null]
+    // my applications: the open issue's, the week before it (closed, being picked: the previous pick may still be the
+    // featured `current` then) and current's, newest first
+    const issues = [...new Set([b.apply?.issue, weekBefore(b.apply?.issue), b.current?.issue].filter((i) => ISSUE_RE.test(i ?? '')))]
+      .sort().reverse()
+    const mineRows = me ? (await Promise.all(issues.map((i) => mine(i, me)))).filter(Boolean).map(mineRow) : []
     return out({
       success: true,
       apply: withTimes(b.apply), current: withTimes(b.current), past: (b.past || []).map(withTimes), rules: b.rules ?? null,
-      ...(me && { mine: mineRow(my) }), ...(me && cur && { mineCurrent: mineRow(myCur) }),
+      ...(me && { mine: mineRows }),
       url: WEEKLY_URL, note: WEEKLY_NOTE,
       next: b.apply?.open ? 'gang weekly apply --name … --symbol … --logo ./logo.png --description "…" --contact @you  (preview; add --yes to sign and submit)' : null,
     })
@@ -256,7 +258,12 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
     if (logoArg == null || logoArg.startsWith('--') || !logoArg.trim()) fail(`--${files[0] || 'logo-uri'} needs a value`, { code: 'USAGE', field: 'logo' })
     if (files.length) {
       try { if (!statSync(logoArg).isFile()) throw new Error('not a file') } catch { fail(`--${files[0]}: no file at ${logoArg}`, { code: 'USAGE', field: 'logo' }) }
-    } else if (!ipfsCid(logoArg) && !/^https?:\/\//i.test(logoArg)) {
+    } else if (ipfsCid(logoArg)) {
+      // ipfs://<cid> or the CDN URL must be a file on gang.fun's bucket (resolveLogoUri would offer --keep-logo-uri)
+      try { await checkGangLogo(cdnUrl(ipfsCid(logoArg))) } catch (e) {
+        fail(`--logo-uri: ${e.message}`, { field: 'logo', ...(e.retryable ? { retry: 'same command again' } : { code: 'USAGE' }) })
+      }
+    } else if (!/^https?:\/\//i.test(logoArg)) {
       fail('--logo-uri takes a gang.fun logo (ipfs://<cid> or its cdn.gang.fun URL) or an http(s) image URL to copy there', { code: 'USAGE', field: 'logo' })
     }
     const b = await board()
@@ -297,7 +304,7 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
     return out({
       success: true, issue, status: r.status ?? 'pending', replaced: !!r.replaced, application,
       ...(logo.uploaded && { logoUploaded: logo.upload?.url ?? true }),
-      note: `Submitted. The team picks one application on ${localTime((b.apply.launchAt ?? 0) - 32 * 3600) ?? 'Thursday 12:00 UTC+8'} and contacts the pick; the pick goes public 24 hours before the launch. gang weekly shows this application (as mine, then as mineCurrent once applications close).`,
+      note: `Submitted. The team picks one application on ${b.apply.launchAt > 0 ? localTime(b.apply.launchAt - 32 * 3600) : 'Thursday 12:00 UTC+8'} and contacts the pick; the pick goes public 24 hours before the launch. gang weekly lists it under mine, with its status.`,
       url: WEEKLY_URL,
     })
   }
@@ -327,6 +334,13 @@ export async function runWeekly(sub, { opt, flag, out, fail, resolveLogo }) {
   }
 
   fail(`unknown gang weekly command: ${sub} (gang weekly | gang weekly apply … | gang weekly withdraw)`)
+}
+
+/** The issue a week before (YYYY-MM-DD), or null. */
+function weekBefore(issue) {
+  if (!ISSUE_RE.test(issue ?? '')) return null
+  const t = Date.parse(`${issue}T00:00:00Z`)
+  return Number.isFinite(t) ? new Date(t - 7 * 86400_000).toISOString().slice(0, 10) : null
 }
 
 /** A word as a POSIX shell reads it back: plain words as they are, the rest in single quotes. */

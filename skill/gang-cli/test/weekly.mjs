@@ -93,13 +93,19 @@ const board = (open = true) => ({
 let weekly = board(), posted = [], applyAnswer = { status: 200, body: { ok: true, issue: ISSUE, status: 'pending', replaced: false } }
 let trendingBody = { at: now, tokens: [], calls: [] }
 let application = null
+let applications = {}
+const CID2 = `b${'b'.repeat(58)}` // a cid gang.fun does not have
 const server = createServer((req, res) => {
   const send = (status, body, type = 'application/json') => res.writeHead(status, { 'content-type': type }).end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body))
   const url = new URL(req.url, 'http://x')
   if (req.method === 'GET' && url.pathname === `/ipfs/${CID}`) return send(200, Buffer.from([0x89, 0x50]), 'image/png')
   if (req.method === 'GET' && url.pathname === '/api/weekly') return send(200, weekly)
   if (req.method === 'GET' && url.pathname === '/api/trending') return send(200, trendingBody)
-  if (req.method === 'GET' && url.pathname === '/api/weekly/application') return application ? send(200, application) : send(404, { error: 'not_found' })
+  if (req.method === 'GET' && url.pathname === '/api/weekly/application') {
+    // per issue, as gang.fun answers: `application` (one row) or `applications` (by issue)
+    const a = applications[url.searchParams.get('issue')] ?? (application?.issue === url.searchParams.get('issue') ? application : null)
+    return a ? send(200, a) : send(404, { error: 'not_found' })
+  }
   if (req.method === 'POST' && url.pathname.startsWith('/api/weekly/')) {
     let b = ''
     req.on('data', (c) => { b += c })
@@ -156,10 +162,10 @@ try {
   assert.equal(r.mine, undefined, 'no wallet → no mine')
   assert.match(r.next, /gang weekly apply/)
   r = await run(['weekly'])
-  assert.equal(r.mine, null)
+  assert.deepEqual(r.mine, [])
   application = { issue: ISSUE, wallet: acct.address.toLowerCase(), status: 'pending', submittedAt: now, symbol: 'MCAT' }
   r = await run(['weekly'])
-  assert.equal(r.mine.status, 'pending')
+  assert.equal(r.mine.length, 1); assert.equal(r.mine[0].status, 'pending')
   application = null
 
   // preview: nothing signed or sent
@@ -226,13 +232,19 @@ try {
   assert.equal(r.code, 'USAGE'); assert.equal(r.apiCode, 'bad_field'); assert.equal(r.field, 'symbol')
   applyAnswer = { status: 200, body: { ok: true, issue: ISSUE, status: 'pending', replaced: true } }
 
-  // once applications closed, gang weekly still shows the application of the issue being picked
-  weekly = { ...board(), apply: { ...board().apply, issue: '2026-11-20', number: 2 }, current: { issue: ISSUE, number: 1, status: 'selecting', launchAt: now + 86400 } }
-  application = { issue: ISSUE, wallet: acct.address.toLowerCase(), status: 'pending', submittedAt: now, symbol: 'MCAT' }
+  // Thursday of week 2: applications for 11-20 closed (apply already points at 11-27) while 11-13's pick is still the
+  // featured current; the 11-20 application must still show, with the older ones, newest first
+  weekly = { ...board(), apply: { ...board().apply, issue: '2026-11-27', number: 3 }, current: { issue: ISSUE, number: 1, status: 'featured', launchAt: now - 86400 * 6 } }
+  const row = (issue, status) => ({ issue, wallet: acct.address.toLowerCase(), status, submittedAt: now, symbol: 'MCAT' })
+  applications = { '2026-11-20': row('2026-11-20', 'pending'), [ISSUE]: row(ISSUE, 'not_selected') }
   r = await run(['weekly'])
-  assert.equal(r.mineCurrent.issue, ISSUE)
-  application = null
+  assert.deepEqual(r.mine.map((m) => [m.issue, m.status]), [['2026-11-20', 'pending'], [ISSUE, 'not_selected']])
+  applications = {}
   weekly = board()
+
+  // an ipfs:// logo gang.fun doesn't have is refused in the preview, without offering --keep-logo-uri
+  r = await run([...APPLY.slice(0, 6), '--logo-uri', `ipfs://${CID2}`, ...APPLY.slice(8)])
+  assert.equal(r.success, false); assert.equal(r.field, 'logo'); assert.doesNotMatch(JSON.stringify(r), /keep-logo-uri/)
 
   // withdraw: refused once closed; needs an application; preview, then --yes signs WeeklyWithdraw
   weekly = board(false)
