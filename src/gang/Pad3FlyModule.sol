@@ -16,6 +16,7 @@ import {FlywheelOracle} from "../flywheel/FlywheelOracle.sol";
 import {Pad3FlyStore} from "./Pad3FlyStore.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
+import {Pad3VanityStore} from "./Pad3VanityStore.sol";
 
 interface IPad3MintRoom {
     function mintRoom() external view returns (uint256);
@@ -155,7 +156,7 @@ contract Pad3FlyModule is Ownable2Step, ReentrancyGuard {
             f.owedDev,
             f.postRulesOf,
             bridgePoolOf,
-            _deps(),
+            Pad3VanityStore.creationDeps(_deps()),
             text,
             quote,
             refPool,

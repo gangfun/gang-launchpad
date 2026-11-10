@@ -17,6 +17,9 @@ import {FairLogic} from "./FairLogic.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {Pad3FlyStore} from "./Pad3FlyStore.sol";
 import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
+import {Pad3VanityStore} from "./Pad3VanityStore.sol";
+import {Pad3VanityDeployer} from "./Pad3VanityDeployer.sol";
+import {Pad3FlyModule} from "./Pad3FlyModule.sol";
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
 ///        address) and the pad's off-chain views (moved out of the pad for its 24 KB limit)
@@ -185,6 +188,73 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangProm
     }
 
     // ---------------------------------------------------------------- create
+    event VanityEnabled(address indexed deployer);
+    error VanityAlreadyEnabled();
+    error BadVanityDeployer();
+    error VanityContextRequired();
+    error BadVanityCall();
+
+    /// @notice One-way activation. Include this call after the upgrade in the same owner batch.
+    function enableVanity(address deployer) external onlyOwner {
+        Pad3VanityStore.Layout storage v = Pad3VanityStore.layout();
+        if (v.deployer != address(0)) revert VanityAlreadyEnabled();
+        Pad3VanityDeployer d = Pad3VanityDeployer(deployer);
+        if (
+            d.pad() != address(this) || d.legacyTokenDeployer() != tokenDeployer
+                || d.legacyMintTokenDeployer() != Pad3FlyModule(flyModule).flyTokenDeployer()
+        ) revert BadVanityDeployer();
+        v.deployer = deployer;
+        emit VanityEnabled(deployer);
+    }
+
+    function vanityDeployer() external view returns (address) {
+        return Pad3VanityStore.layout().deployer;
+    }
+
+    /// @dev Read by the fixed deployer during a create, never a context left over from another call.
+    function vanitySalt() external view returns (bytes32) {
+        Pad3VanityStore.Layout storage v = Pad3VanityStore.layout();
+        if (!v.active || msg.sender != v.deployer) revert VanityContextRequired();
+        return v.salt;
+    }
+
+    /// @notice Run one existing create entry with a creator-bound salt. All original checks and events still run.
+    function createWithSalt(bytes32 salt, bytes calldata data) external returns (address token) {
+        Pad3VanityStore.Layout storage v = Pad3VanityStore.layout();
+        if (v.deployer == address(0) || v.active) revert VanityContextRequired();
+        if (data.length < 4) revert BadVanityCall();
+        bytes4 selector = bytes4(data[:4]);
+        if (
+            selector
+                    != bytes4(
+                        keccak256("create(string,string,string,string,address,address,(uint16,uint16,uint16,address))")
+                    )
+                && selector
+                    != bytes4(
+                        keccak256(
+                            "createWithGradTarget(string,string,string,string,address,address,(uint16,uint16,uint16,address),uint256)"
+                        )
+                    )
+                && selector
+                    != bytes4(
+                        keccak256(
+                            "create(string,string,string,string,address,address,(uint256,uint16,uint16,uint16,uint16),uint256)"
+                        )
+                    ) && selector != IGangVaultPad.createWithVault.selector
+                && selector != IGangPromote.createWithPromote.selector && selector != Pad3FlyModule.create.selector
+        ) revert BadVanityCall();
+        v.salt = keccak256(abi.encode(msg.sender, salt));
+        v.active = true;
+        // Delegatecall retains the creator as msg.sender; the chosen entry owns the normal reentrancy guard.
+        (bool ok, bytes memory result) = address(this).delegatecall(data);
+        if (!ok) {
+            assembly ("memory-safe") { revert(add(result, 32), mload(result)) }
+        }
+        delete v.salt;
+        delete v.active;
+        token = abi.decode(result, (address));
+    }
+
     /// @notice `createWithGradTarget` with the token bound to `vault` (listed) for good. Only by
     ///         `vaultCreator[vault]`, which this clears (one token per grant).
     function createWithVault(
@@ -239,7 +309,18 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangProm
         uint256 gradBnb
     ) private returns (address token) {
         token = CurveLogic.create(
-            _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb
+            _config,
+            curves,
+            bridgePoolOf,
+            Pad3VanityStore.creationDeps(_deps()),
+            name,
+            symbol,
+            logoURI,
+            metaURI,
+            quote,
+            refPool,
+            tax,
+            gradBnb
         );
         gradTargetOf[token] = gradBnb;
         kindOf[token] = KIND_CURVE;
