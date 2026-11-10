@@ -36,6 +36,11 @@ When the signed-in wallet has never traded on Gang (0.28.0+, `GET /api/ref/eligi
 are left out and `firstTrade: { flyLeftOut, note }` says how many: a first trade is pointed at a curve token. If the user
 asks for a 铸币飞轮 token, `gang list --kind fly` still lists them. Signed out, or gang.fun can't say: nothing is left out.
 
+During Gang's weekly launch event (0.36.0+) the block starts with `events`: one row per pick (`status` teaser → launching →
+featured) with its `issue`, `launchAt` / `until`, `token` once it is created, `url` and `note`, newest first. There are two
+from Thursday 20:00 (the next pick's teaser) until the last pick's featured week ends on Friday. It is an official event, not a
+recommendation: mention it when it helps, never buy from it on your own. See `gang weekly` below.
+
 ## `gang invite [--token <addr>] [--who <addr|handle>]`
 
 The wallet's invite link, `https://gang.fun/start?ref=<addr>[&token=<addr>]`: gang.fun's onboarding page for newcomers
@@ -48,6 +53,32 @@ where the user's community is.
   `byToken`.
 - Each week (Monday to Monday, UTC+8) the token with the most qualified new agents is featured on the gang.fun homepage
   for the next week.
+
+## `gang weekly`: the weekly launch event
+
+Each week gang.fun picks one dev's application. The pick creates its token on GangLaunchpad 3.0 (V3 curve) on Friday
+20:00 UTC+8 from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
+homepage, in gang.fun's X / TG posts, and in `events` of `gang trending` / `preflight` / `list`. Being picked is not an
+endorsement or investment advice. Selling more than `rules.revokeSellBps` (20%) of the creator's holding during the featured week ends the
+pin early.
+
+- `gang weekly`: `apply` (the issue open for applications: `opensAt` / `closesAt` / `launchAt`, `open`), `current` (the
+  pick from Thursday 20:00, then its token), `live` (every issue in teaser / launching / featured, newest first: two
+  from Thursday 20:00 until the last pick's featured week ends), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
+  issue, the one being picked and the current one, newest first).
+- `gang weekly apply --name … --symbol … --logo <file> --description "…" --contact <handle> [--twitter …] [--telegram …]
+  [--website …] [--modules lp,buyback,…]`: only when the user wants to apply. Without `--yes` it is a preview (nothing
+  signed or sent): show `application` and `terms`, get the user's OK, then run the same command with `--yes`. That
+  uploads a local logo, signs the application with the Agent wallet (EIP-712 typed data, no transaction, no gas) and
+  submits it. Applying again while open replaces it. `--contact` is only seen by the gang.fun team; the rest may be shown
+  publicly once picked. Use only the name, links and text the user gave.
+- `gang weekly withdraw [--yes]`: withdraw while applications are open.
+- If picked: the team says so through `--contact`; `gang weekly` shows the pick, and `mine` lists this wallet's recent
+  applications with their status (`pending`, `selected`, `not_selected`, `withdrawn`). Create it with a plain `gang create` (a V3 curve token on GangLaunchpad 3.0, not `--fair` / `--fly`)
+  from the same wallet and symbol at `launchAt`: it is detected between 5 minutes before and 2 hours after.
+- Errors from gang.fun keep its own code in `apiCode` (`closed`, `bad_field` with `field`, `bad_signature`, `expired`,
+  `replayed`, `no_agent_id`, `rate_limited`, and `selected`: a picked application can't be changed or withdrawn, ask
+  the team).
 
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 
