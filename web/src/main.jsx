@@ -11,6 +11,7 @@ import Layout from './components/Layout.jsx'
 import Home from './pages/Home.jsx'
 import Token from './pages/Token.jsx'
 import Docs from './pages/Docs.jsx'
+import Me from './pages/Me.jsx'
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchInterval: 12_000, staleTime: 5_000, retry: 1 } } })
 createRoot(document.getElementById('root')).render(
@@ -23,6 +24,7 @@ createRoot(document.getElementById('root')).render(
               <Route index element={<Home />} />
               <Route path="/token/:address" element={<Token />} />
               <Route path="/docs" element={<Docs />} />
+              <Route path="/me" element={<Me />} />
               <Route path="*" element={<main className="wrap"><div className="empty">404</div></main>} />
             </Route>
           </Routes>

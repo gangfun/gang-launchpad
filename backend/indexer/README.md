@@ -13,7 +13,9 @@ Wipe or raise `GANG_START_BLOCK` when switching from v3 so event history does no
 | 接口 | 说明 |
 |---|---|
 | `GET /search?q=<address prefix \| symbol \| name>` | 最多 8 条匹配 |
-| `GET /stats` | 代币数、毕业数、成交数、24h 成交量、累计手续费 |
+| `GET /stats` | 代币数、毕业数、成交数、24h 成交量、累计手续费、`agentBuyers`（持有 Agent ID 且在内盘买过的去重钱包） |
+| `GET /wallets/:address/buys` | 该地址内盘买入，最多 50 条 `{items:[{token,symbol,name,side,ts,tx}]}` |
+| `GET /wallets/:address/deploys` | 该地址创建的代币，最多 50 条 `{items:[{address,name,symbol,ts}]}` |
 | `GET /tokens?sort=new\|hot\|graduated\|progress&limit=50` | 榜单。hot 按 24h 成交量 |
 | `GET /tokens/:addr` | 单个代币：价格、FDV、进度、持有人数、24h 量 |
 | `GET /tokens/:addr/trades?limit=50&offset=0&side=all|buy|sell&sort=ts_desc|ts_asc|amount_desc` | 成交；返回 `{items,hasMore,nextOffset}` |
