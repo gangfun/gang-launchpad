@@ -43,6 +43,7 @@ The local 0.38.0 candidate created three more tokens using final uploaded metada
 - The new acceptance flow passed against the local full-stack fixture.
 - `test/fork/Pad3VanityUpgradeFork.t.sol` passed against the live BSC mainnet state: the upgrade script compared the newest 25 token records, then the proxy was upgraded and the factory activated on the fork. The same seven-entry acceptance and legacy round trip passed. Agent IDs were mocked only on the fork; no mainnet transactions were broadcast.
 - The fork also records proxy writes during upgrade plus activation: only the ERC-1967 implementation slot and the new factory namespace slot are written. Historical business storage is untouched.
+- The same fork test file also provides `test_fork_signedBatchThenAcceptAllModes`: after mainnet deployment, set `PAD3_FORK_BATCH` to the generated JSON and run that case alone. It requires the correct chain/Safe, exactly two zero-value calls, byte-for-byte upgrade/activation calldata and the same storage-write/acceptance checks. This final-batch rehearsal runs before signing, once its mainnet addresses exist.
 - The CLI candidate passed all 29 test files after incorporating the current main branch.
 - Earlier full Pad 3.0 historical regression: 811 passed, 0 failed, 0 skipped.
 
