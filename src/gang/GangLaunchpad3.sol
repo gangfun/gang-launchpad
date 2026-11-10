@@ -25,6 +25,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {FairLogic} from "./FairLogic.sol";
 import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
+import {Pad3VanityStore} from "./Pad3VanityStore.sol";
 
 /// @title GangLaunchpad 3.0 — the upgradeable Gang pad: one permanent address for both launch kinds
 /// @notice GangLaunchpad 2.0 (bonding curve V3 with the creator's 70% of the 1% fee and graduation tiers, and 打新)
@@ -331,7 +332,18 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         uint256 gradBnb
     ) internal returns (address token) {
         token = CurveLogic.create(
-            _config, curves, bridgePoolOf, _deps(), name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb
+            _config,
+            curves,
+            bridgePoolOf,
+            Pad3VanityStore.creationDeps(_deps()),
+            name,
+            symbol,
+            logoURI,
+            metaURI,
+            quote,
+            refPool,
+            tax,
+            gradBnb
         );
         gradTargetOf[token] = gradBnb;
         _record(token, logoURI, KIND_CURVE);
@@ -465,7 +477,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             _sales,
             positions,
             bridgePoolOf,
-            _deps(),
+            Pad3VanityStore.creationDeps(_deps()),
             name,
             symbol,
             logoURI,
