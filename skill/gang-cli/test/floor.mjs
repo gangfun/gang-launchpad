@@ -18,7 +18,7 @@ import {
   formatFloor, HINTS, MAINNET_FLOOR_FACTORY, notItsFloor, parseFloorSpec, parseRedeemFee, partsOf, PERMANENT_NOTE, quoteFor,
   TESTNET_FLOOR_FACTORY, treasuryShare, UNVERIFIED_NOTE,
 } from '../src/floor.js'
-import { claimToModule, floorModuleOfAnother, notThroughModule, payOutCmd } from '../src/creatorfee.js'
+import { claimToModule, floorModuleOfAnother, notThroughModule, payOutCmd, unverifiedFloorNote } from '../src/creatorfee.js'
 import { isLaunch, LAUNCH_FLAGS, untrustedBuybackQuote } from '../src/launch.js'
 import { wantsPoolModule } from '../src/promote.js'
 import { mineSalt, vanityAddress, vanityCreate } from '../src/vanity.js'
@@ -175,6 +175,11 @@ assert.equal(claimToModule({ moduleType: 'floor-v1', at: M, bound: USDC, quote: 
 assert.equal(floorModuleOfAnother(T, T.toLowerCase()), null)
 assert.match(floorModuleOfAnother(OTHER, T), /cloned for another token \(.*\), not this one: a fee claimed there goes to that token's payees and holders/)
 assert.match(floorModuleOfAnother(null, T), /could not read which token this floor module was cloned for/)
+// --claim --to a contract that only says it is a floor module: three cases, each said as it is
+assert.match(unverifiedFloorNote(null, true), /^could not check whether GangFloorModuleFactory made this contract \(RPC error\): run the command again/)
+assert.match(unverifiedFloorNote(false, false), /this token's GangLaunchpad generation has no floor factory to check it against/)
+assert.match(unverifiedFloorNote(false, true), /but GangFloorModuleFactory did not make it: a fee claimed there is in its hands/)
+assert.doesNotMatch(unverifiedFloorNote(false, false), /did not make it/)
 assert.match(notThroughModule('floor module', { token: T, at: M, kind: 'floor' }), /does not go through the floor module.*gang floor distribute --module/)
 
 // ---- the events gang tx decodes

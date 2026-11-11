@@ -1,4 +1,4 @@
-import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, getAddress, hexToString, isAddress, maxUint256, parseUnits, zeroAddress } from 'viem'
+import { createPublicClient, parseAbi, encodeFunctionData, formatUnits, getAddress, hexToString, isAddress, maxUint256, numberToHex, parseUnits, zeroAddress } from 'viem'
 import { atPad, atTokenPad, GANG_GENS, gangGens, KIND_UNREAD, padNets, NOT_ON_MAINNET, rpcTransport } from './gangpad.js'
 import { walletFor } from './fair.js'
 import { fundingStep, parseAmount, parseNum, poolSellQuote, revertOf as revertIn, step } from './steps.js'
@@ -396,6 +396,111 @@ export async function floorVerified(read, module, factory) {
     const admin = await read(factory, FLOOR_FACTORY_ABI, 'admin')
     return (await read(admin, ADMIN_ABI, 'moduleOf', [module])).toLowerCase() === factory.toLowerCase()
   } catch { return null }
+}
+
+const LISTING_ABI = parseAbi([
+  'function taxHandler() view returns (address)', 'function isListed(address recipient) view returns (bool)',
+  'function owner() view returns (address)',
+])
+/** A module kind as every one of the platform's modules names itself: `split-v1`, `buyback-burn-v4`, `floor-v1`. */
+const KIND_RE = /^[a-z][a-z0-9-]*-v\d+$/
+
+/**
+ * The node ran the call and the contract reverted: JSON-RPC code 3 (or -32000, as older nodes send it) whose message
+ * is "execution reverted" (any case; alone or with a reason after a colon), with no data or real revert data (a
+ * selector and more). NOT a node's own failure: an internal error (-32603), a gateway's message that only mentions a revert, "gas
+ * required exceeds allowance", a rate limit dressed as code 3, data that is not revert data.
+ */
+function revertedCall(e) {
+  // the node's own error (viem wraps a -32000 in a class that keeps the code and the message but drops the data)
+  const x = e?.walk?.((y) => y?.name === 'RpcRequestError' && typeof y.code === 'number') ?? null
+  if (!x || (x.code !== 3 && x.code !== -32000)) return false
+  if (!/^execution reverted(:|$)/i.test(String(x.details ?? x.message ?? '').trim())) return false
+  const data = x.data && typeof x.data === 'object' ? x.data.data : x.data
+  return data == null || data === '0x' || (typeof data === 'string' && /^0x([0-9a-fA-F]{2}){4,}$/.test(data))
+}
+
+/**
+ * Is `recipient` — an address someone typed as the tax recipient of a token created on `pad` — a floor module?
+ * → { floor: true, by } | { floor: false } | { unlisted: true } | { unread: <detail> }.
+ * A token that names a floor module by hand lands at another address than the one the module was cloned for, and its
+ * tax is stuck there for good. So "no" is said only on the chain's own evidence, and whatever a node leaves unanswered
+ * is `unread` (the caller builds nothing and asks to run again), never "no".
+ * Every read is at ONE block (the latest one the node names): a node that does not have that block fails the read, so
+ * a node behind the chain can't answer "no code" or "not listed" for a module cloned seconds ago. The reads whose
+ * answer can be "no" (the registries, the code, moduleType()) go to the node raw: only a hex string is an answer —
+ * `null`, an empty string or a missing result is the node's silence, not the contract's.
+ *  1. The pad takes a recipient that is not the creator only when its tax handler lists it (CurveLogic3.checkTax). Not
+ *     listed at that block: `unlisted` — the create is refused whatever the address is.
+ *  2. The floor `factory` (the create target's; null where there is none) has its modules recorded by the
+ *     GangHandlerAdmin it was built over (factory.admin(), fixed for good; moduleOf, written in the clone's tx): a
+ *     floor module, whoever owns the handler by now.
+ *  3. The handler's owner (that admin, or a later one) records which factory listed a module. Listed by a factory: one
+ *     of the platform's modules, and every one of those names its kind (moduleType(): `split-v1`, `floor-v1`, …).
+ *     `floor-v1` (a floor factory this CLI does not know): a floor module. Another kind: not one. No answer, or an
+ *     answer that is no kind's name: `unread`.
+ *  4. Listed by no factory (the platform listed it by hand: a partner's treasury): a wallet (no code at that block) is
+ *     not a module. A contract is asked moduleType(): `floor-v1` → a floor module; any other word (or more than a
+ *     word), an empty return, or a revert (revertedCall) → not one; a piece of a word, or no answer → `unread`.
+ */
+export async function typedFloorModule({ client, pad }, recipient, factory) {
+  try {
+    const blockNumber = await client.getBlockNumber()
+    const block = numberToHex(blockNumber)
+    const at = (address, abi, functionName, args = []) => client.readContract({ address, abi, functionName, args, blockNumber })
+    /** The node's own word, raw: a hex string, or the failure. */
+    const hex = async (method, params) => {
+      const r = await client.request({ method, params: [...params, block] })
+      if (typeof r !== 'string' || !/^0x([0-9a-fA-F]{2})*$/.test(r)) throw new Error(`the node gave no result for ${method}`)
+      return r
+    }
+    /** moduleOf(recipient) on `admin`: the factory, the zero address, or null when `admin` keeps no such record. */
+    const listedBy = async (admin) => {
+      let r
+      try { r = await hex('eth_call', [{ to: admin, data: encodeFunctionData({ abi: ADMIN_ABI, functionName: 'moduleOf', args: [recipient] }) }]) } catch (e) {
+        if (!revertedCall(e)) throw e
+        return null
+      }
+      if (r === '0x') return null // not a contract, or one whose fallback returns nothing
+      if (r.length !== 66 || !/^0x0{24}/.test(r)) throw new Error('moduleOf answered something that is not an address')
+      return getAddress(`0x${r.slice(26)}`)
+    }
+    const same = (x, y) => !!x && !!y && x.toLowerCase() === y.toLowerCase()
+
+    const handler = await at(pad, LISTING_ABI, 'taxHandler')
+    if (!(await at(handler, LISTING_ABI, 'isListed', [recipient]))) return { unlisted: true }
+    const owner = await at(handler, LISTING_ABI, 'owner')
+    let by = null
+    if (factory) {
+      const admin = await at(factory, FLOOR_FACTORY_ABI, 'admin')
+      const listed = await listedBy(admin)
+      if (same(listed, factory)) return { floor: true, by: 'GangHandlerAdmin.moduleOf' }
+      // recorded there for another factory: a factory's module too, whoever owns the handler by now
+      by = same(admin, owner) || (listed && listed !== zeroAddress) ? listed : await listedBy(owner)
+    } else by = await listedBy(owner)
+    const byFactory = !!by && by !== zeroAddress
+
+    if (!byFactory && (await hex('eth_getCode', [recipient])) === '0x') return { floor: false }
+    let r
+    try { r = await hex('eth_call', [{ to: recipient, data: encodeFunctionData({ abi: FLOOR_ABI, functionName: 'moduleType' }) }]) } catch (e) {
+      // a module a factory listed always answers: a revert from one is not the chain's word
+      if (byFactory || !revertedCall(e)) throw e
+      return { floor: false }
+    }
+    const kind = r.length === 66 ? hexToString(r, { size: 32 }).replace(/\0+$/, '') : null
+    if (kind === FLOOR_TYPE) return { floor: true, by: 'moduleType()' }
+    if (byFactory) {
+      if (kind === null || !KIND_RE.test(kind)) throw new Error('a listed module did not name its kind')
+      return { floor: false }
+    }
+    // listed by hand: an empty return (no such function, a silent fallback), a full word or more is the contract's
+    // answer — a floor module returns exactly one word, and a node's failure never makes an answer longer. A piece of
+    // a word is not an answer
+    if (r !== '0x' && r.length < 66) throw new Error('moduleType() answered less than a word')
+    return { floor: false }
+  } catch (e) {
+    return { unread: e?.details || String(e?.shortMessage ?? e?.message ?? e).split('\n')[0] }
+  }
 }
 
 /**

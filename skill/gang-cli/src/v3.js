@@ -1,4 +1,4 @@
-import { createPublicClient, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, hexToString, parseUnits, isAddress, zeroAddress } from 'viem'
+import { createPublicClient, parseAbi, encodeFunctionData, decodeEventLog, formatUnits, parseUnits, isAddress, zeroAddress } from 'viem'
 import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund, parseAmount, parseNum, poolSellQuote, POOL_SELL_HINT, revertOf as revertIn, ROUTER_ABI as GANG_ROUTER_ABI, ROUTER_HINTS, routerDeadline, step, swapBackState, units, viaRouter, GAS_RESERVE } from './steps.js'
 import { API } from './discover.js'
 import { UA } from './version.js'
@@ -14,7 +14,7 @@ import { splitOf } from './split.js'
 import { lpOf } from './lp.js'
 import { comboOf, decoyWarning } from './combo.js'
 import { cappedOf, decoyWarning as cappedDecoyWarning } from './capped.js'
-import { FLOOR_ABI, FLOOR_TYPE, floorOf, floorShown, treasuryShare } from './floor.js'
+import { floorFactoryAddress, floorOf, floorShown, treasuryShare, typedFloorModule } from './floor.js'
 import { VANITY_ABI, vanityCreate, vanityDeployer } from './vanity.js'
 
 /**
@@ -192,8 +192,12 @@ async function taxContracts(ctx) {
   return ctx._tax
 }
 
-/** The call hit a contract without this function: a bare revert (no error data) or an empty return. */
+/**
+ * The call hit a contract without this function: a bare revert (no error data) or an empty return. A node's internal
+ * error (-32603) also comes back from viem as a revert: it is the node's, never "no such function" (as gangpad.js).
+ */
 function noSuchFunction(e) {
+  if (e?.walk?.((x) => x?.code === -32603)) return false
   if (e?.walk?.((x) => x?.name === 'ContractFunctionZeroDataError')) return true
   const r = e?.walk?.((x) => x?.name === 'ContractFunctionRevertedError')
   return !!r && !r.data && (!r.raw || r.raw === '0x')
@@ -531,24 +535,6 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (typedPool) {
       fail('--recipient is a promoter pool module: a token can\'t name one by hand. Leave --recipient out and add --promote: the launch clones yours and binds it', { recipient })
     }
-    // a floor module serves the one token address it was cloned for: a token that names one by hand lands elsewhere, and
-    // its tax goes into a module that can never bind it. Only the launch that cloned it for this very token names it
-    if (recipient !== zeroAddress && !launchFloor && recipient.toLowerCase() !== String(me).toLowerCase()) {
-      const hasCode = await ctx.client.getCode({ address: recipient }).then((c) => !!c && c !== '0x')
-        .catch((e) => fail('could not check --recipient (RPC error)', { detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' }))
-      if (hasCode) {
-        const type = await ctx.read(recipient, FLOOR_ABI, 'moduleType').then((x) => hexToString(x, { size: 32 }).replace(/\0+$/, '')).catch((e) => {
-          // a contract that is no module of this platform: it has no moduleType(), reverts on it (with or without a
-          // reason: a proxy's or a diamond's fallback), or answers something that is not a bytes32. Only a failure of
-          // the node itself is retried
-          if (noSuchFunction(e) || e?.walk?.((x) => /^(ContractFunctionRevertedError|ContractFunctionZeroDataError|AbiDecoding\w*Error|InvalidBytes\w*Error)$/.test(x?.name ?? ''))) return null
-          return fail('could not check --recipient (RPC error)', { detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' })
-        })
-        if (type === FLOOR_TYPE) {
-          fail('--recipient is a floor module: a token can\'t name one by hand. A floor module serves only the token address it was cloned for, so this token\'s tax would go into a module that can never bind it, and the token would have no floor. Leave --recipient out and add --floor: the launch clones a module for this token', { recipient })
-        }
-      }
-    }
     const quote = flag('quote') ? opt('quote') : ctx.wbnb
     const refPool = flag('ref-pool') ? opt('ref-pool') : (defaultRefPool(ctx.chainId, quote) ?? zeroAddress)
     if (!isAddress(quote ?? '') || !isAddress(refPool ?? '')) fail('--quote / --ref-pool must be 0x addresses')
@@ -565,6 +551,21 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       return ctx.read(ctx.pad, PAD_ABI, 'checkTaxConfig', [tax])
     })
     if (!ok) fail(`tax setting refused: ${reason}`, { hint: HINTS.BadTaxConfig, tax: { buyTax, sellTax, dividend, recipient } })
+    // a floor module serves the one token address it was cloned for: a token that names one by hand lands elsewhere, and
+    // its tax goes into a module that can never bind it — for good. Only the launch that cloned it for this very token
+    // names it. Checked on the chain's own records, at one block, and nothing is built on an answer that is not sure
+    if (recipient !== zeroAddress && !launchFloor && recipient.toLowerCase() !== String(me).toLowerCase()) {
+      // the floor factory of the create target's generation, even when --vault moved ctx to the vault pad (whose own
+      // generation has none: its handler lists no floor module, so nothing matches there)
+      const typed = await typedFloorModule({ client: ctx.client, pad: ctx.pad }, recipient, floorFactoryAddress(testnet))
+      if (typed.floor) {
+        fail('--recipient is a floor module: a token can\'t name one by hand. A floor module serves only the token address it was cloned for, so this token\'s tax would go into a module that can never bind it, and the token would have no floor. Leave --recipient out and add --floor: the launch clones a module for this token', { recipient, seenBy: typed.by })
+      }
+      // the pad just took this recipient, so it is listed: a node that says otherwise is behind (or the two answers are
+      // of different blocks). Not sure → nothing is built
+      if (typed.unlisted) fail('could not check --recipient: the pad accepts it, but the tax handler did not show it as listed at the block it was checked on (a node may be behind)', { recipient, retry: 'same command again' })
+      if (typed.unread) fail('could not check --recipient (RPC error)', { detail: typed.unread, retry: 'same command again' })
+    }
     if (!(await ctx.read(ctx.pad, PAD_ABI, 'isAgent', [me]))) fail('this wallet holds no Agent ID; V3 create is Agent-only', { wallet: me })
     // the target: --grad (2.0, createWithGradTarget) or the pad's default (create: 9 BNB on 2.0, 15 on 1.0)
     const targetBnb = grad ?? bnbOf(await ctx.read(ctx.pad, GRAD_TARGET_ABI, 'TARGET_GRAD_BNB'))

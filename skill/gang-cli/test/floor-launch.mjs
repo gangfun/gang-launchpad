@@ -51,18 +51,28 @@ const VAN = lc(t(0x7a17)), HANDLER = t(0x4a4d), ADMIN = lc(t(0xad41)), ME = t(0x
 
 // ---- the fake node's world
 const DIAMOND = lc(t(0xd1a))
-const code = new Set([PAD, FACTORY, VAN, ADMIN, WBNB, DIAMOND])
+const PLAIN = lc(t(0x91a1)) // someone's contract without moduleType(): a bare revert
+const QUIET = lc(t(0x9a1e7)) // someone's contract whose fallback returns nothing
+const OLDNODE = lc(t(0x01d9e)) // someone's contract, on a node that reports a revert the old way (-32000)
+const NEW_ADMIN = lc(t(0xad42)) // a later owner of the tax handler: it never listed the modules cloned before it
+const OWNER_WALLET = lc(t(0x0e0a)) // a handler owned by a wallet (the testnet vault pad): no code, moduleOf returns nothing
+const OWNER_CONTRACT = lc(t(0x0c0c)) // a handler owned by a contract without moduleOf (the mainnet vault pad): a bare revert
+const SPLITMOD = lc(t(0x5b117)), SPLIT_FACTORY = t(0x5fac) // one of the platform's other modules, listed by its own factory
+const OTHER_FLOOR_FACTORY = t(0x0f1f) // a floor factory this CLI does not know
+// what the tax handler lists besides the floor modules cloned here (the factory lists those in the clone tx)
+const listed = new Set([DIAMOND, PLAIN, QUIET, SPLITMOD, OLDNODE])
+const code = new Set([PAD, FACTORY, VAN, ADMIN, WBNB, DIAMOND, PLAIN, QUIET, SPLITMOD, OLDNODE, NEW_ADMIN, OWNER_CONTRACT])
 const modules = new Map() // address → { dev, floorToken, quote, cap, payBps, fee, payees, shares, token, listed }
 const tokens = new Map() // address → { creator, symbol, recipient, graduated, balances: Map }
 const allTokens = []
-const world = { moduleOfFails: false, padSays: null, bond: null, treasury: 0n, poolQuote: false, receipt: null }
+const world = { moduleOfFails: false, padSays: null, bond: null, treasury: 0n, poolQuote: false, receipt: null, mt: null, codeHook: null, taxCheck: null, listedLie: null, trace: null, owner: null, moduleOfRaw: null, otherAdmin: null }
 let hashes = []
 
 const ABI = [...V3_EVENT_ABIS[0], ...CREATOR_FEE_ABI, ...GRAD_TARGET_ABI, ...VANITY_ABI, ...FLOOR_ABI, ...FLOOR_FACTORY_ABI, ...BOND_ABI, ...CALL_BOND_ABI,
   ...parseAbi([
     'function symbol() view returns (string)', 'function decimals() view returns (uint8)', 'function totalSupply() view returns (uint256)',
     'function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)',
-    'function moduleOf(address) view returns (address)', 'function implementation() view returns (address)', 'function kindOf(address token) view returns (uint8)', 'function tokenCount() view returns (uint256)', 'function allTokens(uint256) view returns (address)',
+    'function moduleOf(address) view returns (address)', 'function isListed(address) view returns (bool)', 'function owner() view returns (address)', 'function implementation() view returns (address)', 'function kindOf(address token) view returns (uint8)', 'function tokenCount() view returns (uint256)', 'function allTokens(uint256) view returns (address)',
     'function taxConfigOf(address token) view returns (uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)',
   ])]
 const functions = new Map()
@@ -78,7 +88,11 @@ const zeroOf = (o) => (o.type === 'tuple' ? Object.fromEntries(o.components.map(
 
 function answer(b) {
   if (b.method === 'eth_chainId') return { result: '0x61' }
-  if (b.method === 'eth_getCode') return { result: code.has(lc(b.params[0])) ? '0x60' : '0x' }
+  if (b.method === 'eth_getCode') {
+    world.trace?.push(['getCode', b.params[1]])
+    const hooked = world.codeHook?.(lc(b.params[0]))
+    return { result: hooked !== undefined ? hooked : code.has(lc(b.params[0])) ? '0x60' : '0x' }
+  }
   if (b.method === 'eth_blockNumber') return { result: '0x10' }
   if (b.method === 'eth_getBalance') return { result: '0x0' }
   if (b.method === 'eth_getBlockByNumber') {
@@ -92,6 +106,16 @@ function answer(b) {
   if (!f) return REVERT
   // a contract of someone else whose fallback reverts with a reason (a diamond without that facet)
   if (at === DIAMOND) return { error: { code: 3, message: 'execution reverted: no facet', data: `0x08c379a0${encodeAbiParameters(parseAbiParameters('string'), ['no facet']).slice(2)}` } }
+  world.trace?.push([f.name, b.params[1]])
+  // what a node may answer to moduleType() instead of the truth (a test sets world.mt)
+  if (f.name === 'moduleType') {
+    if (at === PLAIN) return REVERT
+    if (at === QUIET) return { result: '0x' }
+    if (at === OLDNODE) return { error: { code: -32000, message: 'execution reverted' } }
+    const lie = world.mt?.(at)
+    if (lie) return lie
+    if (at === SPLITMOD) return { result: stringToHex('split-v1', { size: 32 }) }
+  }
   const { args = [] } = decodeFunctionData({ abi: [f], data })
   const m = modules.get(at), tk = tokens.get(at)
   let result
@@ -110,7 +134,9 @@ function answer(b) {
     }
     case 'taxConfigOf': { const c = tokens.get(lc(args[0])); if (!c) return REVERT; result = [300, 300, c.dividendBps ?? 0, c.recipient]; break }
     case 'createWithSalt': result = world.padSays ?? predicted(args[0], hashes.at(-1).hash); break
-    case 'checkTaxConfigFor': case 'checkTaxConfig': result = [true, '']; break
+    case 'checkTaxConfigFor': case 'checkTaxConfig': if (world.taxCheck) return world.taxCheck(f.name); result = [true, '']; break
+    case 'isListed': { const a = lc(args[0]); result = world.listedLie ? world.listedLie(a) : listed.has(a) || modules.has(a); break }
+    case 'owner': result = world.owner ?? ADMIN; break
     case 'isAgent': case 'agentGateEnabled': case 'vanityEnabled': result = true; break
     case 'GRAD_BNB_TIERS': result = [6n, 9n, 12n, 15n].map((x) => x * 10n ** 18n); break
     case 'TARGET_GRAD_BNB': case 'graduationAmountOf': result = 9n * 10n ** 18n; break
@@ -124,7 +150,16 @@ function answer(b) {
     case 'predict': result = moduleAt(args[0], args[1]); break
     case 'create': result = moduleAt(ME, args.at(-1)); break
     case 'admin': result = ADMIN; break
-    case 'moduleOf': if (world.moduleOfFails) return { error: { code: -32000, message: 'rpc down' } }; result = modules.get(lc(args[0]))?.listed ? FACTORY : zeroAddress; break
+    case 'moduleOf': {
+      if (world.moduleOfFails) return { error: { code: -32000, message: 'rpc down' } }
+      if (world.moduleOfRaw) return world.moduleOfRaw()
+      if (at === OWNER_WALLET) return { result: '0x' }
+      if (at === OWNER_CONTRACT) return { error: { code: 3, message: 'execution reverted: 0x', data: '0x' } } // as BSC nodes send a bare revert
+      if (at !== ADMIN) { result = world.otherAdmin?.(lc(args[0])) ?? zeroAddress; break } // another admin: by default it listed none of these
+      const a = lc(args[0]), mod = modules.get(a)
+      result = a === SPLITMOD ? SPLIT_FACTORY : mod?.by ?? (mod?.listed ? FACTORY : zeroAddress)
+      break
+    }
     // ---- a floor module (only where one is on chain)
     case 'moduleType': if (!m) return REVERT; result = stringToHex('floor-v1', { size: 32 }); break
     case 'pad': result = PAD; break
@@ -320,14 +355,180 @@ try {
   // ---- a floor module can't be named by hand: the token would land elsewhere and pay a module that can never bind it
   const byHand = { name: 'Other', symbol: 'OTH', from: ME, testnet: true, calldata: true, 'buy-tax': '3', 'sell-tax': '3', recipient: getAddress(MODULE) }
   const before = uploads
-  await refused(() => runV3('create', { ...io(byHand), notes }), /^--recipient is a floor module: a token can't name one by hand\. .*Leave --recipient out and add --floor/)
+  const typedFloor = await refused(() => runV3('create', { ...io(byHand), notes }), /^--recipient is a floor module: a token can't name one by hand\. .*Leave --recipient out and add --floor/)
+  assert.equal(typedFloor.details.seenBy, 'GangHandlerAdmin.moduleOf')
   assert.equal(uploads, before, 'refused before anything is uploaded')
-  // a plain contract, or a wallet, is still a recipient as before
-  const plain = await runV3('create', { ...io({ ...byHand, recipient: KOL }), notes })
-  assert.deepEqual([plain.success, plain.step], [true, 'create'])
-  // a contract that reverts on moduleType() with a reason is no module either: accepted, not "RPC error, retry" for ever
-  const partner = await runV3('create', { ...io({ ...byHand, recipient: getAddress(DIAMOND) }), notes })
-  assert.deepEqual([partner.success, partner.step, lc(partner.recipient)], [true, 'create', DIAMOND])
+  // what is not a floor module is still a recipient as before, each on the chain's own word:
+  const takes = async (recipient, label) => {
+    const o = await runV3('create', { ...io({ ...byHand, recipient: getAddress(recipient) }), notes })
+    assert.deepEqual([o.success, o.step, lc(o.recipient)], [true, 'create', lc(recipient)], label)
+  }
+  listed.add(lc(KOL))
+  await takes(KOL, 'a partner\'s wallet the platform listed')
+  await takes(DIAMOND, 'a contract that reverts on moduleType() with a reason (a diamond, a proxy)')
+  await takes(PLAIN, 'a contract with no such function (a bare revert)')
+  await takes(QUIET, 'a contract whose fallback returns nothing')
+  await takes(SPLITMOD, 'another of the platform\'s modules, listed by its own factory')
+
+  // ---- the other direction: what a node leaves unanswered is never "not a floor module" (the token would be stuck for good)
+  const hand = (recipient = MODULE) => runV3('create', { ...io({ ...byHand, recipient: getAddress(recipient) }), notes })
+  const asFloor = async (by, label) => { const e = await refused(hand, /^--recipient is a floor module/); assert.equal(e.details.seenBy, by, label) }
+  const unanswered = async (label, recipient) => { const e = await refused(() => hand(recipient), /^could not check --recipient/); assert.equal(e.details.retry, 'same command again', label) }
+  const sent = uploads
+  // the registry knows the module whatever a node says of the module itself
+  world.mt = () => ({ result: '0x' })
+  world.codeHook = (a) => (a === MODULE ? '0x' : undefined)
+  await asFloor('GangHandlerAdmin.moduleOf', 'the module unanswered, the registry read')
+  world.codeHook = null
+  world.mt = null
+  // the registry unread: no answer, so no create
+  world.moduleOfFails = true
+  await unanswered('registry unread')
+  world.moduleOfFails = false
+  // the pad took the recipient, the handler does not show it listed at the block checked: a node behind — no create
+  world.listedLie = () => false
+  const behind = await refused(hand, /the pad accepts it, but the tax handler did not show it as listed at the block it was checked on/)
+  assert.equal(behind.details.retry, 'same command again')
+  world.listedLie = null
+  // every read is at one block the node named: a node without that block can only fail, not answer for an older state
+  const pinned = (names) => {
+    const seen = world.trace.filter(([n]) => names.includes(n))
+    assert.deepEqual([...new Set(seen.map(([n]) => n))].sort(), [...names].sort(), 'each of them was read')
+    for (const [n, block] of seen) assert.equal(block, '0x10', `${n} is read at the block the node named, not at "latest"`)
+  }
+  const { createPublicClient, http } = await import('viem')
+  const { typedFloorModule } = await import('../src/floor.js')
+  const direct = (recipient = MODULE) => typedFloorModule({ client: createPublicClient({ transport: http(rpc) }), pad: getAddress(PAD) }, getAddress(recipient), TESTNET_FLOOR_FACTORY)
+  world.trace = []
+  assert.deepEqual(await direct(), { floor: true, by: 'GangHandlerAdmin.moduleOf' })
+  pinned(['taxHandler', 'isListed', 'owner', 'moduleOf'])
+  world.trace = null
+
+  // a floor module of a factory this CLI does not know: listed by a factory, so it must answer for itself
+  modules.get(MODULE).by = OTHER_FLOOR_FACTORY
+  await asFloor('moduleType()', 'another floor factory\'s module')
+  const silences = {
+    'no answer at all': () => ({ result: '0x' }),
+    'a bare revert': () => ({ error: { code: 3, message: 'execution reverted', data: '0x' } }),
+    'a revert with data': () => ({ error: { code: 3, message: 'execution reverted: x', data: `0x08c379a0${encodeAbiParameters(parseAbiParameters('string'), ['x']).slice(2)}` } }),
+    'a node\'s internal error': () => ({ error: { code: -32603, message: 'Internal error' } }),
+    'a node without the state': () => ({ error: { code: -32000, message: 'missing trie node' } }),
+    'a truncated answer': () => ({ result: '0x1234' }),
+  }
+  for (const [label, lie] of Object.entries(silences)) {
+    world.mt = (a) => (a === MODULE ? lie() : null)
+    await unanswered(`a factory's module: ${label}`)
+  }
+  // an answer that is no kind's name is not "another kind": a real module never gives it
+  for (const [label, word] of Object.entries({ 'a zero word': `0x${'00'.repeat(32)}`, 'a garbage word': `0x${'ab'.repeat(32)}`, 'a name that is no kind': stringToHex('Hello', { size: 32 }) })) {
+    world.mt = (a) => (a === MODULE ? { result: word } : null)
+    await unanswered(`a factory's module: ${label}`)
+  }
+  world.mt = null
+  // "no code" is never asked of a module a factory listed: a node that shows none still gets the module's own answer
+  world.codeHook = (a) => (a === MODULE ? '0x' : undefined)
+  await asFloor('moduleType()', 'another floor factory\'s module, a node showing no code')
+  world.codeHook = null
+  delete modules.get(MODULE).by
+
+  // the tax handler has a new owner that never listed this module: the floor factory's own admin still knows it
+  world.owner = getAddress(NEW_ADMIN)
+  await asFloor('GangHandlerAdmin.moduleOf', 'the handler changed hands')
+  assert.deepEqual(await direct(SPLITMOD), { floor: false }, 'listed by hand as far as the new owner knows: it answers split-v1')
+  // the new owner's record counts for what the factory's own admin does not know: a module it lists as another
+  // factory's must name its kind, whatever a node says of its code
+  modules.get(MODULE).listed = false
+  world.otherAdmin = (a) => (a === MODULE ? OTHER_FLOOR_FACTORY : null)
+  await asFloor('moduleType()', 'the new owner lists it for another factory')
+  world.codeHook = (a) => (a === MODULE ? '0x' : undefined)
+  world.mt = (a) => (a === MODULE ? { error: { code: 3, message: 'execution reverted', data: '0x' } } : null)
+  await unanswered('the new owner lists it for another factory, the module unanswered')
+  world.codeHook = null
+  world.mt = null
+  world.otherAdmin = null
+  modules.get(MODULE).listed = true
+  world.owner = null
+  // a handler whose owner keeps no such record (a wallet, or a contract without moduleOf: the vault pads): everything it
+  // lists is listed by hand — a wallet or a plain contract is taken, a floor module still says what it is
+  modules.get(MODULE).listed = false // no factory this CLI knows recorded it
+  for (const owner of [OWNER_WALLET, OWNER_CONTRACT]) {
+    world.owner = getAddress(owner)
+    assert.deepEqual(await direct(KOL), { floor: false }, owner)
+    assert.deepEqual(await direct(PLAIN), { floor: false }, owner)
+    assert.deepEqual(await direct(), { floor: true, by: 'moduleType()' }, owner)
+  }
+  world.owner = null
+  modules.get(MODULE).listed = true
+  // a registry that answers nothing at all (no result) is the node's silence, not "listed by nobody"
+  for (const [label, raw] of Object.entries({ 'null': { result: null }, 'no result': {}, 'an empty string': { result: '' }, 'not an address': { result: `0x${'11'.repeat(32)}` } })) {
+    world.moduleOfRaw = () => raw
+    await unanswered(`the registry: ${label}`)
+  }
+  world.moduleOfRaw = null
+
+  // listed by no factory (by hand): a contract is believed when it says no, never when the node did not say
+  modules.get(MODULE).listed = false // the registry does not know it; the handler still lists it
+  await asFloor('moduleType()', 'not in the registry')
+  world.trace = []
+  assert.deepEqual(await direct(), { floor: true, by: 'moduleType()' })
+  pinned(['taxHandler', 'isListed', 'owner', 'moduleOf', 'getCode', 'moduleType'])
+  world.trace = null
+  assert.deepEqual(await direct(KOL), { floor: false })
+  assert.deepEqual(await direct(t(0xabc)), { unlisted: true })
+  const nodeFailures = {
+    'a node\'s internal error (viem reports it as a revert)': () => ({ error: { code: -32603, message: 'Internal error' } }),
+    'an internal error carrying data': () => ({ error: { code: -32603, message: 'Internal error', data: 'upstream timeout' } }),
+    'a gateway\'s message dressed as a revert': () => ({ error: { code: 3, message: 'execution reverted', data: 'upstream timeout' } }),
+    'a node without the state': () => ({ error: { code: -32000, message: 'missing trie node' } }),
+    'a truncated answer': () => ({ result: '0x1234' }),
+  }
+  Object.assign(nodeFailures, {
+    'no result (null)': () => ({ result: null }),
+    'no result at all': () => ({}),
+    'an empty string': () => ({ result: '' }),
+    'a gateway error that only mentions a revert': () => ({ error: { code: -32000, message: 'upstream b2 failed: execution reverted or timeout' } }),
+    'gas required exceeds allowance': () => ({ error: { code: -32000, message: 'gas required exceeds allowance (0)' } }),
+    'a rate limit dressed as code 3': () => ({ error: { code: 3, message: 'rate limited' } }),
+    'a revert with a byte of data': () => ({ error: { code: 3, message: 'execution reverted', data: '0x12' } }),
+    'the old revert shape with a gateway\'s message as data': () => ({ error: { code: -32000, message: 'execution reverted', data: 'upstream timeout' } }),
+    'the old revert shape with a byte of data': () => ({ error: { code: -32000, message: 'execution reverted', data: '0x12' } }),
+    'a revert whose data hides in an object, not hex': () => ({ error: { code: 3, message: 'execution reverted', data: { data: 'x' } } }),
+    'a piece of a word': () => ({ result: `0x${'00'.repeat(31)}` }),
+    'a result that is a string but not hex': () => ({ result: 'upstream timeout' }),
+    'a result with half a byte': () => ({ result: '0x0' }),
+    'a long result that is not hex': () => ({ result: `0x${'zz'.repeat(40)}` }),
+  })
+  for (const [label, lie] of Object.entries(nodeFailures)) {
+    world.mt = (a) => (a === MODULE ? lie() : null)
+    await unanswered(label)
+  }
+  world.mt = null
+  // the code read unanswered (no result) is not "a wallet"
+  world.codeHook = (a) => (a === MODULE ? null : undefined)
+  await unanswered('getCode: null')
+  world.codeHook = null
+  // a revert as older nodes report it (-32000, the message itself "execution reverted") is the contract's
+  assert.deepEqual(await direct(OLDNODE), { floor: false })
+  // more than a word is the contract's own answer (a node's failure never makes one longer): not a floor module
+  for (const n of [33, 64]) {
+    world.mt = (a) => (a === lc(KOL) ? { result: `0x${'ab'.repeat(n)}` } : null)
+    code.add(lc(KOL))
+    assert.deepEqual(await direct(KOL), { floor: false }, `${n} bytes`)
+  }
+  code.delete(lc(KOL))
+  world.mt = null
+  // no code at that block for an address the handler lists: a wallet (the same block, so not a node behind)
+  world.codeHook = (a) => (a === MODULE ? '0x' : undefined)
+  const wallet = await hand()
+  assert.equal(wallet.success, true)
+  world.codeHook = null
+  modules.get(MODULE).listed = true
+  assert.equal(uploads, sent + 1, 'none of the refusals uploaded anything')
+
+  // a node's internal error on the pad's own tax check is the node's: thrown, not taken for "an older pad without it"
+  world.taxCheck = (fn) => (fn === 'checkTaxConfigFor' ? { error: { code: -32603, message: 'Internal error' } } : assert.fail('not the fallback'))
+  await assert.rejects(() => hand(KOL), (e) => !(e instanceof Failed))
+  world.taxCheck = null
 
   // ---- gang floor: what is shown, and what is built
   const st = await floorCmd('status', { token: TOKEN })

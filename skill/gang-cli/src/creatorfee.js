@@ -118,6 +118,16 @@ export function claimToModule({ moduleType, at, net = '', bound, quote, quoteSym
     warning: `the module's own quote is ${boundSymbol ?? bound}, this fee is in ${quoteSymbol ?? quote}: split / distribute of the module's quote leave it where it is`,
   }
 }
+/**
+ * `--to` a contract that says it is a floor module and is not known to be one (`verified`: false, or null when the
+ * check could not be read; `hasFactory`: whether the token's pad generation has a floor factory to check against). Pure.
+ */
+export function unverifiedFloorNote(verified, hasFactory) {
+  if (verified === null) return 'could not check whether GangFloorModuleFactory made this contract (RPC error): run the command again before claiming there'
+  if (!hasFactory) return 'this contract says it is a floor module, but this token\'s GangLaunchpad generation has no floor factory to check it against: a fee claimed there is in that contract\'s hands, and nothing here confirms it is a treasury holders can redeem'
+  return 'this contract says it is a floor module, but GangFloorModuleFactory did not make it: a fee claimed there is in its hands, not in a treasury holders can redeem'
+}
+
 /** `--to` a floor module that was not cloned for `token` (or whose token could not be read): what to say. Pure. */
 export function floorModuleOfAnother(floorToken, token) {
   if (!floorToken) return 'could not read which token this floor module was cloned for: if it is not this token, the fee goes to another token\'s holders and payees. Check gang floor status --module first'
@@ -290,13 +300,7 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
       // only a module GangFloorModuleFactory made does what a floor module does: nothing is promised about any other
       const verified = await floorVerified(ctx.read, to, ctx.floorFactory ?? null)
       if (verified !== true) {
-        toModule = {
-          payOut: 'what this contract does with a fee sent to it is unknown',
-          warning: verified === null
-            ? 'could not check whether GangFloorModuleFactory made this contract (RPC error): run the command again before claiming there'
-            : !ctx.floorFactory ? 'this contract says it is a floor module, but this token\'s GangLaunchpad generation has no floor factory to check it against: a fee claimed there is in that contract\'s hands, and nothing here confirms it is a treasury holders can redeem'
-              : 'this contract says it is a floor module, but GangFloorModuleFactory did not make it: a fee claimed there is in its hands, not in a treasury holders can redeem',
-        }
+        toModule = { payOut: 'what this contract does with a fee sent to it is unknown', warning: unverifiedFloorNote(verified, !!ctx.floorFactory) }
       } else {
         const floorToken = await ctx.read(to, CAP_QUOTE_ABI, 'floorToken').catch(() => null)
         const note = floorModuleOfAnother(floorToken, token)
