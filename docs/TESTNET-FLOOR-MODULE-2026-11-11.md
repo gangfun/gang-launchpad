@@ -52,10 +52,57 @@ dev = 部署钱包。上限 0.001 测试报价币，封顶前 50% 给收款人�
 
 `split()` 用 `cast send` 发，没有放进 forge 脚本：脚本给的 gas 上限低于合约每次推送前要求的约 36.5 万（`PUSH_GAS × 64/63 + PUSH_RESERVE`），会回滚 `PushStarved`，封顶模块验收时遇到过。赎回不推送收款人，没有这个要求，所以两笔赎回直接由脚本发出。
 
+## 验收二：CLI（分支上的 `skill/gang-cli`，测试网工厂已内置）
+
+CLI 生成交易（`--calldata`），`cast send` 发出，gas 由节点估算。dev = 部署钱包，报价币 MockSPCXB。
+
+### 带收款人的发射
+
+`gang create --name "Floor CLI Test" --symbol FLCT --buy-tax 3 --sell-tax 3 --dividend 40 --quote <MockSPCXB> --floor --redeem-fee 2 --tax-cap 0.0005 --tax-cap-share 50 --split self:70,B:30`，同一条命令跑四次。
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 第 1 次：克隆模块 | CLI 先上传元数据、算出代币地址 `0xb504…abcd`，再为它克隆模块 [`0x4fEB0AbfCD691D3E96491AA3bf975C60acb17cfD`](https://testnet.bscscan.com/address/0x4fEB0AbfCD691D3E96491AA3bf975C60acb17cfD)。预览里有代币将来的地址、元数据地址、上限和收款人、封顶前后进金库的成交额比例（0.75% / 1.5%） | [`0xaede2984…bc66`](https://testnet.bscscan.com/tx/0xaede298427f95e41067b59d785939e25f234170d1a7dee1cabf1cf6fc08fbc66) |
+| 中途把 `--buy-tax` 改成 4 再跑 | 拒绝：模块是为 3% / 3% 的代币克隆的，税率决定代币地址 | 无 |
+| 中途把 `--redeem-fee` 改成 1 再跑 | 拒绝：和链上模块的设置不一致 | 无 |
+| 第 2 次：建币 | 用第 1 步的 salt 和元数据；建币前向 pad 模拟一次，返回地址和计划的一致。代币 [`0xB504EFCcC556c4706C4416cD58671fB0047BaBCd`](https://testnet.bscscan.com/address/0xB504EFCcC556c4706C4416cD58671fB0047BaBCd) 落在预先算出的地址上 | [`0x2ad42b26…71b2`](https://testnet.bscscan.com/tx/0x2ad42b26e7ac36006db7b6d389999156911f42883822d47d9863f2ff3e2871b2) |
+| 第 3 次：绑定 | `token()` 写入 | [`0x8bf39e56…3101`](https://testnet.bscscan.com/tx/0x8bf39e563c7a8e18e9eeee0b8cfea2ffb41d4ab9ccba3689874d752296c13101) |
+| 第 4 次 | 只报告：发射完成 | 无 |
+| 转进 0.0006，`gang floor distribute` | 收款人 0.0003（部署钱包 0.00021、B 0.00009），金库 0.0003，和预览一致 | [`0x8e255952…e312`](https://testnet.bscscan.com/tx/0x8e25595226b8827dcb76564ac2fdf4f45511281a0420e1581fb0eb7e449ee312) |
+| 再转进 0.0004，`gang floor distribute` | 收款人 0.0002（0.00014 / 0.00006），正好用完上限，预览标出 `reachesCap` | [`0x185c24c0…2438`](https://testnet.bscscan.com/tx/0x185c24c0370ed38a95e53883629bc8741842838f03f10b37242a1e8b8ff32438) |
+| 毕业前 `gang floor redeem` | 拒绝：还没毕业 | 无 |
+
+### 赎回（在验收一的 FLRT 上）
+
+`gang floor redeem --token <FLRT> --amount 1000000`：预览到手 0.000006731806121942、手续费 0.000000137383798406，并提示同样的代币在池子里卖出约得 0.0449，是赎回的约 6,600 倍，赎回是亏的。发出后实际到账 0.000006731806121942，和预览逐 wei 一致；100 万枚全部进 0xdead。交易 [`0x6d02d7eb…48db`](https://testnet.bscscan.com/tx/0x6d02d7ebc8ca6d4fd29cfbb1e34230b496535e4f9d255d4ddd1ee116f11b48db)，gas 167,949。
+
+### 没有收款人的发射
+
+`gang create --name "Pure Floor Test" --symbol PFLT --buy-tax 2 --sell-tax 4 --quote <MockSPCXB> --floor --redeem-fee 0`：克隆 [`0xe67707f8…8769`](https://testnet.bscscan.com/tx/0xe67707f8ee9a14d3c651e1b2cab13957a6dd75496311027bf3098ea279e68769)（模块 `0xFd0723f4e23E71206f855F56b9D1150f733dfF0a`）、建币 [`0x61ca3f00…e359`](https://testnet.bscscan.com/tx/0x61ca3f002351145e749de9608ae2274dbb36b6396de8fc79bec40fffbd16e359)（代币 `0x0CB3F862cDB0f4f1D33794c40cAFd1c15F68AbcD`，和预先算出的一致）、绑定 [`0x38d480d9…87e9`](https://testnet.bscscan.com/tx/0x38d480d9ec3cd4d7eda99200e82818171563c4107c46d32bf4b958afb6dc87e9)。读回：没有上限和收款人，手续费 0，模块由工厂创建（`verified`）。
+
+### 发币前拒绝（不发交易）
+
+没带税、和 `--buyback` / `--lp` / `--after-cap` / `--recipient` 同用、`--redeem-fee 6`、只给 `--redeem-fee`、不带 `--tax-cap` 却给 `--split` 或 `--tax-cap-share`、`--dividend 100`、打新或铸币飞轮加 `--floor`、主网（工厂还没有）：都在发交易之前拒绝。
+
+### 审查修复后的复测
+
+CLI 经过三轮独立审查（规格 §14）。第一轮修复改动了发射流程里“找本次建的币”和“建币没发出时怎么办”两处，所以又完整走了一遍：`gang create --name "Floor Recheck" --symbol FLRC --buy-tax 3 --sell-tax 3 --quote <MockSPCXB> --floor --tax-cap 0.001`。
+
+| 步骤 | 结果 | 交易 |
+|---|---|---|
+| 克隆模块 | 模块 `0xA86E54CB0D270d6B9047d6222Fc37144d8Ef74b8`，代币将来的地址 `0xe052…abcd` | [`0xf971bc3a…af28`](https://testnet.bscscan.com/tx/0xf971bc3a114915419a5797be3794097c2afcb7af68bf59c9d1577baead07af28) |
+| 生成建币但不发出，再跑两次 | 每次都重建同一笔建币（同一个 salt），不再提示 `--restart` | 无 |
+| 发出建币 | 代币 `0xe05279138b4100517B068C33c113fF824c80aBcd` 落在计划的地址上 | [`0x34b95e50…233a`](https://testnet.bscscan.com/tx/0x34b95e500486c6d48c327c8f57da7b0388afab0f367af0e085e8077c9ff8233a) |
+| 绑定 | 发射完成，模块由工厂创建（`verified`） | [`0xdfee1fc2…a17f`](https://testnet.bscscan.com/tx/0xdfee1fc2c65eb6746e3581cc2d5a048c2563bb9a37dba48b20e40d09484ca17f) |
+| 手写 `--recipient <验收一的底价模块>` 建币（只读） | 在上传和生成交易之前拒绝：底价模块不能手写 | 无 |
+
+第二、三轮的修复没有再上链复测，由本地测试覆盖（`skill/gang-cli/test/floor.mjs`、`floor-launch.mjs`）。
+
 ## 本次没测到
 
-- CLI、keeper 的 `work`、服务端索引、网站展示：都还没有对接。
-- 没有收款人的纯底价模块、其他报价币（WBNB）。
+- keeper 的 `work`、服务端索引、网站展示：都还没有对接。
+- CLI 里 bond 守卫（赎回会破坏 dev 的 bond 时拒绝）、`gang tx` 按模块类型解码、未验证模块只显示警告：只有本地模拟节点的测试，没有上链验证。
+- WBNB 报价；纯底价模块毕业后的赎回（只验收了发射）。
 - 收款人拒收后记欠款和 `release`、换收款人、报价币短缺、其他资产打进 0xdead：单元测试和模糊测试覆盖（`test/gang/GangFloorModule.t.sol`、`GangFloorModulePending.t.sol`）。
 - “市价跌破底价时买入再赎回有正收益”：要真实池子的价格，留给主网分叉测试。
 - 部署脚本里只在主网生效的检查（3.0、admin、多签 owner、`gangQuote`、abcd 部署器已启用）。主网还没有启用 abcd 部署器，分叉测试也还没做。
