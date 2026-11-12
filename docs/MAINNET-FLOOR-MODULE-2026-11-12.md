@@ -16,7 +16,7 @@
 |---|---|
 | GangFloorModuleFactory | [`0x057d2C1557a0E8298a1E00834D6064497f5DC2fC`](https://bscscan.com/address/0x057d2C1557a0E8298a1E00834D6064497f5DC2fC)，部署 [`0xe95b13df…b122`](https://bscscan.com/tx/0xe95b13df6e6197ec7032b423e8f53374f6653fe647e81c588e240a245180b122)，区块 133121257，gas 3,294,931 |
 | GangFloorModule（实现合约，工厂部署） | [`0xEfCF4C7FE1B6AD4eEe89723E1F97449CeA507e21`](https://bscscan.com/address/0xEfCF4C7FE1B6AD4eEe89723E1F97449CeA507e21)，同一笔交易 |
-| 源码验证 | Sourcify：两个都是 exact match（创建和运行时字节码都完全一致），[工厂](https://repo.sourcify.dev/56/0x057d2C1557a0E8298a1E00834D6064497f5DC2fC)、[实现合约](https://repo.sourcify.dev/56/0xEfCF4C7FE1B6AD4eEe89723E1F97449CeA507e21)。BscScan：通过 Etherscan v2 接口提交的两份一直停在队列里没有处理；重新提交时接口返回免费套餐不支持 BSC，旧的 BscScan 接口已停用。BscScan 上的验证要在网页上手动提交，尚未完成 |
+| 源码验证 | Sourcify：两个都是 exact match（创建和运行时字节码都完全一致），[工厂](https://repo.sourcify.dev/56/0x057d2C1557a0E8298a1E00834D6064497f5DC2fC)、[实现合约](https://repo.sourcify.dev/56/0xEfCF4C7FE1B6AD4eEe89723E1F97449CeA507e21)。BscScan：两个都已验证（2026-11-12 通过 Etherscan v2 接口提交，排队数小时后完成；之后再提交时接口返回免费套餐不支持 BSC） |
 
 部署花费 0.00016474655 BNB。
 
