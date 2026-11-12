@@ -1,7 +1,7 @@
 # 规格草稿 · 底仓金库（`base-v1`，毕业到 Pancake V2）
 
 - 日期：2026-11-12 起草，同日第三版，并按第三版的独立评审修订（§13）
-- 状态：**草稿，未实现，未审计**。第三版的评审没有发现严重或高危的机制问题；修订后的文本没有再评审。`createWithBase` 和底仓买入没有原型
+- 状态：**已实现，已上测试网，主网未部署，没有外部审计**。实现经过一轮独立评审和一轮对补充部分的复审，都没有中危及以上的问题（§14）。测试网记录：`docs/TESTNET-BASE-VAULT-2026-11-13.md`。代码：`src/gang/GangBaseVault.sol`、`src/gang/Pad3BaseStore.sol`、`src/gang/interfaces/IGangBasePad.sol`、`Pad3Module.createWithBase`、`CurveLogic3.buyBase`；测试 `test/gang3/Pad3Base.t.sol`、`test/gang3/Pad3BaseUpgrade.t.sol`、`test/fork/Pad3BaseUpgradeFork.t.sol`
 - 背景：`docs/SPEC-PCS3-GRAD-BASE-2026-11-11.md` 和 `docs/SPEC-PCS3-GRAD-PHASE1-2026-11-11.md`（毕业到 Pancake V3 的方案，已搁置）
 - 基础：GangLaunchpad 3.0 的曲线币（`kindOf = 1`），毕业路径不变
 
@@ -94,7 +94,7 @@ struct Layout {
 
 实现合约和模块的顺序布局、7 个依赖地址、`TOKEN_VERSION`、`INIT_VERSION` 都不变。带底仓的币规则版本号仍是 1（发币选项不改版本号），但「曲线上没有人持有超过 1%」对它不成立；链下读规则时要同时读 `baseVaultOf`。
 
-### 4.2 新增接口（放在 `Pad3Module`）
+### 4.2 新增接口（`IGangBasePad`，由 `Pad3Module` 实现）
 
 ```solidity
 struct BaseConfig {
@@ -109,6 +109,7 @@ event BaseCreated(address indexed token, address indexed vault, uint256 tokens, 
 error BaseNotOpen();
 error BadBaseConfig();
 error WrongBaseVaultImpl();
+error BaseBuyRefused();   // 库的底仓买入：曲线已有成交或花费不对（从 createWithBase 走不到）
 
 /// owner。可以再次设置，只影响之后创建的币。传 0 = 停止。
 /// 非 0 时要求 impl.pad() == 本 pad 且 impl.moduleType() == "base-v1"。
@@ -254,8 +255,8 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 
 1. 部署金库的实现合约（构造时写死 pad 的地址）。
 2. 构建新的 `Pad3Module`、`CurveLogic3` 和实现合约，7 个依赖地址不变。构建脚本每次都会连带部署一个新地址的 `Pad3FlyModule`（代码不变）。
-3. **基线**：主网上现在的实现和模块比 abcd 那一版代码还早（`vanityDeployer()` 和 `createWithSalt` 在线上都会回滚）。本次升级要建立在 abcd 那一版之上。abcd 开不开启都可以上线底仓。
-4. Safe 批次：升级 →（如果同一批里开启 abcd：`enableVanity`）→ `setBaseVaultImpl(impl)`。
+3. **基线**：abcd 已于 2026-11-12 在主网激活（`docs/MAINNET-GANG-LAUNCHPAD-3-ABCD-2026-11-10.md`），本次升级以线上这版实现为基础。激活是单向的，所以主网上 `createWithBase` 只能经 `createWithSalt` 调用；直接调用的路径只在没开 abcd 的测试网和 fork 上用得到。
+4. Safe 批次：升级 → `setBaseVaultImpl(impl)`。
 5. 升级脚本：
    - `setBaseVaultImpl` 放在设置对比之后执行，否则会触发「设置变了」的检查；
    - 设置快照加 `baseVaultImpl()`（升级前读不到按 0 处理）；
@@ -349,4 +350,12 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 
 评审明确不建议再加的：悬崖期、单次释放上限、代币死亡时销毁底仓。
 
-原型：`test/proto/BaseVestProto.t.sol`（金库，本地测试）。`createWithBase` 和底仓买入没有原型。`test/proto/` 下其余文件属于已放弃的设计或评审的验证代码，留作记录。
+原型：`test/proto/BaseVestProto.t.sol`（金库，本地测试）。实现见文首；实现里的金库多了 `BadInit`（零地址、0 天）和一个重入锁错误 `Reentered`。`test/proto/` 下其余文件属于已放弃的设计或评审的验证代码，留作记录。
+
+## 14. 实现的评审（2026-11-12 至 11-13）
+
+| 轮次 | 结论 | 处理 |
+|---|---|---|
+| 实现评审 | 没有严重、高危、中危。低危：升级脚本还没支持底仓；§10 列的几项测试没写 | 升级脚本加 `PAD3_BASE_VAULT_IMPL`（实现合约逐字节核对、`setBaseVaultImpl` 放在批次最后、快照和 `PAD3_BASE_PROBES`）；新增 `script/DeployGangBaseVault.s.sol`；补了创建人是合约、永不毕业、随机时间释放的 fuzz、升级后状态不变和脚本检查的测试 |
+| 对补充部分的复审 | 没有严重、高危、中危。低危：有底仓币但没给探针时脚本不提醒；升级模拟里没有实际建一次底仓币 | 加了提醒；建币、毕业、释放由主网 fork 测试覆盖 |
+| 提示 | 底仓多记的 1 wei 会被第一个往返卖出的人拿走；毕业后 pad 留 1 wei WBNB（原有行为）；`setBaseVaultImpl` 本身不核对代码哈希（由脚本核对） | 不改 |

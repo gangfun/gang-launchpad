@@ -20,6 +20,10 @@ import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 import {Pad3VanityStore} from "./Pad3VanityStore.sol";
 import {Pad3VanityDeployer} from "./Pad3VanityDeployer.sol";
 import {Pad3FlyModule} from "./Pad3FlyModule.sol";
+import {Pad3BaseStore} from "./Pad3BaseStore.sol";
+import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
+import {GangBaseVault} from "./GangBaseVault.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
 ///        address) and the pad's off-chain views (moved out of the pad for its 24 KB limit)
@@ -43,7 +47,15 @@ interface IWBNBDeposit {
     function deposit() external payable;
 }
 
-contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangPromote, Ownable2Step, ReentrancyGuard {
+contract Pad3Module is
+    IGangLaunchpad,
+    IGangLaunchpad3,
+    IGangVaultPad,
+    IGangPromote,
+    IGangBasePad,
+    Ownable2Step,
+    ReentrancyGuard
+{
     using SafeERC20 for IERC20;
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
@@ -219,7 +231,9 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangProm
     }
 
     /// @notice Run one existing create entry with a creator-bound salt. All original checks and events still run.
-    function createWithSalt(bytes32 salt, bytes calldata data) external returns (address token) {
+    ///         Payable for `createWithBase` only: the delegatecall carries msg.value into the chosen entry, and every
+    ///         other listed entry is non-payable, so a value sent with one of them reverts the whole call.
+    function createWithSalt(bytes32 salt, bytes calldata data) external payable returns (address token) {
         Pad3VanityStore.Layout storage v = Pad3VanityStore.layout();
         if (v.deployer == address(0) || v.active) revert VanityContextRequired();
         if (data.length < 4) revert BadVanityCall();
@@ -242,6 +256,7 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangProm
                         )
                     ) && selector != IGangVaultPad.createWithVault.selector
                 && selector != IGangPromote.createWithPromote.selector && selector != Pad3FlyModule.create.selector
+                && selector != IGangBasePad.createWithBase.selector
         ) revert BadVanityCall();
         v.salt = keccak256(abi.encode(msg.sender, salt));
         v.active = true;
@@ -295,6 +310,92 @@ contract Pad3Module is IGangLaunchpad, IGangLaunchpad3, IGangVaultPad, IGangProm
         token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
         Pad3PromoteStore.layout().termsOf[token] = Pad3PromoteStore.Terms(shareBps, window);
         emit PromoteSet(token, shareBps, window);
+    }
+
+    // ---------------------------------------------------------------- opening base
+    /// @inheritdoc IGangBasePad
+    function setBaseVaultImpl(address impl) external onlyOwner {
+        if (impl != address(0)) {
+            if (impl.code.length == 0) revert WrongBaseVaultImpl();
+            try GangBaseVault(impl).pad() returns (address p) {
+                if (p != address(this)) revert WrongBaseVaultImpl();
+            } catch {
+                revert WrongBaseVaultImpl();
+            }
+            try GangBaseVault(impl).moduleType() returns (bytes32 t) {
+                if (t != "base-v1") revert WrongBaseVaultImpl();
+            } catch {
+                revert WrongBaseVaultImpl();
+            }
+        }
+        Pad3BaseStore.layout().vaultImpl = impl;
+        emit BaseVaultImplSet(impl);
+    }
+
+    /// @inheritdoc IGangBasePad
+    /// @dev Steps (spec §4.2): checks and the exact payment; the curve as `createWithGradTarget` makes it (WBNB, no
+    ///      reference pool); the BNB wrapped; the vault cloned and initialised; the records and `BaseCreated`; the
+    ///      base bought as the curve's first trade (CurveLogic3.buyBase). No outside code runs: the quote is WBNB and
+    ///      the vault was just cloned from the owner's implementation.
+    function createWithBase(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        TaxConfig calldata tax,
+        uint256 gradBnb,
+        BaseConfig calldata base
+    ) external payable nonReentrant returns (address token) {
+        Pad3BaseStore.Layout storage b = Pad3BaseStore.layout();
+        address impl = b.vaultImpl;
+        if (impl == address(0)) revert BaseNotOpen();
+        if (!_baseOffered(base.baseBps, base.vestDays) || tax.dividendBps != 0) revert BadBaseConfig();
+        uint256 tokens = _baseTokens(base.baseBps);
+        // WBNB: the graduation amount is gradBnb itself (PadCommon.toQuote); a bad tier reverts in the create below
+        uint256 cost = CurveLogic.isGradTier(gradBnb) ? CurveLogic.baseCost(gradBnb, tokens) : 0;
+        if (msg.value != cost) revert BadMsgValue();
+
+        token = _createCurve(name, symbol, logoURI, metaURI, address(0), address(0), tax, gradBnb);
+        IWBNBDeposit(wbnb).deposit{value: cost}();
+        address vault = Clones.clone(impl);
+        GangBaseVault(vault).initialize(token, msg.sender, base.vestDays);
+        b.vaultOf[token] = vault;
+        b.baseOf[token] = tokens;
+        emit BaseCreated(token, vault, tokens, cost, base.baseBps, base.vestDays);
+        CurveLogic.buyBase(_config, curves, creatorFeeOf, _deps(), token, vault, tokens, cost);
+    }
+
+    /// @inheritdoc IGangBasePad
+    function baseVaultImpl() external view returns (address) {
+        return Pad3BaseStore.layout().vaultImpl;
+    }
+
+    /// @inheritdoc IGangBasePad
+    function baseVaultOf(address token) external view returns (address) {
+        return Pad3BaseStore.layout().vaultOf[token];
+    }
+
+    /// @inheritdoc IGangBasePad
+    function baseOf(address token) external view returns (uint256) {
+        return Pad3BaseStore.layout().baseOf[token];
+    }
+
+    /// @inheritdoc IGangBasePad
+    function previewBaseCost(uint256 gradBnb, uint16 baseBps) external pure returns (uint256) {
+        if (!CurveLogic.isGradTier(gradBnb)) revert BadGradTarget();
+        if (baseBps != 500 && baseBps != 1_000) revert BadBaseConfig();
+        return CurveLogic.baseCost(gradBnb, _baseTokens(baseBps));
+    }
+
+    /// @dev 5%: 30 / 90 / 180 days; 10%: 90 / 180 days (spec §12 item 4).
+    function _baseOffered(uint16 baseBps, uint32 vestDays) private pure returns (bool) {
+        if (baseBps == 500) return vestDays == 30 || vestDays == 90 || vestDays == 180;
+        if (baseBps == 1_000) return vestDays == 90 || vestDays == 180;
+        return false;
+    }
+
+    function _baseTokens(uint16 baseBps) private pure returns (uint256) {
+        return (PadCommon.TOTAL_SUPPLY * baseBps) / PadCommon.BPS;
     }
 
     /// @dev GangLaunchpad3._createCurve, line for line (test/gang3/Pad3Vault.t.sol compares the records)
