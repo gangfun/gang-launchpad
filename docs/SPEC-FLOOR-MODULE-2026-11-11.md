@@ -2,7 +2,7 @@
 
 - 日期：2026-11-11 起草
 - 基础：本仓库 GangCappedSplitter（`capped-v1`）
-- 状态：**已实现；内部独立审查和复审通过（§12、§13），没有外部审计；CLI 已实现并经七轮独立审查（§14）；BSC 测试网已部署并通过合约和 CLI 验收（`docs/TESTNET-FLOOR-MODULE-2026-11-11.md`），主网未部署**（§11）。§9 已定（2026-11-11）。主网部署依赖 abcd 地址部署器先启用（K-13）
+- 状态：**已实现；内部独立审查和复审通过（§12、§13），没有外部审计；CLI 已实现并经七轮独立审查（§14）；BSC 测试网已部署并通过合约和 CLI 验收（`docs/TESTNET-FLOOR-MODULE-2026-11-11.md`）；主网分叉测试通过（§11），主网未部署**（§11）。§9 已定（2026-11-11）。主网部署依赖 abcd 地址部署器先启用（K-13）
 - 代码里的 K-、I- 编号和 § 引用都指本文件
 
 ## 1. 做什么
@@ -263,7 +263,8 @@ I-2 的依据：赎回后 `金库' ÷ 流通量' = (T − a·T/S·(1−f)) ÷ (S
 ## 11. 实现（2026-11-11）
 
 - 代码：`src/gang/GangFloorModule.sol`、`GangFloorModuleFactory.sol`，部署脚本 `script/DeployGangFloorModuleFactory.s.sol`。
-- 测试：`test/gang/GangFloorModule.t.sol`（27 个单元测试、2 个模糊测试、2 个“没有 abcd 部署器时拒绝创建”的测试）、`test/gang/GangFloorModulePending.t.sol`（复审补的 6 个单元测试和 1 个带短缺、换收款人的模型模糊测试）、`test/gang3/Pad3FloorVanity.t.sol`（3.0 加 abcd 部署器上逐步走一遍、部署脚本检查）。模糊测试各 1000 轮。所有测试都跑在 3.0 加 abcd 部署器上。测试网验收已做（`script/FloorTestnetAcceptance.s.sol`）；主网分叉测试还没做，部署脚本里只在主网生效的检查要靠分叉测试覆盖。
+- 测试：`test/gang/GangFloorModule.t.sol`（27 个单元测试、2 个模糊测试、2 个“没有 abcd 部署器时拒绝创建”的测试）、`test/gang/GangFloorModulePending.t.sol`（复审补的 6 个单元测试和 1 个带短缺、换收款人的模型模糊测试）、`test/gang3/Pad3FloorVanity.t.sol`（3.0 加 abcd 部署器上逐步走一遍、部署脚本检查）。模糊测试各 1000 轮。所有测试都跑在 3.0 加 abcd 部署器上。测试网验收已做（`script/FloorTestnetAcceptance.s.sol`）；主网分叉测试已做（`test/fork/FloorMainnetFork.t.sol`，3 个通过），部署脚本里只在主网生效的检查要靠分叉测试覆盖。
+- 主网分叉（2026-11-12，abcd 部署器在主网启用之后）：`test/fork/FloorMainnetFork.t.sol`，3 个全部通过。部署脚本在 chainid 56 上跑完，只在主网生效的检查（3.0、它的 GangHandlerAdmin、多签为 owner、GANG、abcd 部署器已启用）第一次真正执行，多签放行后：先算地址再克隆、`createWithSalt` 建币、绑定、毕业进真实 PancakeSwap、池子交易交税、keeper 卖税、封顶前赎回、收款人恰好拿到上限、封顶后全部进金库；底价高于池价时“池子买入再赎回”有正收益。WBNB 和 USDT 各一遍，另有工厂和绑定的拒绝用例。
 - 收款人、上限、推送、欠款的代码（`_payAll`、`_pay`、`_tryTransfer`、`release`、`setPayee`、`distribute`、初始化检查）从封顶模块复制；`_splitQuote` 和 `_afterSplit` 是本模块自己的（金库和 `payeesPending` 取代了回购、加池两部分）。keeper 的到期规则是分账模块的。回购、加池、分块、TWAP 全部没有。
 - `Split` 事件是 `(incoming, toTreasury, toPayees)`，三个字段，和组合、封顶模块的四字段 `Split` 不是同一个 topic，索引不会混淆。`Distributed`、`PayeeOwed`、`PayeeReleased`、`PayeeChanged`、`Shortfall` 和封顶模块相同。
 - 部署脚本在主网上多一项检查：pad 的 `vanityDeployer()` 不为 0，否则回滚 `pad: abcd deployer not enabled`（K-13）。
