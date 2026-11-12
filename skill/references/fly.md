@@ -8,7 +8,7 @@ adds buy pressure. Invites raise a wallet's quota. These sales are kind 3 on Gan
 GangFlywheelPad). The unified commands detect them (`kind: "fly"`).
 
 **Networks:** BSC mainnet since 2026-10-30. New tokens go to GangLaunchpad 3.0 `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29`
-(CLI 0.30.0+); tokens on the V2 pad `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a` and the V1 pad
+(CLI 0.38.0+ for new creates, 0.30.0+ for existing tokens); tokens on the V2 pad `0x281889ad915c1A95ffc4922235c6314b3Cbd8a5a` and the V1 pad
 `0x631e66560F4FAE4e486B65349edE48189E48B029` keep working. `--testnet` uses BSC testnet (3.0
 `0x0508232833aE6849c03b28F7aA248BBd5cFCceE2`, V2 `0x706973e4F08dBf1604Cf540d0168428521e0E3d6`, V1 set 2).
 
