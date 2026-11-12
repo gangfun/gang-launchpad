@@ -2,9 +2,9 @@
 
 - 链：BSC 主网（chainId 56），2026-11-12
 - 规格：`docs/SPEC-FLOOR-MODULE-2026-11-11.md`；测试网记录：`docs/TESTNET-FLOOR-MODULE-2026-11-11.md`
-- 源码：分支 `claude/tax-token-innovative-mechanics-3e3515` 的 `1f61453`（PR #152，尚未合并），其中已合入 main `d3a5cf9`（abcd 主网上线）。部署记录里的 `commit` 字段就是这个提交
+- 源码：分支 `claude/tax-token-innovative-mechanics-3e3515` 的 `1f61453`（PR #152，已合并），其中已合入 main `d3a5cf9`（abcd 主网上线）。部署记录里的 `commit` 字段就是这个提交
 - 部署钱包 `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`；gas price 0.05 gwei，legacy
-- 状态：**工厂已部署，多签已放行（2026-11-12，区块 133123169）**。服务端和网站对 `floor-v1` 的支持尚未上线，CLI 尚未发版
+- 状态：**全部上线（2026-11-12）**：工厂已部署并经多签放行（区块 133123169）；服务端、网站和 CLI 0.39.0 已上线
 
 只部署一个新工厂。不改 3.0 pad、税处理器、GangHandlerAdmin、分红金库和 abcd 部署器；已有的币和模块不受影响。
 
@@ -50,9 +50,9 @@
 
 已执行 [`0xfaa76565…2655`](https://bscscan.com/tx/0xfaa76565c3514ee9cfb960bb5d714e78888f3c93d88e456eb3ec98f5813e2655)，区块 133123169，gas 144,253。GangHandlerAdmin 发出 `FactorySet(0x057d…C2fC, true)`；执行后 `isFactory(0x057d…C2fC)` = true，工厂还没有克隆过模块（`count()` = 0）。
 
-规格 §7 原定服务端和网站先上线再放行。实际是先放行了，所以从区块 133123169 起，任何 Agent 都能直接调合约建底价币，而网站还不认识 `floor-v1`：这类币的收款地址会显示成一个普通合约，不会被误标成底价币，只是缺少金库、底价和赎回的展示。服务端和网站要尽快补上，并且必须做到：核对模块来源（`GangHandlerAdmin.moduleOf` 等于这个工厂）、只在模块是为这个币克隆的时候展示底价、展示税里进金库的比例。
+规格 §7 原定服务端和网站先上线再放行。实际是先放行了：从区块 133123169 起到服务端和网站上线之间，这类币的收款地址在网站上显示成一个普通合约，没有被误标成底价币，只是缺少金库、底价和赎回的展示。服务端和网站当天补上，做到了：核对模块来源（`GangHandlerAdmin.moduleOf` 等于这个工厂）、只在模块是为这个币克隆并已绑定时展示底价、展示税里进金库的比例。
 
 ## 配套
 
-- CLI：主网工厂地址已写进 `skill/gang-cli`（`gangpad.js`），尚未发版。已发布的 0.38.0 没有 `--floor`。
-- 服务端（keeper、索引）和网站：尚未开始。
+- CLI：0.39.0 已发布（2026-11-12），带 `gang create … --floor` 和 `gang floor`。发版前在主网做了只读冒烟（`gang floor status`、未毕业时 `gang floor redeem` 被拒、手写 `--recipient` 的检查），没有为发版新建币。
+- 服务端（索引、API、keeper）和网站：已上线（2026-11-12），各经独立审查和复审。keeper 按 `split-v1` 的方式处理 `floor-v1`，不需要新配置。
