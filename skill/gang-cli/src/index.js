@@ -519,7 +519,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          QuoteRegistry only.
   gang create … --buy-tax <1-5> --sell-tax <1-5> --floor [--redeem-fee <0-5>] [--tax-cap <amount> [--tax-cap-share <0.01-100>]
                                          [--split <addr>:<pct>[,…]]] [--dev-buy …]
-                                         V3, taxed, floor module (GangFloorModule, floor-v1; mainnet once the Safe allows it): the
+                                         V3, taxed, floor module (GangFloorModule, floor-v1): the
                                          recipient's part of the pool tax is KEPT as a treasury, nothing is bought back or
                                          added. After graduation any holder can give up tokens for their share of it:
                                          amount × treasury ÷ (supply − what 0xdead holds), less --redeem-fee % (default 2)

@@ -58,8 +58,8 @@ export const GANG_GENS = {
       // capped-v1, 2026-11-08, block 132418984; the Safe allowed it on GangHandlerAdmin at block 132420220
       // (docs/MAINNET-CAPPED-MODULE-2026-11-08.md)
       cappedFactory: '0x294E901ecb66af280C1cDD26fD871601d89a2Dca',
-      // floor-v1, 2026-11-12, block 133121257 (docs/MAINNET-FLOOR-MODULE-2026-11-12.md). A launch with --floor works once
-      // the Safe allows it on GangHandlerAdmin (until then the clone's dry run reverts NotFactory, before anything is sent)
+      // floor-v1, 2026-11-12, block 133121257; the Safe allowed it on GangHandlerAdmin at block 133123169
+      // (docs/MAINNET-FLOOR-MODULE-2026-11-12.md)
       floorFactory: '0x057d2C1557a0E8298a1E00834D6064497f5DC2fC',
       // the pool side of the promoter share, 2026-11-07, block 132218466; the Safe allowed it on GangHandlerAdmin at block
       // 132219892 (docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)
