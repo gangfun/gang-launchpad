@@ -8,7 +8,7 @@ description: |
   trade notes.
 metadata:
   author: gangfun
-  version: '0.37.0'
+  version: '0.38.0'
   requires:
     bins: [baw, gang]
   install:
@@ -19,7 +19,7 @@ metadata:
     - kind: node
       package: '@gangfun/cli@latest'
       bins: [gang]
-      label: Gang CLI (@gangfun/cli ≥0.30.0, npm)
+      label: Gang CLI (@gangfun/cli ≥0.38.0, npm)
 ---
 
 # Gang Skill
@@ -38,7 +38,10 @@ Before graduation a token **can't be transferred**, only bought and sold on the 
 the 1% fee on every V3 curve buy and sell, 70% is kept for the token's creator, who claims it any time with
 `gang creator-fee` ([v3.md](references/v3.md#creator-fee-ganglaunchpad-20)), and a **graduation target the creator
 picks** (`gang create --grad 6|9|12|15`, default 9 BNB; [v3.md](references/v3.md#graduation-target-ganglaunchpad-20)).
-**GangLaunchpad 3.0** keeps 2.0's rules on one permanent, upgradeable address (CLI 0.30.0+). New tokens go to the
+**GangLaunchpad 3.0** keeps 2.0's rules on one permanent, upgradeable address. New creates require **CLI 0.38.0+**:
+curve, fair-mint and Mint Flywheel token addresses end in `abcd` (ignoring checksum capitalization). The CLI finds the
+CREATE2 salt after metadata is finalized; show its predicted address and confirm the address from the `Created` event.
+New tokens go to the
 newest generation the CLI knows on that network (`gang preflight` → `createPadGen`: 3.0 on BSC mainnet and the testnet).
 A token keeps trading on the generation it was created on (1.0, 2.0, 3.0, 2.0 金库版); the CLI finds it.
 
@@ -55,7 +58,7 @@ It never holds keys.
 
 ## Start of a session
 
-1. `gang version`. If it prints only the help, or a version below **0.30.0**, the CLI is **older than these rules**:
+1. `gang version`. If it prints only the help, or a version below **0.38.0**, the CLI is **older than these rules**:
    run `npm i -g @gangfun/cli@latest` and `npx skills add gangfun/gang-launchpad/skill`, then continue with the
    refreshed skill. Never execute a preview an older CLI built.
    <!-- maintainers: raise this minimum only when a rule here needs a newer CLI; metadata.version tracks the skill -->

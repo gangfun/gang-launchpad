@@ -1,6 +1,6 @@
 # 主网 · GangLaunchpad 3.0：abcd 地址部署与激活批次
 
-状态：新合约已于 2026-11-10 部署，**代理升级与 abcd 激活尚待 Safe 执行**。2026-11-12 重新核对链上状态及最终批次。
+状态：新合约已于 2026-11-10 部署，**代理升级与 abcd 激活已于 2026-11-12 完成**。
 
 - 网络：BSC 主网，chainId 56。
 - Pad 3.0 代理：[`0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29`](https://bscscan.com/address/0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29)。
@@ -23,13 +23,13 @@ Forge 原始记录：
 - `broadcast/DeployPad3Vanity.s.sol/56/run-1794322702958.json`
 - `broadcast/UpgradeGangLaunchpad3.s.sol/56/run-1794322810618.json`
 
-## Safe 批次（待执行）
+## Safe 批次（已执行）
 
-导入文件：[MAINNET-GANG-LAUNCHPAD-3-UPGRADE-ABCD-SAFE-BATCH-2026-11-10.json](MAINNET-GANG-LAUNCHPAD-3-UPGRADE-ABCD-SAFE-BATCH-2026-11-10.json)。
+归档文件：[MAINNET-GANG-LAUNCHPAD-3-UPGRADE-ABCD-SAFE-BATCH-2026-11-10.json](MAINNET-GANG-LAUNCHPAD-3-UPGRADE-ABCD-SAFE-BATCH-2026-11-10.json)。已执行交易：[`0xe1dc4016…42ed`](https://bscscan.com/tx/0xe1dc4016eb07910813f322926bbfe694cc4674ec293486f5cd38fe4c26ad42ed)，区块 133110602，gas 133,133，费用 0.00000665665 BNB。
 
 - Safe：`0x2866369F7acEFC9760bdE7779362fae5cD68B41E`，需要两位持有者签名。
 - 文件 SHA-256：`153240441ead4132facd359c3370a6c862c554d0878781f278ddf143e59b6a9a`。
-- 两项调用须在同一 Safe 批次中按以下顺序执行，均不转入 BNB。
+- 以下两项调用已在同一 Safe 批次中按顺序执行，均未转入 BNB。
 
 | 顺序 | 目标 | 调用 |
 |---|---|---|
@@ -48,6 +48,12 @@ Forge 原始记录：
 
 ## 执行后验收与修复原则
 
-执行后需读回：代理实现为 `0x3f97fd04b3be95ac03e414e3b1f4fb442b70e131`，`vanityDeployer()` 为 `0x8e7691ed55e0c3268118019a68c62ea6d0a6f8de`；代理与 ProxyAdmin 的 owner 仍为上述 Safe，并核对交易回执与旧币交易视图。
+执行后读回：代理实现为 `0x3f97fd04b3be95ac03e414e3b1f4fb442b70e131`，`vanityDeployer()` 为 `0x8e7691ed55e0c3268118019a68c62ea6d0a6f8de`；代理与 ProxyAdmin 的 owner 仍为上述 Safe。Safe nonce 从 48 增至 49，阈值仍为 2。
 
-激活是单向配置。若激活后需要修复，应保留该工厂及已发币兼容性，发布兼容修复实现；不要直接切回不支持该工厂的旧实现。执行交易哈希和执行后读回结果将在完成 Safe 批次后补充。
+回执含 `ExecutionSuccess`、正确实现地址的 `Upgraded` 和正确工厂地址的 `VanityEnabled`。解码实际 Safe / MultiSend 调用后，两项 calldata、顺序和零转账金额与归档 JSON 完全一致；MultiSend 地址及运行时代码匹配 Safe 官方 v1.5.0 的 BSC 部署，Safe 交易哈希与 nonce 48 对应。
+
+激活后，在主网区块 133111478 的最新状态 fork 上再次运行同一七路径验收 harness：1 通过、0 失败、0 跳过，包含真实历史曲线币买卖、七种创建模式和拒绝无 salt 创建。Agent ID 与测试资金仅在 fork 中模拟，没有在主网广播测试发币或买卖。
+
+主网真实新币创建后的服务端索引与页面展示，尚未作为本次上线的端到端验收完成；此项不能由 fork 验收代替。
+
+激活是单向配置。若激活后需要修复，应保留该工厂及已发币兼容性，发布兼容修复实现；不要直接切回不支持该工厂的旧实现。

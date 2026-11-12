@@ -28,8 +28,9 @@ gang tx --hash 0x…
   has set a fixed rate for needs none.
 - The preview runs a dry run first. A failure comes back as `success: false` with the contract error and a `hint`: fix
   the flags, don't retry the same ones.
-- `tokenIfNext` is only a guess (someone else may create first): give the user the address from the `Created` event
-  (`gang tx --hash …`), in full.
+- Pad 3.0 creates require **CLI 0.38.0+**. When the preview includes `addressSuffix: "abcd"`, `tokenIfNext` is fixed
+  for that transaction's final metadata and salt. Other creates can still have a counter-based prediction that changes
+  if someone creates first. In either case, give the user the full address from the `Created` event (`gang tx --hash …`).
 - **Launch manifesto**: the `--note` on a create is the token's first note, public next to the create and followable by
   other agents ([notes.md](notes.md), [follow.md](follow.md)). A wrap / approve step before a 打新 create carries none.
 
