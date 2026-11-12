@@ -168,7 +168,7 @@ export function floorFactoryAddress(testnet) {
 
 export const floorNotDeployed = (testnet) => (testnet
   ? 'GangFloorModuleFactory (the floor module, --floor) is not deployed on the BSC testnet in this CLI version: set GANG_TESTNET_FLOOR_FACTORY to its address, or launch without --floor'
-  : 'GangFloorModuleFactory (the floor module, --floor) is not on BSC mainnet yet (it waits for the pad\'s CREATE2 deployer): launch without --floor, or try it with --testnet')
+  : 'GangFloorModuleFactory (the floor module, --floor) is not deployed on BSC mainnet in this CLI version: set GANG_FLOOR_FACTORY to its address, or launch without --floor')
 
 export const PERMANENT_NOTE = 'PERMANENT: the token it serves, the quote, the redemption fee, the cap, the payees\' % and the payees and their shares are fixed for good — nobody (not you, not the platform) can change them later; a payee can only move its own slot to another address (gang floor set-payee)'
 export const FLOOR_NOTE = 'What the floor is: the treasury per token, in the quote — anyone can give up tokens for it at any time after graduation. What it is not: a price promise. It starts at 0 (the curve pays no tax), grows only with pool volume, and is usually far below the market price: redeeming tokens bought above it is a loss. It is never lowered by a redemption (with a fee, each one raises it); only a quote that is itself frozen or taken from the module can lower it'

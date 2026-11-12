@@ -28,14 +28,17 @@ const t = (n) => getAddress(`0x${n.toString(16).padStart(40, '0')}`)
 const ME = t(0xaa), A = t(0xa1), B = t(0xb2), M = t(0x30d), T = t(0x70c), OTHER = t(0x0e), WBNB = t(0xb0b), USDC = t(0x5dc)
 const E18 = 10n ** 18n
 
-// ---- the factories: testnet only for now (mainnet waits for the pad's CREATE2 deployer)
+// ---- the factories: both networks (mainnet since 2026-11-12)
 assert.equal(FLOOR_TYPE, 'floor-v1')
-assert.equal(MAINNET_FLOOR_FACTORY, null)
+assert.equal(MAINNET_FLOOR_FACTORY, '0x057d2C1557a0E8298a1E00834D6064497f5DC2fC')
+assert.equal(GANG_GENS.mainnet[0].gen, PAD3_GEN)
+assert.equal(gangGens(false)[0].floorFactory, MAINNET_FLOOR_FACTORY)
+assert.equal(gangGens(false)[1].floorFactory ?? null, null, 'only 3.0 has one')
 assert.equal(TESTNET_FLOOR_FACTORY, '0x0804C018201D8fFe378b873b41B67f136dbdc3F8')
 assert.equal(GANG_GENS.testnet[0].gen, PAD3_GEN)
 assert.equal(gangGens(true)[0].floorFactory, TESTNET_FLOOR_FACTORY)
 assert.equal(gangGens(true)[1].floorFactory ?? null, null, 'only 3.0 has one')
-assert.match(floorNotDeployed(false), /not on BSC mainnet yet \(it waits for the pad's CREATE2 deployer\)/)
+assert.match(floorNotDeployed(false), /not deployed on BSC mainnet in this CLI version: set GANG_FLOOR_FACTORY/)
 assert.match(floorNotDeployed(true), /GANG_TESTNET_FLOOR_FACTORY/)
 
 // ---- --redeem-fee: 0–5%, at most 2 decimals; left out 2%
@@ -248,8 +251,6 @@ for (const f of [['--floor'], ['--redeem-fee', '2']]) {
 }
 refused(['create', '--fly', '--name', 'C', '--symbol', 'C', '--floor'], /^--floor: 铸币飞轮 tokens take no .*floor module/)
 refused([...taxed, '--vault', A, '--floor'], /--floor: a --vault create stands alone/)
-// mainnet: not there yet, said before anything else is built
-refused(['create', '--name', 'C', '--symbol', 'C', '--from', ME, '--buy-tax', '2', '--sell-tax', '3', '--floor'], /GangFloorModuleFactory .* is not on BSC mainnet yet/, { GANG_FLOOR_FACTORY: '' })
 refused(['floor', 'nope'], /usage: gang floor <status\|redeem\|distribute\|release\|set-payee\|bind>/)
 refused(['floor'], /usage: gang floor/)
 refused(['floor', 'status', '--token', 'nope', '--testnet'], /--token must be a V3 token address/)

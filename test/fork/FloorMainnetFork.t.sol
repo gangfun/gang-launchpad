@@ -99,6 +99,45 @@ contract FloorMainnetForkTest is Test {
         return true;
     }
 
+    /// @dev The factory deployed on mainnet (2026-11-12), allowed by executing the archived Safe batch file as is.
+    address constant LIVE_FACTORY = 0x057d2C1557a0E8298a1E00834D6064497f5DC2fC;
+    string constant BATCH = "docs/MAINNET-FLOOR-SET-FACTORY-SAFE-BATCH-2026-11-12.json";
+
+    function _liveFactory() internal returns (bool) {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        if (bytes(rpc).length == 0) {
+            vm.skip(true);
+            return false;
+        }
+        vm.createSelectFork(rpc);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        vm.prank(SAFE);
+        GangLaunchpad3(payable(PAD3)).setWalletCapEnabled(false);
+        factory = GangFloorModuleFactory(LIVE_FACTORY);
+        script = new DeployGangFloorModuleFactory();
+        // the live factory and its implementation, as the script checks them (wiring, mainnet rules, runtime code)
+        script.check(PAD3, LIVE_ADMIN, LIVE_FACTORY);
+        script.checkCode(LIVE_FACTORY);
+        // the archived batch, executed as the Safe would: one call, to the admin, allowing exactly this factory
+        string memory json = vm.readFile(BATCH);
+        assertEq(vm.parseJsonUint(json, ".chainId"), 56);
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), SAFE);
+        assertEq(abi.decode(vm.parseJson(json, ".transactions"), (bytes[])).length, 1, "one call");
+        address to = vm.parseJsonAddress(json, ".transactions[0].to");
+        bytes memory data = vm.parseJsonBytes(json, ".transactions[0].data");
+        assertEq(vm.parseJsonUint(json, ".transactions[0].value"), 0);
+        assertEq(to, LIVE_ADMIN);
+        assertEq(data, abi.encodeWithSignature("setFactory(address,bool)", LIVE_FACTORY, true));
+        bytes[] memory pending = script.pendingBatch(LIVE_ADMIN, LIVE_FACTORY);
+        assertEq(pending.length, 1);
+        assertEq(pending[0], abi.encodePacked(to, data), "the file is what the script prints");
+        vm.prank(SAFE);
+        (bool ok,) = to.call(data);
+        assertTrue(ok, "the Safe's call");
+        assertEq(script.pendingBatch(LIVE_ADMIN, LIVE_FACTORY).length, 0, "allowed");
+        return true;
+    }
+
     function cut(bytes calldata c) external pure returns (address, bytes memory) {
         return (address(bytes20(c[:20])), c[20:]);
     }
@@ -295,6 +334,12 @@ contract FloorMainnetForkTest is Test {
     function test_usdt_launchCapRedeem() public {
         if (!_live()) return;
         _run(M.USDT, M.USDT_WBNB_V3);
+    }
+
+    /// @dev The factory on mainnet, after the archived Safe batch: the whole path, as with a fresh one.
+    function test_liveFactory_safeBatchThenLaunch() public {
+        if (!_liveFactory()) return;
+        _run(M.WBNB, address(0));
     }
 
     /// @dev The factory clones only for an abcd address with no code yet; bind takes only that token.
