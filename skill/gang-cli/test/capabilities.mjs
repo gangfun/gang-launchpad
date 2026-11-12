@@ -49,7 +49,7 @@ assert.equal(new Set(COMMANDS.map((x) => x.command)).size, COMMANDS.length)
 // every command gang_cli's description names is listed: "bond post|topup|…", "fly open-early|launch|invite", single words
 const listed = new Set(COMMANDS.map((x) => x.command))
 const desc = TOOLS.find((t) => t.name === 'gang_cli').description
-for (const m of desc.matchAll(/(?<![\w-])(call-bond|bond|buyback|split|lp|combo|capped|fly|promote) ([a-z-]+(?:\|[a-z-]+)+)/g)) {
+for (const m of desc.matchAll(/(?<![\w-])(call-bond|bond|buyback|split|lp|combo|capped|floor|fly|promote) ([a-z-]+(?:\|[a-z-]+)+)/g)) {
   for (const sub of m[2].split('|')) assert.ok(listed.has(`${m[1]} ${sub}`), `gang_cli names ${m[1]} ${sub}`)
 }
 for (const name of ['create', 'mint', 'withdraw', 'claim', 'release', 'quote', 'list', 'upload-logo', 'creator-fee', 'v3 income', 'version', 'capabilities']) {
