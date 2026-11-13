@@ -1,6 +1,6 @@
-# 主网：共享手续费池换成 RoutedBuybackBurner（2026-11-13，待上线）
+# 主网：共享手续费池换成 RoutedBuybackBurner（2026-11-13，已部署，待 Safe 执行）
 
-BSC 主网（chainId 56）。合约 `src/buyback/RoutedBuybackBurner.sol`，部署脚本 `script/DeployRoutedBuybackBurner.s.sol`。
+BSC 主网（chainId 56）。合约 `src/buyback/RoutedBuybackBurner.sol`，部署脚本 `script/DeployRoutedBuybackBurner.s.sol`（合并提交 959439d），部署记录在 `broadcast/DeployRoutedBuybackBurner.s.sol/56/run-latest.json`。
 
 ## 为什么换
 
@@ -50,6 +50,19 @@ LaunchpadV3 / 打新 / 铸币飞轮共用的 `SharedPlatformFeeBucket`（`0xB8C4
 
 | 合约 | 地址 |
 |---|---|
-| RoutedBuybackBurner（owner Safe `0x2866…B41E`） | 待部署 |
+| RoutedBuybackBurner（owner Safe `0x2866…B41E`） | `0xBed93a256fbC47c56907260232635C7e3f46cc6E` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
 | 现在的 burner（GangBuybackBurner，V2 / U / S 继续用） | `0x38120bf40F8F19E6cc60622Bc7C5B005dfe5363B` |
+
+## 部署记录
+
+| 操作 | 交易 / 文件 |
+|---|---|
+| 部署 RoutedBuybackBurner（部署者 `0x4EEd…19d3`，区块 133369184） | `0xaf9c044464691c8a00d1438a66f344bca71c114b2fb3f10ff86766b83008f29e` |
+| Safe 批量交易（4 笔 `setV3Route`，最后一笔共享池 `setBurner`） | [MAINNET-ROUTED-BUYBACK-BURNER-SAFE-BATCH-2026-11-13.json](MAINNET-ROUTED-BUYBACK-BURNER-SAFE-BATCH-2026-11-13.json)，待执行 |
+
+部署后自检：
+
+- `owner` = Safe，`pendingOwner` = 0；`router` / `smartRouter` / `wbnb` / `gang` 为主网 Pancake V2 router、Smart Router、WBNB、GANG。
+- BscScan 已验证源码。
+- 批量交易的 5 笔都以 Safe 地址 `eth_call` 模拟通过。
