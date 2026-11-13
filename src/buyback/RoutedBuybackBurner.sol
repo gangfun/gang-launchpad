@@ -56,6 +56,7 @@ contract RoutedBuybackBurner is Ownable2Step, ReentrancyGuard {
     error ZeroAmount();
     error InsufficientGangOut();
     error IncompleteQuoteSpend();
+    error NoWbnbOut();
     error BadRoute();
 
     constructor(address owner_, address router_, address smartRouter_, address wbnb_, address gang_) Ownable(owner_) {
@@ -108,7 +109,8 @@ contract RoutedBuybackBurner is Ownable2Step, ReentrancyGuard {
     }
 
     /// @dev Exact input on Pancake V3, paid to this contract; returns the WBNB that actually arrived. No per-leg floor:
-    ///      minGangOut binds the whole route at the end, after the V2 leg.
+    ///      minGangOut binds the whole route at the end, after the V2 leg. Nothing arrived (the router paid someone else,
+    ///      or the route is dust) reverts here, not on whatever the V2 router says about a zero input.
     function _v3ToWbnb(address quote, uint256 amountIn, bytes memory path) internal returns (uint256) {
         uint256 quoteBefore = IERC20(quote).balanceOf(address(this));
         uint256 wbnbBefore = IERC20(wbnb).balanceOf(address(this));
@@ -121,7 +123,9 @@ contract RoutedBuybackBurner is Ownable2Step, ReentrancyGuard {
             );
         IERC20(quote).forceApprove(smartRouter, 0);
         if (IERC20(quote).balanceOf(address(this)) != quoteBefore - amountIn) revert IncompleteQuoteSpend();
-        return IERC20(wbnb).balanceOf(address(this)) - wbnbBefore;
+        uint256 got = IERC20(wbnb).balanceOf(address(this)) - wbnbBefore;
+        if (got == 0) revert NoWbnbOut();
+        return got;
     }
 
     function _burnDelta(address quote, uint256 amountIn, uint256 gangBefore, uint256 minGangOut) internal {

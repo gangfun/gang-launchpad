@@ -24,8 +24,8 @@ interface IV3Quoter {
 ///         deploy key is OWNER (testing), it sends those calls itself. V2 / U / S buckets are not touched: they keep
 ///         GangBuybackBurner and its collectPlatformSmart.
 ///         Every route is quoted on Pancake V3 first; one that does not quote stops the run.
-/// @dev Env: DEPLOYER_PRIVATE_KEY; OWNER (default MainnetAddresses.OWNER); BURNER (an already deployed
-///      RoutedBuybackBurner to print the batch for instead of deploying).
+/// @dev Env: DEPLOYER_PRIVATE_KEY; OWNER (default MainnetAddresses.OWNER); BURNER (a RoutedBuybackBurner already
+///      deployed from this build, checked against a simulated fresh deploy, to wire instead of deploying one).
 ///      Dry run: forge script script/DeployRoutedBuybackBurner.s.sol --rpc-url bsc
 ///      Broadcast: add --broadcast --verify
 contract DeployRoutedBuybackBurner is Script {
@@ -70,41 +70,61 @@ contract DeployRoutedBuybackBurner is Script {
         console.log("owner", owner);
         console.log("shared bucket", SHARED_BUCKET, "burner now", bucket.burner());
 
+        if (burner != address(0)) _checkBurner(burner, owner);
         vm.startBroadcast(pk);
         if (burner == address(0)) {
             burner =
                 address(new RoutedBuybackBurner(owner, M.PANCAKE_V2_ROUTER, M.PANCAKE_SMART_ROUTER, M.WBNB, M.GANG));
             console.log("RoutedBuybackBurner deployed", burner);
         } else {
-            _checkBurner(burner, owner);
             console.log("RoutedBuybackBurner reused", burner);
         }
-        RoutedBuybackBurner b = RoutedBuybackBurner(burner);
-        if (deployer == owner) {
+        // What the deploy key may do itself; the rest goes into a Safe batch per signer (routes: the burner's owner,
+        // setBurner: the bucket's owner — the same Safe on mainnet, so one batch, routes first).
+        address bucketOwner = bucket.owner();
+        bool routesHere = deployer == owner;
+        bool switchHere = routesHere && bucketOwner == deployer;
+        if (routesHere) {
             for (uint256 i; i < quotes.length; i++) {
-                b.setV3Route(quotes[i], paths[i]);
+                RoutedBuybackBurner(burner).setV3Route(quotes[i], paths[i]);
             }
-            if (bucket.owner() == deployer) bucket.setBurner(burner);
         }
+        if (switchHere) bucket.setBurner(burner);
         vm.stopBroadcast();
 
-        if (deployer != owner || bucket.owner() != deployer) _printSafeBatch(burner, quotes, paths, bucket.owner());
+        if (!routesHere && owner == bucketOwner) {
+            _printSafeBatch(owner, burner, quotes, paths, true);
+        } else {
+            if (!routesHere) _printSafeBatch(owner, burner, quotes, paths, false);
+            if (!switchHere) _printSafeBatch(bucketOwner, burner, new address[](0), new bytes[](0), true);
+        }
     }
 
-    /// @dev Safe Transaction Builder JSON: setV3Route per quote, then the shared bucket's setBurner (last, so the
-    ///      bucket only moves once every route is in place).
-    function _printSafeBatch(address burner, address[] memory quotes, bytes[] memory paths, address safe)
-        internal
-        pure
-    {
+    /// @dev Safe Transaction Builder JSON for `safe`: setV3Route per quote, then (withSwitch) the shared bucket's
+    ///      setBurner — last, so the bucket only moves once every route is in place.
+    function _printSafeBatch(
+        address safe,
+        address burner,
+        address[] memory quotes,
+        bytes[] memory paths,
+        bool withSwitch
+    ) internal pure {
         string memory txs;
         for (uint256 i; i < quotes.length; i++) {
             txs = string.concat(
-                txs, _tx(burner, abi.encodeCall(RoutedBuybackBurner.setV3Route, (quotes[i], paths[i]))), ",\n"
+                txs,
+                i == 0 ? "" : ",\n",
+                _tx(burner, abi.encodeCall(RoutedBuybackBurner.setV3Route, (quotes[i], paths[i])))
             );
         }
-        txs = string.concat(txs, _tx(SHARED_BUCKET, abi.encodeCall(ISharedPlatformFeeBucket.setBurner, (burner))));
-        console.log("=== Safe batch (Transaction Builder JSON) ===");
+        if (withSwitch) {
+            txs = string.concat(
+                txs,
+                quotes.length == 0 ? "" : ",\n",
+                _tx(SHARED_BUCKET, abi.encodeCall(ISharedPlatformFeeBucket.setBurner, (burner)))
+            );
+        }
+        console.log("=== Safe batch (Transaction Builder JSON) for", safe, "===");
         console.log(
             string.concat(
                 '{\n  "version": "1.0",\n  "chainId": "56",\n  "createdAt": 0,\n  "meta": {\n',
@@ -128,12 +148,28 @@ contract DeployRoutedBuybackBurner is Script {
         );
     }
 
-    /// @dev A reused burner must be wired like a fresh deploy and owned by OWNER.
-    function _checkBurner(address a, address owner) internal view {
-        RoutedBuybackBurner b = RoutedBuybackBurner(a);
+    /// @dev A reused burner must be this build's RoutedBuybackBurner wired like a fresh deploy (same runtime code as a
+    ///      reference deployed in the simulation only: the immutables are part of it), owned by OWNER, with no owner
+    ///      transfer pending.
+    function _checkBurner(address a, address owner) internal {
+        address ref =
+            address(new RoutedBuybackBurner(owner, M.PANCAKE_V2_ROUTER, M.PANCAKE_SMART_ROUTER, M.WBNB, M.GANG));
         if (
-            a.code.length == 0 || b.owner() != owner || b.gang() != M.GANG || b.wbnb() != M.WBNB
-                || address(b.router()) != M.PANCAKE_V2_ROUTER || b.smartRouter() != M.PANCAKE_SMART_ROUTER
+            a.code.length == 0 || _hashSansMetadata(a.code) != _hashSansMetadata(ref.code)
+                || RoutedBuybackBurner(a).owner() != owner || RoutedBuybackBurner(a).pendingOwner() != address(0)
         ) revert BadBurner(a);
+    }
+
+    /// @dev keccak256 of `code` without the CBOR metadata, whose length sits in the last two bytes (it hashes the
+    ///      source, so an edit to a comment alone would otherwise not match).
+    function _hashSansMetadata(bytes memory code) internal pure returns (bytes32 h) {
+        uint256 n = code.length;
+        if (n >= 2) {
+            uint256 meta = ((uint256(uint8(code[n - 2])) << 8) | uint8(code[n - 1])) + 2;
+            if (meta <= n) n -= meta;
+        }
+        assembly {
+            h := keccak256(add(code, 0x20), n)
+        }
     }
 }

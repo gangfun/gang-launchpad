@@ -128,7 +128,7 @@ contract RoutedBuybackBurnerForkTest is Test {
         uint256 dead0 = IERC20(M.GANG).balanceOf(DEAD);
         vm.startPrank(bucket.keeper());
         bucket.collectPlatform(M.WBNB, 1);
-        bucket.collectPlatform(M.GANG, (bucket.accruedQuote(M.GANG) * 8_000) / 10_000);
+        bucket.collectPlatform(M.GANG, (bucket.accruedQuote(M.GANG) * bucket.BUYBACK_BPS()) / bucket.BPS());
         vm.stopPrank();
         assertGt(IERC20(M.GANG).balanceOf(DEAD), dead0);
     }

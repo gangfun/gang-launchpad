@@ -129,13 +129,13 @@ contract RoutedBuybackBurnerTest is Test {
         burner.buybackAndBurn(address(stock), 10 ether, 1);
     }
 
-    /// @dev A router that pays someone else leaves the burner with no WBNB: the V2 leg then cannot meet minGangOut.
+    /// @dev A router that pays someone else leaves the burner with no WBNB: reverted before the V2 leg.
     function test_v3Route_outputElsewhere_reverts() public {
         _setRoute();
         v3.setPayTo(keeper);
         _fund(stock, 10 ether);
         vm.prank(caller);
-        vm.expectRevert(bytes("slippage"));
+        vm.expectRevert(RoutedBuybackBurner.NoWbnbOut.selector);
         burner.buybackAndBurn(address(stock), 10 ether, 1);
     }
 
