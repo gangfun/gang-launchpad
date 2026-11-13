@@ -2,7 +2,7 @@
 
 - 日期：2026-11-12 起草，同日第三版，并按第三版的独立评审修订（§13）
 - 状态：**已实现，已上测试网，主网未部署，没有外部审计**。实现经过一轮独立评审和一轮对补充部分的复审，都没有中危及以上的问题（§14）。测试网记录：`docs/TESTNET-BASE-VAULT-2026-11-13.md`。代码：`src/gang/GangBaseVault.sol`、`src/gang/Pad3BaseStore.sol`、`src/gang/interfaces/IGangBasePad.sol`、`Pad3Module.createWithBase`、`CurveLogic3.buyBase`；测试 `test/gang3/Pad3Base.t.sol`、`test/gang3/Pad3BaseUpgrade.t.sol`、`test/fork/Pad3BaseUpgradeFork.t.sol`
-- 背景：`docs/SPEC-PCS3-GRAD-BASE-2026-11-11.md` 和 `docs/SPEC-PCS3-GRAD-PHASE1-2026-11-11.md`（毕业到 Pancake V3 的方案，已搁置）
+- 背景：先研究过毕业到 Pancake V3 的方案，已搁置（§13；那份设计记录没有放进仓库）
 - 基础：GangLaunchpad 3.0 的曲线币（`kindOf = 1`），毕业路径不变
 
 ## 1. 做什么
@@ -317,9 +317,7 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 6. 第一版只对 WBNB 计价的币开放，不支持带分红的币。
 7. 优先级沿用之前定的：排在飞轮模式和底价赎回收尾之后。
 
-待你定：
-
-8. **带底仓的币的保证金徽章**按 §10 的办法展示，可以吗。这一项归网页和服务端。
+8. 带底仓的币的保证金徽章（2026-11-13 定）：覆盖率 = 保证金 ÷（创建人钱包 + 金库里剩下的全部）全部卖出所得，不扣卖出税；原有的「承诺量占持仓比例」检查照旧；承诺量低于已释放的量（按时间已释放和实际转出取大）、或保证金比释放期先结束时，不给档位（灰色）；绿色徽章写「押金 ≥ 抛售所得」，不写「全覆盖」。实现见 gang-web-legacy#48、gangfun-server#57。
 
 ## 13. 设计历史和评审记录
 
@@ -328,7 +326,7 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 - **第二版**：改成只有现价和均价都在价位之上时才卖。评审发现创建人守在价位上买下金库卖出的每一块就能赚钱（卖出所得有一部分回到他手里），快速上涨之后金库会把价格卖回价位，回购和卖出会在回购线附近交替。
 - **第三版（本文）**：这些问题来自「让合约替 dev 卖币」本身。改成金库只做线性释放。
 
-**第三版的评审（2026-11-12）。** 两份独立评审，一份查金库和整体设计（`test/proto/ReviewV3_BaseVest.t.sol`，7 个测试），一份只读核对 pad 侧并用库里的整数算法重算了花费。两份都没有严重或高危的机制问题。
+**第三版的评审（2026-11-12）。** 两份独立评审，一份查金库和整体设计（7 个测试，评审用的测试代码没有放进仓库），一份只读核对 pad 侧并用库里的整数算法重算了花费。两份都没有严重或高危的机制问题。
 
 | 来源 | 级别 | 问题 | 处理 |
 |---|---|---|---|
@@ -350,7 +348,7 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 
 评审明确不建议再加的：悬崖期、单次释放上限、代币死亡时销毁底仓。
 
-原型：`test/proto/BaseVestProto.t.sol`（金库，本地测试）。实现见文首；实现里的金库多了 `BadInit`（零地址、0 天）和一个重入锁错误 `Reentered`。`test/proto/` 下其余文件属于已放弃的设计或评审的验证代码，留作记录。
+实现见文首。和第三版的金库原型相比，正式实现多了 `BadInit`（零地址、0 天）和一个重入锁错误 `Reentered`；原型已被正式实现取代，没有放进仓库。
 
 ## 14. 实现的评审（2026-11-12 至 11-13）
 
