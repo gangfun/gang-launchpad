@@ -40,9 +40,9 @@ LaunchpadV3 / 打新 / 铸币飞轮共用的 `SharedPlatformFeeBucket`（`0xB8C4
    ```
 
    脚本会先在 V3 Quoter 上确认每条路线都能报价，然后打印 Safe Transaction Builder 的 JSON。
-2. Safe（`0x2866…B41E`）执行这份批量交易：4 笔 `setV3Route`，最后一笔是共享池的 `setBurner(新 burner)`。路线都到位之后池子才换 burner。
-3. keeper `.env` 设 `EXPECTED_ROUTED_BURNER=<新 burner>`（gangfun-server `keeper/keeper-v2-platform.sh`）。没设的话，keeper 会拒绝这个池子并告警，不会误收。
-4. 先手动跑一次 dry-run，确认 4 个币都显示 `via burner V3 route — simulation OK`。oANTHROPIC 约 1.45 BNB，在正式站 `MAX_ACCRUED_ETHER=6` 以内。
+2. **Safe 执行之前**，先在正式站 keeper `.env` 设 `EXPECTED_ROUTED_BURNER=<新 burner>`（gangfun-server `keeper/keeper-v2-platform.sh`）。keeper 两个 burner 都认：共享池还挂着 GangBuybackBurner 时行为不变，换过去的下一轮就按新 burner 收，中间不断。反过来先换 burner、后配 env 的话，这段时间 keeper 每轮都会拒绝这个池子并报 ERROR，回购也会停。
+3. Safe（`0x2866…B41E`）执行这份批量交易：4 笔 `setV3Route`，最后一笔是共享池的 `setBurner(新 burner)`。路线都到位之后池子才换 burner。
+4. 手动跑一次 dry-run，确认 4 个币都显示 `via burner V3 route — simulation OK`。oANTHROPIC 约 1.45 BNB，在正式站 `MAX_ACCRUED_ETHER=6` 以内。
 
 以后新出现的股票类报价币，如果 V2 不够深、V3 有路线，keeper 会告警（needroute），并给出完整的 `setV3Route(quote, path)` 参数，Safe 签一笔就行。
 
