@@ -1,6 +1,6 @@
-# 主网：共享手续费池换成 RoutedBuybackBurner（2026-11-13，待上线）
+# 主网：共享手续费池换成 RoutedBuybackBurner（2026-11-13，已上线）
 
-BSC 主网（chainId 56）。合约 `src/buyback/RoutedBuybackBurner.sol`，部署脚本 `script/DeployRoutedBuybackBurner.s.sol`。
+BSC 主网（chainId 56）。合约 `src/buyback/RoutedBuybackBurner.sol`，部署脚本 `script/DeployRoutedBuybackBurner.s.sol`（合并提交 959439d），部署记录在 `broadcast/DeployRoutedBuybackBurner.s.sol/56/run-latest.json`。
 
 ## 为什么换
 
@@ -50,6 +50,34 @@ LaunchpadV3 / 打新 / 铸币飞轮共用的 `SharedPlatformFeeBucket`（`0xB8C4
 
 | 合约 | 地址 |
 |---|---|
-| RoutedBuybackBurner（owner Safe `0x2866…B41E`） | 待部署 |
+| RoutedBuybackBurner（owner Safe `0x2866…B41E`） | `0xBed93a256fbC47c56907260232635C7e3f46cc6E` |
 | SharedPlatformFeeBucket | `0xB8C4B68a62513240A5e44EFd78fFc35ac25bA21b` |
 | 现在的 burner（GangBuybackBurner，V2 / U / S 继续用） | `0x38120bf40F8F19E6cc60622Bc7C5B005dfe5363B` |
+
+## 部署记录
+
+| 操作 | 交易 / 文件 |
+|---|---|
+| 部署 RoutedBuybackBurner（部署者 `0x4EEd…19d3`，区块 133369184） | `0xaf9c044464691c8a00d1438a66f344bca71c114b2fb3f10ff86766b83008f29e` |
+| Safe 批量交易（4 笔 `setV3Route`，最后一笔共享池 `setBurner`；[批量交易文件](MAINNET-ROUTED-BUYBACK-BURNER-SAFE-BATCH-2026-11-13.json)，区块 133369704） | `0xc7f87a799163ac96f2510fbbee1262a49530b552fa427245143a681a6bac910c` |
+
+部署后自检：
+
+- `owner` = Safe，`pendingOwner` = 0；`router` / `smartRouter` / `wbnb` / `gang` 为主网 Pancake V2 router、Smart Router、WBNB、GANG。
+- BscScan 已验证源码。
+- 批量交易的 5 笔都以 Safe 地址 `eth_call` 模拟通过。
+
+## 上线后（2026-11-13 22:47，北京时间）
+
+- gangfun-server v1.2.96（997f97b）已发布到正式站，keeper `.env` 设了 `EXPECTED_ROUTED_BURNER=0xBed9…cc6E`（备份 `.env.bak-20261113224605-routed-burner`）。
+- 正式站 keeper 手动跑了一次 `--broadcast`，6 笔 `collectPlatform` 全部成功，`accruedQuote` 都归 0：
+
+| 报价币 | 交易 | 烧掉的 GANG |
+|---|---|---|
+| oANTHROPIC | `0x22684c5a7caca8d796bf9d8959912935332b175f1bc784d20c5edd6ba4916657` | 182,054.8 |
+| BABAB | `0x526b5fee595c3d125ad217cc9bc421d31cd3832497d711e83e8ba9a3e235ef2c` | 68,770.2 |
+| EWYB | `0x4a82e424b30c42ad117dbf6c5a5a6f22b1ae868569b0c334c6de197bec3d6ad3` | 2,395.9 |
+| wTCENTx | `0x335073ce9fee7203fdf3ac3815a6bfcc600e45217c27d658ec0abfb209550561` | 40.3 |
+| WBNB、GANG（共享池里平常的手续费） | `0xcf3a4422…d7d1`、`0xe0a4d4df…1d5f` | — |
+
+- /burn 面板的「待结算手续费」从约 $1,331 降到 $1.11（剩下的是 Soft pad 的 BNB，由它自己的 cron 收）。
