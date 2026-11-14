@@ -10,6 +10,7 @@ import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "./interfaces/IGangLaunchpad3.sol";
 import {IGangPadHandler, IGangPadToken, IGangTokenDeployer} from "./interfaces/IGangPadDeps.sol";
 import {IGangPromote} from "./interfaces/IGangPromote.sol";
+import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 import {PadCommon} from "./PadCommon.sol";
 import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 
@@ -17,7 +18,7 @@ import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 ///        aggregator interface needs, the curve's math and rules unchanged
 /// @notice External library, delegatecalled by GangLaunchpad3 (runs on the pad's storage, balance and msg.sender;
 ///         events come from the pad). Same create / buy / sell / graduation / creator fee as CurveLogic, line for
-///         line, with five additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
+///         line, with six additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
 ///         1. `buy(..., prepaid)`: the pad already holds `quoteIn` (native BNB it wrapped, or quote it pulled itself),
 ///            so the exact pull from msg.sender is skipped;
 ///         2. `sell(..., pull, payTo)`: whose allowance moves the tokens (PULL_CALLER: msg.sender's own, as 2.0's
@@ -27,6 +28,9 @@ import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 ///         4. `TradeV1` on every trade, with the creator's part of the fee and the price after the trade.
 ///         5. the promoter share (docs/SPEC-PROMOTER-SHARE-2026-11-04.md): on a token that has one, a bound wallet's
 ///            trades pay part of the creator's fee to its promoter; no other token, price or fee changes.
+///         6. `buyBase` (docs/SPEC-BASE-VAULT-V2-2026-11-12.md §4): a token created with an opening base buys it for
+///            its base vault as the curve's first trade, at the cost `baseCost` fixes; the curve's math and fee split
+///            are `buy`'s.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -208,6 +212,42 @@ library CurveLogic3 {
         if (v.tokensOut < minTokensOut) revert IGangLaunchpad.Slippage();
 
         tokensOut = _execBuy(c, cv, creatorFeeOf, d, token, trader, quoteIn, v, prepaid);
+    }
+
+    /// @dev The opening base: `tokens` for `vault` as the curve's first trade, paid with `paid` the pad already holds
+    ///      (prepaid). No Agent gate, no wallet cap, no promoter share: only Pad3Module.createWithBase calls this, in
+    ///      the token's create, for the vault it has just cloned. `paid` must be `baseCost(gradAmt, tokens)`, the one
+    ///      formula the create entry and `previewBaseCost` use. The curve books `paid − fee` (≥ the net `tokens`
+    ///      need) and the fee is split as any buy's; no refund, no graduation (tokens ≤ 1/8 of the curve).
+    function buyBase(
+        IGangLaunchpad.Config storage c,
+        mapping(address => IGangLaunchpad.Curve) storage curves,
+        mapping(address => uint256) storage creatorFeeOf,
+        IGangLaunchpad.Deps memory d,
+        address token,
+        address vault,
+        uint256 tokens,
+        uint256 paid
+    ) external {
+        IGangLaunchpad.Curve storage cv = _live(curves, token);
+        if (cv.sold != 0 || cv.realQuote != 0) revert IGangBasePad.BaseBuyRefused();
+        if (tokens == 0 || paid != baseCost(cv.gradAmt, tokens)) revert IGangBasePad.BaseBuyRefused();
+        BuyVars memory v;
+        _applyFee(paid, v);
+        v.gradAmt = cv.gradAmt;
+        v.tokensOut = tokens;
+        // what the curve books buys at least `tokens` (the ceil in baseCost only rounds up)
+        if (_tokensOut(cv, v.net) < tokens || v.net >= v.gradAmt) revert IGangBasePad.BaseBuyRefused();
+        _execBuy(c, cv, creatorFeeOf, d, token, vault, paid, v, true);
+    }
+
+    /// @dev What buying `tokens` as a fresh curve's first trade costs, the 1% fee included: the net the curve needs
+    ///      for them (`_quoteInFor` with nothing sold), grossed up by the fee and rounded up. A pure function of the
+    ///      graduation amount (= gradBnb for WBNB) and `tokens`.
+    function baseCost(uint256 gradAmt, uint256 tokens) internal pure returns (uint256) {
+        uint256 vq = gradAmt / 3;
+        uint256 net = Math.ceilDiv(vq * VIRTUAL_TOKEN, VIRTUAL_TOKEN - tokens) - vq;
+        return Math.ceilDiv(net * PadCommon.BPS, PadCommon.BPS - PROTOCOL_FEE_BPS);
     }
 
     function _prepBuy(

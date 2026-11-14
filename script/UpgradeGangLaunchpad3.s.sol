@@ -18,6 +18,7 @@ import {Pad3FlyModule} from "../src/gang/Pad3FlyModule.sol";
 import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 import {Pad3VanityDeployer} from "../src/gang/Pad3VanityDeployer.sol";
+import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
 
 /// @title UpgradeGangLaunchpad3 — move the GangLaunchpad 3.0 proxy to a new implementation, checked before the Safe
 ///        signs (audit 3C M-1 / L-3)
@@ -54,6 +55,11 @@ import {Pad3VanityDeployer} from "../src/gang/Pad3VanityDeployer.sol";
 ///      deployed addresses, and again right before the Safe signs.
 ///      Optional PAD3_ABCD_DEPLOYER (DeployPad3Vanity): validate its code and legacy references, then enable it after
 ///      the upgrade in the same Safe batch. The pad owner must also own that batch. Do not set it again once enabled.
+///      Optional PAD3_BASE_VAULT_IMPL (DeployGangBaseVault; docs/SPEC-BASE-VAULT-V2-2026-11-12.md §8): its code must be
+///      this build's GangBaseVault for this proxy, byte for byte; `setBaseVaultImpl` runs after the upgrade (and after
+///      any abcd activation) in the same batch, after the settings comparison. The pad owner must own that batch too.
+///      PAD3_BASE_PROBES (optional, token,token,…: from `BaseCreated` logs; the pad can't list them): each one's base
+///      vault and base amount are compared across the upgrade.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
 
@@ -72,6 +78,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     Pad3Impl.FlyDeps internal _fly;
     /// @dev Optional one-way activation, after the upgrade in the same batch. Existing dependencies stay fixed.
     address internal _abcd;
+    /// @dev Optional base vault implementation set after the upgrade in the same batch.
+    address internal _baseImpl;
 
     struct Snapshot {
         bytes32 settings;
@@ -108,6 +116,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         address impl = _envAddr("PAD3_IMPL", address(0));
         _abcd = _envAddr("PAD3_ABCD_DEPLOYER", address(0));
         if (_abcd != address(0)) _checkVanity(s.pad, upgrader);
+        _baseImpl = _envAddr("PAD3_BASE_VAULT_IMPL", address(0));
+        if (_baseImpl != address(0)) _checkBaseImpl(s.pad, upgrader);
         bool deployed = _resolveFly(GangLaunchpad3(payable(current)), impl, s, c, pk, upgrader);
         (address[] memory prepTo, bytes[] memory prepCall) = _flyPrep(s, c.keeper, c.dexRouter, upgrader);
 
@@ -142,6 +152,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             _sendPrep(prepTo, prepCall, upgrader, false);
             ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
             _enableVanity(proxy);
+            _setBaseImpl(proxy);
             vm.stopBroadcast();
             console.log("upgraded (testnet, the deploy wallet owns the ProxyAdmin)");
             return s;
@@ -155,6 +166,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         console.log("\n=== Safe batch: upgrade GangLaunchpad 3.0 (ProxyAdmin.upgradeAndCall, effective at once) ===");
         if (prepTo.length != 0) console.log("(the fly-mode listings first, then the upgrade, in one batch)");
         if (_abcd != address(0)) console.log("(enable abcd addresses after the upgrade in the same batch)");
+        if (_baseImpl != address(0)) console.log("(set the base vault implementation last, in the same batch)");
         console.log(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call, proxy));
     }
 
@@ -163,6 +175,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         GangLaunchpad3 p = GangLaunchpad3(payable(s.pad));
         Snapshot memory before = _snapshot(p, s, _servesVaultMode(s.pad), new bool[](0));
         _warnNoPromoteProbes(p);
+        _warnNoBaseProbes(p);
         uint256 snap = vm.snapshotState();
         _sendPrep(u.prepTo, u.prepCall, u.upgrader, true);
         vm.prank(u.upgrader);
@@ -183,6 +196,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _checkOriginTrader(s);
         if (_abcd != address(0)) vm.prank(u.upgrader);
         _enableVanity(s.pad);
+        if (_baseImpl != address(0)) vm.prank(u.upgrader);
+        _setBaseImpl(s.pad);
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
     }
@@ -205,6 +220,24 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         Pad3Module p = Pad3Module(payable(proxy));
         p.enableVanity(_abcd);
         if (p.vanityDeployer() != _abcd) revert WiringCheck("abcd activation");
+    }
+
+    /// @dev PAD3_BASE_VAULT_IMPL: the pad owner sends the batch, it is not set yet, and its code is this build's
+    ///      GangBaseVault for `proxy` (the pad is an immutable, so a reference deployed here has the same bytes).
+    function _checkBaseImpl(address proxy, address upgrader) internal {
+        if (Ownable(proxy).owner() != upgrader) revert WiringCheck("base vault: pad owner must own the upgrade batch");
+        if (_baseState(GangLaunchpad3(payable(proxy))) == _baseImpl) {
+            revert WiringCheck("base vault implementation already set: omit PAD3_BASE_VAULT_IMPL");
+        }
+        address ref = address(new GangBaseVault(proxy));
+        if (!R.sameCode(_baseImpl, ref.code)) revert WiringCheck("base vault implementation code");
+    }
+
+    function _setBaseImpl(address proxy) internal {
+        if (_baseImpl == address(0)) return;
+        Pad3Module p = Pad3Module(payable(proxy));
+        p.setBaseVaultImpl(_baseImpl);
+        if (p.baseVaultImpl() != _baseImpl) revert WiringCheck("base vault implementation");
     }
 
     /// @dev The listings `_flyPrep` found, as the ProxyAdmin's owner sends them: pranked (the simulation) or broadcast
@@ -233,6 +266,9 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         j = string.concat(j, _tx(admin, call, to.length != 0));
         if (_abcd != address(0)) {
             j = string.concat(j, _tx(proxy, abi.encodeCall(Pad3Module.enableVanity, (_abcd)), true));
+        }
+        if (_baseImpl != address(0)) {
+            j = string.concat(j, _tx(proxy, abi.encodeCall(Pad3Module.setBaseVaultImpl, (_baseImpl)), true));
         }
         j = string.concat(j, "]}");
     }
@@ -442,7 +478,9 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
                 p.routers(s.router),
                 p.bridgePoolOf(M.USDT),
                 listed,
-                _vanityState(p)
+                _vanityState(p),
+                _baseState(p),
+                _baseProbes(p, _baseProbeList())
             )
         );
         uint256 n = p.tokenCount();
@@ -459,7 +497,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
                     _derived(p, t, snap.newFairEntry[i]),
                     vault ? _vaultState(p, t) : bytes(""),
                     p.kindOf(t) == 3 ? _flyState(p, t) : bytes(""),
-                    _promoteState(p, t)
+                    _promoteState(p, t),
+                    _baseState(p, t)
                 )
             );
         }
@@ -471,6 +510,45 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         } catch {
             return address(0);
         }
+    }
+
+    /// @dev The base vault implementation (0 before the first upgrade with the opening base).
+    function _baseState(GangLaunchpad3 p) internal view returns (address) {
+        try Pad3Module(payable(address(p))).baseVaultImpl() returns (address a) {
+            return a;
+        } catch {
+            return address(0);
+        }
+    }
+
+    /// @dev A token with an opening base: its vault and base amount. Empty for any other token and before the first
+    ///      upgrade with the opening base, so tokens without one hash the same across that upgrade.
+    function _baseState(GangLaunchpad3 p, address t) internal view returns (bytes memory) {
+        (bool ok, bytes memory ret) = address(p).staticcall(abi.encodeCall(Pad3Module.baseVaultOf, (t)));
+        if (!ok || ret.length != 32 || abi.decode(ret, (address)) == address(0)) return "";
+        return abi.encode(ret, Pad3Module(payable(address(p))).baseOf(t));
+    }
+
+    /// @dev PAD3_BASE_PROBES: token,token,… (from `BaseCreated` logs: tokens beyond the sample).
+    function _baseProbeList() internal view virtual returns (address[] memory) {
+        return vm.envOr("PAD3_BASE_PROBES", ",", new address[](0));
+    }
+
+    /// @dev Each probe's base vault and amount; a probe without a base is refused (it would check nothing).
+    function _baseProbes(GangLaunchpad3 p, address[] memory probes) internal view returns (bytes memory out) {
+        for (uint256 i; i < probes.length; i++) {
+            bytes memory st = _baseState(p, probes[i]);
+            if (st.length == 0) revert WiringCheck("PAD3_BASE_PROBES: a token without an opening base");
+            out = abi.encode(out, probes[i], st);
+        }
+    }
+
+    /// @dev The opening base is open and PAD3_BASE_PROBES is empty: tokens with a base outside the newest 25 go
+    ///      unchecked. Said out loud (as `_warnNoPromoteProbes`), not refused: the pad can't list them.
+    function _warnNoBaseProbes(GangLaunchpad3 p) internal view {
+        if (_baseState(p) == address(0) || _baseProbeList().length != 0) return;
+        console.log("WARNING: the opening base is open and PAD3_BASE_PROBES is empty: tokens with a base outside the");
+        console.log("newest 25 are not compared. Set it from the BaseCreated logs before the Safe signs.");
     }
 
     /// @dev A gated 打新 sale still minting that `p` reports as not traded through its entry (status 3).
