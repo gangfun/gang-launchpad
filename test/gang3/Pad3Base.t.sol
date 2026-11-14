@@ -14,6 +14,10 @@ import {GangToken} from "../../src/gang/GangToken.sol";
 import {IGangBasePad} from "../../src/gang/interfaces/IGangBasePad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
+import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
+import {IGangPromote} from "../../src/gang/interfaces/IGangPromote.sol";
+import {Pad3FlyModule} from "../../src/gang/Pad3FlyModule.sol";
+import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
 
 /// @dev A vault implementation of another pad, or with the wrong type: setBaseVaultImpl refuses both.
 contract FakeVault {
@@ -528,6 +532,49 @@ contract Pad3BaseTest is GangFixture {
         vm.prank(creator);
         address t = m.createWithSalt(salt, data);
         assertEq(uint16(uint160(t)), 0xabcd);
+    }
+
+    /// @dev Every listed entry but createWithBase rejects a value at its non-payable check: empty revert data with
+    ///      arguments that decode (all zero: empty strings, zero addresses and numbers), while the same call without a
+    ///      value gets past decoding and reverts with an error (or creates). A future payable entry in the list would
+    ///      revert with its own error here, or take the value, and fail this test.
+    function test_abcd_valueRejectedByEveryOtherEntry() public {
+        _enableVanity();
+        bytes4[6] memory sels = [
+            bytes4(keccak256("create(string,string,string,string,address,address,(uint16,uint16,uint16,address))")),
+            bytes4(
+                keccak256(
+                    "createWithGradTarget(string,string,string,string,address,address,(uint16,uint16,uint16,address),uint256)"
+                )
+            ),
+            bytes4(
+                keccak256(
+                    "create(string,string,string,string,address,address,(uint256,uint16,uint16,uint16,uint16),uint256)"
+                )
+            ),
+            IGangVaultPad.createWithVault.selector,
+            IGangPromote.createWithPromote.selector,
+            Pad3FlyModule.create.selector
+        ];
+        uint256 padBnb = address(pad).balance;
+        vm.deal(creator, creator.balance + 1);
+        for (uint256 i; i < sels.length; ++i) {
+            IFlywheelPad.FlyConfig memory fly;
+            string[4] memory text;
+            // the 铸币飞轮 entry's string[4] does not decode from zeros: its own encoding
+            bytes memory data = i == 5
+                ? abi.encodeCall(Pad3FlyModule.create, (text, address(0), address(0), fly, 0))
+                : abi.encodePacked(sels[i], new bytes(32 * 24));
+            vm.prank(creator);
+            (bool ok, bytes memory ret) =
+                address(m).call{value: 1}(abi.encodeCall(m.createWithSalt, (bytes32(i), data)));
+            assertFalse(ok);
+            assertEq(ret.length, 0, "a value is refused before anything else");
+            vm.prank(creator);
+            (ok, ret) = address(m).call(abi.encodeCall(m.createWithSalt, (bytes32(i), data)));
+            assertTrue(ok || ret.length != 0, "without a value the arguments decode");
+        }
+        assertEq(address(pad).balance, padBnb);
     }
 
     function test_codeSizes() public view {

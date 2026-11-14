@@ -157,7 +157,7 @@ WBNB 计价时毕业金额就是 `gradBnb` 本身，所以花费是 `(gradBnb, b
 
 - **abcd**：没开启 abcd 时直接调用 `createWithBase`；开启之后只能经 `createWithSalt` 调用。两条路径都要支持，CLI 按 `vanityDeployer()` 是否为 0 来选。经 `createWithSalt` 调用需要两处改动：
   - 它的入口白名单加上本函数的选择器；
-  - **`createWithSalt` 改成可以收 BNB**（它现在不能收，`Pad3Module.sol` 第 222 行）。三轮评审都核对过：里面是 delegatecall，会带着 BNB 进去；白名单里另外六个入口都不收 BNB，遇到 BNB 会让整笔交易回滚，不会有 BNB 留在 pad 里；它是唯一的自我 delegatecall，有 `active` 标记，BNB 不会被花两次；回滚时 abcd 的临时状态一起回退。
+  - **`createWithSalt` 改成可以收 BNB**（原来不能收）。三轮评审都核对过：里面是 delegatecall，会带着 BNB 进去；白名单里另外六个入口都不收 BNB，遇到 BNB 会让整笔交易回滚，不会有 BNB 留在 pad 里（`test_abcd_valueRejectedByEveryOtherEntry` 逐个入口钉住：带 BNB 时在读参数之前就空回滚，不带 BNB 时参数能解出来；以后哪个入口改成收 BNB，这个测试会失败）；它是唯一的自我 delegatecall，有 `active` 标记，BNB 不会被花两次；回滚时 abcd 的临时状态一起回退。
 - 创建过程中不运行任何外部人的代码：计价币是 WBNB，金库是刚克隆出来的。所有创建和交易入口都有重入锁。
 - 金库的地址是可以提前算出来的（代理合约的下一个部署地址）。评审没有找到这能造成什么后果：router、聚合器、金库模式的登记都要求地址上有代码，pad 里按钱包记的状态又都以代币地址为键，而代币此时还不存在。
 - 现有的 `create*` 入口不变，那些币没有底仓。
@@ -168,7 +168,7 @@ WBNB 计价时毕业金额就是 `gradBnb` 本身，所以花费是 `(gradBnb, b
 - 底仓计入 `sold`，曲线的价格从底仓买入之后的位置开始。`getTokenInfo`、`tryBuy`、注册表的报价都读存储，自动反映底仓。对金库地址本身，钱包余量和买入报价都是 0。
 - 评审用库里的整数算法验算了全部 8 种组合（4 个毕业档位 × 2 档底仓）：记进曲线的金额能买到的代币不少于底仓；曲线的乘积不变小；毕业时卖出的总量正好是 8 亿枚、池子拿到 2 亿枚，和没有底仓时一样；其他持币人全部卖出之后，曲线里剩下的钱等于底仓的净成本。金库锁住的币不会削弱曲线的偿付能力。
 - 实现合约的源码不需要改（只有一处注释要提到 `baseVaultOf`）。`CurveLogic3` 多一个入口，实现合约和 `Pad3Module` 因为链接的库地址变了都要重新部署。
-- 合约大小（磁盘上的构建产物）：实现合约 21,784 B，`Pad3Module` 14,337 B，`CurveLogic3` 13,905 B。评审估计模块增加 2.5–3.5 KB、库增加约 1 KB，都在上限以内。改完以构建结果为准。
+- 合约大小（本次构建的部署字节码）：实现合约 21,784 B，`Pad3Module` 17,809 B（原 14,337 B），`CurveLogic3` 15,531 B（原 13,905 B），`GangBaseVault` 1,956 B，都在 24,576 B 以内。
 
 ## 5. `GangBaseVault`
 
@@ -242,7 +242,7 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 |---|---|---|
 | R1 | 毕业前有人让金库的币动起来 | 金库不授权、不主动调用；pad 的每条转账路径都核对过 |
 | R2 | 底仓买入绕过了 Agent 门槛和钱包上限 | 只有 `createWithBase` 这一条路径；数量只能是两档之一；买家只能是刚克隆出来的金库 |
-| R3 | 金库的实现合约被设错 | `setBaseVaultImpl` 检查 `impl.pad()` 和 `impl.moduleType()`；只影响新币；每次更换走脚本，核对代码和本次构建逐字节一致，并在 fork 上创建、毕业、释放一遍 |
+| R3 | 金库的实现合约被设错 | `setBaseVaultImpl` 检查 `impl.pad()` 和 `impl.moduleType()`；只影响新币；单独设置或更换用 `script/SetGangBaseVaultImpl.s.sol`（更换已有的实现还要 `PAD3_BASE_REPLACE=true`），随升级一起换才用升级脚本的 `PAD3_BASE_VAULT_IMPL`；两者都核对代码和本次构建逐字节一致；另外手动跑一遍 `test/fork/Pad3BaseUpgradeFork.t.sol`（创建、毕业、释放），升级脚本本身不做这一步 |
 | R4 | 有人抢先调 `release` 让释放开始 | 无害。只能在毕业之后，效果和创建人自己调一样 |
 | R5 | 有人往金库里送币 | 毕业前送不进来（代币锁着）。开始之前送的算进总量；开始之后送的在释放期结束时一并转出。既不会加快释放，也不会卡住 |
 | R6 | 创建人的钱包丢了或被盗 | 收款地址不能改，币照常释放到创建人的地址。创建人自己的风险，CLI 里提示。另外创建人可以是一个持有 Agent 身份的合约，「不能改」固定的是地址，不是控制它的人 |
@@ -256,11 +256,13 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 1. 部署金库的实现合约（构造时写死 pad 的地址）。
 2. 构建新的 `Pad3Module`、`CurveLogic3` 和实现合约，7 个依赖地址不变。构建脚本每次都会连带部署一个新地址的 `Pad3FlyModule`（代码不变）。
 3. **基线**：abcd 已于 2026-11-12 在主网激活（`docs/MAINNET-GANG-LAUNCHPAD-3-ABCD-2026-11-10.md`），本次升级以线上这版实现为基础。激活是单向的，所以主网上 `createWithBase` 只能经 `createWithSalt` 调用；直接调用的路径只在没开 abcd 的测试网和 fork 上用得到。
-4. Safe 批次：升级 → `setBaseVaultImpl(impl)`。
+4. Safe 批次分两次：
+   - **第一批：只升级**。跑升级脚本时不设 `PAD3_BASE_VAULT_IMPL`。升级后 `baseVaultImpl()` 是 0，`createWithBase` 回滚 `BaseNotOpen`，链上行为和升级前一样。
+   - **第二批：`setBaseVaultImpl(impl)`**，等服务端（索引、保证金徽章、释放 keeper）、网页（含底仓金库实现地址的配置）和 CLI 都上线之后再执行。用 `script/SetGangBaseVaultImpl.s.sol`（设 `GANG_PAD3` 和 `PAD3_BASE_VAULT_IMPL`）：它核对代码、按 owner 模拟并读回，再打印只有这一笔的 Safe 批次。**不要为此重跑升级脚本**：不设 `PAD3_IMPL` 时它会重新部署一套模块和实现合约，打出一次多余的升级。原因：这一笔执行后任何 Agent 都能直接调合约建底仓币，不必等 CLI；如果链下还没准备好，页面会照旧显示保证金覆盖率（§6 说明它约束不了底仓），金库的那笔买入会被算成 dev 买入，毕业后也没有 keeper 调 `release`。
 5. 升级脚本：
    - `setBaseVaultImpl` 放在设置对比之后执行，否则会触发「设置变了」的检查；
    - 设置快照加 `baseVaultImpl()`（升级前读不到按 0 处理）；
-   - 抽样只取最新的 25 个币，pad 又没法枚举带底仓的币，所以要像推广分成那样给一份探针名单（从 `BaseCreated` 事件里取），比对 `baseVaultOf`、`baseOf`；
+   - 抽样只取最新的 25 个币，pad 又没法枚举带底仓的币，所以要像推广分成那样给一份探针名单（从 `BaseCreated` 事件里取），比对 `baseVaultOf`、`baseOf`。第一次上线时还没有底仓币，名单为空；**之后每次升级，签名前必须用 `PAD3_BASE_PROBES` 填上已有的底仓币**（脚本在名单为空时只警告、不拒绝）；
    - `Pad3BaseStore.SLOT` 和成员位置；金库实现合约的代码和本次构建逐字节一致。
 
 ## 9. 众筹
@@ -317,7 +319,7 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 6. 第一版只对 WBNB 计价的币开放，不支持带分红的币。
 7. 优先级沿用之前定的：排在飞轮模式和底价赎回收尾之后。
 
-8. 带底仓的币的保证金徽章（2026-11-13 定）：覆盖率 = 保证金 ÷（创建人钱包 + 金库里剩下的全部）全部卖出所得，不扣卖出税；原有的「承诺量占持仓比例」检查照旧；承诺量低于已释放的量（按时间已释放和实际转出取大）、或保证金比释放期先结束时，不给档位（灰色）；绿色徽章写「押金 ≥ 抛售所得」，不写「全覆盖」。实现见 gang-web-legacy#48、gangfun-server#57。
+8. 带底仓的币的保证金徽章（2026-11-13 定）：覆盖率 = 保证金 ÷（创建人钱包 + 金库里剩下的全部）全部卖出所得，不扣卖出税；原有的「承诺量占持仓比例」检查照旧；承诺量低于已释放的量（按时间已释放和实际转出取大）、或保证金比释放期先结束时，不给档位（灰色）；绿色徽章写「押金 ≥ 抛售所得」，不写「全覆盖」。保证金还没开始计时（没有到期时间）时，同样不给档位。
 
 ## 13. 设计历史和评审记录
 
@@ -356,4 +358,5 @@ function moduleType() external pure returns (bytes32);  // "base-v1"
 |---|---|---|
 | 实现评审 | 没有严重、高危、中危。低危：升级脚本还没支持底仓；§10 列的几项测试没写 | 升级脚本加 `PAD3_BASE_VAULT_IMPL`（实现合约逐字节核对、`setBaseVaultImpl` 放在批次最后、快照和 `PAD3_BASE_PROBES`）；新增 `script/DeployGangBaseVault.s.sol`；补了创建人是合约、永不毕业、随机时间释放的 fuzz、升级后状态不变和脚本检查的测试 |
 | 对补充部分的复审 | 没有严重、高危、中危。低危：有底仓币但没给探针时脚本不提醒；升级模拟里没有实际建一次底仓币 | 加了提醒；建币、毕业、释放由主网 fork 测试覆盖 |
+| 合并前的全面复查（2026-11-14，合约、脚本、CLI 分开评审） | 合约没有严重、高危、中危；低危：`createWithSalt` 收 BNB 的测试只覆盖了一个入口。脚本：中危是上线顺序（`setBaseVaultImpl` 一执行任何 Agent 都能建底仓币，链下没准备好时显示和统计会错），低危是部署脚本主网不核对 pad、验收脚本注释说能重跑。CLI 三处低危（创建人分成写死 70%、全部释放后的提示、`--base-vest` 缺 `--base` 的报错）。复审：新单测并行时共用环境变量会偶发失败；§8 第二批写成了重跑升级脚本 | 测试改成逐个入口：带 BNB 空回滚、不带 BNB 参数能解出来；§8 改为两批，新增 `script/SetGangBaseVaultImpl.s.sol` 发第二批（重跑升级脚本会再部署、再升级一次），fork 测试按两批走；部署脚本主网要求 pad 是线上 3.0 代理；注释改正；CLI 三处都改了。复审后：脚本的输入改成参数传入，测试不再写环境变量；§8 和 R3 改成用新脚本；更换已有实现要 `PAD3_BASE_REPLACE=true` |
 | 提示 | 底仓多记的 1 wei 会被第一个往返卖出的人拿走；毕业后 pad 留 1 wei WBNB（原有行为）；`setBaseVaultImpl` 本身不核对代码哈希（由脚本核对） | 不改 |

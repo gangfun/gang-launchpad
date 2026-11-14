@@ -19,6 +19,7 @@ import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {FlyUpgradeHarness} from "./Pad3LiveUpgrade.sol";
+import {SetGangBaseVaultImpl} from "../../script/SetGangBaseVaultImpl.s.sol";
 
 interface IWBNB {
     function deposit() external payable;
@@ -26,8 +27,8 @@ interface IWBNB {
 }
 
 /// @notice The opening base on a mainnet fork (docs/SPEC-BASE-VAULT-V2-2026-11-12.md §10): UpgradeGangLaunchpad3 run
-///         with PAD3_BASE_VAULT_IMPL against the live proxy (abcd already on), the batch sent as the Safe (upgrade, then
-///         setBaseVaultImpl), then an untaxed and a taxed base token created through createWithSalt, graduated to the
+///         against the live proxy (abcd already on) and its batch sent as the Safe (the upgrade alone: createWithBase
+///         stays closed), then SetGangBaseVaultImpl and its one-call batch (§8's second batch), then an untaxed and a taxed base token created through createWithSalt, graduated to the
 ///         real Pancake V2 pair, and released in full. Agent IDs are mocked only on this fork. No broadcast.
 /// @dev BSC_RPC_URL required (skipped if absent). Link the live PoolCheck:
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
@@ -76,11 +77,11 @@ contract Pad3BaseUpgradeForkTest is Test {
             )
         );
 
-        // DeployGangBaseVault, then the upgrade script with PAD3_BASE_VAULT_IMPL
+        // DeployGangBaseVault, then the upgrade script without PAD3_BASE_VAULT_IMPL (spec §8: first batch)
         address impl = address(new GangBaseVault(PAD3));
         (, uint256 key) = makeAddrAndKey("base fork deployer");
         vm.deal(vm.addr(key), 10 ether);
-        _env(key, impl);
+        _env(key, address(0));
         FlyUpgradeHarness upgrade = new FlyUpgradeHarness();
         vm.pauseGasMetering();
         upgrade.run();
@@ -88,18 +89,34 @@ contract Pad3BaseUpgradeForkTest is Test {
         address next = upgrade.deployedImpl();
         assertTrue(next != address(0));
 
-        // the Safe batch, in the order the script prints it
+        // first batch: the upgrade alone; createWithBase stays closed
         vm.record();
-        vm.startPrank(M.OWNER_SAFE);
+        vm.prank(M.OWNER_SAFE);
         ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), next, "");
-        m.setBaseVaultImpl(impl);
-        vm.stopPrank();
         (, bytes32[] memory writes) = vm.accesses(PAD3);
-        assertEq(writes.length, 2, "only the implementation slot and the base namespace");
-        for (uint256 i; i < writes.length; i++) {
-            assertTrue(writes[i] == R.IMPLEMENTATION_SLOT || writes[i] == Pad3BaseStore.SLOT, "historical storage");
-        }
+        assertEq(writes.length, 1, "only the implementation slot");
+        assertEq(writes[0], R.IMPLEMENTATION_SLOT);
         assertEq(R.implementationOf(PAD3), next);
+        assertEq(m.baseVaultImpl(), address(0), "closed after the upgrade");
+        IGangLaunchpad.TaxConfig memory none;
+        bytes memory closed = abi.encodeCall(
+            Pad3Module.createWithBase, ("C", "C", "", "", none, 6 ether, IGangBasePad.BaseConfig(500, 30))
+        );
+        uint256 closedCost = m.previewBaseCost(6 ether, 500);
+        vm.deal(creator, creator.balance + closedCost);
+        vm.prank(creator, creator);
+        vm.expectRevert(IGangBasePad.BaseNotOpen.selector);
+        m.createWithSalt{value: closedCost}(bytes32(0), closed);
+
+        // second batch, once the off-chain parts are live: SetGangBaseVaultImpl checks and prints it, the Safe sends it
+        new SetGangBaseVaultImpl().run(PAD3, impl, 0, false);
+        assertEq(m.baseVaultImpl(), address(0), "the script only prints on mainnet");
+        vm.record();
+        vm.prank(M.OWNER_SAFE);
+        m.setBaseVaultImpl(impl);
+        (, writes) = vm.accesses(PAD3);
+        assertEq(writes.length, 1, "only the base namespace");
+        assertEq(writes[0], Pad3BaseStore.SLOT);
         assertEq(m.baseVaultImpl(), impl);
         assertEq(m.vanityDeployer(), factory);
         assertEq(p.owner(), M.OWNER_SAFE);

@@ -3,7 +3,7 @@ import { decimalsOf, defaultRefPool, dividendOf, VAULT_ABI, fundingStep as fund,
 import { API } from './discover.js'
 import { UA } from './version.js'
 import { walletFor } from './fair.js'
-import { atTokenPad, CREATOR_FEE_ABI, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, tokenVaultOf, VAULT_GEN, VAULT_NO_BOND, vaultGenOf, vaultModeOf } from './gangpad.js'
+import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, genFields, GRAD_TARGET_ABI, gradTargetBnbOf, gradTiersOf, KIND_UNREAD, MERGED_ERRORS_ABI, MERGED_HINTS, NOT_ON_MAINNET, notThisKind, PAD3_GEN, padNets, rpcTransport, tokenVaultOf, VAULT_GEN, VAULT_NO_BOND, vaultGenOf, vaultModeOf } from './gangpad.js'
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, followPromoter, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
@@ -674,7 +674,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       sizePct: base.baseBps / 100, vestDays: base.vestDays, costBnb: formatUnits(baseCost, 18), payWithThisTx: `${formatUnits(baseCost, 18)} BNB (the tx's value: exactly what the pad's previewBaseCost asks for a ${base.baseBps / 100}% base at the ${targetBnb} BNB target)`,
       what: `the pad buys ${base.baseBps / 100}% of the supply on the curve as the token's very first trade, for this token's own base vault (GangBaseVault, base-v1). The vault never trades and approves no one: the base cannot move before graduation`,
       schedule: scheduleLine(base.vestDays),
-      payoff: basePayoff({ gradBnb: targetBnb, baseBps: base.baseBps, vestDays: base.vestDays, cost: baseCost }),
+      payoff: basePayoff({ gradBnb: targetBnb, baseBps: base.baseBps, vestDays: base.vestDays, cost: baseCost, creatorFeeShareBps: (await creatorFeeShareOf(ctx).catch(() => null)) ?? undefined }),
       ...(taxed && { tax: baseTaxLine({ taxed, sellTaxPct: sellTax, platformTaxPct: fees.platformTaxPct, selfRecipient }) }),
       neverGraduates: BASE_LOST,
       bond: BASE_NO_BOND,

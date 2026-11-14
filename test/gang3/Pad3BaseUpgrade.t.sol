@@ -14,6 +14,7 @@ import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
 import {DeployGang} from "../../script/DeployGang.s.sol";
+import {SetGangBaseVaultImpl} from "../../script/SetGangBaseVaultImpl.s.sol";
 
 contract BaseUpgradeHarness is UpgradeGangLaunchpad3 {
     function check(address proxy, address impl, address upgrader) external {
@@ -144,5 +145,69 @@ contract Pad3BaseUpgradeTest is GangFixture {
             abi.encodeWithSelector(DeployGang.WiringCheck.selector, "PAD3_BASE_PROBES: a token without an opening base")
         );
         h.probes(address(pad), list);
+    }
+
+    /// @dev The second owner batch (spec §8): checks, simulates, sends nothing unless the deploy wallet owns the pad.
+    function test_setScript_checksAndOnlyPrints() public {
+        vm.chainId(97);
+        SetGangBaseVaultImpl s = new SetGangBaseVaultImpl();
+        s.run(address(pad), address(impl), 0, false);
+        assertEq(m.baseVaultImpl(), address(0), "printed, not sent");
+
+        address other = address(new GangBaseVault(makeAddr("other pad")));
+        vm.expectRevert(abi.encodeWithSelector(SetGangBaseVaultImpl.Check.selector, "vault implementation code"));
+        s.run(address(pad), other, 0, false);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SetGangBaseVaultImpl.Check.selector, "pad not upgraded to the base build")
+        );
+        s.run(address(wbnb), address(impl), 0, false);
+
+        vm.prank(upgrader);
+        m.setBaseVaultImpl(address(impl));
+        vm.expectRevert(
+            abi.encodeWithSelector(SetGangBaseVaultImpl.Check.selector, "already set to PAD3_BASE_VAULT_IMPL")
+        );
+        s.run(address(pad), address(impl), 0, false);
+
+        // replacing one already set needs PAD3_BASE_REPLACE
+        GangBaseVault second = new GangBaseVault(address(pad));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SetGangBaseVaultImpl.Check.selector,
+                "an implementation is already set: PAD3_BASE_REPLACE=true to replace it"
+            )
+        );
+        s.run(address(pad), address(second), 0, false);
+        s.run(address(pad), address(second), 0, true);
+        assertEq(m.baseVaultImpl(), address(impl), "printed, not sent");
+
+        vm.chainId(56);
+        vm.expectRevert(
+            abi.encodeWithSelector(SetGangBaseVaultImpl.Check.selector, "GANG_PAD3 is not the mainnet 3.0 proxy")
+        );
+        s.run(address(pad), address(impl), 0, false);
+
+        vm.chainId(31337);
+        vm.expectRevert(
+            abi.encodeWithSelector(SetGangBaseVaultImpl.Check.selector, "chain: BSC mainnet or testnet only")
+        );
+        s.run(address(pad), address(impl), 0, false);
+    }
+
+    function test_setScript_testnetSendsWhenTheDeployWalletOwnsThePad() public {
+        (address dep, uint256 key) = makeAddrAndKey("testnet deployer");
+        vm.prank(upgrader);
+        p.transferOwnership(dep);
+        vm.prank(dep);
+        p.acceptOwnership();
+        vm.chainId(97);
+        SetGangBaseVaultImpl s = new SetGangBaseVaultImpl();
+        // another key: printed only
+        (, uint256 otherKey) = makeAddrAndKey("someone else");
+        s.run(address(pad), address(impl), otherKey, false);
+        assertEq(m.baseVaultImpl(), address(0));
+        s.run(address(pad), address(impl), key, false);
+        assertEq(m.baseVaultImpl(), address(impl));
     }
 }

@@ -1,4 +1,4 @@
-/** Review (base-v1 fix): index.js refuses --base with --promote-days / --vault / untaxed --promote before any chain read; the lone guard still reaches --base-vest. */
+/** Review (base-v1 fix): index.js refuses --base with --promote-days / --vault / untaxed --promote before any chain read; --base-vest without --base is refused first. */
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 const ME = '0x0000000000000000000000000000000000000d3f'
@@ -8,5 +8,5 @@ const pre = (out, re) => { assert.match(out, re, out); assert.doesNotMatch(out, 
 pre(cli([...common, '--promote-days', '30']), /--promote-days: --base and --promote/)
 pre(cli([...common, '--promote', '10']), /--base and --promote/)
 pre(cli([...common, '--vault', '0x0000000000000000000000000000000000000a11']), /--base and --vault/)
-pre(cli(['create', '--name', 'B', '--symbol', 'B', '--testnet', '--from', ME, '--base-vest', '30', '--promote', '5']), /--base and --promote/)
+pre(cli(['create', '--name', 'B', '--symbol', 'B', '--testnet', '--from', ME, '--base-vest', '30', '--promote', '5']), /--base-vest needs --base/)
 console.log('review-base-guard: ok')

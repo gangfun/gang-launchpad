@@ -1522,6 +1522,7 @@ async function main() {
   }
   // --base (3.0 opening base): a V3 create paid in BNB, alone: no 打新 / 铸币飞轮, no chained launch
   if (tokenCreate && (flag('base') || flag('base-vest'))) {
+    if (!flag('base')) fail('--base-vest needs --base 5 or --base 10 (the opening base size)')
     if (flyCreate || flag('fair') || cmd === 'fair') fail(`--base buys an opening base on a V3 curve token: leave --${flyCreate ? 'fly' : 'fair'} out`)
     // --promote / --vault first: a taxed --promote alone starts a launch in one command (a promoter pool module clone)
     const other = ['promote', 'promote-days', 'vault'].find((f) => flag(f))

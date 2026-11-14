@@ -24,7 +24,8 @@ interface IWBNBLite {
 ///         the vault and the money are read back, the vault cannot start before graduation, and the deployer's own
 ///         wallet still buys and sells on the curve. Graduation and release need 6 tBNB of buys and are covered by
 ///         test/fork/Pad3BaseUpgradeFork.t.sol on mainnet state.
-/// @dev Env: DEPLOYER_PRIVATE_KEY, GANG_PAD3. Re-runnable: a token already made for this deployer is read back.
+/// @dev Env: DEPLOYER_PRIVATE_KEY, GANG_PAD3. Not idempotent: each run mines a fresh salt and creates (and pays for)
+///      another base token.
 contract BaseTestnetAcceptance is Script {
     string internal constant NAME = "Base Test";
     string internal constant SYMBOL = "BASET";

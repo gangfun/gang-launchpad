@@ -212,7 +212,9 @@ export async function baseOf(ctx, token) {
         ? `locked until graduation. Then the first gang base release starts a ${days}-day linear release to the creator. ${BASE_LOST.replace('you paid', 'the creator paid')}`
         : `graduated, release not started: the first gang base release (anyone may call it) starts the clock; nothing moves in that call`
       : vested >= total && now - startAt >= duration
-        ? 'the release period is over: gang base release sends the vault\'s whole balance to the creator'
+        ? balance === 0n
+          ? 'fully released: the vault is empty (gang base release has nothing to send)'
+          : 'the release period is over: gang base release sends the vault\'s whole balance to the creator'
         : `releasing linearly to the creator until ${iso(startAt + duration)}; unreleased is counted by time (total − vested so far), not from the vault's balance`,
     bond: BASE_NO_BOND,
     raw: { bought, startAt, duration, total, released, releasable, balance, locked, now },
@@ -231,7 +233,7 @@ export async function runBase(sub, { opt, flag, out, fail, summarize }) {
   const chainId = Number(ctx.chainId)
   const tn = testnet ? ' --testnet' : ''
   const token = opt('token')
-  if (!isAddress(token ?? '')) fail('--token must be a 3.0 curve token address (0x…)', { got: token ?? null })
+  if (!isAddress(token ?? '')) return fail('--token must be a 3.0 curve token address (0x…)', { got: token ?? null })
   const kind = await atTokenPad(ctx, token)
   if (kind === null) return fail(KIND_UNREAD.error, { token, retry: KIND_UNREAD.retry })
   if (kind !== 'v3') return fail(`not a V3 curve token on a GangLaunchpad (${testnet ? 'BSC testnet' : 'BSC mainnet; add --testnet for a testnet token'})`, { token, chainId, ...(kind && kind !== 'none' && { kind }) })
