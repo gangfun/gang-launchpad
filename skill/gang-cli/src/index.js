@@ -1630,25 +1630,25 @@ async function main() {
       const issues = []
       const status = bawStatus()
       if (status !== 'CONNECTED') issues.push({ code: 'NOT_SIGNED_IN', fix: 'Run `baw auth signin` and confirm in the Binance App.' })
-      let me = null, settings = null, agent = false
+      let me = null, settings = null, agent = false, balance = null, balanceCut = false
       if (status === 'CONNECTED') {
         me = bawAddress(); settings = bawSettings()
         if (!settings.devMode?.enabled) issues.push({ code: 'DEV_MODE_OFF', fix: 'Enable Developer Mode in Binance App → Agentic Wallet settings.' })
         if (!settings.tradeAllTokens) issues.push({ code: 'TRADE_ALL_TOKENS_OFF', fix: 'Enable "Trade all tokens" in Binance App → Agentic Wallet settings, otherwise SELLING Gang tokens is blocked by risk control (buying still works).' })
+        // the BNB balance, read beside the Agent ID check (after the last baw call, which blocks the event loop). Capped at
+        // 3 s: with every RPC down, the transport's retries would hold preflight for far longer. Null when unread
+        const cap = new Promise((r) => { const t = setTimeout(() => { balanceCut = true; r(null) }, 3000); t.unref?.() })
+        balance = Promise.race([client.getBalance({ address: me }), cap]).catch(() => null)
         agent = await createGateAgent(me)
         if (!agent) issues.push({ code: 'NO_AGENT_ID', fix: 'Claim a .ai Agent ID in Binance Wallet (Agent ID banner). Gang only lets Agent ID holders buy/create.' })
       }
       // after the baw calls: they block the event loop, and the fetch's short timeout would run out meanwhile
       const hot = trendingBlock({ wallet: me })
       // an empty wallet is the next stop after setup: say so now, as a warning (setup itself is done)
-      let bnb = null, balanceCut = false
-      const warnings = []
-      if (me) {
-        // capped at 3 s: with every RPC down, the transport's retries would hold preflight for far longer
-        const cap = new Promise((r) => { const t = setTimeout(() => { balanceCut = true; r(null) }, 3000); t.unref?.() })
-        try { bnb = await Promise.race([client.getBalance({ address: me }), cap]) } catch { /* RPC down: no balance line, preflight still answers */ }
-        if (bnb != null && bnb < LOW_BNB) warnings.push({ code: 'LOW_BNB', fix: `Top up before the first trade: ${FUND_HOW}.` })
-      }
+      const bnb = balance && await balance
+      const warnings = bnb != null && bnb < LOW_BNB
+        ? [{ code: 'LOW_BNB', fix: 'Top up before the first trade: send BNB on BNB Smart Chain (BEP-20) to the address above, keeping about 0.002 BNB more than the trade for gas.' }]
+        : []
       out({
         success: issues.length === 0, cliVersion: VERSION, status, address: me,
         // `launchpad` = createPad: kept for readers of the old field (it used to be the V2 create target)
