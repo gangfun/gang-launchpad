@@ -18,7 +18,9 @@ import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {Pad3Impl} from "../../script/Pad3Impl.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
-import {FlyUpgradeHarness} from "./Pad3LiveUpgrade.sol";
+import {FlyUpgradeHarness, Pad3LiveUpgrade} from "./Pad3LiveUpgrade.sol";
+import {Pad3VanityAcceptanceVault} from "../../script/Pad3VanityTestnetAcceptance.s.sol";
+import {Pad3VanityAcceptanceHarness} from "../utils/Pad3VanityAcceptanceHarness.sol";
 import {SetGangBaseVaultImpl} from "../../script/SetGangBaseVaultImpl.s.sol";
 
 interface IWBNB {
@@ -132,6 +134,160 @@ contract Pad3BaseUpgradeForkTest is Test {
 
         _base(creator, factory, 0, 500, 30);
         _base(_actor(), factory, 300, 1000, 90);
+    }
+
+    /// @notice The first-batch JSON written for signing (PAD3_FORK_BATCH), as written, over the deployed mainnet
+    ///         contracts; then the seven create entries, and the second batch with the deployed vault implementation
+    ///         (PAD3_BASE_VAULT_IMPL) checked by SetGangBaseVaultImpl. Skipped unless both are set.
+    function test_fork_signedBatchThenOpenBase() public {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        string memory path = Pad3LiveUpgrade.batchFile();
+        address impl = vm.envOr("PAD3_BASE_VAULT_IMPL", address(0));
+        if (bytes(rpc).length == 0 || bytes(path).length == 0 || impl == address(0)) {
+            vm.skip(true);
+            return;
+        }
+        uint256 forkBlock = vm.envOr("BSC_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        address factory = m.vanityDeployer();
+
+        (address creator, uint256 creatorKey) = makeAddrAndKey("base signed batch creator");
+        vm.deal(creator, 10 ether);
+        IGangLaunchpad.TaxConfig memory untaxed;
+        address old = _saltCreate(
+            creator,
+            factory,
+            "Old",
+            "OLD",
+            address(0),
+            0,
+            abi.encodeWithSignature(
+                "create(string,string,string,string,address,address,(uint16,uint16,uint16,address))",
+                "Old",
+                "OLD",
+                "",
+                "meta",
+                address(0),
+                address(0),
+                untaxed
+            )
+        );
+
+        // first batch, as written: one upgradeAndCall, no value, no set-up call
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonString(json, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
+        assertFalse(vm.keyExistsJson(json, ".transactions[1]"), "expected the one-call upgrade batch");
+        assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), R.adminOf(PAD3));
+        assertEq(vm.parseJsonString(json, ".transactions[0].value"), "0");
+        vm.record();
+        address next = Pad3LiveUpgrade.executeBatchFile(path, M.OWNER_SAFE);
+        (, bytes32[] memory writes) = vm.accesses(PAD3);
+        assertEq(writes.length, 1, "only the implementation slot");
+        assertEq(writes[0], R.IMPLEMENTATION_SLOT);
+        assertEq(
+            vm.parseJsonBytes(json, ".transactions[0].data"),
+            abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(PAD3), next, bytes("")))
+        );
+        assertEq(p.owner(), M.OWNER_SAFE);
+        assertEq(m.vanityDeployer(), factory);
+        assertEq(m.baseVaultImpl(), address(0), "closed after the upgrade");
+
+        // closed until the second batch
+        IGangLaunchpad.TaxConfig memory none;
+        uint256 closedCost = m.previewBaseCost(6 ether, 500);
+        vm.prank(creator, creator);
+        vm.expectRevert(IGangBasePad.BaseNotOpen.selector);
+        m.createWithSalt{value: closedCost}(
+            bytes32(0),
+            abi.encodeCall(
+                Pad3Module.createWithBase, ("C", "C", "", "", none, 6 ether, IGangBasePad.BaseConfig(500, 30))
+            )
+        );
+
+        // the seven existing create entries and the older tokens still work on the new implementation
+        _buy(_actor(), old, 0.05 ether);
+        vm.startPrank(M.OWNER_SAFE);
+        address vault = address(new Pad3VanityAcceptanceVault());
+        m.setVault(vault, true);
+        m.setVaultCreator(vault, creator);
+        vm.stopPrank();
+        // address(0): the harness picks a live pre-abcd WBNB curve (`old` above is an abcd token)
+        address[] memory tokens = new Pad3VanityAcceptanceHarness().accept(PAD3, creatorKey, vault, address(0));
+        assertEq(tokens.length, 7);
+
+        // second batch with the deployed vault implementation: the script's checks pass, then the Safe sends it
+        new SetGangBaseVaultImpl().run(PAD3, impl, 0, false);
+        assertEq(m.baseVaultImpl(), address(0), "the script only prints on mainnet");
+        vm.prank(M.OWNER_SAFE);
+        m.setBaseVaultImpl(impl);
+        assertEq(m.baseVaultImpl(), impl);
+
+        _base(creator, factory, 0, 500, 30);
+        _base(_actor(), factory, 300, 1000, 90);
+    }
+
+    /// @notice The second-batch JSON written for signing (PAD3_FORK_BATCH2), as written, on the live pad after the first
+    ///         batch: it writes only the base namespace, then base tokens are created, graduated and released, and the
+    ///         older tokens still trade. Skipped unless PAD3_FORK_BATCH2 is set (and the live pad runs the base build).
+    function test_fork_secondBatchOpensBase() public {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        string memory path = vm.envOr("PAD3_FORK_BATCH2", string(""));
+        if (bytes(rpc).length == 0 || bytes(path).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        uint256 forkBlock = vm.envOr("BSC_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        address factory = m.vanityDeployer();
+        assertEq(m.baseVaultImpl(), address(0), "still closed before the second batch");
+        address implBefore = R.implementationOf(PAD3);
+
+        (address creator, uint256 creatorKey) = makeAddrAndKey("base second batch creator");
+        vm.deal(creator, 10 ether);
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonString(json, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
+        assertFalse(vm.keyExistsJson(json, ".transactions[1]"), "expected the one-call batch");
+        assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), PAD3);
+        assertEq(vm.parseJsonString(json, ".transactions[0].value"), "0");
+        address impl = abi.decode(_tail(vm.parseJsonBytes(json, ".transactions[0].data")), (address));
+        assertEq(vm.parseJsonBytes(json, ".transactions[0].data"), abi.encodeCall(Pad3Module.setBaseVaultImpl, (impl)));
+        assertEq(GangBaseVault(impl).pad(), PAD3);
+        new SetGangBaseVaultImpl().run(PAD3, impl, 0, false);
+
+        vm.record();
+        Pad3LiveUpgrade.executeBatchFile(path, M.OWNER_SAFE);
+        (, bytes32[] memory writes) = vm.accesses(PAD3);
+        assertEq(writes.length, 1, "only the base namespace");
+        assertEq(writes[0], Pad3BaseStore.SLOT);
+        assertEq(m.baseVaultImpl(), impl);
+        assertEq(R.implementationOf(PAD3), implBefore);
+        assertEq(m.vanityDeployer(), factory);
+        assertEq(p.owner(), M.OWNER_SAFE);
+
+        // the existing entries still work, then base tokens through graduation and release
+        vm.startPrank(M.OWNER_SAFE);
+        address vault = address(new Pad3VanityAcceptanceVault());
+        m.setVault(vault, true);
+        m.setVaultCreator(vault, creator);
+        vm.stopPrank();
+        address[] memory tokens = new Pad3VanityAcceptanceHarness().accept(PAD3, creatorKey, vault, address(0));
+        assertEq(tokens.length, 7);
+        _base(creator, factory, 0, 500, 30);
+        _base(_actor(), factory, 300, 1000, 90);
+    }
+
+    function _tail(bytes memory data) private pure returns (bytes memory out) {
+        out = new bytes(data.length - 4);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = data[i + 4];
+        }
     }
 
     function _base(address creator, address factory, uint16 taxBps, uint16 bps, uint32 vestDays) internal {

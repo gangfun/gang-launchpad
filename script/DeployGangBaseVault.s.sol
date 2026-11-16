@@ -5,9 +5,10 @@ import {Script, console} from "forge-std/Script.sol";
 import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
 
 /// @notice Deploy only the base vault implementation (docs/SPEC-BASE-VAULT-V2-2026-11-12.md §8 step 1), its pad fixed
-///         to GANG_PAD3. Then run UpgradeGangLaunchpad3 with PAD3_BASE_VAULT_IMPL set to its address: that script
-///         checks its code against this build, simulates `setBaseVaultImpl` after the upgrade, and appends it to the
-///         owner batch. Nothing uses the implementation until that call.
+///         to GANG_PAD3. On mainnet the base opens in a second owner batch (spec §8 step 4): run UpgradeGangLaunchpad3
+///         WITHOUT PAD3_BASE_VAULT_IMPL for the upgrade, then, once the server, the website and the CLI are live,
+///         SetGangBaseVaultImpl with PAD3_BASE_VAULT_IMPL set to this address (it checks the code against this build
+///         and prints the one-call batch). Nothing uses the implementation until `setBaseVaultImpl`.
 contract DeployGangBaseVault is Script {
     /// @dev The mainnet GangLaunchpad 3.0 proxy: a mainnet vault fixed to any other pad is refused here.
     address internal constant MAINNET_PAD3 = 0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29;
