@@ -4,7 +4,7 @@
 - 规格：`docs/SPEC-BASE-VAULT-V2-2026-11-12.md`；测试网记录：`docs/TESTNET-BASE-VAULT-2026-11-13.md`
 - 源码：PR #156（已合并，合并提交 `9cac485`）。部署记录里的 `commit` 字段是该 PR 的最后一个提交 `59d0665`，`src/` 和合并后的 main 相同
 - 部署钱包 `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`；gas price 0.05 gwei
-- 状态：金库实现合约已部署；**Safe 第一批（只升级）已于 2026-11-16 执行**，3.0 代理已在新实现上。`createWithBase` 仍然关闭（`BaseNotOpen`），等服务端、网站、CLI 上线后执行第二批
+- 状态：金库实现合约已部署；**Safe 第一批（只升级）已于 2026-11-16 执行**，3.0 代理已在新实现上。`createWithBase` 仍然关闭（`BaseNotOpen`），服务端 v1.2.101、网站 v1.2.129 / v1.2.130、CLI 0.40.0 已上线；**Safe 第二批（开放底仓）已生成，等待签名**
 
 ## 部署
 
@@ -57,10 +57,34 @@
 - `SetGangBaseVaultImpl` 对执行后的主网状态只读运行，检查全部通过并打印出第二批（一笔 `setBaseVaultImpl(0x6ff4…0F3b)`）。签名前要再生成一次，这次没有存档。
 - 执行后的主网状态（区块 133875100 之后）上重跑 `test_fork_signedBatchThenOpenBase`：1 通过、0 失败。批次在已升级的代理上再执行一次只是重写同一个实现地址；后面的七种创建入口、老曲线币买卖、第二批以及两个底仓币的毕业和释放全部通过。Agent ID 只在 fork 里模拟，没有在主网发测试币或做测试交易。
 
+## 链下上线（2026-11-16）
+
+- 服务端 v1.2.101（gangfun-server #57）：索引 `BaseCreated` 和金库事件、底仓币的保证金规则、释放 keeper。生产 keeper：pad-watch 的 3.0 预期实现改为新实现；`base-release` 定时任务已装上，`BASE_PADS` 未设时不做任何事。
+- 网站 v1.2.129（gang-web-legacy #48，`VITE_GANG_BASE_VAULT_IMPL3` = 上面的金库实现合约）和 v1.2.130（#50：`capabilities.json`、`llms.txt`、指南的 CLI 0.40.0 说明）。
+- CLI 0.40.0（#161，npm 和 MCP Registry）：从 pad 读 `baseVaultImpl()`，开放前 `--base` 在发送前就停下并提示未开放。
+
+## Safe 第二批（等待签名）
+
+归档文件：[MAINNET-GANG-LAUNCHPAD-3-OPEN-BASE-SAFE-BATCH-2026-11-16.json](MAINNET-GANG-LAUNCHPAD-3-OPEN-BASE-SAFE-BATCH-2026-11-16.json)，SHA-256 `66f027f66b08d3409296604f7f2a0610f85eadd5191478b3f1279c0ae3de1d09`。由 `script/SetGangBaseVaultImpl.s.sol` 对执行第一批后的主网状态生成。Safe `0x2866369F7acEFC9760bdE7779362fae5cD68B41E`，一笔，不转 BNB，立即生效：
+
+| 顺序 | 目标 | 调用 |
+|---|---|---|
+| 1 | Pad 3.0 代理 `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29` | `setBaseVaultImpl(0x6ff43a038524a46b9F537c0725c17356DCfF0F3b)` |
+
+脚本的检查：链是主网，pad 是 3.0 代理且已是底仓构建，owner 是 Safe，当前 `baseVaultImpl()` = 0，实现合约的代码和本次构建（`pad` 固定为该代理）逐字节一致；以 Safe 身份模拟设置并读回，然后回滚。
+
+签名前的 fork 演练（`test/fork/Pad3BaseUpgradeFork.t.sol` 的 `test_fork_secondBatchOpensBase`，`PAD3_FORK_BATCH2` = 上面的 JSON；2026-11-16，执行第一批后的主网最新状态，约区块 133,935,701 之前；公共归档节点；Agent ID 只在 fork 里模拟，没有广播）：1 通过、0 失败。
+
+- 检查链、Safe、只有一笔、目标是代理、不转 BNB、calldata 就是 `setBaseVaultImpl(实现合约)`，实现合约的 `pad()` 是该代理；`SetGangBaseVaultImpl` 对同一实现合约检查通过。
+- 以 Safe 身份原样执行后，代理只写了底仓命名空间；实现地址、abcd 部署器、owner 都不变。
+- abcd 上线时的七种创建入口（含一个线上老曲线币的买卖）通过；不带税 5% / 30 天、带税 3% / 10% / 90 天两个底仓币买到毕业，真实 Pancake V2 交易对拿到 2 亿枚和 6 WBNB，释放三分之一、到期全部转给创建人。
+
+执行后要做：读回 `baseVaultImpl()`；生产 keeper 设 `BASE_PADS=gl3:0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29@<执行区块>`；第一个真实底仓币出来后核对服务端、网站和 CLI 的显示。
+
 ## 后续（spec §8）
 
 1. ~~Safe 第一批~~：已执行（见上）。
-2. 服务端、网站（配置 `VITE_GANG_BASE_VAULT_IMPL3` = 上面的实现合约）、CLI 0.40.0 上线。
-3. **Safe 第二批**：`script/SetGangBaseVaultImpl.s.sol`，`PAD3_BASE_VAULT_IMPL` = 上面的实现合约。脚本会再比对一次字节码，模拟 `setBaseVaultImpl` 并读回，然后打印单笔交易的 Safe 批次。不要为第二批重跑升级脚本。
+2. ~~服务端、网站、CLI 0.40.0 上线~~：已完成（见上）。
+3. **Safe 第二批**（已生成，见上）：`script/SetGangBaseVaultImpl.s.sol`，`PAD3_BASE_VAULT_IMPL` = 上面的实现合约。脚本会再比对一次字节码，模拟 `setBaseVaultImpl` 并读回，然后打印单笔交易的 Safe 批次。不要为第二批重跑升级脚本。
 
 每一步完成后在本文件补记录。

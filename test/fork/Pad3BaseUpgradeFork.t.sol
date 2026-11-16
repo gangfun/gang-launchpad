@@ -229,6 +229,67 @@ contract Pad3BaseUpgradeForkTest is Test {
         _base(_actor(), factory, 300, 1000, 90);
     }
 
+    /// @notice The second-batch JSON written for signing (PAD3_FORK_BATCH2), as written, on the live pad after the first
+    ///         batch: it writes only the base namespace, then base tokens are created, graduated and released, and the
+    ///         older tokens still trade. Skipped unless PAD3_FORK_BATCH2 is set (and the live pad runs the base build).
+    function test_fork_secondBatchOpensBase() public {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        string memory path = vm.envOr("PAD3_FORK_BATCH2", string(""));
+        if (bytes(rpc).length == 0 || bytes(path).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        uint256 forkBlock = vm.envOr("BSC_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        address factory = m.vanityDeployer();
+        assertEq(m.baseVaultImpl(), address(0), "still closed before the second batch");
+        address implBefore = R.implementationOf(PAD3);
+
+        (address creator, uint256 creatorKey) = makeAddrAndKey("base second batch creator");
+        vm.deal(creator, 10 ether);
+
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonString(json, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
+        assertFalse(vm.keyExistsJson(json, ".transactions[1]"), "expected the one-call batch");
+        assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), PAD3);
+        assertEq(vm.parseJsonString(json, ".transactions[0].value"), "0");
+        address impl = abi.decode(_tail(vm.parseJsonBytes(json, ".transactions[0].data")), (address));
+        assertEq(vm.parseJsonBytes(json, ".transactions[0].data"), abi.encodeCall(Pad3Module.setBaseVaultImpl, (impl)));
+        assertEq(GangBaseVault(impl).pad(), PAD3);
+        new SetGangBaseVaultImpl().run(PAD3, impl, 0, false);
+
+        vm.record();
+        Pad3LiveUpgrade.executeBatchFile(path, M.OWNER_SAFE);
+        (, bytes32[] memory writes) = vm.accesses(PAD3);
+        assertEq(writes.length, 1, "only the base namespace");
+        assertEq(writes[0], Pad3BaseStore.SLOT);
+        assertEq(m.baseVaultImpl(), impl);
+        assertEq(R.implementationOf(PAD3), implBefore);
+        assertEq(m.vanityDeployer(), factory);
+        assertEq(p.owner(), M.OWNER_SAFE);
+
+        // the existing entries still work, then base tokens through graduation and release
+        vm.startPrank(M.OWNER_SAFE);
+        address vault = address(new Pad3VanityAcceptanceVault());
+        m.setVault(vault, true);
+        m.setVaultCreator(vault, creator);
+        vm.stopPrank();
+        address[] memory tokens = new Pad3VanityAcceptanceHarness().accept(PAD3, creatorKey, vault, address(0));
+        assertEq(tokens.length, 7);
+        _base(creator, factory, 0, 500, 30);
+        _base(_actor(), factory, 300, 1000, 90);
+    }
+
+    function _tail(bytes memory data) private pure returns (bytes memory out) {
+        out = new bytes(data.length - 4);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = data[i + 4];
+        }
+    }
+
     function _base(address creator, address factory, uint16 taxBps, uint16 bps, uint32 vestDays) internal {
         address handler = Pad3Impl.depsOf(p).taxHandler;
         IGangLaunchpad.TaxConfig memory tax = IGangLaunchpad.TaxConfig({
