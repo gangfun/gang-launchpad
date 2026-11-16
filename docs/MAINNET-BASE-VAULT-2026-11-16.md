@@ -4,7 +4,7 @@
 - 规格：`docs/SPEC-BASE-VAULT-V2-2026-11-12.md`；测试网记录：`docs/TESTNET-BASE-VAULT-2026-11-13.md`
 - 源码：PR #156（已合并，合并提交 `9cac485`）。部署记录里的 `commit` 字段是该 PR 的最后一个提交 `59d0665`，`src/` 和合并后的 main 相同
 - 部署钱包 `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`；gas price 0.05 gwei
-- 状态：金库实现合约和 3.0 新实现都已部署；**Safe 第一批（只升级）已生成，等待签名**。签名执行前 pad 不变，执行后 `createWithBase` 也仍然关闭，要等第二批
+- 状态：金库实现合约已部署；**Safe 第一批（只升级）已于 2026-11-16 执行**，3.0 代理已在新实现上。`createWithBase` 仍然关闭（`BaseNotOpen`），等服务端、网站、CLI 上线后执行第二批
 
 ## 部署
 
@@ -36,9 +36,9 @@
 
 脚本先在模拟里以 Safe 身份执行升级，再读回比对：最新 25 个币的记录和视图、pad 设置、阶段 2 的全部读回，都和升级前一致。然后带 `PAD3_IMPL`、`PAD3_FLY_HANDLER`、`PAD3_FLY_VAULT_CORE` 只读重跑，打印出第一批。没有设 `PAD3_PROMOTE_PROBES`：部署用的 RPC 不支持 `eth_getLogs`，公共节点的日志又不完整，拿不到完整的绑定名单。上一次升级（abcd）也没有设。推广分成的命名空间由 `test/gang3/Pad3Promote.t.sol` 固定，带分成的币如果在 25 个样本里，它的条款也会比对。
 
-## Safe 第一批（等待签名）
+## Safe 第一批（已执行）
 
-归档文件：[MAINNET-GANG-LAUNCHPAD-3-UPGRADE-BASE-SAFE-BATCH-2026-11-16.json](MAINNET-GANG-LAUNCHPAD-3-UPGRADE-BASE-SAFE-BATCH-2026-11-16.json)，SHA-256 `4c007916b0cb561a44eaefae5838e5bf94d693a7f0a4bd55d2212ad96892fcc7`。Safe `0x2866369F7acEFC9760bdE7779362fae5cD68B41E`，一笔，不转 BNB：
+归档文件：[MAINNET-GANG-LAUNCHPAD-3-UPGRADE-BASE-SAFE-BATCH-2026-11-16.json](MAINNET-GANG-LAUNCHPAD-3-UPGRADE-BASE-SAFE-BATCH-2026-11-16.json)，SHA-256 `4c007916b0cb561a44eaefae5838e5bf94d693a7f0a4bd55d2212ad96892fcc7`。已执行交易：[`0x48244fdd…2debf`](https://bscscan.com/tx/0x48244fdd365653f3add898d997de417f2f5c77afc7deb16e33f9ff73c5e2debf)，区块 133874706（2026-11-16 13:51 UTC+8），gas 84,578，费用 0.0000042289 BNB。Safe `0x2866369F7acEFC9760bdE7779362fae5cD68B41E`，两位持有者签名，nonce 52，safeTxHash `0xe6c077b2…e5e4`。一笔，不转 BNB：
 
 | 顺序 | 目标 | 调用 |
 |---|---|---|
@@ -49,9 +49,17 @@
 - `test_fork_signedBatchThenOpenBase`（`PAD3_FORK_BATCH` = 上面的 JSON，`PAD3_BASE_VAULT_IMPL` = 已部署的金库实现合约）：检查链、Safe、只有一笔、目标是 ProxyAdmin、不转 BNB、calldata 就是升级到新实现且不带初始化调用；以 Safe 身份原样执行后，代理只写了实现地址槽；owner 和 abcd 部署器不变；`baseVaultImpl()` = 0，经 `createWithSalt` 调 `createWithBase` 回滚 `BaseNotOpen`；升级前建的 abcd 币照常买入；abcd 上线时用的七种创建入口验收（含一个线上老曲线币的买卖）通过；`SetGangBaseVaultImpl` 对已部署的实现合约检查通过、只打印不发送；Safe 设置后，不带税 5% / 30 天、带税 3% / 10% / 90 天两个底仓币买到毕业，释放三分之一、到期全部转给创建人。
 - `test_fork_upgradeSetImplCreateGraduateRelease`：在 fork 里从头跑一遍两批流程（脚本自己部署），同样通过。
 
+执行后核对：
+
+- Safe 交易服务里 nonce 52 的 `to`、`value`、`data` 和归档 JSON 完全一致，`operation` = 0（直接调用，没有经 MultiSend）。
+- 回执：状态成功，代理发出 `Upgraded(0xbf15a9B05BBaE720B7cA9a4D87833634Ed90C1BC)`，Safe 发出 `ExecutionSuccess`（safeTxHash 同上）。
+- 读回：实现地址槽 = 新实现；`module()` = 新的 Pad3Module `0x63a9…0b4c`；`baseVaultImpl()` = 0；`vanityDeployer()` 仍是 `0x8e76…F8DE`；pad 和 ProxyAdmin 的 owner 仍是 Safe；Safe nonce 53，阈值 2。
+- `SetGangBaseVaultImpl` 对执行后的主网状态只读运行，检查全部通过并打印出第二批（一笔 `setBaseVaultImpl(0x6ff4…0F3b)`）。签名前要再生成一次，这次没有存档。
+- 执行后的主网状态（区块 133875100 之后）上重跑 `test_fork_signedBatchThenOpenBase`：1 通过、0 失败。批次在已升级的代理上再执行一次只是重写同一个实现地址；后面的七种创建入口、老曲线币买卖、第二批以及两个底仓币的毕业和释放全部通过。Agent ID 只在 fork 里模拟，没有在主网发测试币或做测试交易。
+
 ## 后续（spec §8）
 
-1. **Safe 第一批**：上面的 JSON。执行后读回实现地址，`baseVaultImpl()` 应为 0，`createWithBase` 回滚 `BaseNotOpen`。
+1. ~~Safe 第一批~~：已执行（见上）。
 2. 服务端、网站（配置 `VITE_GANG_BASE_VAULT_IMPL3` = 上面的实现合约）、CLI 0.40.0 上线。
 3. **Safe 第二批**：`script/SetGangBaseVaultImpl.s.sol`，`PAD3_BASE_VAULT_IMPL` = 上面的实现合约。脚本会再比对一次字节码，模拟 `setBaseVaultImpl` 并读回，然后打印单笔交易的 Safe 批次。不要为第二批重跑升级脚本。
 
