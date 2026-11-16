@@ -603,7 +603,7 @@ PROMOTER SHARE (GangLaunchpad 3.0, 0.34.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TES
                                          the dev: reclaim what no root allocated, after 30 days of settler silence once the token
                                          has graduated, which closes the module FOR GOOD / send what a failed push left
 
-OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; the pad says whether it has it: BSC testnet now, not mainnet yet):
+OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; the pad says whether it is open: BSC testnet now; mainnet once the Safe opens it):
   gang create … --base <5|10> --base-vest <30|90|180> [--grad 6|9|12|15] [--buy-tax <1-5> --sell-tax <1-5>]
                                          the create also buys 5% or 10% of the supply on the curve, as its first trade, for
                                          the token's own base vault (GangBaseVault). The tx pays exactly the pad's
