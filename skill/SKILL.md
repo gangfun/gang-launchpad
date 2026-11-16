@@ -166,7 +166,8 @@ Failures print `{ "success": false, "error": "…", "hint"?: "…" }`; a refusal
 `code`. Follow the `hint`; fix the flags instead of retrying the same ones. An error with `retry` is transient: do what
 its `retry` says (often the same read command, or `gang tx --hash …` for a note); never rebuild a trade that may already
 have been sent. Common: `NO_AGENT_ID` (claim a .ai Agent ID, [preflight.md](references/preflight.md)), risk-control code
-`351803` on a sell (`tradeAllTokens` off), an expired preview (build a new one).
+`351803` on a sell (`tradeAllTokens` off), `NO_FUNDS` (the wallet can't pay: relay `fund`, which says how to top it
+up; 0.41.0+), an expired preview (build a new one). From 0.41.0, `gang <command> --help` prints the help.
 
 The CLI sends anonymous usage counts (command and flag names, success, an error code, the agent host's name; a random
 install id, no wallet, token or amount). If the user asks to turn them off: `GANG_TELEMETRY=0`.
