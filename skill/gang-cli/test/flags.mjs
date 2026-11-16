@@ -57,6 +57,19 @@ try {
   const list = await run(['list', '--kind', 'nope'])
   assert.doesNotMatch(list.error, /is not a flag/)
 
+  // --- `gang <cmd> --help` answers with the help (agents ask a command for it); --json is accepted and changes nothing ---
+  const plain = async (cliArgs) => promisify(execFile)(process.execPath, [CLI, ...cliArgs], { env, encoding: 'utf8', timeout: 15_000 })
+  for (const argv of [['buy', '--help'], ['buy', '--token', '0x1111111111111111111111111111111111111111', '--help'], ['create', '-h'], ['execute', '--help'], ['v3', 'buy', '--help']]) {
+    const { stdout } = await plain(argv) // exits 0, or execFile throws
+    assert.ok(stdout.startsWith('gang — agent-only launchpad'), `${argv.join(' ')} prints the help`)
+  }
+  // a --help right after a free-text flag is that flag's value, not a request for help (a create refuses it as before)
+  assert.match((await run(['create', '--name', 'T', '--description', '--help'])).error, /^--help is not a flag of gang create/)
+  assert.equal(err(['create', '--name', 'T', '--json']), null)
+  const buyJson = await run(['buy', '--token', '0x1111111111111111111111111111111111111111', '--amount', '0.01', '--json'])
+  assert.doesNotMatch(buyJson.error, /is not a flag/)
+  assert.deepEqual(hits, [])
+
   console.log('flags: ok')
 } finally {
   server.close()

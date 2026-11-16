@@ -59,6 +59,7 @@ const out = (o) => {
   if (o && typeof o === 'object' && o.success === false) {
     process.exitCode = 1 // fail() exits 1 too: a refused send can't look like a success to a script
     if (!o.code) o = { ...o, code: codeOf(o) }
+    if (o.code === 'NO_FUNDS' && !o.fund) o = { ...o, fund: FUND_HINT }
   }
   if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refInfo }
   // a failed result built no tx, so it claims no tag; a bad id is always said
@@ -1405,6 +1406,14 @@ function create() {
 // after a clean preflight: where a first trade usually starts
 // gang.fun's setup page: every preflight issue code, step by step, for the user to open on their phone (gang-web-legacy /start)
 const SETUP_GUIDE = 'https://gang.fun/start'
+// a wallet that can't pay: what to tell the user (gang preflight prints the wallet's address)
+const FUND_HOW = 'send BNB on BNB Smart Chain (BEP-20) to the Agentic Wallet address (gang preflight shows it), keeping about 0.002 BNB more than the trade for gas'
+const FUND_HINT = `Top up: ${FUND_HOW}; then run the same command again. Nothing was sent.`
+// below this a wallet can't make a first small buy plus gas: preflight warns, without failing
+const LOW_BNB = parseEther('0.005')
+// `gang buy --help`: the flags whose value may be free text, so a --help there is a value, not a request for help
+const TEXT_FLAGS = new Set(['--note', '--description', '--name', '--symbol'])
+const wantsHelp = (argv) => argv.some((a, i) => i > 0 && (a === '--help' || a === '-h') && !TEXT_FLAGS.has(argv[i - 1]))
 const PREFLIGHT_NEXT = [
   'gang trending: what other agents buy now',
   'gang notes --min-hit 0.6: followable calls by authors who hit 60%+',
@@ -1500,6 +1509,12 @@ async function pendingReport() {
 }
 
 async function main() {
+  // agents ask a command for its help (gang buy --help, gang create -h): answer with the help, not an unknown-flag refusal
+  if (cmd !== 'help' && wantsHelp(args)) {
+    record(args, { success: true })
+    console.log(HELP)
+    return
+  }
   if (UPDATE_CHECKED.has(cmd)) update = checkUpdate()
   // streams and the MCP server print no single result: count the start (MCP tools run this CLI, so each one counts itself)
   if (cmd === 'watch' || cmd === 'mcp') record(args, { success: true })
@@ -1624,11 +1639,19 @@ async function main() {
       }
       // after the baw calls: they block the event loop, and the fetch's short timeout would run out meanwhile
       const hot = trendingBlock({ wallet: me })
+      // an empty wallet is the next stop after setup: say so now, as a warning (setup itself is done)
+      let bnb = null
+      const warnings = []
+      if (me) {
+        try { bnb = await client.getBalance({ address: me }) } catch { /* RPC down: no balance line, preflight still answers */ }
+        if (bnb != null && bnb < LOW_BNB) warnings.push({ code: 'LOW_BNB', fix: `Top up before the first trade: ${FUND_HOW}.` })
+      }
       return out({
         success: issues.length === 0, cliVersion: VERSION, status, address: me,
         // `launchpad` = createPad: kept for readers of the old field (it used to be the V2 create target)
         launchpad: padNets('v3').mainnet.pad, createPad: padNets('v3').mainnet.pad, createPadGen: padNets('v3').mainnet.gen, isAgent: agent,
         devMode: settings?.devMode?.enabled ?? null, tradeAllTokens: settings?.tradeAllTokens ?? null, issues,
+        ...(bnb != null && { bnb: fmt(bnb) }), ...(warnings.length && { warnings }),
         note: 'New create → GangLaunchpad (gang create = gang v3 create; gang fair create for 打新). LaunchpadV2 / Soft / U / S take no new tokens: existing buy / sell only.',
         ...(!issues.length && { next: PREFLIGHT_NEXT }),
         ...(issues.length && { guide: { url: SETUP_GUIDE, note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone; give it with the fixes.' } }),

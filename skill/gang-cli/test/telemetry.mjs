@@ -143,6 +143,15 @@ try {
     assert.equal(codeOf({ error: '--slippage must be a number between 0 and 50', got: '99' }), 'USAGE')
     assert.equal(codeOf({ error: 'something odd happened with 0xabc' }), 'ERROR')
     assert.equal(codeOf({ error: 'x', issues: [{ code: 'NO_AGENT_ID' }] }), 'NO_AGENT_ID')
+    // an empty wallet is told apart from a broken command
+    for (const m of ['not enough BNB for this buy (native BNB must also cover gas)', 'not enough BNB + WBNB for this buy (native BNB must also cover gas)',
+      'not enough quote token for this buy (V2 pays in the quote ERC-20, not BNB)', 'not enough BNB']) assert.equal(codeOf({ error: m, haveBnb: '0.001' }), 'NO_FUNDS')
+    assert.equal(codeOf({ error: 'pool has not enough liquidity' }), 'ERROR')
+    // the event carries baw's error name after its numeric code; the result's code stays baw's number
+    assert.equal(eventOf(['execute'], { success: false, error: 'x', code: 953401, errorName: 'SERVICE_ERROR' }).code, '953401:SERVICE_ERROR')
+    assert.equal(eventOf(['execute'], { success: false, error: 'x', code: 351806, errorName: 'not a constant' }).code, '351806')
+    assert.equal(eventOf(['execute'], { success: false, error: 'x', code: 'NO_AGENT_ID', errorName: 'SERVICE_ERROR' }).code, 'NO_AGENT_ID')
+    assert.equal(eventOf(['execute'], { success: false, error: 'x', errorName: 'SERVICE_ERROR' }).code, 'SERVICE_ERROR')
   }
 
   // --- install id: random v4, created once, kept ---

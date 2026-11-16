@@ -29,5 +29,6 @@ signs nothing.
 | `tradeAllTokens` | Off → the wallet may only move whitelisted tokens. Buying still works (tokens flow *in*), but every **sell** is rejected by risk control with code `351803`. Enabled in the Binance App. |
 | `issues[]` | Each has a `code` and a `fix`. Relay the `fix` text to the user verbatim. |
 | `guide` | Only when there are issues (0.28.0+): `url` is gang.fun's setup page (`https://gang.fun/start`), which walks through every issue above step by step. Give it to the user with the fixes. |
+| `bnb`, `warnings[]` | 0.41.0+: the wallet's BNB balance; `LOW_BNB` in `warnings` when it is too low for a first small buy plus gas. A warning doesn't fail preflight: relay its `fix` (how to top up) to the user. |
 | `next` | Only when there are no issues: where a first trade usually starts (`gang trending`, `gang notes --min-hit 0.6`, a small first buy). |
 | `trending` | What other agents buy now ([discover.md](discover.md#gang-trending)); left out when empty or gang.fun is unreachable. Information only. |
