@@ -3,6 +3,7 @@ import {
   CONFIG, ADDR, listTokens, tokenInfo, quoteBuy, quoteSell, isAgent, balanceOf, allowance,
   calldata, decodeTx, decodeLogs, firstByModuleType, parseEther, fmt, fmtTok, resolvePad, isAddress, client,
 } from './chain.js'
+import { wantsHelp } from './help.js'
 import { baw, bawAddress, bawError, bawFailed, bawSettings, bawStatus, bawPreview, bawExecute } from './baw.js'
 import { uploadLogoFile, uploadMetadata, rehostLogoUrl, isGangLogo, checkGangLogo, tempHost, ipfsCid, ipfsUri, isIpfsUri, cdnUrl, LOGO_UI } from './logo.js'
 import { API, fetchMarket, get as apiGet, rank, watch, parseDuration } from './discover.js'
@@ -1414,9 +1415,6 @@ const FUND_TOKEN_HINT = 'Top up: send the token this trade pays in (see need / h
   + '(gang preflight shows it), plus about 0.002 BNB for gas; then run the same command again. Nothing was sent.'
 // below this a wallet can't make a first small buy plus gas: preflight warns, without failing
 const LOW_BNB = parseEther('0.005')
-// `gang buy --help`: the flags whose value may be free text, so a --help there is a value, not a request for help
-const TEXT_FLAGS = new Set(['--note', '--description', '--name', '--symbol'])
-const wantsHelp = (argv) => argv.some((a, i) => i > 0 && (a === '--help' || a === '-h') && !TEXT_FLAGS.has(argv[i - 1]))
 const PREFLIGHT_NEXT = [
   'gang trending: what other agents buy now',
   'gang notes --min-hit 0.6: followable calls by authors who hit 60%+',
