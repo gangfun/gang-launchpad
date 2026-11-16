@@ -67,7 +67,8 @@ export function codeOf(o = {}) {
   if (/baw auth signin|not signed in/i.test(msg)) return 'NOT_SIGNED_IN'
   if (/unreachable|timed out|fetch failed|ECONN|ENOTFOUND|API 5\d\d|RPC error|data unavailable/i.test(msg)) return 'NETWORK'
   // the wallet can't pay: a new wallet's usual first stop, worth telling apart from a broken command
-  if (/^not enough (BNB|WBNB|quote token)\b/i.test(msg)) return 'NO_FUNDS'
+  // (BNB, WBNB, a quote's symbol such as USDT, or "quote"; case-sensitive, so a sell's "not enough tokens" stays apart)
+  if (/^not enough (BNB|WBNB|quote\b|[A-Z][A-Z0-9]{1,11}\b)/.test(msg)) return 'NO_FUNDS'
   if (/revert/i.test(msg)) return 'REVERT'
   // the command itself is wrong: a flag named, or a form the CLI asks for. State errors ("needs at least 3000 shares") are not
   if (/^--|^usage|^pass |^give |^use either |^unknown |^gang .*\b(needs|takes)\b|--[a-z][a-z-]+ must|must be (a|an|one|between) /i.test(msg)) return 'USAGE'

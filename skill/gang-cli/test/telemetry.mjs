@@ -146,6 +146,8 @@ try {
     // an empty wallet is told apart from a broken command
     for (const m of ['not enough BNB for this buy (native BNB must also cover gas)', 'not enough BNB + WBNB for this buy (native BNB must also cover gas)',
       'not enough quote token for this buy (V2 pays in the quote ERC-20, not BNB)', 'not enough BNB']) assert.equal(codeOf({ error: m, haveBnb: '0.001' }), 'NO_FUNDS')
+    assert.equal(codeOf({ error: 'not enough USDT', have: '1', need: '5' }), 'NO_FUNDS') // a stable-quoted token's quote
+    assert.equal(codeOf({ error: 'not enough tokens', have: '1', need: '5' }), 'ERROR') // a sell's balance, not a top-up
     assert.equal(codeOf({ error: 'pool has not enough liquidity' }), 'ERROR')
     // the event carries baw's error name after its numeric code; the result's code stays baw's number
     assert.equal(eventOf(['execute'], { success: false, error: 'x', code: 953401, errorName: 'SERVICE_ERROR' }).code, '953401:SERVICE_ERROR')

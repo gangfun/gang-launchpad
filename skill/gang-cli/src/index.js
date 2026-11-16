@@ -59,7 +59,7 @@ const out = (o) => {
   if (o && typeof o === 'object' && o.success === false) {
     process.exitCode = 1 // fail() exits 1 too: a refused send can't look like a success to a script
     if (!o.code) o = { ...o, code: codeOf(o) }
-    if (o.code === 'NO_FUNDS' && !o.fund) o = { ...o, fund: FUND_HINT }
+    if (o.code === 'NO_FUNDS' && !o.fund) o = { ...o, fund: /^not enough (BNB|WBNB)\b/.test(String(o.error ?? '')) ? FUND_HINT : FUND_TOKEN_HINT }
   }
   if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refInfo }
   // a failed result built no tx, so it claims no tag; a bad id is always said
@@ -1409,6 +1409,9 @@ const SETUP_GUIDE = 'https://gang.fun/start'
 // a wallet that can't pay: what to tell the user (gang preflight prints the wallet's address)
 const FUND_HOW = 'send BNB on BNB Smart Chain (BEP-20) to the Agentic Wallet address (gang preflight shows it), keeping about 0.002 BNB more than the trade for gas'
 const FUND_HINT = `Top up: ${FUND_HOW}; then run the same command again. Nothing was sent.`
+// a token that pays in an ERC-20 quote (USDT, GANG, …): that token, plus BNB for gas
+const FUND_TOKEN_HINT = 'Top up: send the token this trade pays in (see need / have) on BNB Smart Chain (BEP-20) to the Agentic Wallet address '
+  + '(gang preflight shows it), plus about 0.002 BNB for gas; then run the same command again. Nothing was sent.'
 // below this a wallet can't make a first small buy plus gas: preflight warns, without failing
 const LOW_BNB = parseEther('0.005')
 // `gang buy --help`: the flags whose value may be free text, so a --help there is a value, not a request for help
@@ -1640,13 +1643,15 @@ async function main() {
       // after the baw calls: they block the event loop, and the fetch's short timeout would run out meanwhile
       const hot = trendingBlock({ wallet: me })
       // an empty wallet is the next stop after setup: say so now, as a warning (setup itself is done)
-      let bnb = null
+      let bnb = null, balanceCut = false
       const warnings = []
       if (me) {
-        try { bnb = await client.getBalance({ address: me }) } catch { /* RPC down: no balance line, preflight still answers */ }
+        // capped at 3 s: with every RPC down, the transport's retries would hold preflight for far longer
+        const cap = new Promise((r) => { const t = setTimeout(() => { balanceCut = true; r(null) }, 3000); t.unref?.() })
+        try { bnb = await Promise.race([client.getBalance({ address: me }), cap]) } catch { /* RPC down: no balance line, preflight still answers */ }
         if (bnb != null && bnb < LOW_BNB) warnings.push({ code: 'LOW_BNB', fix: `Top up before the first trade: ${FUND_HOW}.` })
       }
-      return out({
+      out({
         success: issues.length === 0, cliVersion: VERSION, status, address: me,
         // `launchpad` = createPad: kept for readers of the old field (it used to be the V2 create target)
         launchpad: padNets('v3').mainnet.pad, createPad: padNets('v3').mainnet.pad, createPadGen: padNets('v3').mainnet.gen, isAgent: agent,
@@ -1657,6 +1662,9 @@ async function main() {
         ...(issues.length && { guide: { url: SETUP_GUIDE, note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone; give it with the fixes.' } }),
         ...await hot.then((t) => (t ? { trending: t } : {})),
       })
+      // the cut-off read is still pending and would keep the process (and an MCP host waiting on it) alive: exit once printed
+      if (balanceCut) process.stdout.write('', () => process.exit(process.exitCode ?? 0))
+      return
     }
     case 'list': {
       // --kind v3 / fair: GangLaunchpad tokens (from gang.fun); without it the V2 / Soft / U / S pads, as before

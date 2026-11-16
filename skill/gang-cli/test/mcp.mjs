@@ -172,6 +172,8 @@ for (const [name, args, re] of [
   ['gang_cli', { args: ['help'] }, /use the gang_help tool/],
   ['gang_cli', { args: ['--help'] }, /use the gang_help tool/],
   ['gang_cli', { args: ['-h'] }, /use the gang_help tool/],
+  ['gang_cli', { args: ['buy', '--token', '0x1111111111111111111111111111111111111111', '--help'] }, /use the gang_help tool/],
+  ['gang_cli', { args: ['create', '-h'] }, /use the gang_help tool/],
   ['gang_cli', { args: ['mcp'] }, /gang mcp is this server/],
   ['gang_watch', { timeout: 'soon' }, /timeout must look like 90, 50s, 5m or 1h \(got soon\)/],
   ['gang_watch', { interval: '10x' }, /interval must look like/],

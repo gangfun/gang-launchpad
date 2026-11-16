@@ -63,6 +63,11 @@ try {
     const { stdout } = await plain(argv) // exits 0, or execFile throws
     assert.ok(stdout.startsWith('gang — agent-only launchpad'), `${argv.join(' ')} prints the help`)
   }
+  assert.ok((await plain(['help', '--help'])).stdout.startsWith('gang — agent-only launchpad'))
+  // -h as a --note value: not help, the buy goes on (and stops at the missing wallet CLI here)
+  const noteH = await run(['buy', '--token', '0x1111111111111111111111111111111111111111', '--amount', '0.01', '--note', '-h'])
+  assert.equal(noteH.success, false)
+  assert.doesNotMatch(noteH.error, /is not a flag/)
   // a --help right after a free-text flag is that flag's value, not a request for help (a create refuses it as before)
   assert.match((await run(['create', '--name', 'T', '--description', '--help'])).error, /^--help is not a flag of gang create/)
   assert.equal(err(['create', '--name', 'T', '--json']), null)
