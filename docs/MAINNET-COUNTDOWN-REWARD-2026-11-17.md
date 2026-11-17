@@ -16,7 +16,7 @@
 |---|---|
 | GangCountdownRewardFactory | [`0xa1e3117a59104de7D97667cF22f9AB886a5f2957`](https://bscscan.com/address/0xa1e3117a59104de7D97667cF22f9AB886a5f2957)，部署 [`0xfe1e9f3d…cddd`](https://bscscan.com/tx/0xfe1e9f3d5d0599111f3f6cf0570417a9f434343cadf1622422bf95d6bb40cddd)，区块 134102359，gas 3,406,667 |
 | GangCountdownReward（实现合约，工厂部署） | [`0x4bDC318bDB338a5d2DC9DcDd07831a943E5fD35E`](https://bscscan.com/address/0x4bDC318bDB338a5d2DC9DcDd07831a943E5fD35E)，同一笔交易 |
-| 源码验证 | Sourcify：两个都是 exact match（创建和运行时字节码都完全一致），[工厂](https://repo.sourcify.dev/56/0xa1e3117a59104de7D97667cF22f9AB886a5f2957)、[实现合约](https://repo.sourcify.dev/56/0x4bDC318bDB338a5d2DC9DcDd07831a943E5fD35E)。BscScan：需要 API key，未提交 |
+| 源码验证 | Sourcify：两个都是 exact match（创建和运行时字节码都完全一致），[工厂](https://repo.sourcify.dev/56/0xa1e3117a59104de7D97667cF22f9AB886a5f2957)、[实现合约](https://repo.sourcify.dev/56/0x4bDC318bDB338a5d2DC9DcDd07831a943E5fD35E)。BscScan：两个都已验证（2026-11-17 查询 Etherscan v2 接口 `getsourcecode`，合约名和编译器 v0.8.28 都在） |
 
 部署花费约 0.00017 BNB。
 
