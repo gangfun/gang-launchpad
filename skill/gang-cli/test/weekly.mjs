@@ -18,7 +18,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 
 const dir = mkdtempSync(join(tmpdir(), 'gang-weekly-'))
 process.env.GANG_TRENDING_CACHE = join(dir, 'trending.json')
-const { canonical, applicationDigest, typedData, joinSignature, normalizeTelegram, applicationFields, eventRow, WEEKLY_DOMAIN, WEEKLY_NOTE } = await import('../src/weekly.js')
+const { canonical, applicationDigest, typedData, joinSignature, normalizeTelegram, applicationFields, eventRow, isHold, HOLD_NOTE, HOLD_SUBMITTED, WEEKLY_DOMAIN, WEEKLY_NOTE } = await import('../src/weekly.js')
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
 
 // a throwaway test key (anvil's account #1), never a real wallet
@@ -87,6 +87,21 @@ assert.equal(eventRow({ kind: 'other', issue: 'x' }), null)
   assert.equal(e.url, 'https://gang.fun/weekly')
   assert.ok(e.launchAtLocal)
   assert.equal(e.extra, undefined)
+}
+// hold: the server's flag, or an open issue without a closing date / launch time
+{
+  const t = now
+  assert.equal(isHold(null), false)
+  assert.equal(isHold({ apply: { open: true, closesAt: t, launchAt: t } }), false, 'the weekly cadence')
+  assert.equal(isHold({ hold: false, apply: { open: true, closesAt: t, launchAt: t } }), false)
+  assert.equal(isHold({ hold: true, apply: { open: true, closesAt: t, launchAt: t } }), true)
+  assert.equal(isHold({ apply: { open: true, closesAt: t, launchAt: t, hold: true } }), true)
+  assert.equal(isHold({ apply: { open: true, closesAt: null, launchAt: null } }), true, 'an old server with null times')
+  assert.equal(isHold({ hold: false, apply: { open: true, closesAt: null, launchAt: null } }), true, 'null times never name a Friday')
+  assert.equal(isHold({ apply: { open: false, closesAt: null, launchAt: null } }), false)
+  assert.equal(eventRow({ kind: 'weekly-launch', issue: '2026-11-20', status: 'apply', launchAt: null, until: null, hold: true }).hold, true)
+  assert.equal(eventRow({ kind: 'weekly-launch', issue: '2026-11-20', status: 'teaser', launchAt: t }).hold, undefined)
+  assert.doesNotMatch(HOLD_NOTE + HOLD_SUBMITTED, /friday|thursday|20:00|12:00|each week|every week/i)
 }
 
 // --- the CLI against a fake gang.fun and a fake baw ---
@@ -231,6 +246,44 @@ try {
   r = await run([...APPLY, '--issue', 'friday'])
   assert.equal(r.success, false); assert.match(r.error, /--issue/)
   assert.equal(posted.length, 2, 'nothing refused above reached gang.fun')
+
+  // the weekly cadence names the launch and pick times, never "hold"
+  r = await run(APPLY)
+  assert.equal(r.hold, undefined)
+  assert.match(r.terms[0], /at \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC/)
+  r = await run(['weekly'])
+  assert.equal(r.hold, undefined); assert.equal(r.holdNote, undefined); assert.equal(r.apply.hold, undefined)
+  r = await run([...APPLY, '--yes'])
+  assert.match(r.note, /^Submitted\. The team picks one application on \d{4}-/)
+
+  // hold: an open pool with no closing date or launch time; nothing names a day, a time or a cadence
+  const HOLD_ISSUE = '2026-11-20'
+  const held = { now, hold: true, rules: board().rules, apply: { issue: HOLD_ISSUE, number: 2, opensAt: now - 86400, closesAt: null, open: true, launchAt: null, hold: true }, picking: null, current: null, live: [], past: [] }
+  const noDay = /friday|thursday|20:00|12:00|each week|every week|week's pick/i
+  for (const b of [held, { ...held, hold: undefined, apply: { ...held.apply, hold: undefined } }]) {
+    weekly = b
+    r = await run(['weekly'])
+    assert.equal(r.success, true)
+    assert.equal(r.hold, true); assert.equal(r.apply.hold, true)
+    assert.equal(r.apply.closesAtLocal, undefined); assert.equal(r.apply.launchAtLocal, undefined)
+    assert.equal(r.holdNote, HOLD_NOTE)
+    assert.match(r.next, /gang weekly apply/)
+    r = await run(APPLY)
+    assert.equal(r.success, true); assert.equal(r.preview, true); assert.equal(r.hold, true); assert.equal(r.issue, HOLD_ISSUE)
+    assert.match(r.terms[0], /arranged with the gang\.fun team and announced on gang\.fun\/weekly/)
+    assert.doesNotMatch(JSON.stringify(r), noDay)
+    const n = posted.length
+    r = await run([...APPLY, '--yes'])
+    assert.equal(r.success, true, JSON.stringify(r)); assert.equal(r.hold, true)
+    assert.equal(r.note, HOLD_SUBMITTED)
+    assert.doesNotMatch(JSON.stringify(r), noDay)
+    assert.equal(posted.length, n + 1); assert.equal(posted.at(-1).body.application.issue, HOLD_ISSUE)
+    // another issue than the open pool: refused without a closing date or "null"
+    r = await run([...APPLY, '--issue', '2026-11-27'])
+    assert.equal(r.success, false)
+    assert.equal(r.error, 'applications for 2026-11-27 are not open (open: 2026-11-20, no closing date)')
+  }
+  weekly = board()
 
   // a refused field comes back as USAGE with gang.fun's own code and field
   applyAnswer = { status: 400, body: { error: 'bad_field', field: 'symbol', message: 'bad symbol' } }
