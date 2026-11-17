@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { formatEther } from 'viem'
 import { getHandleMap, makeClient } from './handles.js'
+import { countAgentBuyers } from './agentBuyers.js'
 import { getMeta } from './db.js'
 import { readPair, fetchDexOhlcv, mergeCurveAndDex } from './pancake.js'
 
@@ -102,7 +103,33 @@ export function startApi(db, { port = 8787, launchpad, rpcUrls }) {
         }))
         return json(res, 200, await Promise.all(hits.map((r) => withDexPrice(r))))
       }
-      if (p[0] === 'stats') { const s = q.stats.get(day()); return json(res, 200, { launchpad, bnbUsd, ...s, vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0', fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0' }) }
+      if (p[0] === 'stats') {
+        const s = q.stats.get(day())
+        return json(res, 200, {
+          launchpad, bnbUsd, ...s,
+          vol24: s.vol24 ? formatEther(BigInt(Math.round(s.vol24))) : '0',
+          fees: s.fees ? formatEther(BigInt(Math.round(s.fees))) : '0',
+          agentBuyers: countAgentBuyers(db),
+        })
+      }
+      if (p[0] === 'wallets' && p[1] && (p[2] === 'buys' || p[2] === 'deploys')) {
+        const addr = String(p[1]).toLowerCase()
+        if (!/^0x[a-f0-9]{40}$/.test(addr)) return json(res, 400, { error: 'bad address' })
+        if (p[2] === 'buys') {
+          const items = db.prepare(`
+            SELECT tr.token AS token, tr.side AS side, tr.ts AS ts, tr.tx AS tx, t.symbol AS symbol, t.name AS name
+            FROM trades tr LEFT JOIN tokens t ON t.address = tr.token
+            WHERE tr.trader = ? AND tr.side = 'buy'
+            ORDER BY tr.ts DESC, tr.id DESC LIMIT 50
+          `).all(addr)
+          return json(res, 200, { items })
+        }
+        const items = db.prepare(`
+          SELECT address, name, symbol, created_ts AS ts
+          FROM tokens WHERE lower(creator) = ? ORDER BY created_ts DESC LIMIT 50
+        `).all(addr)
+        return json(res, 200, { items })
+      }
       if (p[0] === 'tokens' && !p[1]) {
         const sort = url.searchParams.get('sort') || 'new'
         const offset = Math.max(0, Math.min(Number(url.searchParams.get('offset') || 0) || 0, 10_000))

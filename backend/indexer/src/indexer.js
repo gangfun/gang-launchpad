@@ -3,6 +3,7 @@ import { bsc } from 'viem/chains'
 import { EVENTS } from './abi.js'
 import { getMeta, setMeta } from './db.js'
 import { refreshHandles } from './handles.js'
+import { noteCurveBuyer, refreshAgentBuyers } from './agentBuyers.js'
 
 const VIRTUAL_BNB = 6666666666666666667n
 const VIRTUAL_TOKEN = 1066666666666666666666666667n
@@ -100,6 +101,7 @@ export class Indexer {
         this.stmts.insTrade.run(tok, 'buy', a.buyer.toLowerCase(), a.bnbIn.toString(), a.fee.toString(), a.tokensOut.toString(), a.realBnb.toString(), p.toString(), Number(l.blockNumber), ts, l.transactionHash, l.logIndex)
         this.stmts.updTok.run(a.realBnb.toString(), sold.toString(), p.toString(), ts, tok)
         this.bump(tok, a.buyer.toLowerCase(), a.tokensOut)
+        noteCurveBuyer(this.db, a.buyer, ts)
         break
       }
       case 'Sell': {
@@ -128,6 +130,7 @@ export class Indexer {
       // Agent ID handleOf cache — every ~5 sync cycles, non-blocking for API.
       if (++handleTick % 5 === 0) {
         try { await refreshHandles(this.db, this.client, { log: this.log }) } catch (e) { this.log('handle refresh:', e.message) }
+        try { await refreshAgentBuyers(this.db, this.client, { log: this.log }) } catch (e) { this.log('agent buyer refresh:', e.message) }
       }
       await new Promise((r) => setTimeout(r, intervalMs))
     }

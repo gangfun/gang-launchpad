@@ -2,6 +2,7 @@ import { openDb } from './db.js'
 import { Indexer } from './indexer.js'
 import { startApi } from './api.js'
 import { refreshHandles } from './handles.js'
+import { refreshAgentBuyers } from './agentBuyers.js'
 
 const DEFAULT_RPCS = 'https://bsc-rpc.publicnode.com,https://bsc.publicnode.com'
 const urls = (process.env.GANG_RPC_URLS || process.env.GANG_RPC_URL || DEFAULT_RPCS)
@@ -32,5 +33,6 @@ try {
 }
 if (!once) {
   refreshHandles(db, ix.client).catch((e) => console.error('handle refresh:', e.message))
+  refreshAgentBuyers(db, ix.client).catch((e) => console.error('agent buyer refresh:', e.message))
   ix.run()
 }
