@@ -38,6 +38,7 @@ contract GangCountdownRewardTest is FloorBase {
     function _cfg() internal pure returns (GangCountdownReward.Config memory c) {
         c = GangCountdownReward.Config({
             window: 1 hours,
+            maxRound: 6 hours,
             idle: 30 days,
             payoutBps: 3_000,
             lastBps: 2_000,
@@ -129,6 +130,19 @@ contract GangCountdownRewardTest is FloorBase {
         cf.create(tok, w, bad, bytes32(0));
         bad = _cfg();
         bad.entries = 21;
+        vm.expectRevert(GangCountdownReward.BadConfig.selector);
+        cf.create(tok, w, bad, bytes32(0));
+        bad = _cfg();
+        bad.maxRound = 59 minutes;
+        vm.expectRevert(GangCountdownReward.BadConfig.selector);
+        cf.create(tok, w, bad, bytes32(0));
+        bad = _cfg();
+        bad.maxRound = 24 hours + 1;
+        vm.expectRevert(GangCountdownReward.BadConfig.selector);
+        cf.create(tok, w, bad, bytes32(0));
+        bad = _cfg();
+        bad.window = 2 hours;
+        bad.maxRound = 1 hours; // under the window
         vm.expectRevert(GangCountdownReward.BadConfig.selector);
         cf.create(tok, w, bad, bytes32(0));
         bad = _cfg();
@@ -353,6 +367,43 @@ contract GangCountdownRewardTest is FloorBase {
         m.settle();
         assertEq(m.claimableOf(b), 0.21 ether);
         _assertBooks(m, address(wbnb));
+    }
+
+    /// @dev Buys every 50 minutes would keep a 1-hour countdown alive for good: the round still ends 6 hours after its
+    ///      first counted buy, and the next buy starts round 2.
+    function test_round_maxRoundEndsIt() public {
+        (GangCountdownReward m,,) = _setupCD(address(wbnb), _cfg(), 1 ether, true);
+        uint256 start = vm.getBlockTimestamp();
+        address a = _buyer();
+        _buyBnb(m, a, 0.1 ether);
+        assertEq(m.roundEndsBy(), start + 6 hours);
+        address last;
+        for (uint256 i; i < 7; i++) {
+            _next(50 minutes);
+            last = _buyer();
+            _buyBnb(m, last, 0.1 ether);
+            assertLe(m.deadline(), start + 6 hours, "never past the cap");
+        }
+        // 5h50: the deadline is the cap, not 6h50
+        assertEq(m.deadline(), start + 6 hours);
+        assertEq(m.currentRound(), 1);
+        vm.warp(start + 6 hours);
+        (bool due,) = m.previewWork();
+        assertFalse(due, "at the cap itself the round still runs");
+        vm.warp(start + 6 hours + 1);
+        (due,) = m.previewWork();
+        assertTrue(due);
+        address next = _buyer();
+        _buyBnb(m, next, 0.1 ether);
+        assertEq(m.currentRound(), 2, "the next buy starts round 2");
+        assertEq(m.roundEndsBy(), start + 6 hours + 1 + 6 hours);
+        m.settle();
+        // capped: 0.3 shared equally by the last 3 entries, no extra for the last one
+        assertEq(m.claimableOf(last), 0.1 ether, "an equal share at the cap");
+        assertEq(m.claimableOf(next), 0);
+        (,,,,, GangCountdownReward.Entry[] memory list) = m.round(0);
+        assertEq(m.claimableOf(list[0].buyer), 0.1 ether);
+        assertEq(m.claimableOf(list[1].buyer), 0.1 ether);
     }
 
     function test_round_maxPayoutCaps() public {

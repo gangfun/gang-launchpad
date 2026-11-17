@@ -26,9 +26,9 @@ interface ICountdownPair {
 /// @notice The tax recipient of one V3 (curve) token that turns the recipient's part of the pool tax into a reward for
 ///         the token's buyers. It is also the buy entry: a pool buy made through `buy` / `buyWithQuote` (on the
 ///         token's own Pancake V2 pair, read from the token) is "counted". Each counted buy sets the round's deadline to
-///         `now + window`; once the deadline passes, the round's last `entries` counted buys share a payout fixed when
+///         `now + window`, but never past `maxRound` after the round's first counted buy; once the deadline passes, the round's last `entries` counted buys share a payout fixed when
 ///         the round is frozen: `min(available × payoutBps, maxPayout)`. The last buy gets `lastBps` of it on top of
-///         an equal share of the rest. Whatever is not paid stays for the next round. Buyers `claim` what they were
+///         an equal share of the rest — except in a round that ended at its `maxRound` cap, where all shares are equal. Whatever is not paid stays for the next round. Buyers `claim` what they were
 ///         credited (pull, never pushed).
 ///         Money in: the tax the handler pushes (a plain transfer), of which `devBps` is booked to the dev, and
 ///         `fund` (a seed, from anyone, the graduation reward's carry included), all of which goes to the reward pool.
@@ -50,6 +50,9 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
     uint256 public constant MAX_ENTRIES = 20;
     uint64 public constant MIN_WINDOW = 30 minutes;
     uint64 public constant MAX_WINDOW = 24 hours;
+    /// @notice A round's longest run from its first counted buy (`maxRound` bounds; at least `window`).
+    uint64 public constant MIN_ROUND = 1 hours;
+    uint64 public constant MAX_ROUND = 24 hours;
     uint16 public constant MIN_PAYOUT_BPS = 1_000;
     uint16 public constant MAX_PAYOUT_BPS = 5_000;
     uint16 public constant MAX_LAST_BPS = 2_000;
@@ -73,6 +76,8 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
 
     struct Config {
         uint64 window;
+        /// @dev The round ends at the latest this long after its first counted buy, however buys keep coming.
+        uint64 maxRound;
         uint64 idle;
         uint16 payoutBps;
         uint16 lastBps;
@@ -91,9 +96,11 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
     /// @dev One of the two alternating round buffers.
     struct Round {
         uint64 id;
+        uint64 startedAt; // the first counted buy's time: the round ends by startedAt + maxRound
         uint32 count; // counted buys in the round (the ring keeps the last `entries`)
         bool frozen;
         bool settled;
+        bool capped; // ended at its maxRound cap: the last entry gets no extra (its end time was known in advance)
         uint256 reserved; // the payout fixed at freeze, until settled
     }
 
@@ -176,7 +183,7 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
     }
 
     /// @notice A clone's setup, by the factory in the tx that clones it. Bounds: window MIN_WINDOW–MAX_WINDOW, idle
-    ///         MIN_IDLE–MAX_IDLE, payoutBps MIN_PAYOUT_BPS–MAX_PAYOUT_BPS, lastBps ≤ MAX_LAST_BPS, devBps ≤ MAX_DEV_BPS,
+    ///         MIN_IDLE–MAX_IDLE, maxRound MIN_ROUND–MAX_ROUND and at least window, payoutBps MIN_PAYOUT_BPS–MAX_PAYOUT_BPS, lastBps ≤ MAX_LAST_BPS, devBps ≤ MAX_DEV_BPS,
     ///         entries 1–MAX_ENTRIES, minBuy and maxPayout above 0.
     function initialize(address dev_, address token_, address quote_, Config calldata c) external {
         if (address(this) == _self) revert NotClone();
@@ -188,7 +195,7 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
             c.window < MIN_WINDOW || c.window > MAX_WINDOW || c.idle < MIN_IDLE || c.idle > MAX_IDLE
                 || c.payoutBps < MIN_PAYOUT_BPS || c.payoutBps > MAX_PAYOUT_BPS || c.lastBps > MAX_LAST_BPS
                 || c.devBps > MAX_DEV_BPS || c.entries == 0 || c.entries > MAX_ENTRIES || c.minBuy == 0
-                || c.maxPayout == 0
+                || c.maxPayout == 0 || c.maxRound < MIN_ROUND || c.maxRound > MAX_ROUND || c.maxRound < c.window
         ) revert BadConfig();
         dev = dev_;
         rewardToken = token_;
@@ -372,6 +379,11 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
         return deadline == 0 ? 0 : _rounds[cur].id;
     }
 
+    /// @notice The latest the running round can end (its first counted buy + maxRound; 0: none running).
+    function roundEndsBy() external view returns (uint64) {
+        return deadline == 0 ? 0 : _rounds[cur].startedAt + _cfg.maxRound;
+    }
+
     /// @notice What a freeze now would take its payout from: the pool with what arrived since the last booking.
     function potAvailable() public view returns (uint256 p) {
         (uint256 incoming, bool short) = _incoming();
@@ -448,7 +460,10 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
         uint256 n = _cfg.entries;
         _ring[b][r.count % n] = Entry(buyer, tokensOut > type(uint96).max ? type(uint96).max : uint96(tokensOut));
         r.count += 1;
+        // each counted buy puts the deadline `window` ahead, but never past the round's cap (maxRound after its start)
         uint64 d = uint64(block.timestamp) + _cfg.window;
+        uint64 cap = r.startedAt + _cfg.maxRound;
+        if (d > cap) d = cap;
         deadline = d;
         lastCountedAt = uint64(block.timestamp);
         emit Counted(r.id, buyer, quoteIn, tokensOut, d);
@@ -460,7 +475,7 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
         uint8 b = lastRoundId == 0 ? 0 : 1 - cur;
         _settleBuf(b);
         uint64 id = ++lastRoundId;
-        _rounds[b] = Round(id, 0, false, false, 0);
+        _rounds[b] = Round(id, uint64(block.timestamp), 0, false, false, false, 0);
         cur = b;
         emit RoundStarted(id);
     }
@@ -475,6 +490,7 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
         reservedTotal += payout;
         r.reserved = payout;
         r.frozen = true;
+        r.capped = d == r.startedAt + _cfg.maxRound;
         deadline = 0;
         emit RoundFrozen(r.id, payout, _min(r.count, _cfg.entries));
     }
@@ -501,7 +517,9 @@ contract GangCountdownReward is IGangRecipientModule, ReentrancyGuard {
         if (k == 0 || payout == 0) return 0;
         uint64 id = r.id;
         uint256 lastIdx = (uint256(r.count) - 1) % n;
-        uint256 extra = k == 1 ? 0 : (payout * _cfg.lastBps) / BPS;
+        // a round that ended at its cap ended at a time everyone knew: no prize for the last slot, equal shares
+        // (audit 2026-11-17: the order of the last block is the builder's, not the buyers')
+        uint256 extra = k == 1 || r.capped ? 0 : (payout * _cfg.lastBps) / BPS;
         uint256 each = (payout - extra) / k;
         for (uint256 j; j < k; j++) {
             uint256 idx = (uint256(r.count) - 1 - j) % n;
