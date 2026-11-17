@@ -98,6 +98,8 @@ assert.deepEqual(unions, [])
   const args = (name, a) => TOOLS.find((t) => t.name === name).args(a)
   assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', useWbnb: true, useQuote: true, payBnb: true }).slice(5),
     ['--use-wbnb', '--use-quote', '--pay-bnb'])
+  assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', cdUncounted: true }).slice(5), ['--cd-uncounted'])
+  assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', cdUncounted: false }).slice(5), [])
   assert.deepEqual(args('gang_sell', { token: addr(1), all: true, settleFirst: true, breakBond: true, confirmOut: true, toBnb: true }),
     ['sell', '--token', addr(1), '--all', '--to-bnb', '--break-bond', '--confirm-out', '--settle-first'])
   assert.deepEqual(args('gang_status', { token: addr(1), from: addr(2), slippage: 2, testnet: true }),

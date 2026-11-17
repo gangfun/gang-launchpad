@@ -98,6 +98,7 @@ try {
 
     assert.deepEqual([eventOf(['fly', 'mint', '--token', tok(2)]).c, eventOf(['fly', 'mint']).s], ['fly', 'mint'])
     assert.equal(eventOf(['buy', 'mint']).s, '') // only commands with subcommands keep the second word
+    assert.deepEqual([eventOf(['countdown', 'claim', '--token', tok(2)]).s, eventOf(['grad-reward', 'refund-request']).s], ['claim', 'refund-request'])
     // the host's name: only when known, and only as a short slug
     assert.equal(clientOf('Claude Code'), 'claude-code')
     assert.equal(clientOf('cursor-vscode'), 'cursor-vscode')
