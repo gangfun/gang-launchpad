@@ -229,6 +229,6 @@ pay   = pot − carry
 
 以上金额都按这个币的报价币换算，汇率取毕业额 ÷ 毕业目标。
 
-上线时：多签升级批次用升级脚本的 `PAD3_GRAD_REWARD` 一步加上 `setGradReward(true, handlerAdmin, 0)`，先只开单独玩法；carry 用 `script/SetGradRewardCountdown.s.sol` 单独开：一笔 `setGradReward(true, handlerAdmin, countdownFactory)`，脚本先逐字节比对工厂和它的实现（构建不带 `--libraries`），再在模拟里执行并读回。测试网 2026-11-17 已开；主网等多签。
+上线时：多签升级批次用升级脚本的 `PAD3_GRAD_REWARD` 一步加上 `setGradReward(true, handlerAdmin, 0)`，先只开单独玩法；carry 用 `script/SetGradRewardCountdown.s.sol` 单独开：一笔 `setGradReward(true, handlerAdmin, countdownFactory)`，脚本先逐字节比对工厂和它的实现（构建不带 `--libraries`），再在模拟里执行并读回。测试网和主网 2026-11-17 都已开（主网 Safe nonce 56）。
 
 CLI（0.44.0）：`--countdown-reward` 发射里可以加 `--grad-reward`，带 carry 时默认 `--gr-carry 20`（0–50）。pad 设的倒计时工厂必须是 CLI 用的那个，否则带 carry 的发射被拒（`--gr-carry 0` 照常）。
