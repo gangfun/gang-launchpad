@@ -112,7 +112,7 @@ Pad 3.0 的 owner 启用 `abcd` 部署器后，CLI 会为曲线、打新、铸�
 deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的买入都是普通买入。只有 `GangHandlerAdmin.moduleOf(module)`
 等于倒计时工厂、并且 `rewardToken()` 就是这个币时，才认作真的模块；只会回答 `moduleType() = countdown-v1` 的合约不算。
 `gang buy` 会自动做这些检查，默认传 `mustCount = true`（`--cd-uncounted` 传 false），并在 `rewards.countdown` 里说明结果。
-工厂：BSC 测试网 `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`；主网暂无。
+工厂：BSC 主网 `0xa1e3117a59104de7D97667cF22f9AB886a5f2957`，BSC 测试网 `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`。
 
 ### 失败代码
 

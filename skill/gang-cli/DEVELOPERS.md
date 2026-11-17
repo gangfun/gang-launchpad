@@ -115,7 +115,7 @@ deadline, mustCount)` after an approve to the module. A buy through PancakeSwap'
 plain buy. Treat a module as genuine only when `GangHandlerAdmin.moduleOf(module)` is the countdown factory and its
 `rewardToken()` is the token: a contract that merely answers `moduleType() = countdown-v1` is not one. `gang buy` does all
 of this, sends `mustCount = true` by default (`--cd-uncounted` for false) and explains the result in `rewards.countdown`.
-Factory: BSC testnet `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`; none on mainnet yet.
+Factories: BSC mainnet `0xa1e3117a59104de7D97667cF22f9AB886a5f2957`, BSC testnet `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`.
 
 ### Failure codes
 

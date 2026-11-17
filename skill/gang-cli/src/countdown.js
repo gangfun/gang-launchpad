@@ -153,7 +153,7 @@ export async function simulateCountdown(client, from, address, abi, functionName
 export const countdownFactoryAddress = (testnet) => gangGens(testnet)[0].countdownFactory || null
 export const countdownNotLive = (testnet) => (testnet
   ? 'the countdown reward (countdown-v1) has no factory on the BSC testnet in this CLI version: set GANG_TESTNET_COUNTDOWN_FACTORY to its address'
-  : 'the countdown reward (countdown-v1) is not live on BSC mainnet yet (no GangCountdownRewardFactory there in this CLI version): it is on the BSC testnet (--testnet). GANG_COUNTDOWN_FACTORY overrides the address once one is deployed')
+  : 'the countdown reward (countdown-v1) has no factory on BSC mainnet for this pad in this CLI version: set GANG_COUNTDOWN_FACTORY to its address')
 
 // ---- the wording (the user's framing: the dev's own tax share becomes the buyers' reward, paid by fixed public rules)
 export const WHAT_IT_IS = 'the dev turned its own share of the pool tax into a reward for buyers: when the countdown runs out, the last counted buys share this round\'s reward by a fixed public rule. Buyers pay only the pool price and the usual buy tax, nothing extra, and keep the tokens they buy. Who gets what follows from the order of counted buys alone, by rules anyone can read on chain'

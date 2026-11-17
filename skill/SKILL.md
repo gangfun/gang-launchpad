@@ -155,7 +155,7 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   binds only by its first trade of the token: a plain first buy can never bind later, so relay `promoteWarning` on a buy
   preview. If `gang promote buy` prints only the help the CLI is older than 0.34.0: tell the user to update, and don't
   fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
-- **Countdown reward** (`countdown-v1`, 0.43.2+, testnet): the creator's own share of the pool tax, paid to the last
+- **Countdown reward** (`countdown-v1`, 0.43.2+, BSC mainnet and testnet): the creator's own share of the pool tax, paid to the last
   counted buys of each round by a fixed public rule: a reward paid by fixed public rules from the creator's tax share. On a
   graduated token `gang buy` goes through its module; relay `rewards.countdown` (counts or not and why, the round, the
   estimated share) and that anyone, the creator too, can take slots with several wallets. A buy that would not count is

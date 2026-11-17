@@ -61,8 +61,8 @@ export const GANG_GENS = {
       // floor-v1, 2026-11-12, block 133121257; the Safe allowed it on GangHandlerAdmin at block 133123169
       // (docs/MAINNET-FLOOR-MODULE-2026-11-12.md)
       floorFactory: '0x057d2C1557a0E8298a1E00834D6064497f5DC2fC',
-      // countdown-v1 (倒计时奖励): no mainnet factory yet; GANG_COUNTDOWN_FACTORY names one once deployed
-      countdownFactory: null,
+      // countdown-v1 (倒计时奖励), 2026-11-17, block 134102359; the Safe allowed it on GangHandlerAdmin (isFactory)
+      countdownFactory: '0xa1e3117a59104de7D97667cF22f9AB886a5f2957',
       // the 3.0 tax handler's GangHandlerAdmin: a countdown factory counts only when its admin() is this one (no env
       // override, so an env naming a forged factory can't pass the provenance check)
       handlerAdmin: '0xC833CEC2B283759003945C0Bf8C048aB1949Af76',

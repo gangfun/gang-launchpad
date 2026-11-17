@@ -160,21 +160,6 @@ const MODULE_FLAGS = ['buyback', 'split', 'lp']
 /** How a module's flags read in a message. */
 const MOD_FLAG = { buyback: '--buyback', split: '--split', lp: '--lp', combo: 'more than one of --buyback / --lp / --split', capped: '--tax-cap', floor: '--floor', countdown: '--countdown-reward', promote: '--promote on a taxed token' }
 
-const FUNDED_EVENT = COUNTDOWN_ABI.find((x) => x.type === 'event' && x.name === 'Funded')
-/** Σ amount of `module`'s Funded events from `from` since `fromBlock`, read in 5,000-block chunks; null on an RPC error. */
-async function fundedBy(client, module, from, fromBlock) {
-  try {
-    const latest = await client.getBlockNumber()
-    let sum = 0n
-    for (let b = fromBlock; b <= latest; b += 5000n) {
-      const to = b + 4999n < latest ? b + 4999n : latest
-      const logs = await client.getLogs({ address: module, event: FUNDED_EVENT, args: { from }, fromBlock: b, toBlock: to })
-      for (const l of logs) sum += l.args.amount
-    }
-    return sum
-  } catch { return null }
-}
-
 const planPath = (key) => join(LAUNCH_DIR, `${createHash('sha256').update(key).digest('hex').slice(0, 32)}.json`)
 
 function readPlan(key) {
@@ -501,7 +486,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     ...(cdSpec?.seed ? ['seed'] : []), ...(devBuy ? ['dev-buy'] : []), ...(bond ? ['bond'] : [])]
   const rerun = 're-run this same command after executing it'
   // a countdown seed that landed is said on every later run (it is never funded again)
-  const seedDone = () => (plan?.module === 'countdown' && plan.seeded ? `done: this wallet's Funded events at the module add up to ${plan.seededText ?? 'the seed'}; it is not funded again` : null)
+  const seedDone = () => (plan?.module === 'countdown' && plan.seeded ? `done: ${plan.seededText ?? 'the seed'} arrived in the module's books since the seed stage began; it is not funded again` : null)
   const tag = (stage, extra = {}) => ({ launch: { stage, steps, ...(seedDone() && { seed: seedDone() }), ...extra } })
   const withTag = (stage, extra) => (o) => out({ ...o, ...tag(stage, extra) })
 
@@ -1312,25 +1297,37 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     }
   }
 
-  // ---- the countdown pool's seed (--cd-seed): approve (wrap first for WBNB), then fund. Done is decided by this module's
-  // own Funded events from this wallet since the seed stage began (the plan keeps that block and the amount), never by
-  // the pool's size: tax or someone else's fund can fill the pool too
+  // ---- the countdown pool's seed (--cd-seed): approve (wrap first for WBNB), then fund. Read from the module's own books,
+  // never from logs (a public node can silently leave some out): what it holds (pot + reserved + credited + the dev's
+  // part) is recorded when the seed stage begins. Before graduation nothing else moves those books but a fund (or a
+  // stray transfer that a call books, which also lands in the pool), and nothing takes from them: held − that base ≥
+  // the seed means it landed, less means it did not. After graduation the tax moves them too, so an unconfirmed seed is
+  // never decided (or funded again) there
   if (isCountdown && cdSpec?.seed && !plan.seeded) {
-    const cdRaw = cdNow ?? await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin })
+    const cdRaw = await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin })
+    if (!cdRaw || cdRaw.verified !== true || cdRaw.partial) return fail('could not read this launch\'s countdown reward module (RPC error?)', { module: plan.splitter, retry: 'same command again' })
     const want = await cdUnits(cdRaw.rewardQuote)
     if (want.failed) return want.failed
     const sym = want.units.symbol || cdRaw.rewardQuote
     const amount = formatUnits(want.seed, want.units.decimals)
+    const fq = (x) => `${formatUnits(x, want.units.decimals)} ${sym}`
     if (plan.seedAmount && BigInt(plan.seedAmount) !== want.seed) {
-      return fail(`this launch's seed is ${formatUnits(BigInt(plan.seedAmount), want.units.decimals)} ${sym}, not the ${amount} --cd-seed says now: run it again with that amount (a seed is added once)`, { module: plan.splitter })
+      return fail(`this launch's seed is ${fq(BigInt(plan.seedAmount))}, not the ${amount} --cd-seed says now: run it again with that amount (a seed is added once)`, { module: plan.splitter })
     }
-    if (plan.seedFromBlock === undefined) {
-      plan = { ...plan, seedAmount: String(want.seed), seedFromBlock: String(await client.getBlockNumber()) }
+    const held = BigInt(cdRaw.pot) + BigInt(cdRaw.reservedTotal) + BigInt(cdRaw.claimTotal) + BigInt(cdRaw.devOwed)
+    const graduated = (await read(net.pad, PAD_ABI, 'curves', [token]))[6]
+    const UNDECIDED = 'the token graduated before this launch saw its seed land: from graduation the pool tax moves the module\'s books too, so whether the seed landed can no longer be read from them, and no second fund is built on a guess. Check the fund tx with gang tx --hash <hash>; drop --cd-seed to finish the launch'
+    if (plan.seedBase === undefined) {
+      if (graduated) return fail(UNDECIDED, { module: plan.splitter })
+      plan = { ...plan, seedAmount: String(want.seed), seedBase: String(held) }
       writePlan(key, plan)
     }
-    const funded = await fundedBy(client, plan.splitter, me, BigInt(plan.seedFromBlock))
-    if (funded === null) return fail('could not read the countdown module\'s Funded events (RPC error): whether the seed landed is unknown, so nothing is built', { module: plan.splitter, retry: 'same command again' })
-    if (funded < want.seed) {
+    if (graduated) return fail(UNDECIDED, { module: plan.splitter, held: fq(held), base: fq(BigInt(plan.seedBase)) })
+    const arrived = held - BigInt(plan.seedBase)
+    if (arrived < want.seed) {
+      // a fund still on its way: never a second one beside it
+      const [mined, pending] = await Promise.all([client.getTransactionCount({ address: me, blockTag: 'latest' }), client.getTransactionCount({ address: me, blockTag: 'pending' })])
+      if (pending > mined) return fail('a tx of this wallet is still pending: wait for it to land, then run the same command again (no second fund is built beside it)', { wallet: me, retry: 'same command again' })
       const sctx = { chainId: net.chainId, wbnb: net.wbnb, client, read }
       const pre = await fundingStep(sctx, { me, token: cdRaw.rewardQuote, need: want.seed, spender: plan.splitter, sym, approveStep: 'approve-quote' }, flag('calldata'), io.summarize)
       if (pre) {
@@ -1345,13 +1342,13 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       return out({
         ...step({ chainId: net.chainId }, { from: me, to: plan.splitter, data }, {
           step: 'seed', chainId: Number(net.chainId), token, module: plan.splitter, amount, quote: sym,
-          ...(again && { warning: 'this launch built this seed before and the module shows no Funded event of it yet. If that fund was executed, wait for it and run the command again — executing this one too adds the seed twice. If it was never executed, execute this one' }),
+          ...(again && { warning: `this launch built this seed before, and the module's books show it did not land (${fq(arrived)} of ${amount} arrived since the seed stage began; no tx of this wallet is pending): that fund was never sent or it reverted. Execute this one only if the earlier one is not still waiting for approval in the Binance App — never approve both` }),
           note: `adds ${amount} ${sym} to the countdown reward pool, all of it for the buyers: it never comes back to you, and you take no part of it (your dev % applies to the tax only)`,
         }, flag('calldata'), io.summarize),
         ...tag('seed', { token, next: `${rerun}${devBuy ? ': it continues with the dev buy' : bond ? ': it continues with the bond' : ': the launch is then done'}` }),
       })
     }
-    plan = { ...plan, seeded: true, seededText: `${formatUnits(funded, want.units.decimals)} ${sym}` }
+    plan = { ...plan, seeded: true, seededText: fq(arrived) }
     writePlan(key, plan)
   }
 

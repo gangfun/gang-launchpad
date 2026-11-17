@@ -548,8 +548,8 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
   gang create … --buy-tax <1-5> --sell-tax <1-5> --countdown-reward --cd-max-payout <amount> [--cd-window 60m]
                                          [--cd-max-round 6h] [--cd-idle 30d] [--cd-payout 30] [--cd-last 20] [--cd-dev 0]
                                          [--cd-entries 10] [--cd-min-buy 0.05] [--cd-min-pot 0.1] [--cd-seed <amount>] [--dev-buy …]
-                                         V3, taxed, countdown reward (倒计时奖励, GangCountdownReward, countdown-v1; BSC testnet
-                                         now, mainnet not live yet): your share of the pool tax becomes a reward for buyers.
+                                         V3, taxed, countdown reward (倒计时奖励, GangCountdownReward, countdown-v1; BSC mainnet
+                                         and testnet): your share of the pool tax becomes a reward for buyers.
                                          After graduation each buy of at least --cd-min-buy through the module (gang buy)
                                          puts the countdown --cd-window ahead, never past --cd-max-round from the round's
                                          first counted buy. When it runs out, the round's last --cd-entries counted buys
@@ -880,7 +880,7 @@ FLOOR (a V3 token whose recipient is a floor module, floor-v1; GANG_FLOOR_FACTOR
                                          --module <addr> instead of --token names a module directly (not for redeem).
                                          Gas, --testnet, --calldata, --from as gang capped
 COUNTDOWN REWARD (倒计时奖励, a V3 token whose recipient is its countdown module, countdown-v1; GANG_COUNTDOWN_FACTORY /
-GANG_TESTNET_COUNTDOWN_FACTORY; BSC testnet now, mainnet not live yet):
+GANG_TESTNET_COUNTDOWN_FACTORY; BSC mainnet and testnet):
   gang buy --token <addr> --amount <n> [--cd-uncounted]
                                          graduated: the buy goes through the token's countdown module (WBNB-quoted: BNB, or
                                          the quote after an approve with --use-quote; another quote: approve, then
