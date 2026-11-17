@@ -4,7 +4,7 @@
 - 规格：`docs/SPEC-COUNTDOWN-REWARD-2026-11-17.md`；测试网记录：`docs/TESTNET-COUNTDOWN-REWARD-2026-11-17.md`
 - 源码：合约来自 PR #163（main `35a9564`）。部署时在分支 `cli/countdown-reward` 的 `9517f7c` 上执行，这个分支上 `src/` 和 main 完全相同，部署记录里的 `commit` 字段就是它
 - 部署钱包 `0x4EEdcDF5fab775e10C0D09951b6F59Ab81ba19d3`；gas price 0.05 gwei，legacy
-- 状态：**工厂已部署，等多签放行**（下面的批次 JSON）。放行之前谁都克隆不了模块
+- 状态：**工厂已部署，并经多签放行**（2026-11-17，下面的批次 JSON）。服务端 v1.2.105 内置了这个工厂，网站 v1.2.132 能显示倒计时卡片；CLI 0.43.2 发布后 dev 可以用它发币
 
 只部署一个新工厂。不改 3.0 pad、税处理器、GangHandlerAdmin、GangRouter 和 abcd 部署器；已有的币和模块不受影响。
 
@@ -29,7 +29,7 @@
 | GangHandlerAdmin | `0xC833CEC2B283759003945C0Bf8C048aB1949Af76`，owner = 多签 `0x2866369F7acEFC9760bdE7779362fae5cD68B41E` |
 | gangQuote | GANG `0x0c6302401aa5325C2E36F170f52C00B1d220B405` |
 
-链上读回：工厂 `pad()`、`admin()`、`implementation()` 如上，`vanityEnabled()` = true，`count()` = 0；实现合约 `factory()` = 工厂，`taxHandler()` 和 `gangQuote()` 如上；`admin.isFactory(工厂)` = false（等多签）。
+链上读回：工厂 `pad()`、`admin()`、`implementation()` 如上，`vanityEnabled()` = true，`count()` = 0；实现合约 `factory()` = 工厂，`taxHandler()` 和 `gangQuote()` 如上。部署后 `admin.isFactory(工厂)` = false；多签执行批次后读回为 true。
 
 工厂没有 owner，不可升级。每个模块的代币、报价币和全部参数都在 dev 克隆时写死，平台不能改。
 
@@ -58,7 +58,7 @@
 
 ## 之后
 
-1. 多签执行批次，放行工厂。
-2. 服务端：主网 env 设 `GANG_COUNTDOWN_FACTORY=0xa1e3117a59104de7D97667cF22f9AB886a5f2957@134102359`，并把内置的主网工厂补上。
-3. CLI：写入主网工厂地址，发 0.43.2。
+1. 多签执行批次，放行工厂：已完成，`isFactory` = true。
+2. 服务端：内置主网工厂 `0xa1e3…2957@134102359`（gangfun-server PR #64），已随 v1.2.105 上线，正式站不用改 env。
+3. CLI：内置主网工厂，发 0.43.2（gang-launchpad PR #165）。
 4. 网站：CLI 发布后打开「怎么参与」的命令。
