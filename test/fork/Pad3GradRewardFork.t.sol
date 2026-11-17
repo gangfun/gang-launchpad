@@ -128,6 +128,65 @@ contract Pad3GradRewardForkTest is Test {
         assertEq(p.owner(), M.OWNER_SAFE);
         assertEq(m.vanityDeployer(), factory);
 
+        _createGraduateClaim(factory);
+    }
+
+    /// @notice The Safe batch written for signing (PAD3_FORK_BATCH = docs/MAINNET-GANG-LAUNCHPAD-3-UPGRADE-GRAD-SAFE-BATCH-
+    ///         2026-11-17.json), as written, over the deployed mainnet contracts: exactly the upgrade, then the opening;
+    ///         then a reward token bought to graduation and claimed.
+    function test_fork_signedBatchThenGrad() public {
+        string memory rpc = vm.envOr("BSC_RPC_URL", string(""));
+        string memory path = vm.envOr("PAD3_FORK_BATCH", string(""));
+        if (bytes(rpc).length == 0 || bytes(path).length == 0) {
+            vm.skip(true);
+            return;
+        }
+        uint256 forkBlock = vm.envOr("BSC_FORK_BLOCK", uint256(0));
+        if (forkBlock == 0) vm.createSelectFork(rpc);
+        else vm.createSelectFork(rpc, forkBlock);
+        vm.mockCall(M.AGENT_ID_REGISTRY, abi.encodeWithSelector(IERC721.balanceOf.selector), abi.encode(uint256(1)));
+        address factory = m.vanityDeployer();
+        string memory json = vm.readFile(path);
+        assertEq(vm.parseJsonString(json, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
+        assertFalse(vm.keyExistsJson(json, ".transactions[2]"), "two calls");
+        address admin = R.adminOf(PAD3);
+        assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), admin);
+        assertEq(vm.parseJsonString(json, ".transactions[0].value"), "0");
+        assertEq(vm.parseJsonAddress(json, ".transactions[1].to"), PAD3);
+        assertEq(vm.parseJsonString(json, ".transactions[1].value"), "0");
+        bytes memory up = vm.parseJsonBytes(json, ".transactions[0].data");
+        (address proxy, address next, bytes memory init) = abi.decode(_tail(up), (address, address, bytes));
+        assertEq(proxy, PAD3);
+        assertEq(init.length, 0, "no set-up call");
+        assertTrue(next.code.length > 0, "the new implementation is deployed");
+        assertEq(
+            vm.parseJsonBytes(json, ".transactions[1].data"),
+            abi.encodeCall(Pad3Module.setGradReward, (true, ADMIN3, address(0)))
+        );
+        vm.record();
+        _send(json, 0);
+        (, bytes32[] memory writes) = vm.accesses(PAD3);
+        assertEq(writes.length, 1, "only the implementation slot");
+        assertEq(writes[0], R.IMPLEMENTATION_SLOT);
+        address impl = R.implementationOf(PAD3);
+        assertEq(up, abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(PAD3), impl, bytes(""))));
+        _send(json, 1);
+        (bool open, address a, address f) = g.gradRewardDeps();
+        assertTrue(open && a == ADMIN3 && f == address(0));
+        assertEq(p.owner(), M.OWNER_SAFE);
+        assertEq(m.vanityDeployer(), factory);
+        _createGraduateClaim(factory);
+    }
+
+    function _tail(bytes memory data) private pure returns (bytes memory out) {
+        out = new bytes(data.length - 4);
+        for (uint256 i; i < out.length; i++) {
+            out[i] = data[i + 4];
+        }
+    }
+
+    function _createGraduateClaim(address factory) internal {
         // a reward token, through createWithSalt (direct create is refused with abcd on)
         address creator = _actor();
         IGangGradRewardBase.GradConfig memory cfg = IGangGradRewardBase.GradConfig({
