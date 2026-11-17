@@ -22,7 +22,7 @@
 - 读回：新 Pad3Module 的 `gradModule()` = 上面的 Pad3GradModule；`flyModule()` = 上面的 Pad3FlyModule，它的 handler `0x7De9…3ba0` 和 vault core `0x9d90…767E` 沿用线上的。
 - 脚本先在模拟里以 Safe 身份执行升级和 `setGradReward`，再读回比对：最新 25 个币的记录和视图、pad 设置、阶段 2 的全部读回，都和升级前一致。然后带 `PAD3_IMPL`、`PAD3_FLY_HANDLER`、`PAD3_FLY_VAULT_CORE` 只读重跑，逐字节核对新实现、Pad3Module、Pad3FlyModule、Pad3GradModule 都是本次构建的代码，打印出下面的批次。
 - 没有设 `PAD3_PROMOTE_PROBES` 和 `PAD3_BASE_PROBES`，原因和上一次升级相同：部署用的 RPC 拿不到完整的日志。推广分成和底仓的命名空间由各自的测试固定；样本里有带分成或底仓的币时，它们的条款也会比对。
-- 源码验证：还没在 BscScan 提交。需要 BscScan API key，上次是用户提供的。
+- 源码验证：五个都已在 BscScan 验证（2026-11-17，Etherscan v2 接口；构造参数和链接库取自上面的部署记录）。
 
 ## Safe 批次（已执行）
 
@@ -56,4 +56,3 @@
 - CLI 0.42.0：已发布（gangfun/cli `3f6158a`，npm 和 MCP Registry）。文案修改 0.43.1 在 PR #168。
 - 服务端 v1.2.103：已上线（gangfun/gangfun-server#63，merge `473a7a9`）。`/v3/tokens/:token/grad-reward` 可用。上线早于 Safe 执行，主网不需要补扫。
 - 网站：gangfun/gang-web-legacy#54（奖励面板、`llms.txt`、指南版本号）和 #52（`capabilities.json`）待合并部署。
-- 源码验证：还没在 BscScan 提交，需要 BscScan API key。
