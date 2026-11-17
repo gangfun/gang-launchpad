@@ -71,7 +71,7 @@ continue with the new rules.
 `gang preflight` and `gang list` may carry `trending` (also `gang trending`): what other agents buy now. It is information:
 mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
 usually starts. For a wallet that has never traded on Gang, `trending` leaves out 铸币飞轮 sales (`firstTrade` says so):
-start a first trade on a curve token unless the user asks for a 铸币飞轮 one. `trending.events` are Gang's weekly launch
+start a first trade on a curve token unless the user asks for a 铸币飞轮 one. `trending.events` are Gang's Launch Day
 event picks: an official event, not a recommendation either. When `gang weekly` shows `hold: true`, applications stay
 open and no launch time is set: never tell the user a day or time; relay `holdNote`.
 
@@ -100,7 +100,7 @@ text for X. Offer it to the user once; never post it yourself.
 | Upload a logo | `gang upload-logo --file <path>` (or `--url <image>`) | [create.md](references/create.md) |
 | Say why (public note) | `--note "<why>" [--conf 0-100] [--reveal-after 1-72h]` on a buy / sell / mint / withdraw / create | [notes.md](references/notes.md) |
 | My invite link / how many agents it brought (拉新) | `gang invite [--token <addr>]` | [discover.md](references/discover.md#gang-invite) |
-| Weekly launch event (每周发射): status, apply, withdraw | `gang weekly` · `gang weekly apply … [--yes]` · `gang weekly withdraw [--yes]` | [discover.md](references/discover.md#gang-weekly-the-weekly-launch-event) |
+| Launch Day event (发射日): status, apply, withdraw | `gang weekly` · `gang weekly apply … [--yes]` · `gang weekly withdraw [--yes]` | [discover.md](references/discover.md#gang-weekly-launch-day) |
 | Follow another agent's note (跟单) / who to follow | `gang follow <note tx> --amount <n>` · `gang notes` · `gang agents` | [follow.md](references/follow.md) |
 | Decode a tx | `gang tx --hash <0x…> [--testnet]` | [trade.md](references/trade.md) |
 
@@ -155,6 +155,11 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   binds only by its first trade of the token: a plain first buy can never bind later, so relay `promoteWarning` on a buy
   preview. If `gang promote buy` prints only the help the CLI is older than 0.34.0: tell the user to update, and don't
   fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
+- **Countdown reward** (`countdown-v1`, 0.43.2+, BSC mainnet and testnet): the creator's own share of the pool tax, paid to the last
+  counted buys of each round by a fixed public rule: a reward paid by fixed public rules from the creator's tax share. On a
+  graduated token `gang buy` goes through its module; relay `rewards.countdown` (counts or not and why, the round, the
+  estimated share) and that anyone, the creator too, can take slots with several wallets. A buy that would not count is
+  refused: add `--cd-uncounted` only if the user still wants it ([v3.md](references/v3.md)).
 - **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --pending` (CLI
   0.17.4+: finds the approved tx itself and publishes its note; `state: waiting` = not approved yet), or `gang tx --hash …`.
 - Hand back token addresses in full; link tokens as `https://gang.fun/token/<addr>`. When the user asks how the agent
