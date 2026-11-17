@@ -41,9 +41,10 @@ contract CountdownTestnetAcceptance is Script {
     uint256 internal constant MINTER_GAS = 600_000;
     uint256 internal constant NEAR_END_FACTOR = 10;
     string internal constant MINTER_LABEL = "gang-capped-testnet";
-    bytes32 internal constant SALT = keccak256("countdown-acceptance-1");
-    string internal constant NAME = "Countdown Test";
-    string internal constant SYMBOL = "CDRT";
+    /// @dev CD_RUN (default 1) picks the module salt and the token's name: a second run (a new factory) gets its own.
+    bytes32 internal SALT;
+    string internal NAME;
+    string internal SYMBOL;
     uint16 internal constant TAX_BPS = 300;
     uint16 internal constant DIVIDEND_BPS = 2_000;
     uint256 internal constant SEED = 0.2 ether;
@@ -350,6 +351,14 @@ contract CountdownTestnetAcceptance is Script {
         deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         deployer = vm.addr(deployerPk);
         q = T.TEST_QUOTE;
+        uint256 runId = vm.envOr("CD_RUN", uint256(1));
+        if (runId == 1) {
+            (SALT, NAME, SYMBOL) = (keccak256("countdown-acceptance-1"), "Countdown Test", "CDRT");
+        } else {
+            string memory n = vm.toString(runId);
+            SALT = keccak256(bytes(string.concat("countdown-acceptance-", n)));
+            (NAME, SYMBOL) = (string.concat("Countdown Test ", n), string.concat("CDR", n));
+        }
     }
 
     function _register(uint256 pk) internal {
