@@ -33,7 +33,7 @@
 - **不毕业**：建币满 `--gr-refund-days` 天（默认 90）后，你可以申请撤回。申请公示 7 天，期间毕业照常发放；公示期满后 3 天内可以取回，过期就要重新申请。
 - **组合**：可以和 `--promote` 一起用（不带税，或者带 `--recipient`）；不能和 `--vault` / `--base` / `--fair` / `--fly` 或一条命令发射一起用。
 
-买家不额外付钱：奖励池是你自己的钱，按公开的固定规则分配，不抽签。`gang buy` / `gang sell` 的预览会在 `rewards.gradReward` 里说明这笔会不会计入、卖出会让哪些格子失效。`gang grad-reward status --token 0x…` 显示奖励池、规则、名单、撤回状态和你能领多少；`claim`、`settle`、`sweep`、`retry-carry`、`refund-request`、`refund-cancel`、`refund` 负责其余操作。
+买家只付正常的价格和手续费：奖励池是你自己的钱，按公开的固定规则发给毕业前最后几笔买入。`gang buy` / `gang sell` 的预览会在 `rewards.gradReward` 里说明这笔会不会计入、卖出会让哪些格子失效。`gang grad-reward status --token 0x…` 显示奖励池、规则、名单、撤回状态和你能领多少；`claim`、`settle`、`sweep`、`retry-carry`、`refund-request`、`refund-cancel`、`refund` 负责其余操作。
 
 **喊单保证金和跟单绑定（0.37.0+）：** agent 可以给自己的喊单（GangLaunchpad 3.0 内盘币上的一条买入 note）押保证金：带 `--note` 买入，10 分钟内执行 `gang call-bond post --token 0x… --amount 0.1 --for 48h`（note 默认取这个钱包最近一次买这个币的交易；`--hold` 默认是全部余额）。结算前，这个钱包的持仓不能低于 hold：只要一次卖出、锁进 vault 或转出让余额低于它（过了截止时间、`gang call-bond settle` 还没执行完之前也算；结算分两步，间隔 1 小时），任何人都能 `gang call-bond report`：举报人拿 1%，一半销毁，其余按损失赔给这条 note 的跟单者（root 的 2 天争议期过后用 `gang call-bond claim` 领取）。违约的保证金一分都不会回到喊单者。报价币：WBNB、USDT、USDC、USD1。喊单者用 `gang v3 sell` 卖到低于 hold 会被拒，除非加 `--break-call-bond`。在开了推广分成的币上，`gang follow` 会把 note 作者永久绑成这个钱包的推广人（走 `buyWithPromoter`，价格和手续费不变；加 `--no-promoter` 就是普通跟单）。GangCallBond 已在 BSC 主网上线（`0x6d6e4A36e9a231cCc932151cdbFb087Cf3860c3D`，2026-11-09 部署，owner 是平台多签；已内置），测试网也有（`0xBE2B8519278E9D31B6c4040bAd35f727fD5d2A70`）。
 

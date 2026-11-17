@@ -641,7 +641,7 @@ GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; the pad says whe
                                          rest goes back to you (to the token's countdown module if that is its tax recipient). Not graduating: --gr-refund-days (default 90) after the
                                          create you may ask for it back; the request is public for 7 days (a graduation in
                                          that time pays the buyers), then you have 3 days to take it, else it lapses. The
-                                         buyers pay nothing extra: it is your money, by a fixed rule, no draw. With --promote
+                                         buyers pay only the usual price and fee: it is your money, paid by a fixed public rule. With --promote
                                          on an untaxed token or with --recipient; not with --vault / --base / --fair / --fly
                                          or a launch in one command (--dev-buy, --bond, --buyback, --split, --lp, --tax-cap,
                                          --floor). gang buy / gang sell previews say whether a buy counts (rewards.gradReward)
