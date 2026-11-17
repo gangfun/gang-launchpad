@@ -56,3 +56,13 @@
 - CLI 0.42.0：已发布（gangfun/cli `3f6158a`，npm 和 MCP Registry）。文案修改 0.43.1 在 PR #168。
 - 服务端 v1.2.103：已上线（gangfun/gangfun-server#63，merge `473a7a9`）。`/v3/tokens/:token/grad-reward` 可用。上线早于 Safe 执行，主网不需要补扫。
 - 网站：gangfun/gang-web-legacy#54（奖励面板、`llms.txt`、指南版本号）和 #52（`capabilities.json`）待合并部署。
+
+## carry：转给倒计时奖励（2026-11-17 已开启）
+
+- 一笔调用：pad `0x2bEb…AB29` 上 `setGradReward(true, 0xC833…Af76, 0xa1e3…2957)`，生效后带 `--countdown-reward` 的奖励币毕业时，按 `carryBps` 把一部分奖励池转进它的倒计时模块。不改实现，不转 BNB。
+- 生成：`script/SetGradRewardCountdown.s.sol --sig "run()"`，不带 `--libraries`，主网只读模拟。脚本逐字节比对了倒计时工厂和它的实现、确认 admin 的 `isFactory` 为真，以 Safe 身份模拟执行并读回 (true, admin, factory)。
+- 归档文件：[MAINNET-GRAD-REWARD-CARRY-SAFE-BATCH-2026-11-17.json](MAINNET-GRAD-REWARD-CARRY-SAFE-BATCH-2026-11-17.json)，SHA-256 `9eb748200aa3d5ad13bab9490aabe569a42e5c8d328731f1cd471328dcfebbb8`。生成时 Safe 的下一个 nonce 是 56。
+- fork 演练（区块 134133151，脚本最终版）：`PAD3_CARRY_BATCH=<上面的文件>` 跑 `test/fork/Pad3GradCarryFork.t.sol`，通过。核对文件就是脚本打印的调用、只有一笔；Safe 执行后只写了命名空间的前两个字；再跑脚本被拒绝；线上工厂克隆模块、建币、约 80 个模拟 Agent 买到毕业，模块奖励池正好多了种子钱的 20%，没有欠款，回收也进了模块。
+- 执行：交易 [`0xa19d0301…9240`](https://bscscan.com/tx/0xa19d0301c7c24c9e98da0b0b9dba322bb5a5a487a53c2017352a4b1b7f589240)，区块 134134184（2026-11-17 22:18 UTC+8），gas 108,300，费用 0.0000054 BNB。Safe nonce 56，直接调用 pad（`operation` = 0，不转 BNB），`data` 和归档 JSON 逐字节一致。
+- 执行后核对：回执成功；pad 发出 `GradRewardDepsSet(true, 0xC833…Af76, 0xa1e3…2957)`，Safe 发出 `ExecutionSuccess`；`gradRewardDeps()` 读回 (true, `0xC833CEC2B283759003945C0Bf8C048aB1949Af76`, `0xa1e3117a59104de7D97667cF22f9AB886a5f2957`)；pad 的 owner 仍是 Safe；Safe 的下一个 nonce 是 57。
+- 应急关闭：`setGradReward(false, 0xC833…Af76, 0xa1e3…2957)`，保留两个地址。
