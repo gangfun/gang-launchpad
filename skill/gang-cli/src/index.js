@@ -608,7 +608,7 @@ PROMOTER SHARE (GangLaunchpad 3.0, 0.34.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TES
                                          the dev: reclaim what no root allocated, after 30 days of settler silence once the token
                                          has graduated, which closes the module FOR GOOD / send what a failed push left
 
-OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; the pad says whether it is open: BSC testnet now; mainnet once the Safe opens it):
+OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; open on BSC mainnet and testnet; the pad says whether it is open):
   gang create … --base <5|10> --base-vest <30|90|180> [--grad 6|9|12|15] [--buy-tax <1-5> --sell-tax <1-5>]
                                          the create also buys 5% or 10% of the supply on the curve, as its first trade, for
                                          the token's own base vault (GangBaseVault). The tx pays exactly the pad's
@@ -630,7 +630,7 @@ OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; the pad says whether it is op
                                          ones send what has vested to the creator (never to the caller). --testnet,
                                          --calldata, --from as elsewhere
 
-GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; the pad says whether it is open: BSC testnet now; mainnet once the Safe opens it):
+GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; open on BSC mainnet and testnet; the pad says whether it is open):
   gang create … --grad-reward <seed> [--gr-min-buy <amount>] [--gr-entries <1-20>] [--gr-last <0-50>] [--gr-refund-days <30-180>]
                                          you seed a reward pool in the token's quote (pulled in the create: approve first;
                                          at least 0.1 BNB worth) for the last --gr-entries curve buys (default 10) that each
