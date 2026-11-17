@@ -371,6 +371,7 @@ contract Pad3PromoteUpgradeForkTest is Test {
         vm.setEnv("CALLERS_PROXY_OK", "true");
         vm.setEnv("PAD3_INIT_CALL", "0x");
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(address(0)));

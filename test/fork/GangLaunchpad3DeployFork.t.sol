@@ -376,17 +376,20 @@ contract GangLaunchpad3DeployForkTest is Test {
         UpgradeGangLaunchpad3 u = new UpgradeGangLaunchpad3();
         address cur = R.implementationOf(address(p));
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.setEnv("PAD3_INIT_CALL", "0x");
         u.run();
         assertEq(R.implementationOf(address(p)), cur, "printed for the Safe, not sent");
 
         address wrong = _otherRegistry(p);
         vm.setEnv("PAD3_IMPL", vm.toString(wrong));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "PAD3_IMPL dependencies differ"));
         u.run();
 
         address next = _v2Over(p, Pad3Impl.module(Pad3Impl.depsOf(p)));
         vm.setEnv("PAD3_IMPL", vm.toString(next));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         // not this build's GangLaunchpad3 code (final audit M-1); then with the script of the build that ships it
         vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad implementation code"));
         u.run();
@@ -399,6 +402,7 @@ contract GangLaunchpad3DeployForkTest is Test {
         u2.run();
         assertEq(R.implementationOf(address(p)), cur, "still not sent");
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.setEnv("PAD3_INIT_CALL", "0x");
     }
 

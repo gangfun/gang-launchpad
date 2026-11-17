@@ -138,6 +138,7 @@ contract Pad3VanityUpgradeForkTest is Test {
         vm.setEnv("GANG_PAD_REGISTRY", vm.toString(M.PAD_REGISTRY));
         vm.setEnv("PAD3_ABCD_DEPLOYER", vm.toString(factory));
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.setEnv("PAD3_INIT_CALL", "0x");
         vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));
