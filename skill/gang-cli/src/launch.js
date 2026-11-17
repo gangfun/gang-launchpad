@@ -160,6 +160,21 @@ const MODULE_FLAGS = ['buyback', 'split', 'lp']
 /** How a module's flags read in a message. */
 const MOD_FLAG = { buyback: '--buyback', split: '--split', lp: '--lp', combo: 'more than one of --buyback / --lp / --split', capped: '--tax-cap', floor: '--floor', countdown: '--countdown-reward', promote: '--promote on a taxed token' }
 
+const FUNDED_EVENT = COUNTDOWN_ABI.find((x) => x.type === 'event' && x.name === 'Funded')
+/** Σ amount of `module`'s Funded events from `from` since `fromBlock`, read in 5,000-block chunks; null on an RPC error. */
+async function fundedBy(client, module, from, fromBlock) {
+  try {
+    const latest = await client.getBlockNumber()
+    let sum = 0n
+    for (let b = fromBlock; b <= latest; b += 5000n) {
+      const to = b + 4999n < latest ? b + 4999n : latest
+      const logs = await client.getLogs({ address: module, event: FUNDED_EVENT, args: { from }, fromBlock: b, toBlock: to })
+      for (const l of logs) sum += l.args.amount
+    }
+    return sum
+  } catch { return null }
+}
+
 const planPath = (key) => join(LAUNCH_DIR, `${createHash('sha256').update(key).digest('hex').slice(0, 32)}.json`)
 
 function readPlan(key) {
@@ -485,7 +500,9 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   const steps = [...(mod ? [cloneStep] : []), kind === 'v3' ? 'create' : 'create (dev shares included)', ...(mod ? ['bind'] : []),
     ...(cdSpec?.seed ? ['seed'] : []), ...(devBuy ? ['dev-buy'] : []), ...(bond ? ['bond'] : [])]
   const rerun = 're-run this same command after executing it'
-  const tag = (stage, extra = {}) => ({ launch: { stage, steps, ...extra } })
+  // a countdown seed that landed is said on every later run (it is never funded again)
+  const seedDone = () => (plan?.module === 'countdown' && plan.seeded ? `done: this wallet's Funded events at the module add up to ${plan.seededText ?? 'the seed'}; it is not funded again` : null)
+  const tag = (stage, extra = {}) => ({ launch: { stage, steps, ...(seedDone() && { seed: seedDone() }), ...extra } })
   const withTag = (stage, extra) => (o) => out({ ...o, ...tag(stage, extra) })
 
   let plan = flag('restart') ? null : readPlan(key)
@@ -510,6 +527,11 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   // ---- a launch keeps the mode it began with (the create, once built, is never redone by a changed flag)
   // a floor module is cloned for one token address: a plan that lost it builds nothing more (no create without the
   // salt and metadata that give that address, no guess at which token is this launch's)
+  // a countdown launch begun with another factory (an older CLI, or a changed GANG_*COUNTDOWN_FACTORY): its module is not
+  // one this CLI can verify, so nothing more is built on it
+  if (plan?.module === 'countdown' && !plan.done && plan.factory && String(plan.factory).toLowerCase() !== String(countdownFactoryAddress(testnet) ?? '').toLowerCase()) {
+    return fail(`this launch's countdown reward module was cloned by the factory ${plan.factory}, not by ${countdownFactoryAddress(testnet) ?? 'any factory'} (the one this CLI uses now): nothing more is built on it. Add --restart for a new module and token${plan.token ? ` (the token ${plan.token} stays as it is)` : ''}`, { module: plan.splitter, planFactory: plan.factory, factory: countdownFactoryAddress(testnet) })
+  }
   if (PINNED[plan?.module] && !pinnedOf(plan)) return fail(`this launch's plan has no token address for its ${PINNED[plan.module]}: add --restart`, { module: plan.splitter })
   let created = plan?.startCount !== undefined
   let rebuilt = false
@@ -1021,7 +1043,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
         hint: `if the clone was executed, wait for it to land and ${rerun.replace(' after executing it', '')}; if it was not, add --restart to build it again`,
       })
     }
-    const s = await countdownRaw(read, plan.splitter, { factory: plan.factory }).catch(() => undefined)
+    const s = await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin }).catch(() => undefined)
     if (s === undefined || (s && s.verified === null)) return fail('could not check this launch\'s countdown reward module against its factory (RPC error)', { module: plan.splitter, retry: 'same command again' })
     if (!s || s.verified !== true || s.dev.toLowerCase() !== me.toLowerCase() || s.token) {
       return fail('the module at this launch\'s address is not an unbound countdown reward module of this wallet: add --restart', { module: plan.splitter })
@@ -1175,7 +1197,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   // a launch keeps the countdown settings it began with, and its token is the one the module was cloned for
   let cdNow = null
   if (plan.module === 'countdown' && plan.splitter && !plan.done) {
-    cdNow = await countdownRaw(read, plan.splitter, { factory: plan.factory }).catch(() => null)
+    cdNow = await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin }).catch(() => null)
     if (!cdNow || cdNow.verified === null) return fail('could not read this launch\'s countdown reward module (RPC error?)', { module: plan.splitter, retry: 'same command again' })
     if (cdNow.verified !== true) return fail('this launch\'s module is not one GangCountdownRewardFactory made: nothing more is built for it', { module: plan.splitter })
     if (cdNow.rewardToken.toLowerCase() !== token.toLowerCase()) {
@@ -1200,7 +1222,7 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
   const buybackState = () => (plan.splitter && !isSplit && !isLp && !isCombo && !isCapped && !isPromote && !isFloor && !isCountdown ? splitterOf(read, plan.splitter) : null)
   const countdownState = async () => {
     if (!plan.splitter || !isCountdown) return null
-    const raw = await countdownRaw(read, plan.splitter, { factory: plan.factory, me, getBlock: () => client.getBlock() })
+    const raw = await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin, me, getBlock: () => client.getBlock() })
     if (!raw) return null
     const hidden = countdownShown(raw, token)
     if (hidden) return hidden
@@ -1290,17 +1312,25 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     }
   }
 
-  // ---- the countdown pool's seed (--cd-seed): approve (wrap first for WBNB), then fund. Before graduation only fund() moves
-  // the pool, so a pool at or above the seed means it landed; past graduation the plan's own mark says it was built
+  // ---- the countdown pool's seed (--cd-seed): approve (wrap first for WBNB), then fund. Done is decided by this module's
+  // own Funded events from this wallet since the seed stage began (the plan keeps that block and the amount), never by
+  // the pool's size: tax or someone else's fund can fill the pool too
   if (isCountdown && cdSpec?.seed && !plan.seeded) {
-    const cdRaw = cdNow ?? await countdownRaw(read, plan.splitter, { factory: plan.factory })
+    const cdRaw = cdNow ?? await countdownRaw(read, plan.splitter, { factory: plan.factory, admin: net.handlerAdmin })
     const want = await cdUnits(cdRaw.rewardQuote)
     if (want.failed) return want.failed
-    const graduated = (await read(net.pad, PAD_ABI, 'curves', [token]))[6]
-    const landed = !graduated ? BigInt(cdRaw.potAvailable) >= want.seed : !!plan.seedAt
-    if (!landed) {
-      const sym = want.units.symbol || cdRaw.rewardQuote
-      const amount = formatUnits(want.seed, want.units.decimals)
+    const sym = want.units.symbol || cdRaw.rewardQuote
+    const amount = formatUnits(want.seed, want.units.decimals)
+    if (plan.seedAmount && BigInt(plan.seedAmount) !== want.seed) {
+      return fail(`this launch's seed is ${formatUnits(BigInt(plan.seedAmount), want.units.decimals)} ${sym}, not the ${amount} --cd-seed says now: run it again with that amount (a seed is added once)`, { module: plan.splitter })
+    }
+    if (plan.seedFromBlock === undefined) {
+      plan = { ...plan, seedAmount: String(want.seed), seedFromBlock: String(await client.getBlockNumber()) }
+      writePlan(key, plan)
+    }
+    const funded = await fundedBy(client, plan.splitter, me, BigInt(plan.seedFromBlock))
+    if (funded === null) return fail('could not read the countdown module\'s Funded events (RPC error): whether the seed landed is unknown, so nothing is built', { module: plan.splitter, retry: 'same command again' })
+    if (funded < want.seed) {
       const sctx = { chainId: net.chainId, wbnb: net.wbnb, client, read }
       const pre = await fundingStep(sctx, { me, token: cdRaw.rewardQuote, need: want.seed, spender: plan.splitter, sym, approveStep: 'approve-quote' }, flag('calldata'), io.summarize)
       if (pre) {
@@ -1315,13 +1345,13 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
       return out({
         ...step({ chainId: net.chainId }, { from: me, to: plan.splitter, data }, {
           step: 'seed', chainId: Number(net.chainId), token, module: plan.splitter, amount, quote: sym,
-          ...(again && { warning: 'this launch built this seed before and the pool does not show it yet. If that fund was executed, wait for it and run the command again — executing this one too adds the seed twice. If it was never executed, execute this one' }),
+          ...(again && { warning: 'this launch built this seed before and the module shows no Funded event of it yet. If that fund was executed, wait for it and run the command again — executing this one too adds the seed twice. If it was never executed, execute this one' }),
           note: `adds ${amount} ${sym} to the countdown reward pool, all of it for the buyers: it never comes back to you, and you take no part of it (your dev % applies to the tax only)`,
         }, flag('calldata'), io.summarize),
         ...tag('seed', { token, next: `${rerun}${devBuy ? ': it continues with the dev buy' : bond ? ': it continues with the bond' : ': the launch is then done'}` }),
       })
     }
-    plan = { ...plan, seeded: true }
+    plan = { ...plan, seeded: true, seededText: `${formatUnits(funded, want.units.decimals)} ${sym}` }
     writePlan(key, plan)
   }
 

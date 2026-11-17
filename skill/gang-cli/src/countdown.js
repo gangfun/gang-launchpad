@@ -2,7 +2,6 @@ import { createPublicClient, encodeFunctionData, formatUnits, getAddress, hexToS
 import { walletFor } from './fair.js'
 import { atTokenPad, gangGens, KIND_UNREAD, NOT_ON_MAINNET, padNets, rpcTransport } from './gangpad.js'
 import { decimalsOf, fundingStep, GAS_RESERVE, revertOf as revertIn, routerDeadline, step } from './steps.js'
-import { floorVerified } from './floor.js'
 
 /**
  * 倒计时奖励, the countdown reward (GangCountdownReward, `countdown-v1`; docs/SPEC-COUNTDOWN-REWARD-2026-11-17.md): one
@@ -12,8 +11,8 @@ import { floorVerified } from './floor.js'
  * counted: it puts the round's deadline `window` ahead, never past the round's cap (its first counted buy + `maxRound`).
  * Once the deadline passes, the round's last `entries` counted buys share min(pool × payoutBps, maxPayout): an equal
  * share each, the newest `lastBps` of it on top (a round that ended at its cap: equal shares, no extra). Buys through
- * PancakeSwap's router, an aggregator or GangRouter never count. Not a bet: buyers buy the token at the pool price and
- * pay the usual buy tax, nothing extra; the pool is the dev's tax share, paid out by a fixed public rule.
+ * PancakeSwap's router, an aggregator or GangRouter never count. A reward paid by fixed public rules from the dev's tax
+ * share: buyers buy the token at the pool price and pay the usual buy tax, nothing extra.
  * The token is fixed when the module is cloned (`rewardToken`, its CREATE2 address before it exists), as the floor
  * module's: a launch computes the token's address first, clones the module for it, creates the token at that address,
  * then binds (launch.js). A module is a countdown module only when GangCountdownRewardFactory listed it
@@ -156,9 +155,9 @@ export const countdownNotLive = (testnet) => (testnet
   ? 'the countdown reward (countdown-v1) has no factory on the BSC testnet in this CLI version: set GANG_TESTNET_COUNTDOWN_FACTORY to its address'
   : 'the countdown reward (countdown-v1) is not live on BSC mainnet yet (no GangCountdownRewardFactory there in this CLI version): it is on the BSC testnet (--testnet). GANG_COUNTDOWN_FACTORY overrides the address once one is deployed')
 
-// ---- the wording (the user's framing: the dev's own tax share becomes the buyers' reward; never a bet)
-export const WHAT_IT_IS = 'the dev turned its own share of the pool tax into a reward for buyers: when the countdown runs out, the last counted buys share this round\'s reward by a fixed public rule. Buyers pay only the pool price and the usual buy tax, nothing extra, and keep the tokens they buy. No randomness, no draw'
-export const ONLY_GANG_BUYS = 'only buys through the countdown module count (gang buy, and the gang.fun buy button): a buy on PancakeSwap\'s own router, through an aggregator or through GangRouter is a normal buy and never counts'
+// ---- the wording (the user's framing: the dev's own tax share becomes the buyers' reward, paid by fixed public rules)
+export const WHAT_IT_IS = 'the dev turned its own share of the pool tax into a reward for buyers: when the countdown runs out, the last counted buys share this round\'s reward by a fixed public rule. Buyers pay only the pool price and the usual buy tax, nothing extra, and keep the tokens they buy. Who gets what follows from the order of counted buys alone, by rules anyone can read on chain'
+export const ONLY_GANG_BUYS = 'only buys through the countdown module count, as the gang CLI and MCP send them (gang buy): a buy on PancakeSwap\'s own router, through an aggregator or through GangRouter is a normal buy and never counts'
 export const MULTI_WALLET_NOTE = 'anyone, the dev included, can take several reward slots with several wallets: each slot only costs a counted buy (at least the minimum buy, paying the buy tax), and the same wallet may hold several slots'
 export const CAPPED_NOTE = 'a round that keeps getting buys ends at its cap (its first counted buy + the max round time): that end time is public in advance, so its last slots favour whoever controls the order of the last block (block builders, private relays, bundles). For that reason a round that ends at its cap pays all its slots equally, with no extra for the last buy'
 export const POOL_GROWS_NOTE = 'the pool grows only when the held tax is sold: on pool sells, or by the keeper in small chunks; with buys alone it grows slowly'
@@ -382,7 +381,7 @@ export function estimateShare(s, counted) {
  * The raw state of a module for printing (reads it all). null when `addr` does not answer countdown-v1. `factory`: the
  * countdown factory of the pad's generation (the provenance check). `me`: a wallet to report its claimable and slots.
  */
-export async function countdownRaw(read, addr, { factory, me = null, getBlock } = {}) {
+export async function countdownRaw(read, addr, { factory, admin, token = null, me = null, getBlock } = {}) {
   if (!addr || addr === zeroAddress) return null
   let type
   try { type = await read(addr, COUNTDOWN_ABI, 'moduleType') } catch (e) {
@@ -391,10 +390,17 @@ export async function countdownRaw(read, addr, { factory, me = null, getBlock } 
     throw e
   }
   if (hexToString(type, { size: 32 }).replace(/\0+$/, '') !== COUNTDOWN_TYPE) return null
+  // provenance first: a module of another factory (the superseded one) or any contract that answers countdown-v1 is
+  // read no further, so an older or bad ABI can't look like an RPC failure. Only the warning is shown for it
+  const [verified, rewardToken] = await Promise.all([
+    countdownVerified(read, addr, factory, admin),
+    read(addr, COUNTDOWN_ABI, 'rewardToken').catch(() => null),
+  ])
+  if (verified !== true) return { module: addr, verified, rewardToken, partial: true }
+  if (token && String(rewardToken).toLowerCase() !== token.toLowerCase()) return { module: addr, verified, rewardToken, partial: true }
   const FIELDS = ['config', 'dev', 'rewardToken', 'rewardQuote', 'token', 'pot', 'potAvailable', 'reservedTotal', 'claimTotal', 'devOwed', 'cur', 'deadline', 'lastRoundId', 'lastCountedAt', 'lastFinalizedAt', 'currentRound', 'roundEndsBy', 'previewWork']
-  const [vals, verified, rounds, block, claimable] = await Promise.all([
+  const [vals, rounds, block, claimable] = await Promise.all([
     Promise.all(FIELDS.map((f) => read(addr, COUNTDOWN_ABI, f))),
-    floorVerified(read, addr, factory),
     Promise.all([0, 1].map((b) => read(addr, COUNTDOWN_ABI, 'round', [b]))),
     getBlock ? getBlock() : null,
     me ? read(addr, COUNTDOWN_ABI, 'claimableOf', [me]) : 0n,
@@ -413,6 +419,20 @@ export async function countdownRaw(read, addr, { factory, me = null, getBlock } 
     due: r.previewWork[0], rounds: [buf(0), buf(1)], count: buf(cur).count,
     now: block ? block.timestamp : BigInt(Math.floor(Date.now() / 1000)), me, claimable,
   }
+}
+
+const ADMIN_ABI = parseAbi(['function moduleOf(address module) view returns (address)'])
+/**
+ * Whether `module` was made by `factory`: the factory's admin() is the network's pinned GangHandlerAdmin (`admin`, from
+ * gangpad.js; never from the env) and that admin's moduleOf(module) is the factory. null when it could not be read.
+ */
+export async function countdownVerified(read, module, factory, admin) {
+  if (!factory || !admin) return false
+  try {
+    const a = await read(factory, COUNTDOWN_FACTORY_ABI, 'admin')
+    if (a.toLowerCase() !== admin.toLowerCase()) return false
+    return (await read(a, ADMIN_ABI, 'moduleOf', [module])).toLowerCase() === factory.toLowerCase()
+  } catch { return null }
 }
 
 /** Whether a settle / finalize is due now, from the raw state (as the contract's _due). */
@@ -504,7 +524,7 @@ export async function countdownForToken(ctx, token, recipient, me = null) {
   const factory = ctx.countdownFactory || null
   if (!factory || !recipient || recipient === zeroAddress) return null
   let raw
-  try { raw = await countdownRaw(ctx.read, recipient, { factory, me, getBlock: () => ctx.client.getBlock() }) } catch (e) {
+  try { raw = await countdownRaw(ctx.read, recipient, { factory, admin: ctx.handlerAdmin, token, me, getBlock: () => ctx.client.getBlock() }) } catch (e) {
     return { unread: e.shortMessage || e.message.split('\n')[0] }
   }
   if (!raw) return null
@@ -659,7 +679,7 @@ export async function runCountdown(sub, { opt, flag, out, fail, summarize }) {
   let me = null
   try { me = walletFor(ctx, opt('from')) } catch { /* status works without a wallet */ }
   let raw
-  try { raw = await countdownRaw(ctx.read, recipient, { factory: ctx.countdownFactory, me, getBlock: () => ctx.client.getBlock() }) } catch (e) {
+  try { raw = await countdownRaw(ctx.read, recipient, { factory: ctx.countdownFactory, admin: ctx.handlerAdmin, token, me, getBlock: () => ctx.client.getBlock() }) } catch (e) {
     return fail('could not read the countdown reward module (RPC error)', { token, module: recipient, detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' })
   }
   if (!raw) return fail('this token\'s tax recipient is not a countdown reward module (countdown-v1): the token was not launched with --countdown-reward', { token, recipient: recipient === zeroAddress ? null : recipient })
@@ -702,6 +722,10 @@ export async function runCountdown(sub, { opt, flag, out, fail, summarize }) {
       step: 'countdown-claim', amount: f(raw.claimable), quote: sym, to,
       note: `pays everything credited to this wallet (${f(raw.claimable)} ${sym}) to ${to.toLowerCase() === String(me).toLowerCase() ? 'this wallet' : to}`,
     })
+  }
+  // the local reading of what is due must agree with the module's own previewWork, or nothing is built
+  if ((sub === 'settle' || sub === 'finalize') && (due.settle || due.finalize) !== !!raw.due) {
+    return fail(`the module's previewWork says ${raw.due ? 'something is due' : 'nothing is due'}, but this CLI reads the round as ${due.settle ? 'due to settle' : due.finalize ? 'due to finalize' : 'not due'}: nothing is built. Run the command again (a block may have landed in between); if it persists, report it`, { token, module: raw.module, previewWork: !!raw.due, local: due, retry: 'same command again' })
   }
   if (sub === 'settle') {
     if (!due.settle) {

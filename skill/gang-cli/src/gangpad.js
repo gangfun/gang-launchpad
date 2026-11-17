@@ -63,6 +63,9 @@ export const GANG_GENS = {
       floorFactory: '0x057d2C1557a0E8298a1E00834D6064497f5DC2fC',
       // countdown-v1 (倒计时奖励): no mainnet factory yet; GANG_COUNTDOWN_FACTORY names one once deployed
       countdownFactory: null,
+      // the 3.0 tax handler's GangHandlerAdmin: a countdown factory counts only when its admin() is this one (no env
+      // override, so an env naming a forged factory can't pass the provenance check)
+      handlerAdmin: '0xC833CEC2B283759003945C0Bf8C048aB1949Af76',
       // the pool side of the promoter share, 2026-11-07, block 132218466; the Safe allowed it on GangHandlerAdmin at block
       // 132219892 (docs/MAINNET-GANG-LAUNCHPAD-3-PROMOTE-2026-11-07.md)
       promotePoolFactory: '0xA633e499ADcD69A4F91dc83587096b2c1903167A',
@@ -121,6 +124,7 @@ export const GANG_GENS = {
       // block 143183063; docs/TESTNET-COUNTDOWN-REWARD-2026-11-17.md). The earlier factory 0x2Be9…aCdE (no maxRound) is
       // superseded
       countdownFactory: '0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582',
+      handlerAdmin: '0x0fb8280B88a4DF00e8654cfE9cBd544D104a9D23',
       // the pool side of the promoter share, 2026-11-05 (docs/TESTNET-GANG-LAUNCHPAD-3-2026-11-03.md)
       promotePoolFactory: '0x7a68A65d27591a21C44f91015F930422BA79F1c2',
       // GangCallBond, 2026-11-09, block 141708762 (docs/TESTNET-CALL-BOND-2026-11-09.md)
@@ -163,7 +167,7 @@ export const GANG_GENS = {
   ],
 }
 // what a generation brings to a ctx (gen: '1.0' | '2.0' | PAD3_GEN | VAULT_GEN, null for a pad named by the env that this CLI does not know)
-const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory', 'cappedFactory', 'floorFactory', 'promotePoolFactory', 'callBond', 'countdownFactory']
+const GEN_FIELDS = ['gen', 'pad', 'router', 'bond', 'splitterFactory', 'splitFactory', 'lpFactory', 'comboFactory', 'cappedFactory', 'floorFactory', 'promotePoolFactory', 'callBond', 'countdownFactory', 'handlerAdmin']
 // the env names of each field, per network (new name first; the old per-command names still work as aliases)
 const GEN_ENV = {
   mainnet: {

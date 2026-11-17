@@ -397,7 +397,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     // or its countdown reward module (countdown-v1): the dev's tax share as buyers' rewards; only one the factory made,
     // cloned for this very token, is shown with its numbers
     const cdSeen = c.recipient && !c.recipientIsCreator && !buyback && !split && !lp && !combo && !capped && !floorRaw
-      ? await countdownForToken(ctx, token, c.recipientIsCreator ? null : c.recipient) : null
+      ? await countdownForToken(ctx, token, c.recipient) : null
     const countdown = !cdSeen ? null : cdSeen.unread ? { error: 'could not read the token\'s countdown reward module (RPC error)', detail: cdSeen.unread, retry: `gang countdown status --token ${token}${net}` }
       : cdSeen.warning ? { module: cdSeen.module, isThisTokensCountdown: false, warning: cdSeen.warning }
         : { ...formatCountdown(cdSeen.raw, { symbol: c.quoteSymbol, decimals: await decimalsOf(ctx, c.quote) }, `--token ${token}${net}`), more: `gang countdown status --token ${token}${net}` }

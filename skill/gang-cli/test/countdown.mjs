@@ -2,7 +2,7 @@
  * The countdown reward (倒计时奖励, countdown-v1; docs/SPEC-COUNTDOWN-REWARD-2026-11-17.md):
  *   - the --cd-* flags, their defaults and bounds; the Config in the quote's units (BNB defaults on WBNB only);
  *   - the contract's math to the wei (payout, shares, a capped round), the buy estimate and what is due;
- *   - the launch preview's economics and honest notes (no bet / lottery / jackpot wording anywhere);
+ *   - the launch preview's economics and honest notes, in the user's framing (a reward by fixed public rules);
  * and, against a local fake BSC testnet node (no chain, no wallet):
  *   - gang create … --countdown-reward: clone (for the token's address) → create (that address, the module as the
  *     recipient) → bind → approve → fund, one tx per run; changed tax rates or --cd-* settings refused;
@@ -14,13 +14,13 @@
  *   node skill/gang-cli/test/countdown.mjs
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   decodeFunctionData, encodeAbiParameters, encodeFunctionResult, getAddress, getCreate2Address, keccak256, parseAbi,
-  parseAbiParameters, stringToHex, toFunctionSelector, toHex, zeroAddress,
+  parseAbiParameters, stringToHex, toEventSelector, toFunctionSelector, toHex, zeroAddress,
 } from 'viem'
 
 const LAUNCH_DIR = mkdtempSync(join(tmpdir(), 'gang-countdown-'))
@@ -131,7 +131,10 @@ const BNB = (x) => BigInt(Math.round(x * 1e6)) * 10n ** 12n
   const off = { attached: false, reason: 'already traded' }
   assert.deepEqual(refShown({ step: 'pool-buy' }, off), off, 'a ref that was not attached keeps its own reason')
   assert.equal(refShown({ step: 'pool-buy' }, null), null)
-  for (const text of [JSON.stringify(view), cd.CD_USAGE, cd.WHAT_IT_IS]) assert.doesNotMatch(text, /\b(bet|bets|betting|lottery|jackpot|gamble|wager)\b/i)
+  // wording the user ruled out, spelled backwards so it never appears in the source either
+  const banned = new RegExp(`\\b(${['teb', 'steb', 'gnitteb', 'yrettol', 'topkcaj', 'elbmag', 'regaw'].map((w) => [...w].reverse().join('')).join('|')})\\b`, 'i')
+  for (const text of [JSON.stringify(view), cd.CD_USAGE, cd.WHAT_IT_IS, cd.ONLY_GANG_BUYS]) assert.doesNotMatch(text, banned)
+  assert.doesNotMatch(cd.ONLY_GANG_BUYS, /button|website/i)
 }
 
 // ---------------------------------------------------------------- the fake node
@@ -139,8 +142,11 @@ const GEN = gangGens(true)[0]
 const PAD = lc(GEN.pad), FACTORY = lc(cd.countdownFactoryAddress(true)), WBNB = lc(V3_NETS.testnet.wbnb), ROUTER = lc(GEN.router)
 assert.equal(FACTORY, lc('0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582'), 'the testnet factory with maxRound')
 assert.equal(cd.countdownFactoryAddress(false), null, 'mainnet: none yet')
-const VAN = lc(t(0x7a17)), HANDLER = t(0x4a4d), ADMIN = lc(t(0xad41)), ME = t(0xd3f), BUYER = t(0xb0b), PAIR = lc(t(0x9a12))
+const VAN = lc(t(0x7a17)), HANDLER = t(0x4a4d), ADMIN = lc(GEN.handlerAdmin), ME = t(0xd3f), BUYER = t(0xb0b), PAIR = lc(t(0x9a12))
 const FAKE = lc(t(0xfa4e)) // a contract that answers countdown-v1 but no factory listed it
+const OLD = lc(t(0x01d0)) // a module of the superseded factory: listed, but by that factory, and its config() has another ABI
+const OLD_FACTORY = lc(t(0x2be9))
+const funded = [] // Funded(from, amount) logs of the countdown modules
 const code = new Set([PAD, FACTORY, VAN, ADMIN, WBNB, PAIR, FAKE, ROUTER])
 const modules = new Map(), tokens = new Map(), allTokens = []
 const world = { now: 2_000_000_000n, allowance: 0n, quoteBal: 10n * E18, wouldCount: true, calls: [], hashes: [] }
@@ -168,6 +174,13 @@ function answer(b) {
   if (b.method === 'eth_getCode') return { result: code.has(lc(b.params[0])) ? '0x60' : '0x' }
   if (b.method === 'eth_blockNumber') return { result: '0x10' }
   if (b.method === 'eth_getBalance') return { result: toHex(10n * E18) }
+  if (b.method === 'eth_getLogs') {
+    const { address, topics } = b.params[0]
+    return { result: funded.filter((l) => lc(l.module) === lc(address) && (!topics?.[1] || lc(topics[1]) === lc(encodeAbiParameters(parseAbiParameters('address'), [l.from])))).map((l, i) => ({
+      address: l.module, topics: [toEventSelector(COUNTDOWN_ABI.find((x) => x.name === 'Funded')), encodeAbiParameters(parseAbiParameters('address'), [l.from])],
+      data: encodeAbiParameters(parseAbiParameters('uint256'), [l.amount]), blockNumber: '0x10', transactionHash: `0x${'ab'.repeat(32)}`, transactionIndex: '0x0', blockHash: `0x${'11'.repeat(32)}`, logIndex: toHex(i), removed: false,
+    })) }
+  }
   if (b.method === 'eth_getBlockByNumber') {
     return { result: { number: '0x10', timestamp: toHex(world.now), hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'22'.repeat(32)}`, transactions: [], gasLimit: '0x1', gasUsed: '0x0', difficulty: '0x0', totalDifficulty: '0x0', size: '0x0', nonce: '0x0000000000000000', logsBloom: `0x${'00'.repeat(256)}`, miner: zeroAddress, extraData: '0x', uncles: [] } }
   }
@@ -179,6 +192,12 @@ function answer(b) {
   const { args = [] } = decodeFunctionData({ abi: [f], data })
   const m = modules.get(at), tk = tokens.get(at)
   let result
+  if (at === OLD) {
+    // the superseded factory's module: it names its kind and its token, and nothing else of this ABI answers
+    if (f.name === 'moduleType') return { result: encodeFunctionResult({ abi: [f], functionName: f.name, result: stringToHex('countdown-v1', { size: 32 }) }) }
+    if (f.name === 'rewardToken') return { result: encodeFunctionResult({ abi: [f], functionName: f.name, result: world.oldToken }) }
+    return REVERT
+  }
   if (m || at === FAKE) {
     const mm = m ?? fakeModule
     world.calls.push({ at, fn: f.name, args, from })
@@ -196,7 +215,7 @@ function answer(b) {
       case 'lastCountedAt': result = mm.deadline ? mm.deadline - 1800n : 0n; break
       case 'currentRound': result = mm.deadline && world.now <= mm.deadline ? 1n : 0n; break
       case 'roundEndsBy': result = mm.deadline ? mm.deadline + 10_000n : 0n; break
-      case 'previewWork': result = [false, 0n]; break
+      case 'previewWork': result = [!!mm.deadline && world.now > mm.deadline, 0n]; break
       case 'round': result = args[0] === 0 && mm.deadline ? ROUND(1, 2, [BUYER, ME]) : ROUND(0, 0, []); break
       case 'claimableOf': result = lc(args[0]) === lc(ME) ? mm.claimable ?? 0n : 0n; break
       case 'wouldCount': result = world.wouldCount && args[0] >= mm.cfg.minBuy; break
@@ -243,7 +262,7 @@ function answer(b) {
     case 'predict': result = moduleAt(args[0], args[1]); break
     case 'create': world.calls.push({ at, fn: 'create', args }); result = moduleAt(ME, args.at(-1)); break
     case 'admin': result = ADMIN; break
-    case 'moduleOf': result = modules.has(lc(args[0])) ? FACTORY : zeroAddress; break
+    case 'moduleOf': result = modules.has(lc(args[0])) ? FACTORY : lc(args[0]) === OLD ? OLD_FACTORY : zeroAddress; break
     // ---- the pair, the router, the handler
     case 'getReserves': result = [1000n * E18 * 1000n, 10n * E18, 0]; break
     case 'token0': result = [...tokens.keys()].find((k) => tokens.get(k).graduated) ?? zeroAddress; break
@@ -387,9 +406,17 @@ try {
   assert.equal(decodeFunctionData({ abi: COUNTDOWN_ABI, data: fund.tx.data }).args[0], BNB(0.2))
   // built, not landed yet: built again, with a warning
   assert.match((await launch()).warning, /built this seed before/)
-  modules.get(MODULE).pot = BNB(0.2)
+  // someone else's fund, or tax, filling the pool is not this launch's seed
+  modules.get(MODULE).pot = BNB(5)
+  assert.equal((await launch()).step, 'seed', 'a full pool alone does not mark the seed done')
+  funded.push({ module: MODULE, from: BUYER, amount: BNB(0.2) })
+  assert.equal((await launch()).step, 'seed', 'another wallet\'s fund is not this launch\'s seed')
+  // a changed --cd-seed is refused
+  await refused(() => launch({ 'cd-seed': '0.3' }), /this launch's seed is 0\.2 WBNB, not the 0\.3/)
+  funded.push({ module: MODULE, from: ME, amount: BNB(0.2) })
   const done = await launch()
   assert.equal(done.launch.stage, 'done')
+  assert.match(done.launch.seed, /done: this wallet's Funded events at the module add up to 0\.2 WBNB; it is not funded again/)
   assert.equal(done.countdown.state, 'not started')
   assert.equal(done.countdown.verified, true)
 
@@ -458,6 +485,38 @@ try {
   const THIRD = lc(t(0x0333abcd))
   tokens.set(THIRD, { creator: ME, symbol: 'TRD', recipient: getAddress(MODULE), graduated: false, balances: new Map() })
   assert.match((await countdown('status', { token: THIRD })).warning, /cloned for another token/)
+
+  // ---- 8. the superseded factory's module (testnet CDRT is one): provenance first, so its other ABI is never read; the
+  // buy is a plain pool buy with the warning, info and status show only the warning
+  const OLDTOKEN = lc(t(0x0444abcd))
+  world.oldToken = getAddress(OLDTOKEN)
+  tokens.set(OLDTOKEN, { creator: ME, symbol: 'OLD', recipient: getAddress(OLD), graduated: true, balances: new Map() })
+  code.add(OLD)
+  const ost = await countdown('status', { token: OLDTOKEN })
+  assert.deepEqual([ost.success, ost.verified, ost.isThisTokensCountdown], [true, false, false])
+  assert.match(ost.warning, /GangCountdownRewardFactory did not make it/)
+  const oinfo = await v3('info', { token: OLDTOKEN })
+  assert.equal(oinfo.countdown.isThisTokensCountdown, false)
+  const obuy = await v3('buy', { token: OLDTOKEN, amount: '0.1' })
+  // the plain GangRouter pool path (this fake node quotes no PancakeSwap path, so it stops at the quote)
+  assert.deepEqual([obuy.step, obuy.via], ['pool-buy', undefined])
+  assert.match(obuy.error, /PancakeSwap has no usable pool/)
+  assert.match(obuy.rewards.countdown.warning, /did not make it/)
+  await refused(() => v3('buy', { token: OLDTOKEN, amount: '0.1', 'cd-uncounted': true }), /--cd-uncounted applies to a token whose tax recipient is its countdown reward module/)
+
+  // ---- 9. a factory whose admin() is not the network's pinned GangHandlerAdmin (an env naming a forged one): never verified
+  const forged = (address, _abi, fn) => (fn === 'admin' ? t(0xf0f0) : FACTORY)
+  assert.equal(await cd.countdownVerified(async (...a) => forged(...a), MODULE, FACTORY, GEN.handlerAdmin), false)
+  assert.equal(await cd.countdownVerified(async (_a, _b, fn) => (fn === 'admin' ? GEN.handlerAdmin : FACTORY), MODULE, FACTORY, GEN.handlerAdmin), true)
+  assert.equal(await cd.countdownVerified(async () => { throw new Error('rpc') }, MODULE, FACTORY, GEN.handlerAdmin), null)
+  assert.equal(await cd.countdownVerified(async () => FACTORY, MODULE, FACTORY, null), false)
+
+  // ---- 10. a plan begun with another factory: refused on resume
+  rmSync(LAUNCH_DIR, { recursive: true, force: true })
+  await launch({ symbol: 'CDN2' })
+  const pf = join(LAUNCH_DIR, readdirSync(LAUNCH_DIR).find((n) => n.endsWith('.json')))
+  writeFileSync(pf, JSON.stringify({ ...JSON.parse(readFileSync(pf, 'utf8')), factory: getAddress(OLD_FACTORY) }))
+  await refused(() => launch({ symbol: 'CDN2' }), /cloned by the factory .* not by 0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582 .*Add --restart/)
 
   console.log('countdown: ok')
 } finally {
