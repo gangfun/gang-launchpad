@@ -84,6 +84,10 @@ contract GangLaunchpad3LayoutTest is Test {
         _mirrors("Pad3Module.sol/Pad3Module.json");
     }
 
+    function test_layout_gradModuleMirrorsPad() public view {
+        _mirrors("Pad3GradModule.sol/Pad3GradModule.json");
+    }
+
     function test_layout_flyModuleMirrorsPad() public view {
         _mirrors("Pad3FlyModule.sol/Pad3FlyModule.json");
     }

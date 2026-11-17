@@ -42,8 +42,8 @@ library Pad3FlyPad {
 
     function deploy(FlywheelFixture f) internal returns (address pad3) {
         address registry = address(new EmptyPadRegistry());
-        // creates from here: the vault core, the 铸币飞轮 module, Pad3Module, the implementation, the proxy
-        address proxy = VM.computeCreateAddress(address(this), VM.getNonce(address(this)) + 4);
+        // creates from here: the vault core, the 铸币飞轮 module, Pad3GradModule, Pad3Module, the implementation, the proxy
+        address proxy = VM.computeCreateAddress(address(this), VM.getNonce(address(this)) + 5);
         address core = address(new Pad3FlyVaultCore(address(f.vault()), proxy));
         Pad3Impl.Deps memory d = Pad3Impl.Deps({
             quoteRegistry: address(f.quoteRegistry()),

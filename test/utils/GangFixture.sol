@@ -191,8 +191,8 @@ abstract contract GangFixture is Test {
         // core of the proxy (the vault's one operator for 3.0 itself is `handler`)
         flyDeployer = new MintTokenDeployer(owner);
         flyHandler = new FlywheelTaxHandler(owner, address(divVault), address(bucket), address(0));
-        // creates from here: the vault core, the 铸币飞轮 module, Pad3Module, the implementation, the proxy
-        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 4);
+        // creates from here: the vault core, the 铸币飞轮 module, Pad3GradModule, Pad3Module, the implementation, the proxy
+        address predicted = vm.computeCreateAddress(address(this), vm.getNonce(address(this)) + 5);
         flyCore = new Pad3FlyVaultCore(address(divVault), predicted);
         GangLaunchpad3 impl = GangLaunchpad3(
             payable(Pad3Impl.deploy(

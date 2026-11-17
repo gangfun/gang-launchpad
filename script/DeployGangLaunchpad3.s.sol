@@ -17,6 +17,7 @@ import {IGangLaunchpad3} from "../src/gang/interfaces/IGangLaunchpad3.sol";
 import {Pad3CodeCheck as CC} from "./Pad3CodeCheck.sol";
 import {Pad3Impl} from "./Pad3Impl.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
+import {Pad3GradModule} from "../src/gang/Pad3GradModule.sol";
 import {Pad3FlyModule} from "../src/gang/Pad3FlyModule.sol";
 import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
 import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
@@ -143,9 +144,9 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         if (c.owner != c.deployer) revert WiringCheck("fresh 3.0 with OWNER != deployer: not supported");
         s.handler = address(new GangTaxHandler(c.deployer, s.vault, s.bucket, c.dexRouter));
         FlywheelTaxHandler fly = new FlywheelTaxHandler(c.owner, s.vault, s.bucket, c.dexRouter);
-        // the vault core needs the proxy's address: four creates on (the core, the 铸币飞轮 module, the module, the
-        // implementation)
-        address proxy = vm.computeCreateAddress(c.deployer, vm.getNonce(c.deployer) + 4);
+        // the vault core needs the proxy's address: five creates on (the core, the 铸币飞轮 module, the 冲毕业奖励
+        // module, the module, the implementation)
+        address proxy = vm.computeCreateAddress(c.deployer, vm.getNonce(c.deployer) + 5);
         address core = address(new Pad3FlyVaultCore(s.vault, proxy));
         // the modules, then the implementation over them (Pad3Impl: the one way they are made)
         address impl = Pad3Impl.deploy(
@@ -308,6 +309,11 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
             revert WiringCheck("pad fly module code");
         }
         if (Pad3FlyModule(fly).TOKEN_VERSION() != cur.TOKEN_VERSION()) revert WiringCheck("fly module TOKEN_VERSION");
+        // the 冲毕业奖励 module Pad3Module's fallback delegates its selectors to: this build's (no immutables)
+        address grad = Pad3Module(payable(m)).gradModule();
+        if (grad.code.length == 0 || !R.sameCode(grad.code, type(Pad3GradModule).runtimeCode)) {
+            revert WiringCheck("pad grad module code");
+        }
         _codeChecked = impl;
     }
 
@@ -379,6 +385,7 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         string[] memory fly = new string[](2);
         (fly[0], fly[1]) = ("FlywheelLogic", "FlywheelPostLogic");
         links.check("Pad3FlyModule.sol/Pad3FlyModule.json", "flywheel", fly);
+        links.check("Pad3GradModule.sol/Pad3GradModule.json", "gang", new string[](0));
     }
 
     /// @dev This build's implementation with `cur`'s dependencies, deployed in the simulation only (every caller runs
@@ -389,11 +396,12 @@ contract DeployGangLaunchpad3 is DeployGangLaunchpad2 {
         return Pad3Impl.implWith(Pad3Impl.depsOf(cur), cur.module());
     }
 
-    /// @dev This build's Pad3Module with `cur`'s dependencies over `cur`'s own 铸币飞轮 module (its address is an
-    ///      immutable of the module; that module is compared with `_refFlyModule`), in the simulation only. A later
+    /// @dev This build's Pad3Module with `cur`'s dependencies over `cur`'s own 铸币飞轮 and 冲毕业奖励 modules (their
+    ///      addresses are immutables of the module; they are compared with `_refFlyModule` / Pad3GradModule's code), in the simulation only. A later
     ///      version deploys its own module here.
     function _refModule(GangLaunchpad3 cur) internal virtual returns (address) {
-        return Pad3Impl.moduleWith(Pad3Impl.depsOf(cur), Pad3Module(payable(cur.module())).flyModule());
+        Pad3Module m = Pad3Module(payable(cur.module()));
+        return Pad3Impl.moduleWith(Pad3Impl.depsOf(cur), m.flyModule(), m.gradModule());
     }
 
     /// @dev This build's 铸币飞轮 module with `cur`'s four shared dependencies and its own module's two, in the
