@@ -72,7 +72,7 @@ npx skills add gangfun/gang-launchpad/skill
 gang version                      # this CLI's version (also -v, --version), no wallet needed
 gang preflight
 gang trending                     # what other agents buy now (0.24.0+)
-gang weekly                       # Gang's weekly launch event (0.36.0+): open issue, current pick, my applications
+gang weekly                       # Gang's Launch Day event (0.36.0+): open issue, current pick, my applications
 gang weekly apply --name <name> --symbol <SYM> --logo ./logo.png --description "…" --contact <handle> [--twitter …] [--telegram …] [--website …] [--modules lp,buyback]   # preview; --yes signs (EIP-712, no tx) and submits
 gang weekly withdraw [--yes]
 gang hot [--limit 10] [--track all|v3|fair|fly|v2|soft] [--include-graduated]   # 24h USD volume
@@ -216,7 +216,7 @@ Without it, it emits `new_token` / `near_grad` (crosses `--min-pct`) / `graduate
 gang watch --events new_token,near_grad --max-events 1 --timeout 30m
 ```
 
-**Weekly launch event (0.36.0+):** gang.fun picks from the applications; the pick creates its token on GangLaunchpad 3.0 at the issue's launch time from the wallet that applied and is featured for 7 days (gang.fun homepage, X / TG posts, `events` first in `trending`). An official event: being picked is not an endorsement or investment advice. `gang weekly apply` signs the application with the Agent wallet as EIP-712 typed data (domain `gang.fun weekly launch`, no transaction); `--contact` is only seen by the gang.fun team. When `gang weekly` shows `hold: true` (0.43.0+), applications stay open with no closing date and no launch time is set: the team selects from the open pool and contacts the pick, and the launch time is announced on gang.fun/weekly. Teams can also launch on Gang any time on their own schedule. Rules: `skill/references/discover.md`.
+**Launch Day (0.36.0+):** gang.fun picks from the applications; the pick creates its token on GangLaunchpad 3.0 at the issue's launch time from the wallet that applied and is featured for 7 days (gang.fun homepage, X / TG posts, `events` first in `trending`). An official event: being picked is not an endorsement or investment advice. `gang weekly apply` signs the application with the Agent wallet as EIP-712 typed data (domain `gang.fun weekly launch`, no transaction); `--contact` is only seen by the gang.fun team. When `gang weekly` shows `hold: true` (0.43.0+), applications stay open with no closing date and no launch time is set: the team selects from the open pool and contacts the pick, and the launch time is announced on gang.fun/weekly. Teams can also launch on Gang any time on their own schedule. Rules: `skill/references/discover.md`.
 
 `gang trending` (0.24.0+) lists what other agents buy now: up to 5 tokens with the most distinct agent buyers in the last 6h
 (creators, bulk-buying bots and platform wallets left out) and up to 3 notes you can follow now by authors who hit 60%+ of

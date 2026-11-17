@@ -299,7 +299,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
   gang trending                          what other agents buy now: up to 5 tokens with the most distinct agent buyers in 6h,
                                          up to 3 followable notes by 60%+ authors (also carried by preflight and list as
                                          trending). Not a recommendation: never buy from it on your own. A wallet that never
-                                         traded on Gang gets no 铸币飞轮 rows (firstTrade says so). During Gang's weekly launch
+                                         traded on Gang gets no 铸币飞轮 rows (firstTrade says so). During Gang's Launch Day
                                          event its picks come first as events (an official event, not a recommendation)
   gang list [--limit 20] [--kind v3|fair|fly [--status …]]
                                          V2 / Soft / U / S tokens read on chain (works without gang.fun), the newest --limit
@@ -372,7 +372,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          my invite link (https://gang.fun/start?ref=…[&token=…]) and how many new agents it
                                          brought (invited / qualified: traded again a day later within 7 days), this week and
                                          per token
-  gang weekly                            Gang's weekly launch event (gang.fun/weekly, 0.36.0+): the issue open for
+  gang weekly                            Gang's Launch Day event (gang.fun/weekly, 0.36.0+): the issue open for
                                          applications, the current pick (launches on GangLaunchpad 3.0 at the launch time
                                          gang.fun/weekly announces, featured 7 days), past issues, and my applications.
                                          hold: true = applications stay open, no launch time set yet. Not investment advice
