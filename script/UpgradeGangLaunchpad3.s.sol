@@ -8,7 +8,10 @@ import {GangMainnetRefs as M} from "../config/GangDeployRefs.sol";
 import {GangLaunchpad3} from "../src/gang/GangLaunchpad3.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Pad3GradStore} from "../src/gang/Pad3GradStore.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
+import {IGangGradReward} from "../src/gang/interfaces/IGangGradReward.sol";
 import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
 import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
@@ -60,6 +63,10 @@ import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
 ///      any abcd activation) in the same batch, after the settings comparison. The pad owner must own that batch too.
 ///      PAD3_BASE_PROBES (optional, token,token,…: from `BaseCreated` logs; the pad can't list them): each one's base
 ///      vault and base amount are compared across the upgrade.
+///      Optional PAD3_GRAD_REWARD=true (docs/SPEC-GRAD-REWARD-2026-11-17.md §13): `setGradReward(true, admin, factory)`
+///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
+///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
+///      this build has no countdown factory to check; the carry opens in a later batch). The pad owner must own it.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
 
@@ -80,6 +87,10 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     address internal _abcd;
     /// @dev Optional base vault implementation set after the upgrade in the same batch.
     address internal _baseImpl;
+    /// @dev Optional 冲毕业奖励 opening after the upgrade in the same batch (PAD3_GRAD_REWARD).
+    bool internal _grad;
+    address internal _gradAdmin;
+    address internal _gradFactory;
 
     struct Snapshot {
         bytes32 settings;
@@ -118,6 +129,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (_abcd != address(0)) _checkVanity(s.pad, upgrader);
         _baseImpl = _envAddr("PAD3_BASE_VAULT_IMPL", address(0));
         if (_baseImpl != address(0)) _checkBaseImpl(s.pad, upgrader);
+        _grad = vm.envOr("PAD3_GRAD_REWARD", false);
+        if (_grad) _checkGrad(s, c, upgrader);
         bool deployed = _resolveFly(GangLaunchpad3(payable(current)), impl, s, c, pk, upgrader);
         (address[] memory prepTo, bytes[] memory prepCall) = _flyPrep(s, c.keeper, c.dexRouter, upgrader);
 
@@ -153,6 +166,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             ProxyAdmin(admin).upgradeAndCall(ITransparentUpgradeableProxy(proxy), impl, init);
             _enableVanity(proxy);
             _setBaseImpl(proxy);
+            _setGrad(proxy);
             vm.stopBroadcast();
             console.log("upgraded (testnet, the deploy wallet owns the ProxyAdmin)");
             return s;
@@ -167,6 +181,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (prepTo.length != 0) console.log("(the fly-mode listings first, then the upgrade, in one batch)");
         if (_abcd != address(0)) console.log("(enable abcd addresses after the upgrade in the same batch)");
         if (_baseImpl != address(0)) console.log("(set the base vault implementation last, in the same batch)");
+        if (_grad) console.log("(open the graduation reward last, in the same batch)");
         console.log(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call, proxy));
     }
 
@@ -198,6 +213,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _enableVanity(s.pad);
         if (_baseImpl != address(0)) vm.prank(u.upgrader);
         _setBaseImpl(s.pad);
+        if (_grad) vm.prank(u.upgrader);
+        _setGrad(s.pad);
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
     }
@@ -240,6 +257,33 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (p.baseVaultImpl() != _baseImpl) revert WiringCheck("base vault implementation");
     }
 
+    /// @dev PAD3_GRAD_REWARD: a one-time opening, never over settings the Safe made since (a factory set, an emergency
+    ///      close: read from storage, as the current implementation may not serve the view); the pad owner sends the
+    ///      batch; the admin is this build's GangHandlerAdmin owning the pad's handler, owned by OWNER, nothing pending;
+    ///      no countdown factory yet (this build has none to compare code with: the carry opens in a later batch).
+    function _checkGrad(Stack memory s, Cfg memory c, address upgrader) internal {
+        if (Ownable(s.pad).owner() != upgrader) {
+            revert WiringCheck("grad reward: pad owner must own the upgrade batch");
+        }
+        if (vm.load(s.pad, Pad3GradStore.SLOT) != 0 || vm.load(s.pad, bytes32(uint256(Pad3GradStore.SLOT) + 1)) != 0) {
+            revert WiringCheck("grad reward already set: omit PAD3_GRAD_REWARD");
+        }
+        _gradAdmin = _envAddr("PAD3_GRAD_HANDLER_ADMIN", address(0));
+        _gradFactory = _envAddr("PAD3_GRAD_COUNTDOWN_FACTORY", address(0));
+        if (!_isOwnersAdmin(_gradAdmin, s.handler, c.owner)) revert WiringCheck("PAD3_GRAD_HANDLER_ADMIN");
+        if (Ownable(s.handler).owner() != _gradAdmin || Ownable2Step(s.handler).pendingOwner() != address(0)) {
+            revert WiringCheck("PAD3_GRAD_HANDLER_ADMIN: not the handler's owner (or a handover pending)");
+        }
+        if (_gradFactory != address(0)) revert WiringCheck("PAD3_GRAD_COUNTDOWN_FACTORY: not in this build, leave 0");
+    }
+
+    function _setGrad(address proxy) internal {
+        if (!_grad) return;
+        Pad3Module(payable(proxy)).setGradReward(true, _gradAdmin, _gradFactory);
+        (bool open, address a, address f) = IGangGradReward(proxy).gradRewardDeps();
+        if (!open || a != _gradAdmin || f != _gradFactory) revert WiringCheck("grad reward opening");
+    }
+
     /// @dev The listings `_flyPrep` found, as the ProxyAdmin's owner sends them: pranked (the simulation) or broadcast
     ///      (testnet, the deploy wallet owns them all).
     function _sendPrep(address[] memory to, bytes[] memory data, address upgrader, bool prank) internal {
@@ -269,6 +313,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         }
         if (_baseImpl != address(0)) {
             j = string.concat(j, _tx(proxy, abi.encodeCall(Pad3Module.setBaseVaultImpl, (_baseImpl)), true));
+        }
+        if (_grad) {
+            j = string.concat(
+                j, _tx(proxy, abi.encodeCall(Pad3Module.setGradReward, (true, _gradAdmin, _gradFactory)), true)
+            );
         }
         j = string.concat(j, "]}");
     }

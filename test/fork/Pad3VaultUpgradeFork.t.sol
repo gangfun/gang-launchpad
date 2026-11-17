@@ -196,6 +196,7 @@ contract Pad3VaultUpgradeForkTest is Test {
         vm.setEnv("PAD3_INIT_CALL", "0x");
         // the script deploys the implementation and the 铸币飞轮 tax handler (Pad3LiveUpgrade)
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_GRAD_REWARD", "false");
         vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_VAULT_CORE", vm.toString(address(0)));

@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {GangLaunchpad3} from "../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
 import {Pad3FlyModule} from "../src/gang/Pad3FlyModule.sol";
+import {Pad3GradModule} from "../src/gang/Pad3GradModule.sol";
 
 /// @title Pad3Impl — how this build's GangLaunchpad 3.0 implementation is made: the 铸币飞轮 module first (three of the
 ///        pad's dependencies plus its own three: tax handler, token deployer, vault core), then Pad3Module over it (the pad's six
@@ -71,11 +72,16 @@ library Pad3Impl {
         );
     }
 
-    /// @dev Pad3Module over an existing 铸币飞轮 module.
+    /// @dev Pad3Module over an existing 铸币飞轮 module and a new 冲毕业奖励 module (Pad3GradModule: no immutables).
     function moduleWith(Deps memory d, address fly) internal returns (address) {
+        return moduleWith(d, fly, address(new Pad3GradModule()));
+    }
+
+    /// @dev Pad3Module over existing 铸币飞轮 and 冲毕业奖励 modules (the deploy script's reference for a module).
+    function moduleWith(Deps memory d, address fly, address grad) internal returns (address) {
         return address(
             new Pad3Module(
-                d.quoteRegistry, d.dividendVault, d.platformBucket, d.taxHandler, d.tokenDeployer, d.wbnb, fly
+                d.quoteRegistry, d.dividendVault, d.platformBucket, d.taxHandler, d.tokenDeployer, d.wbnb, fly, grad
             )
         );
     }

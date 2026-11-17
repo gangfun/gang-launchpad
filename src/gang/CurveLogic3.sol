@@ -13,12 +13,13 @@ import {IGangPromote} from "./interfaces/IGangPromote.sol";
 import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 import {PadCommon} from "./PadCommon.sol";
 import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
+import {Pad3GradStore} from "./Pad3GradStore.sol";
 
 /// @title CurveLogic3 — GangLaunchpad 3.0's bonding-curve path: CurveLogic (2.0) with the entries 3.0's own
 ///        aggregator interface needs, the curve's math and rules unchanged
 /// @notice External library, delegatecalled by GangLaunchpad3 (runs on the pad's storage, balance and msg.sender;
 ///         events come from the pad). Same create / buy / sell / graduation / creator fee as CurveLogic, line for
-///         line, with six additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
+///         line, with seven additions (docs/SPEC-GANG-LAUNCHPAD-3-2026-11-03.md §2, §4):
 ///         1. `buy(..., prepaid)`: the pad already holds `quoteIn` (native BNB it wrapped, or quote it pulled itself),
 ///            so the exact pull from msg.sender is skipped;
 ///         2. `sell(..., pull, payTo)`: whose allowance moves the tokens (PULL_CALLER: msg.sender's own, as 2.0's
@@ -31,6 +32,8 @@ import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 ///         6. `buyBase` (docs/SPEC-BASE-VAULT-V2-2026-11-12.md §4): a token created with an opening base buys it for
 ///            its base vault as the curve's first trade, at the cost `baseCost` fixes; the curve's math and fee split
 ///            are `buy`'s.
+///         7. the graduation reward (docs/SPEC-GRAD-REWARD-2026-11-17.md): on a token that has one, counted buys and
+///            sells are booked (Pad3GradStore) and graduation books the pool; no price, fee or refund changes.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -333,7 +336,10 @@ library CurveLogic3 {
         // §23: the cut (cap / graduation) goes back to the trader, not the caller — aggregators assume exact-in and
         // may not forward or sweep a leftover. Direct `buy`: trader = msg.sender, as before.
         if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(trader, v.refundGross);
-        if (cv.realQuote >= v.gradAmt) _graduate(c, token, cv);
+        bool graduates = cv.realQuote >= v.gradAmt;
+        // 冲毕业奖励 (SPEC-GRAD-REWARD §3): a no-op for a token without one (one read)
+        Pad3GradStore.onBuy(token, trader, quoteIn - v.refundGross, v.tokensOut, graduates, c.agentGateEnabled);
+        if (graduates) _graduate(c, token, cv);
         tokensOut = v.tokensOut;
     }
 
@@ -434,6 +440,8 @@ library CurveLogic3 {
         address quoteAddr = cv.quote;
         uint256 creatorFee = _syncShareAndFee(cv, creatorFeeOf, d, token, trader, quoteAddr, protocolFee);
         if (payTo != address(this)) IERC20(quoteAddr).safeTransfer(payTo, quoteToUser);
+        // 冲毕业奖励 (SPEC-GRAD-REWARD §4): the seller's entries so far stop counting
+        Pad3GradStore.onSell(token, trader);
 
         // `tax` stays in the event (ABI unchanged for indexers): always 0, the curve charges none
         emit IGangLaunchpad.Sell(token, trader, tokensIn, protocolFee, 0, quoteToUser, cv.realQuote);
@@ -521,6 +529,8 @@ library CurveLogic3 {
         // taxed: unlock, migrate, then setPair (tax and share syncing start); untaxed: never setPair (Untaxed)
         cv.pair = PadCommon.migrate(c, token, quote, tokenAmount, quoteAmount, cv.buyTaxBps > 0);
         emit IGangLaunchpad.Graduated(token, cv.pair, quote, tokenAmount, quoteAmount);
+        // 冲毕业奖励: book the pool, send the carry (never reverts on the module's account)
+        Pad3GradStore.onGraduate(token, quote);
     }
 
     /// @dev The curve's marginal price: quote wei per 1e18 token wei (virtual + real quote over the virtual tokens left).

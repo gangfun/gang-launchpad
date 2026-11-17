@@ -240,6 +240,17 @@ contract Pad3UpgradeTest is GangFixture {
         h.checkImplCode(v2);
     }
 
+    /// @dev Grad reward re-review N-1: a module whose 冲毕业奖励 module is not this build's Pad3GradModule fails, though
+    ///      the module and the implementation themselves are this build's code over it.
+    function test_implCode_gradModuleThisBuildOnly() public {
+        Pad3Impl.Deps memory d = Pad3Impl.depsOf(GangLaunchpad3(payable(pad3Impl)));
+        address fly = Pad3Module(payable(GangLaunchpad3(payable(pad3Impl)).module())).flyModule();
+        address other = address(new GangHandlerAdmin(owner, address(handler))); // any contract
+        address impl = Pad3Impl.implWith(d, Pad3Impl.moduleWith(d, fly, other));
+        vm.expectRevert(abi.encodeWithSelector(DeployGang.WiringCheck.selector, "pad grad module code"));
+        h.checkImplCode(impl);
+    }
+
     /// @dev M-2: only this build's GangHandlerAdmin passes for the owner's admin, not a look-alike.
     function test_isOwnersAdmin_realCodeOnly() public {
         GangHandlerAdmin real = new GangHandlerAdmin(owner, address(handler));

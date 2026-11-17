@@ -24,6 +24,13 @@ import {Pad3BaseStore} from "./Pad3BaseStore.sol";
 import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 import {GangBaseVault} from "./GangBaseVault.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+import {IGangGradReward, IGangGradRewardBase} from "./interfaces/IGangGradReward.sol";
+import {Pad3GradStore, ICountdownCarry} from "./Pad3GradStore.sol";
+
+/// @dev GangHandlerAdmin's record of which factory deployed a listed tax recipient.
+interface IHandlerAdminModules {
+    function moduleOf(address module) external view returns (address factory);
+}
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
 ///        address) and the pad's off-chain views (moved out of the pad for its 24 KB limit)
@@ -53,6 +60,7 @@ contract Pad3Module is
     IGangVaultPad,
     IGangPromote,
     IGangBasePad,
+    IGangGradRewardBase,
     Ownable2Step,
     ReentrancyGuard
 {
@@ -94,6 +102,10 @@ contract Pad3Module is
     /// @notice 3.0's 铸币飞轮 module (Pad3FlyModule): every selector this module does not define runs there,
     ///         delegatecalled (the pad's call, still in the proxy's storage). The last link: it has no fallback.
     address public immutable flyModule;
+    /// @notice 冲毕业奖励's claims, refund and views (Pad3GradModule, moved out for the 24 KB limit): the selectors
+    ///         `_isGrad` lists run there, delegatecalled. No immutables of its own, so the deploy scripts compare its
+    ///         code with this build's as is.
+    address public immutable gradModule;
 
     constructor(
         address quoteRegistry_,
@@ -102,14 +114,16 @@ contract Pad3Module is
         address taxHandler_,
         address tokenDeployer_,
         address wbnb_,
-        address flyModule_
+        address flyModule_,
+        address gradModule_
     ) Ownable(address(0xdEaD)) {
         if (
             quoteRegistry_ == address(0) || dividendVault_ == address(0) || platformBucket_ == address(0)
                 || taxHandler_ == address(0) || tokenDeployer_ == address(0) || wbnb_ == address(0)
-                || flyModule_ == address(0)
+                || flyModule_ == address(0) || gradModule_ == address(0)
         ) revert ZeroAddress();
         flyModule = flyModule_;
+        gradModule = gradModule_;
         quoteRegistry = quoteRegistry_;
         dividendVault = dividendVault_;
         platformBucket = platformBucket_;
@@ -118,9 +132,32 @@ contract Pad3Module is
         wbnb = wbnb_;
     }
 
-    /// @notice Selectors not defined here (the 铸币飞轮 mode): Pad3FlyModule's.
+    /// @notice Selectors not defined here: 冲毕业奖励's (Pad3GradModule's), else the 铸币飞轮 mode's (Pad3FlyModule's).
     fallback() external payable {
+        if (_isGrad(msg.sig)) _delegate(gradModule);
         _toFly();
+    }
+
+    /// @dev Pad3GradModule's selectors (the IGangGradReward functions not defined here).
+    function _isGrad(bytes4 s) private pure returns (bool) {
+        return s == IGangGradReward.claimGradReward.selector || s == IGangGradReward.settleGradReward.selector
+            || s == IGangGradReward.sweepGradReward.selector || s == IGangGradReward.retryCarry.selector
+            || s == IGangGradReward.requestGradRefund.selector || s == IGangGradReward.cancelGradRefund.selector
+            || s == IGangGradReward.gradRefund.selector || s == IGangGradReward.gradReward.selector
+            || s == IGangGradReward.gradEntries.selector || s == IGangGradReward.gradClaimable.selector
+            || s == IGangGradReward.gradRewardDeps.selector;
+    }
+
+    /// @dev This call, as it came, delegatecalled to `m` (never comes back).
+    function _delegate(address m) internal {
+        assembly ("memory-safe") {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), m, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
     }
 
     /// @dev This call, as it came, delegatecalled to the 铸币飞轮 module (never comes back).
@@ -257,6 +294,7 @@ contract Pad3Module is
                     ) && selector != IGangVaultPad.createWithVault.selector
                 && selector != IGangPromote.createWithPromote.selector && selector != Pad3FlyModule.create.selector
                 && selector != IGangBasePad.createWithBase.selector
+                && selector != IGangGradReward.createWithGradReward.selector
         ) revert BadVanityCall();
         v.salt = keccak256(abi.encode(msg.sender, salt));
         v.active = true;
@@ -310,6 +348,95 @@ contract Pad3Module is
         token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
         Pad3PromoteStore.layout().termsOf[token] = Pad3PromoteStore.Terms(shareBps, window);
         emit PromoteSet(token, shareBps, window);
+    }
+
+    // ---------------------------------------------------------------- graduation reward (冲毕业奖励)
+    uint16 public constant MAX_GRAD_LAST_BPS = 5_000;
+    uint16 public constant MAX_GRAD_CARRY_BPS = 5_000;
+    uint32 public constant MIN_GRAD_REFUND_AFTER = 30 days;
+    uint32 public constant MAX_GRAD_REFUND_AFTER = 180 days;
+
+    /// @notice Owner: open / close new graduation-reward creates, and the two addresses the carry is checked with.
+    function setGradReward(bool open, address handlerAdmin, address countdownFactory) external onlyOwner {
+        if (countdownFactory != address(0) && handlerAdmin == address(0)) revert ZeroAddress();
+        Pad3GradStore.Layout storage g = Pad3GradStore.layout();
+        g.open = open;
+        g.handlerAdmin = handlerAdmin;
+        g.countdownFactory = countdownFactory;
+        emit GradRewardDepsSet(open, handlerAdmin, countdownFactory);
+    }
+
+    /// @notice `createWithGradTarget` (optionally with a promoter share) plus a graduation reward. The seed is pulled
+    ///         from the creator in the token's quote (approve the pad first). A countdown reward module named as the
+    ///         tax recipient is found and checked here; `carryBps` > 0 needs one.
+    /// @dev Not with a vault (`vaultLock` / `vaultRelease` move balances outside the curve) or an opening base: those
+    ///      are other entries. The countdown module is found from the token's own tax route, never passed in (B-3).
+    function createWithGradReward(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        address quote,
+        address refPool,
+        TaxConfig calldata tax,
+        uint256 gradBnb,
+        GradConfig calldata cfg
+    ) external nonReentrant returns (address token) {
+        Pad3GradStore.Layout storage g = Pad3GradStore.layout();
+        if (!g.open) revert GradNotOpen();
+        if (
+            cfg.seed == 0 || cfg.minBuy == 0 || cfg.entries == 0 || cfg.entries > Pad3GradStore.MAX_ENTRIES
+                || cfg.lastBps > MAX_GRAD_LAST_BPS || cfg.carryBps > MAX_GRAD_CARRY_BPS
+                || cfg.refundAfter < MIN_GRAD_REFUND_AFTER || cfg.refundAfter > MAX_GRAD_REFUND_AFTER
+        ) revert BadGradConfig();
+        bool promote = cfg.promoteBps != 0 || cfg.promoteWindow != 0;
+        if (
+            promote
+                && (cfg.promoteBps == 0
+                    || cfg.promoteBps > MAX_PROMOTE_BPS
+                    || cfg.promoteWindow < MIN_PROMOTE_WINDOW
+                    || cfg.promoteWindow > MAX_PROMOTE_WINDOW)
+        ) revert BadPromoteTerms();
+
+        token = _createCurve(name, symbol, logoURI, metaURI, quote, refPool, tax, gradBnb);
+        if (promote) {
+            Pad3PromoteStore.layout().termsOf[token] = Pad3PromoteStore.Terms(cfg.promoteBps, cfg.promoteWindow);
+            emit PromoteSet(token, cfg.promoteBps, cfg.promoteWindow);
+        }
+
+        address q = curves[token].quote;
+        address countdown = _countdownOf(g, token, q);
+        if (cfg.carryBps > 0 && countdown == address(0)) revert BadCountdown();
+        PadCommon.pullExact(q, cfg.seed);
+
+        Pad3GradStore.Reward storage r = g.rewardOf[token];
+        r.state = Pad3GradStore.ACTIVE;
+        r.entries = cfg.entries;
+        r.lastBps = cfg.lastBps;
+        r.carryBps = cfg.carryBps;
+        r.refundAfter = cfg.refundAfter;
+        r.createdAt = uint40(block.timestamp);
+        r.pot = cfg.seed;
+        r.minBuy = cfg.minBuy;
+        r.countdown = countdown;
+        emit GradRewardSet(
+            token, cfg.seed, cfg.minBuy, cfg.entries, cfg.lastBps, cfg.carryBps, cfg.refundAfter, countdown
+        );
+    }
+
+    /// @dev The token's tax recipient when it is a countdown reward module of the listed factory, made for this very
+    ///      token and quote (else BadCountdown); 0 when the recipient is anything else.
+    function _countdownOf(Pad3GradStore.Layout storage g, address token, address q) private view returns (address) {
+        address factory = g.countdownFactory;
+        if (factory == address(0)) return address(0);
+        (, address recipient) = IGangPadHandler(taxHandler).routeOf(token);
+        if (recipient == address(0) || IHandlerAdminModules(g.handlerAdmin).moduleOf(recipient) != factory) {
+            return address(0);
+        }
+        if (ICountdownCarry(recipient).rewardToken() != token || ICountdownCarry(recipient).rewardQuote() != q) {
+            revert BadCountdown();
+        }
+        return recipient;
     }
 
     // ---------------------------------------------------------------- opening base
