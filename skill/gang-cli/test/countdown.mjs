@@ -158,7 +158,7 @@ const ABI = [...V3_EVENT_ABIS[0], ...CREATOR_FEE_ABI, ...GRAD_TARGET_ABI, ...VAN
     'function allTokens(uint256) view returns (address)', 'function getReserves() view returns (uint112, uint112, uint32)', 'function token0() view returns (address)',
     'function owedOf(address token) view returns (uint256)', 'function graduationRemaining(address token) view returns (uint256)',
     'function tokenInitCodeHash(string,string,string,address,uint16,uint16,bool) view returns (bytes32)', 'function wbnb() view returns (address)', 'function pancakeRouter() view returns (address)',
-    'function previewSellNextBlock(address token, uint256 amount) view returns (uint256)', 'function dexRouter() view returns (address)',
+    'function previewSellNextBlock(address token, uint256 amount) view returns (uint256)', 'function dexRouter() view returns (address)', 'function gradRewardDeps() view returns (bool, address, address)',
   ])]
 const functions = new Map()
 for (const f of ABI) if (f.type === 'function' && !functions.has(toFunctionSelector(f))) functions.set(toFunctionSelector(f), f)
@@ -257,6 +257,7 @@ function answer(b) {
     case 'predict': result = moduleAt(args[0], args[1]); break
     case 'create': world.calls.push({ at, fn: 'create', args }); result = moduleAt(ME, args.at(-1)); break
     case 'admin': result = ADMIN; break
+    case 'gradRewardDeps': if (at !== PAD || !world.gradDeps) return REVERT; result = world.gradDeps; break
     case 'moduleOf': result = modules.has(lc(args[0])) ? FACTORY : lc(args[0]) === OLD ? OLD_FACTORY : zeroAddress; break
     // ---- the pair, the router, the handler
     case 'getReserves': result = [1000n * E18 * 1000n, 10n * E18, 0]; break
@@ -327,16 +328,29 @@ try {
   await refused(() => launch({}, ['buy-tax', 'sell-tax']), /needs a taxed token/)
   await refused(() => launch({ dividend: '100' }), /--dividend 100 leaves nothing/)
   await refused(() => launch({}, ['cd-max-payout']), /--cd-max-payout <amount> is required/)
-  await refused(() => launch({ 'grad-reward': '0.5' }), /--grad-reward and --countdown-reward can't go together in this CLI version/)
+  // --grad-reward now goes with --countdown-reward (its create takes the graduation reward, test/gradreward.mjs); the
+  // CLI still refuses the other launch flags with it
   {
     const { spawnSync } = await import('node:child_process')
-    const r = spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'create', '--name', 'A', '--symbol', 'A', '--buy-tax', '3', '--sell-tax', '3', '--countdown-reward', '--cd-max-payout', '1', '--grad-reward', '0.5', '--testnet'], { encoding: 'utf8', env: { ...process.env, GANG_TELEMETRY: '0', GANG_UPDATE_CHECK: '0' } })
-    assert.equal(r.status, 1)
-    assert.match(JSON.parse(r.stdout).error, /--grad-reward and --countdown-reward can't go together in this CLI version/)
+    const x = spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'create', '--name', 'A', '--symbol', 'A', '--buy-tax', '3', '--sell-tax', '3', '--countdown-reward', '--cd-max-payout', '1', '--grad-reward', '0.5', '--dev-buy', '0.1', '--testnet'], { encoding: 'utf8', env: { ...process.env, GANG_TELEMETRY: '0', GANG_UPDATE_CHECK: '0' } })
+    assert.equal(x.status, 1)
+    assert.match(JSON.parse(x.stdout).error, /--dev-buy: a --grad-reward create goes alone or with --countdown-reward/)
   }
   await refused(() => launch({ 'cd-max-round': '20m' }), /--cd-max-round must be/)
   await refused(() => launch({ 'cd-window': '1h' }, ['countdown-reward']), /go with --countdown-reward/)
   await refused(() => runLaunch('fair', { io: io({ ...BASE, fair: true }), runV3, runFair: null, runBond: null, padNotes: () => notes }), /--countdown-reward is for V3 tokens/)
+
+  // ---- --grad-reward with it: what its create would refuse is refused before the clone (nothing uploaded, no plan)
+  await refused(() => launch({ 'grad-reward': '0.5' }), /has no graduation reward yet/)
+  world.gradDeps = [false, ADMIN, zeroAddress]
+  await refused(() => launch({ 'grad-reward': '0.5' }), /the graduation reward is closed on this pad/)
+  world.gradDeps = [true, ADMIN, zeroAddress]
+  await refused(() => launch({ 'grad-reward': '0.5' }), /--gr-carry: the pad has not opened the graduation reward's carry/)
+  await refused(() => launch({ 'grad-reward': '0.5', 'gr-carry': '20' }), /--gr-carry: the pad has not opened/)
+  await refused(() => launch({ 'grad-reward': '0.5', 'gr-carry': '60' }), /--gr-carry must be an integer between 0 and 50/)
+  world.gradDeps = undefined
+  assert.equal(uploads, 0, 'nothing uploaded before the clone checks pass')
+  assert.equal(world.calls.length, 0)
 
   // ---- 1. the clone: for the token's address, with the Config in wei
   const clone = await launch()

@@ -66,7 +66,7 @@ import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
 ///      Optional PAD3_GRAD_REWARD=true (docs/SPEC-GRAD-REWARD-2026-11-17.md §13): `setGradReward(true, admin, factory)`
 ///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
 ///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
-///      this build has no countdown factory to check; the carry opens in a later batch). The pad owner must own it.
+///      the carry opens with script/SetGradRewardCountdown.s.sol, run without --libraries). The pad owner must own it.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
 
@@ -274,7 +274,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (Ownable(s.handler).owner() != _gradAdmin || Ownable2Step(s.handler).pendingOwner() != address(0)) {
             revert WiringCheck("PAD3_GRAD_HANDLER_ADMIN: not the handler's owner (or a handover pending)");
         }
-        if (_gradFactory != address(0)) revert WiringCheck("PAD3_GRAD_COUNTDOWN_FACTORY: not in this build, leave 0");
+        // the factory's exact code check needs a build without --libraries, which this script can't do: the carry opens
+        // with script/SetGradRewardCountdown.s.sol once the reward is open
+        if (_gradFactory != address(0)) {
+            revert WiringCheck("PAD3_GRAD_COUNTDOWN_FACTORY: leave 0, open the carry with SetGradRewardCountdown");
+        }
     }
 
     function _setGrad(address proxy) internal {

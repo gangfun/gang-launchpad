@@ -89,15 +89,39 @@ Agent 身份只在 fork 里模拟，没有往主网广播任何交易。结果�
 升级脚本里这一步的规则（审查后加的）：
 - 只能开一次：命名空间已有内容时拒绝；
 - admin 必须持有 handler；
-- 本次构建里还没有倒计时工厂的源码，可以拿来比对，所以 `PAD3_GRAD_COUNTDOWN_FACTORY` 必须为 0。carry 等倒计时工厂进了仓库，再单独走一个批次开启。
+- `PAD3_GRAD_COUNTDOWN_FACTORY` 必须为 0：工厂的逐字节比对要求构建时不带 `--libraries`，升级脚本做不到。carry 在奖励开启后用 `script/SetGradRewardCountdown.s.sol` 单独开启（见下文）。
 - 这些规则是测试网执行之后才加的，只在主网 fork 上跑过。测试网的状态都满足这些规则：handler 的 owner 就是这个 admin，没有待接收的 owner。
 - 运维：紧急关闭时用 `setGradReward(false, <admin>, <factory>)`，不要把两个地址清零，脚本靠这两个值判断「已经设置过」，清零后它就判断不出来了。
+
+## carry：转给倒计时奖励（2026-11-17 开启）
+
+`script/SetGradRewardCountdown.s.sol`（`--sig "run()"`，不带 `--libraries`）。发送前脚本先确认：奖励已开、还没设过倒计时工厂；工厂和它的实现通过 `DeployGangCountdownRewardFactory` 的 `check` 和 `checkCode`（逐字节比对，含 metadata）；admin 的 `isFactory` 为真；以 pad owner 身份在模拟里调用 `setGradReward(true, admin, factory)`，读回后回滚。测试网部署钱包就是 pad 的 owner，所以直接发送；主网只打印一笔调用的 Safe 批次。
+
+| 内容 | 结果 | 交易 |
+|---|---|---|
+| `setGradReward(true, 0x0fb8…9D23, 0x0f83…e582)` | 读回 `gradRewardDeps()` = (true, GangHandlerAdmin `0x0fb8280B88a4DF00e8654cfE9cBd544D104a9D23`, 倒计时工厂 `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`)；gas 61,338 | [`0x8aa739b3…41bc5`](https://testnet.bscscan.com/tx/0x8aa739b332439de17255c1dfc2670cde7f609f3eb0c0ff04f3590564b4c41bc5)，区块 143266804 |
+
+### CLI 0.44.0 候选：一条命令同时开两种奖励
+
+同样由 CLI 自己的代码生成交易（`--testnet --calldata --from <部署钱包>`），`cast send` 发送，元数据换成固定的测试 URI。命令：`gang create … --quote MockSPCXB --grad 6 --buy-tax 3 --sell-tax 3 --countdown-reward --cd-max-payout 1 --cd-min-buy 0.003 --cd-min-pot 0.01 --grad-reward 0.2 --gr-min-buy 0.003 --gr-entries 5 --gr-carry 20`，每步之后重跑同一条命令。
+
+| 步骤 | CLI 的结果 | 交易 |
+|---|---|---|
+| countdown-module | 为预先算出的 abcd 地址克隆倒计时模块 [`0x4d45a884DB28BA8b192307C897f9390537bAbcd9`](https://testnet.bscscan.com/address/0x4d45a884DB28BA8b192307C897f9390537bAbcd9) | [`0xe7d06559…0c00`](https://testnet.bscscan.com/tx/0xe7d065592eec2e88b9101a5de2875291eee5e2f23604f6a0e13d8b7e673b0c00) |
+| approve-quote | 0.2 MockSPCXB 给 pad（建币时拉走奖励池） | [`0x0df36bc1…afa7`](https://testnet.bscscan.com/tx/0x0df36bc1b2f7d78567de69127791389f862e6f64beff33ee49143a927c30afa7) |
+| create | 经 `createWithSalt` 调 `createWithGradReward`，税收接收方是模块，`carryBps` 2000；`gradReward` 说明里有 `carryPct` 20 和「没领的部分转进倒计时模块」 | [`0xc3d86279…572e`](https://testnet.bscscan.com/tx/0xc3d862797d77d7f8663ca3f95038909763eea30e0288ee320a82a42c9216572e) |
+| bind | 模块绑定到这个币；再跑返回 `stage: done` | [`0x1fad72a7…c14b`](https://testnet.bscscan.com/tx/0x1fad72a7e2d5aab21a41d4c4bc59004bb19922d1210012cd84f4ec7ecc67c14b) |
+
+代币 [`0x14b776b6f27a1F5373be6d12456B62589210aBCD`](https://testnet.bscscan.com/address/0x14b776b6f27a1F5373be6d12456B62589210aBCD)。pad 从税收接收方自己认出了模块：`gang grad-reward status` 显示 `countdown` = 上面的模块、`carryPct` 20，回收去向是这个模块。
+
+验收中发现并修好的问题：CLI 在建币前会先用空的 logo / metadata 试跑一次，这样算出的是另一个代币地址；带 carry 时 pad 要求模块是给这个地址做的，试跑就报 `BadCountdown`。现在固定了地址的发射（底价模块、倒计时模块）试跑时就用固定的 salt 和 metadata，并加了回归测试。
+
+毕业时 carry 真正转进模块，由主网 fork `test/fork/Pad3GradCarryFork.t.sol` 覆盖：线上倒计时工厂 `0xa1e3…2957` 克隆模块、建币、约 80 个模拟 Agent 买到毕业，模块奖励池增加正好 20% 的种子钱，`carryOwed` 为 0，买家领取不超过剩下的部分，180 天后的回收也进了模块。
 
 ## 没做
 
 - **测试网上的毕业、领取和回收**：测试网开着 1% 钱包上限，要毕业需要大约 80 个不同的 Agent 钱包。这部分由上面的主网 fork 覆盖。
-- **carry 转给倒计时模块**：倒计时奖励还没上线，这部分只有单元测试，用的是模拟模块。
-- CLI、服务端、网站都还没有对接。
+- **测试网上 carry 的毕业**：同上，要大约 80 个 Agent 钱包；由主网 fork `Pad3GradCarryFork` 覆盖。
 
 ## 花费
 

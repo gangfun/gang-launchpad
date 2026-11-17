@@ -20,7 +20,7 @@ import { decodeFunctionData, encodeFunctionResult, getAddress, parseAbi, toFunct
 process.env.GANG_TELEMETRY = '0'
 const { runV3, V3_EVENT_ABIS, V3_NETS } = await import('../src/v3.js')
 const { GRAD_PAD_ABI, gradBuyLine, gradSellLine, parseGradReward, runGradReward } = await import('../src/gradreward.js')
-const { VANITY_ABI } = await import('../src/vanity.js')
+const { VANITY_ABI, vanityAddress } = await import('../src/vanity.js')
 const { PROMOTE_PAD_ABI } = await import('../src/promote.js')
 const { CREATOR_FEE_ABI, GRAD_TARGET_ABI, gangGens, PAD3_GEN } = await import('../src/gangpad.js')
 
@@ -34,15 +34,18 @@ const Q6 = lc(t(0x6666))
 
 // ---- parsing
 const p = (flags) => parseGradReward((k) => flags[k], (k) => Object.hasOwn(flags, k))
-assert.deepEqual(p({ 'grad-reward': '0.5' }), { seed: '0.5', minBuy: null, entries: 10, lastBps: 3000, refundDays: 90 })
+assert.deepEqual(p({ 'grad-reward': '0.5' }), { seed: '0.5', minBuy: null, entries: 10, lastBps: 3000, refundDays: 90, carryBps: null })
 assert.deepEqual(p({ 'grad-reward': '1', 'gr-min-buy': '0.02', 'gr-entries': '20', 'gr-last': '0', 'gr-refund-days': '30' }),
-  { seed: '1', minBuy: '0.02', entries: 20, lastBps: 0, refundDays: 30 })
+  { seed: '1', minBuy: '0.02', entries: 20, lastBps: 0, refundDays: 30, carryBps: null })
 assert.match(p({ 'grad-reward': '0' }).error, /positive amount/)
 assert.match(p({ 'grad-reward': 'x' }).error, /needs the seed/)
 assert.match(p({ 'grad-reward': '1', 'gr-entries': '21' }).error, /between 1 and 20/)
 assert.match(p({ 'grad-reward': '1', 'gr-last': '51' }).error, /between 0 and 50/)
 assert.match(p({ 'grad-reward': '1', 'gr-refund-days': '29' }).error, /between 30 and 180/)
 assert.match(p({ 'grad-reward': '1', 'gr-min-buy': '-1' }).error, /--gr-min-buy/)
+assert.equal(p({ 'grad-reward': '1' }).carryBps, null)
+assert.equal(p({ 'grad-reward': '1', 'gr-carry': '25' }).carryBps, 2500)
+assert.match(p({ 'grad-reward': '1', 'gr-carry': '51' }).error, /between 0 and 50/)
 
 // ---- the fake node
 const world = {
@@ -97,12 +100,13 @@ const answer = (b) => {
     return { result: encodeFunctionResult({ abi: [f], functionName: f.name, result }) }
   }
   if (at !== PAD && f.name === 'kindOf') return { result: encodeFunctionResult({ abi: [f], functionName: f.name, result: 0 }) }
+  if (at !== PAD && f.name === 'implementation') return { result: encodeFunctionResult({ abi: [f], functionName: f.name, result: t(0x1111) }) }
   if (at !== PAD && f.name !== 'tokenInitCodeHash') return revert
   switch (f.name) {
     case 'kindOf': result = lc(args[0]) === TOKEN ? 1 : 0; break
     case 'vanityDeployer': result = world.vanity ? VAN : zeroAddress; break
     case 'taxHandler': case 'router': case 'recipientRegistry': case 'implementation': result = HANDLER; break
-    case 'gradRewardDeps': if (!world.hasGrad) return revert; result = [world.open, t(0xad), zeroAddress]; break
+    case 'gradRewardDeps': if (!world.hasGrad) return revert; result = [world.open, t(0xad), world.cdFactory ?? zeroAddress]; break
     case 'agentGateEnabled': result = world.gated; break
     case 'gradReward': if (!world.hasGrad) return revert; result = lc(args[0]) === TOKEN ? view() : { ...view(), state: 0 }; break
     case 'gradEntries': result = [world.list.buyers, world.list.seqs, world.list.spent, world.list.valid]; break
@@ -116,7 +120,9 @@ const answer = (b) => {
       const inner = decodeFunctionData({ abi: GRAD_PAD_ABI, data: args[1] })
       world.calls.push({ via: 'createWithSalt', fn: inner.functionName, args: inner.args })
       if (world.allowance < inner.args[8].seed) return { error: { code: 3, message: 'execution reverted: allowance', data: '0x' } }
-      result = t(0x1abcd)
+      // a carry checks that the module was made for this very token: any other salt or metadata puts it elsewhere
+      if (world.pinSalt && (args[0] !== world.pinSalt || inner.args[3] !== 'ipfs://meta')) return err('BadCountdown()')
+      result = world.saltResult ?? t(0x1abcd)
       break
     }
     case 'createWithGradReward': {
@@ -349,6 +355,44 @@ try {
   assert.equal(r.gradReward.minBuy, '0.01 USD6')
   await refused(create({ quote: Q6, 'grad-reward': '0.09' }), /at least 0\.1 USD6/)
 
+  // ---- the carry: --gr-carry needs a --countdown-reward launch; in one, the pad must have this CLI's factory set
+  await refused(create({ 'gr-carry': '20' }), /add --countdown-reward/)
+  const CDF = V3_NETS.testnet.countdownFactory ?? (await import('../src/countdown.js')).countdownFactoryAddress(true)
+  const MOD = t(0xc0de)
+  const cdSalt = `0x${'11'.repeat(32)}`
+  const cdToken = vanityAddress(VAN, ME, `0x${'ab'.repeat(32)}`, cdSalt)
+  const cdCreate = (extra) => runV3('create', {
+    ...io({ name: 'Grad', symbol: 'GRAD', from: ME, testnet: true, calldata: true, 'grad-reward': '0.5', 'buy-tax': '3', 'sell-tax': '3', recipient: MOD, ...extra }),
+    launchFloor: { noun: 'countdown reward module', token: cdToken, salt: cdSalt, logoURI: 'ipfs://logo', metaURI: 'ipfs://meta', metadata: { name: 'Grad' } },
+  })
+  world.saltResult = cdToken
+  // every dry run of a pinned launch, the first included, uses the pinned salt and metadata
+  world.pinSalt = cdSalt
+  // the pad has no countdown factory: a carry is refused, --gr-carry 0 goes through
+  world.cdFactory = zeroAddress
+  await refused(cdCreate({}), /not opened the graduation reward's carry/)
+  r = await cdCreate({ 'gr-carry': '0' })
+  assert.equal(r.success, true, JSON.stringify(r))
+  assert.equal(decodeFunctionData({ abi: GRAD_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data }).args[1] }).args[8].carryBps, 0)
+  assert.match(r.gradReward.claims, /back to you/)
+  // the pad has this CLI's factory: the default carry is 20%, and the rest goes to the module
+  world.cdFactory = CDF
+  r = await cdCreate({})
+  assert.equal(r.success, true, JSON.stringify(r))
+  const cdArgs = decodeFunctionData({ abi: GRAD_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data }).args[1] }).args
+  assert.equal(cdArgs[8].carryBps, 2000)
+  assert.equal(lc(cdArgs[6].recipient), lc(MOD))
+  assert.equal(r.gradReward.carryPct, 20)
+  assert.match(r.gradReward.carry, /countdown reward module/)
+  assert.match(r.gradReward.split, /payout \(the pool less the 20% carry\)/)
+  assert.match(r.gradReward.claims, /countdown reward module/)
+  r = await cdCreate({ 'gr-carry': '35' })
+  assert.equal(decodeFunctionData({ abi: GRAD_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data }).args[1] }).args[8].carryBps, 3500)
+  // another factory on the pad than this CLI's: refused
+  world.cdFactory = t(0xbad)
+  await refused(cdCreate({}), /not opened the graduation reward's carry/)
+  world.cdFactory = undefined; world.saltResult = undefined; world.pinSalt = undefined
+
   // a token without a reward
   await refused(runGradReward('status', io({ token: t(0x999), testnet: true })), /not a V3 curve token/)
 
@@ -358,10 +402,14 @@ try {
   const c0 = ['create', '--name', 'A', '--symbol', 'A', '--grad-reward', '1']
   assert.match(gang(...c0, '--fair'), /leave --fair out/)
   assert.match(gang(...c0, '--fly'), /leave --fly out/)
-  assert.match(gang(...c0, '--dev-buy', '0.1'), /stands alone/)
-  assert.match(gang(...c0, '--bond', '0.1'), /stands alone/)
+  assert.match(gang(...c0, '--dev-buy', '0.1'), /goes alone or with --countdown-reward/)
+  assert.match(gang(...c0, '--bond', '0.1'), /goes alone or with --countdown-reward/)
   assert.match(gang(...c0, '--buy-tax', '2', '--sell-tax', '2', '--promote', '10'), /promoter pool launch/)
   assert.match(gang('create', '--name', 'A', '--symbol', 'A', '--gr-last', '10'), /goes with --grad-reward/)
+  assert.match(gang(...c0, '--gr-carry', '20'), /add --countdown-reward/)
+  // with --countdown-reward the grad flags pass the CLI's own checks (the launch takes it from there)
+  const both = gang(...c0, '--countdown-reward', '--cd-max-payout', '1', '--dev-buy', '0.1')
+  assert.match(both, /--dev-buy/)
   assert.match(gang('fair', 'create', '--name', 'A', '--symbol', 'A', '--grad-reward', '1'), /leave --fair out/)
 
   console.log('gradreward: ok')
