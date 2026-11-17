@@ -88,6 +88,20 @@ assert.equal(eventRow({ kind: 'other', issue: 'x' }), null)
   assert.ok(e.launchAtLocal)
   assert.equal(e.extra, undefined)
 }
+{
+  // the event is shown as Launch Day; the command, the kind and the EIP-712 domain keep "weekly"
+  const { COMMANDS } = await import('../src/capabilities.js')
+  const { INSTRUCTIONS, RULES, TOOLS } = await import('../src/mcp.js')
+  const help = (await promisify(execFile)(process.execPath, [fileURLToPath(new URL('../src/index.js', import.meta.url)), 'help'], { env: { ...process.env, GANG_TELEMETRY: '0', GANG_UPDATE_CHECK: '0' } })).stdout
+  const weeklyCaps = COMMANDS.filter((c) => /^weekly/.test(c.command)).map((c) => c.summary).join('\n')
+  const shown = [WEEKLY_NOTE, help, weeklyCaps, INSTRUCTIONS, RULES.join('\n'), TOOLS.map((t) => t.description).join('\n')].join('\n')
+  assert.match(WEEKLY_NOTE, /Launch Day/)
+  assert.match(help, /gang weekly +Gang's Launch Day event/)
+  assert.equal(weeklyCaps.split('Launch Day').length - 1, 3, 'weekly, apply and withdraw')
+  assert.doesNotMatch(shown, /weekly launch|weekly event|week's pick/i)
+  assert.doesNotMatch(shown, /Gang Weekly/, 'the gang weekly command is fine, the old title is not')
+  assert.equal(WEEKLY_DOMAIN.name, 'gang.fun weekly launch', 'the signing domain stays')
+}
 // hold: the server's flag, or an open issue without a closing date / launch time
 {
   const t = now

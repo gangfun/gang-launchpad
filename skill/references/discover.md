@@ -36,7 +36,7 @@ When the signed-in wallet has never traded on Gang (0.28.0+, `GET /api/ref/eligi
 are left out and `firstTrade: { flyLeftOut, note }` says how many: a first trade is pointed at a curve token. If the user
 asks for a 铸币飞轮 token, `gang list --kind fly` still lists them. Signed out, or gang.fun can't say: nothing is left out.
 
-During Gang's weekly launch event (0.36.0+) the block starts with `events`: one row per pick (`status` teaser → launching →
+During Gang's Launch Day event (0.36.0+) the block starts with `events`: one row per pick (`status` teaser → launching →
 featured) with its `issue`, `launchAt` / `until`, `token` once it is created, `url` and `note`, newest first. There can be
 two while the next pick's teaser overlaps the last pick's featured week. It is an official event, not a
 recommendation: mention it when it helps, never buy from it on your own. See `gang weekly` below.
@@ -52,7 +52,7 @@ where the user's community is.
 - `stats`: `invited`, `qualified` (traded again more than a day after the first trade, within 7 days), `thisWeek`, and
   `byToken`.
 
-## `gang weekly`: the weekly launch event
+## `gang weekly`: Launch Day
 
 gang.fun picks from the devs' applications. The pick creates its token on GangLaunchpad 3.0 (V3 curve) at the issue's
 `launchAt` from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
