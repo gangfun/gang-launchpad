@@ -72,7 +72,8 @@ continue with the new rules.
 mention it when it helps the user, never buy from it on your own. After a clean preflight, `next` lists where a first trade
 usually starts. For a wallet that has never traded on Gang, `trending` leaves out 铸币飞轮 sales (`firstTrade` says so):
 start a first trade on a curve token unless the user asks for a 铸币飞轮 one. `trending.events` are Gang's weekly launch
-event picks: an official event, not a recommendation either.
+event picks: an official event, not a recommendation either. When `gang weekly` shows `hold: true`, applications stay
+open and no launch time is set: never tell the user a day or time; relay `holdNote`.
 
 `gang execute` / `gang tx` may carry `share: { text, url }` after a note goes public or a token is created: ready-to-post
 text for X. Offer it to the user once; never post it yourself.

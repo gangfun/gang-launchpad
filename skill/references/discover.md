@@ -37,8 +37,8 @@ are left out and `firstTrade: { flyLeftOut, note }` says how many: a first trade
 asks for a 铸币飞轮 token, `gang list --kind fly` still lists them. Signed out, or gang.fun can't say: nothing is left out.
 
 During Gang's weekly launch event (0.36.0+) the block starts with `events`: one row per pick (`status` teaser → launching →
-featured) with its `issue`, `launchAt` / `until`, `token` once it is created, `url` and `note`, newest first. There are two
-from Thursday 20:00 (the next pick's teaser) until the last pick's featured week ends on Friday. It is an official event, not a
+featured) with its `issue`, `launchAt` / `until`, `token` once it is created, `url` and `note`, newest first. There can be
+two while the next pick's teaser overlaps the last pick's featured week. It is an official event, not a
 recommendation: mention it when it helps, never buy from it on your own. See `gang weekly` below.
 
 ## `gang invite [--token <addr>] [--who <addr|handle>]`
@@ -51,20 +51,23 @@ where the user's community is.
   the token it bought. So a dev sharing `gang.fun/start?token=<their token>` is credited even without `ref`.
 - `stats`: `invited`, `qualified` (traded again more than a day after the first trade, within 7 days), `thisWeek`, and
   `byToken`.
-- Each week (Monday to Monday, UTC+8) the token with the most qualified new agents is featured on the gang.fun homepage
-  for the next week.
 
 ## `gang weekly`: the weekly launch event
 
-Each week gang.fun picks one dev's application. The pick creates its token on GangLaunchpad 3.0 (V3 curve) on Friday
-20:00 UTC+8 from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
+gang.fun picks from the devs' applications. The pick creates its token on GangLaunchpad 3.0 (V3 curve) at the issue's
+`launchAt` from the wallet that applied, with the symbol it applied with, and is featured for 7 days: on the gang.fun
 homepage, in gang.fun's X / TG posts, and in `events` of `gang trending` / `preflight` / `list`. Being picked is not an
 endorsement or investment advice. Selling more than `rules.revokeSellBps` (20%) of the creator's holding during the featured week ends the
 pin early.
 
+**Hold (0.43.0+):** when `gang weekly` shows `hold: true` (also `apply.hold`), applications stay open with no closing date
+and no launch time (`apply.closesAt` / `apply.launchAt` are null). The team selects from the open pool and contacts the
+pick; the launch time is announced on gang.fun/weekly. Don't tell the user a day or time; teams can also launch on Gang
+any time on their own schedule (`gang create`). The output's `holdNote` says this.
+
 - `gang weekly`: `apply` (the issue open for applications: `opensAt` / `closesAt` / `launchAt`, `open`), `current` (the
-  pick from Thursday 20:00, then its token), `live` (every issue in teaser / launching / featured, newest first: two
-  from Thursday 20:00 until the last pick's featured week ends), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
+  pick once its teaser starts, then its token), `live` (every issue in teaser / launching / featured, newest first: two
+  while a teaser overlaps the last pick's featured week), `past`, `rules`, and `mine` (the signed-in wallet's applications for the open
   issue, the one being picked and the current one, newest first).
 - `gang weekly apply --name … --symbol … --logo <file> --description "…" --contact <handle> [--twitter …] [--telegram …]
   [--website …] [--modules lp,buyback,…]`: only when the user wants to apply. Without `--yes` it is a preview (nothing
