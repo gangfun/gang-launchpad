@@ -35,7 +35,7 @@
 
 买家不额外付钱：奖励池是你自己的钱，按公开的固定规则分配，不抽签。`gang buy` / `gang sell` 的预览会在 `rewards.gradReward` 里说明这笔会不会计入、卖出会让哪些格子失效。`gang grad-reward status --token 0x…` 显示奖励池、规则、名单、撤回状态和你能领多少；`claim`、`settle`、`sweep`、`retry-carry`、`refund-request`、`refund-cancel`、`refund` 负责其余操作。
 
-**倒计时奖励（0.43.0+，BSC 测试网；主网还没上线）：** `gang create … --buy-tax 3 --sell-tax 3 --countdown-reward --cd-max-payout <金额> [--cd-window 60m] [--cd-max-round 6h] [--cd-idle 30d] [--cd-payout 30] [--cd-last 20] [--cd-dev 0] [--cd-entries 10] [--cd-min-buy 0.05] [--cd-min-pot 0.1] [--cd-seed <金额>]` 把币的税收接收地址设成它自己的倒计时奖励模块（GangCountdownReward，`countdown-v1`）：你那份池子税变成买家的奖励。
+**倒计时奖励（0.43.2+，BSC 测试网；主网还没上线）：** `gang create … --buy-tax 3 --sell-tax 3 --countdown-reward --cd-max-payout <金额> [--cd-window 60m] [--cd-max-round 6h] [--cd-idle 30d] [--cd-payout 30] [--cd-last 20] [--cd-dev 0] [--cd-entries 10] [--cd-min-buy 0.05] [--cd-min-pot 0.1] [--cd-seed <金额>]` 把币的税收接收地址设成它自己的倒计时奖励模块（GangCountdownReward，`countdown-v1`）：你那份池子税变成买家的奖励。
 
 - **怎么计入**：毕业后，每笔通过模块买入、至少 `--cd-min-buy` 的买单，把倒计时推到 `--cd-window` 之后；一轮最长不超过第一笔计入后的 `--cd-max-round`。
 - **怎么分**：倒计时结束时，这一轮最后 `--cd-entries` 笔计入的买入平分奖励池的 `--cd-payout`%（不超过必填的 `--cd-max-payout`），最后一笔再多拿这一轮的 `--cd-last`%。到上限结束的轮次结束时间是公开的，所以只平分，不发额外部分。
@@ -335,7 +335,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_COMBO_FACTORY` / `GANG_TESTNET_COMBO_FACTORY` | 发币目标那一代的 GangComboSplitterFactory（同时给 `--buyback` / `--lp` / `--split` 中的几个；已有的币用它自己那一代的）。默认（CLI 0.22.0+）：主网 3.0 `0x2018…eA39`（2.0 `0xcCeA…98Be`，1.0 `0xd33C…1DBd`，2026-10-31 起），测试网 3.0 `0xdc16…543C`（2.0 `0x312c…84BD`，1.0 `0x52a8…4CFE`；第一版 2.0 没有） |
 | `GANG_CAPPED_FACTORY` / `GANG_TESTNET_CAPPED_FACTORY` | 发币目标那一代的 GangCappedSplitterFactory（有税 V3 发射的 `--tax-cap`）。CLI 0.35.0+；已内置：主网 `0x294E901ecb66af280C1cDD26fD871601d89a2Dca`，测试网 `0xe3f61865d98993dd39c136Af19651C6F6686498A` |
 | `GANG_FLOOR_FACTORY` / `GANG_TESTNET_FLOOR_FACTORY` | 发币目标那一代的 GangFloorModuleFactory（有税 V3 发射的 `--floor`）。已内置：主网 `0x057d2C1557a0E8298a1E00834D6064497f5DC2fC`，测试网 `0x0804C018201D8fFe378b873b41B67f136dbdc3F8` |
-| `GANG_COUNTDOWN_FACTORY` / `GANG_TESTNET_COUNTDOWN_FACTORY` | 发币目标那一代的 GangCountdownRewardFactory（`--countdown-reward`）。CLI 0.43.0+；已内置：测试网 `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`；主网暂无 |
+| `GANG_COUNTDOWN_FACTORY` / `GANG_TESTNET_COUNTDOWN_FACTORY` | 发币目标那一代的 GangCountdownRewardFactory（`--countdown-reward`）。CLI 0.43.2+；已内置：测试网 `0x0f83ABC7d39C0d043d3f5612E304D9395B5fe582`；主网暂无 |
 | `GANG_CALL_BOND` / `GANG_TESTNET_CALL_BOND` | GangLaunchpad 3.0 的 GangCallBond（`gang call-bond`）。CLI 0.37.0+；已内置：主网 `0x6d6e4A36e9a231cCc932151cdbFb087Cf3860c3D`，测试网 `0xBE2B8519278E9D31B6c4040bAd35f727fD5d2A70` |
 | `GANG_ROUTER` / `GANG_TESTNET_ROUTER` | 发币目标那一代的 GangRouter 代理（用原生 BNB 买 V3 / 打新，以及已毕业币的所有外盘买卖；已有的币用它自己那一代的）；旧名 `GANG_ROUTER_TESTNET` 仍可用。默认：主网 3.0 `0xec97…61e7`（2.0 `0xa832…844a`，1.0 `0xE040…79C4`），测试网 3.0 `0x0954…87b9`（2.0 `0x5a4F…dDAA`，第一版 2.0 `0xb218…FC08`，1.0 `0x6bB6…C9F6`） |
 

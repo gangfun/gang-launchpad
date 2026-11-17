@@ -105,7 +105,7 @@ Pad 3.0 的 owner 启用 `abcd` 部署器后，CLI 会为曲线、打新、铸�
 从该部署器读取准确的 `tokenInitCodeHash` 或 `mintInitCodeHash`，按有效 salt `keccak256(abi.encode(creator, salt))` 搜索地址。
 十六进制地址后四位必须为 `abcd`，忽略校验和带来的大小写。旧币地址不变；仅凭后缀不能认定是 Gang 发行的币。
 
-### 倒计时奖励的买入（0.43.0+）
+### 倒计时奖励的买入（0.43.2+）
 
 税收接收地址是倒计时奖励模块（`countdown-v1`）的已毕业 V3 币，只有通过这个模块的买入才计入：WBNB 报价的币用
 `buy(minTokensOut, deadline, mustCount)` 付 BNB，其他报价币先 approve 给模块，再调 `buyWithQuote(quoteIn, minTokensOut,

@@ -107,7 +107,7 @@ Direct integrations read `vanityDeployer()` on the pad. A nonzero result require
 search with the effective salt `keccak256(abi.encode(creator, salt))`. The address must end in `abcd` (hex, ignoring checksum
 capitalization). Existing tokens keep their addresses. A suffix alone does not prove a token was launched on Gang.
 
-### Countdown reward buys (0.43.0+)
+### Countdown reward buys (0.43.2+)
 
 A graduated V3 token whose tax recipient is a countdown reward module (`countdown-v1`) counts only buys sent through that
 module: `buy(minTokensOut, deadline, mustCount)` with BNB (WBNB-quoted tokens) or `buyWithQuote(quoteIn, minTokensOut,

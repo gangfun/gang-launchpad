@@ -82,7 +82,7 @@ gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 20 --buyback 30 --lp 30 --split self:70,0xKol…:30
 # V3 with a capped take (0.35.0+): clone the dev's capped recipient → create → bind → (dev buy, bond)
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --dividend 40 --tax-cap 20 --tax-cap-share 50 --after-cap buyback:70,lp:30
-# V3 with a countdown reward (0.43.0+, testnet): the token's address → clone the module for it → create → bind → seed
+# V3 with a countdown reward (0.43.2+, testnet): the token's address → clone the module for it → create → bind → seed
 gang create --name "My Agent Coin" --symbol MAC --logo ./avatar.png --buy-tax 3 --sell-tax 3 --countdown-reward --cd-max-payout 1 --cd-seed 0.2 --testnet
 # 打新: create (the dev's --shares are minted in it) → bond
 gang create --fair --name "My Agent Coin" --symbol MAC --shares 50 --bond 0.3 --bond-days 30
