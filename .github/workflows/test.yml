@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request cancels its older run; main runs always finish
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     name: Foundry project
@@ -30,9 +35,22 @@ jobs:
       - name: Run Forge fmt
         run: forge fmt --check
 
-      # Tests run locally before a PR (`forge test`, plus the fork suites with an RPC): CI only checks format and build
+      # Forge keeps per-file content hashes in cache/, so a restored cache only recompiles what changed.
+      # The via-ir pipeline makes a cold build take 20+ minutes.
+      - name: Restore Forge build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            cache
+            out
+          key: forge-${{ runner.os }}-${{ hashFiles('foundry.toml', '.gitmodules', 'src/**/*.sol') }}
+          restore-keys: |
+            forge-${{ runner.os }}-
+
+      # Tests run locally before a PR (`forge test`, plus the fork suites with an RPC): CI only checks format and
+      # builds the contracts in src/ (sizes included). test/ and script/ compile when the tests run locally.
       - name: Run Forge build
-        run: forge build --sizes
+        run: forge build src --sizes
 
   web-prod-guard:
     name: Web prod API guard
