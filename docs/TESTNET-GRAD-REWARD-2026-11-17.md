@@ -50,6 +50,23 @@
 - 普通买入在多出的那次冷读之后，gas 约 18.3 万到 21.2 万。
 - 记录：`broadcast/GradRewardTestnetAcceptance.s.sol/97/`。
 
+## CLI 验收（0.42.0 候选）
+
+交易由 CLI 自己的代码生成（`--testnet --calldata --from <部署钱包>`），再用 `cast send` 签名发送。元数据上传换成了固定的测试 URI，没有往 gang.fun 发布任何内容。报价币是 MockSPCXB。
+
+| 步骤 | CLI 的结果 | 交易 |
+|---|---|---|
+| `gang create … --quote MockSPCXB --grad 6 --grad-reward 0.2 --gr-min-buy 0.003 --gr-entries 5` | 先返回 `approve-quote`，金额 0.2，说明「建币会拉走 0.2 MockSPCXB 奖励池」；批准后再跑，返回经 `createWithSalt` 调 `createWithGradReward` 的建币交易，地址以 abcd 结尾 | [approve `0xa954578f…95dc`](https://testnet.bscscan.com/tx/0xa954578feb6800e5b43234cd0993ddb6eae7b1e1d56388ab2bdbb3a4abb295dc)、[create `0xdd09751d…2bf2`](https://testnet.bscscan.com/tx/0xdd09751d0de0756c61a99c3b17ba8b88af414354dffb0c8c5ea18ccbc1fe2bf2) |
+| `gang grad-reward status` | 代币 [`0xd9e6af346c363a530d6de49d92ea00c451ecabcd`](https://testnet.bscscan.com/address/0xd9e6af346c363a530d6de49d92ea00c451ecabcd)：on the curve，奖励池 0.2，`minBuy` 0.003，5 格，30%，门槛开着，名单为空 | 无 |
+| `gang buy --amount 0.001` | 预览 `rewards.gradReward.counts` = false（低于最低额） | [`0x653aa72f…462a`](https://testnet.bscscan.com/tx/0x653aa72f01f11170d6ff0121c7a37169472ef63295c3ff3ee84dce8c0b95462a) |
+| `gang buy --amount 0.004` 两次 | 预览 `counts` = true | [`0x127efd68…cf1`](https://testnet.bscscan.com/tx/0x127efd68f493f616b499e908f33c0c9c56d0c856f95d1796135f3829ea26dcf1)、[`0xba5dc8a5…8cd5`](https://testnet.bscscan.com/tx/0xba5dc8a5985a6693f03b898b9f7b1946042d5b7d5d081faebf0833b02a888cd5) |
+| `gang sell`（四分之一） | 预览警告「这笔卖出会让你在名单里的 2 格失效」；卖出后 status 显示这两格无效 | [`0x1c10ce58…ac1a`](https://testnet.bscscan.com/tx/0x1c10ce589edd7b77551d6521722eea8f802d5a118fd5f5ab5e5041a8c42bac1a) |
+| 再 `gang buy --amount 0.004` | `counts` = true；status 显示 seq 3 有效，seq 1、2 无效 | [`0x3b35a95a…497b`](https://testnet.bscscan.com/tx/0x3b35a95adb9efef19e1dcb29fcf97bb6c1acba1b03f9cc500190128f59f8497b) |
+| `gang grad-reward refund-request` / `claim` | 分别拒绝：「too early，2027-02-15 起才能申请撤回」「the reward is not in the state this needs」，不生成交易 | 无 |
+| `gang info` | 带 `gradReward`（状态、奖励池、已计入 3 笔），并附上 `gang grad-reward status` 的提示 | 无 |
+
+每笔买入、卖出之前还各有一笔 CLI 返回的 approve。所有交易都成功。
+
 ## 升级后的回归
 
 - 重跑 `script/Pad3VanityTestnetAcceptance.s.sol`：39 笔交易全部成功。7 个创建入口都通过 `createWithSalt` 建币，地址以 abcd 结尾；升级前的老币 `0x1695…85f7` 也完成了买卖。记录：`broadcast/Pad3VanityTestnetAcceptance.s.sol/97/run-1794893349799.json`。
