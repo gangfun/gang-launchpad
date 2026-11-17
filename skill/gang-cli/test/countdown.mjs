@@ -121,6 +121,16 @@ const BNB = (x) => BigInt(Math.round(x * 1e6)) * 10n ** 12n
   assert.match(honest, /only buys through the countdown module count/)
   assert.match(honest, /no holding check/)
   assert.match(view.seed, /0\.3 WBNB/)
+  // --ref on a pool trade: the router call carries no invite tag, so the result never says it is attached
+  const { refShown, POOL_NO_REF } = await import('../src/pool.js')
+  const att = { attached: true, referrer: '0xabc', note: 'credited' }
+  assert.deepEqual(refShown({ step: 'pool-buy', venue: 'pancakeswap' }, att), { attached: false, referrer: '0xabc', reason: POOL_NO_REF })
+  assert.equal(refShown({ step: 'approve-quote', next: 'pool-buy' }, att).attached, false, 'the setup step before a pool buy')
+  assert.equal(refShown({ success: false, step: 'pool-buy', error: 'x' }, att).attached, false)
+  assert.deepEqual(refShown({ step: 'buy', via: 'router' }, att), att, 'a curve buy carries the tag')
+  const off = { attached: false, reason: 'already traded' }
+  assert.deepEqual(refShown({ step: 'pool-buy' }, off), off, 'a ref that was not attached keeps its own reason')
+  assert.equal(refShown({ step: 'pool-buy' }, null), null)
   for (const text of [JSON.stringify(view), cd.CD_USAGE, cd.WHAT_IT_IS]) assert.doesNotMatch(text, /\b(bet|bets|betting|lottery|jackpot|gamble|wager)\b/i)
 }
 
@@ -303,6 +313,13 @@ try {
   await refused(() => launch({}, ['buy-tax', 'sell-tax']), /needs a taxed token/)
   await refused(() => launch({ dividend: '100' }), /--dividend 100 leaves nothing/)
   await refused(() => launch({}, ['cd-max-payout']), /--cd-max-payout <amount> is required/)
+  await refused(() => launch({ 'grad-reward': '0.5' }), /--grad-reward and --countdown-reward can't go together in this CLI version/)
+  {
+    const { spawnSync } = await import('node:child_process')
+    const r = spawnSync(process.execPath, [new URL('../src/index.js', import.meta.url).pathname, 'create', '--name', 'A', '--symbol', 'A', '--buy-tax', '3', '--sell-tax', '3', '--countdown-reward', '--cd-max-payout', '1', '--grad-reward', '0.5', '--testnet'], { encoding: 'utf8', env: { ...process.env, GANG_TELEMETRY: '0', GANG_UPDATE_CHECK: '0' } })
+    assert.equal(r.status, 1)
+    assert.match(JSON.parse(r.stdout).error, /--grad-reward and --countdown-reward can't go together in this CLI version/)
+  }
   await refused(() => launch({ 'cd-max-round': '20m' }), /--cd-max-round must be/)
   await refused(() => launch({ 'cd-window': '1h' }, ['countdown-reward']), /go with --countdown-reward/)
   await refused(() => runLaunch('fair', { io: io({ ...BASE, fair: true }), runV3, runFair: null, runBond: null, padNotes: () => notes }), /--countdown-reward is for V3 tokens/)

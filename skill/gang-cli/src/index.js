@@ -36,7 +36,7 @@ import { wantsPoolModule } from './promote.js'
 import { runWeekly } from './weekly.js'
 import { runFly, flyCtx, isFlyToken, FLY_EVENT_ABIS, FLY_CREATE_FLAGS } from './fly.js'
 import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, REDEEM_FEE_ALONE, runLaunch, TAX_CAP_ALONE } from './launch.js'
-import { poolPayBnb, poolTrade } from './pool.js'
+import { poolPayBnb, poolTrade, refShown } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { MERGED_ERRORS_ABI, genOf, padNets } from './gangpad.js'
 import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
@@ -65,7 +65,8 @@ const out = (o) => {
     if (!o.code) o = { ...o, code: codeOf(o) }
     if (o.code === 'NO_FUNDS' && !o.fund) o = { ...o, fund: /^not enough (BNB|WBNB)\b/.test(String(o.error ?? '')) ? FUND_HINT : FUND_TOKEN_HINT }
   }
-  if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refInfo }
+  // a pool trade never carries the invite tag (pool.js refShown): its result says so instead of the resolved ref
+  if (refInfo && o && typeof o === 'object' && !('ref' in o)) o = { ...o, ref: refShown(o, refInfo) }
   // a failed result built no tx, so it claims no tag; a bad id is always said
   if (toolInfo() && o && typeof o === 'object' && !('tool' in o) && (o.success !== false || !toolInfo().attached)) o = { ...o, tool: toolInfo() }
   record(args, o)
@@ -563,7 +564,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          through the module count. PERMANENT: every setting. Steps: the token's address
                                          first (as --floor), clone your module for it → create → bind → seed → the rest of
                                          the launch. Not with --floor / --buyback / --lp / --split / --tax-cap / --recipient /
-                                         --vault; with --promote the promoter share stays on the curve. Quote: WBNB, GANG or
+                                         --vault / --grad-reward (both rewards on one token: a later version); with --promote the promoter share stays on the curve. Quote: WBNB, GANG or
                                          one listed in the pad's QuoteRegistry
   gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
                                          打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
@@ -1634,6 +1635,7 @@ async function main() {
     if (!flag('grad-reward')) fail(`--${grFlag} goes with --grad-reward <seed>`)
     if (flyCreate || flag('fair') || cmd === 'fair') fail(`--grad-reward rewards the last buys of a V3 curve: leave --${flyCreate ? 'fly' : 'fair'} out`)
     if (flag('base') || flag('vault')) fail(`--grad-reward and --${flag('base') ? 'base' : 'vault'} can't go together`)
+    if (flag('countdown-reward')) fail('--grad-reward and --countdown-reward can\'t go together in this CLI version: running both rewards on one token (the graduation reward carried into the countdown pool) comes in a later version. Launch with one of them')
     if (wantsPoolModule('v3', flag, opt)) fail('--grad-reward with --promote on a taxed token: that --promote would start a promoter pool launch, which a --grad-reward create does not take. Add --recipient <your address> (the creator\'s own share stays in the create), or use an untaxed token')
     const launch = LAUNCH_FLAGS.find((f) => flag(f))
     if (launch) fail(`--${launch}: ${GRAD_ALONE}`)
