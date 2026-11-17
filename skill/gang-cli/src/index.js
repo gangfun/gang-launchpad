@@ -559,7 +559,9 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          counted buy anyone may pay the last round again (finalize). --cd-dev % of the tax
                                          stays yours (claim-dev). --cd-min-buy / --cd-min-pot default to 0.05 / 0.1 BNB on a
                                          WBNB-quoted token and must be given for another quote. --cd-seed adds that much of
-                                         the quote to the pool after the bind (approve, fund). The preview shows the % of
+                                         the quote to the pool after the bind (approve, fund). A fund that does not show in
+                                         the module's books is built again only with --cd-seed-again (the first may still
+                                         wait for approval in the Binance App: approve only one). The preview shows the % of
                                          pool volume that reaches the pool, what a round pays at most and what taking every
                                          slot costs. Anyone, you included, can take slots with several wallets; only buys
                                          through the module count. PERMANENT: every setting. Steps: the token's address

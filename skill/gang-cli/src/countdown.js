@@ -168,7 +168,7 @@ export const UNVERIFIED_NOTE = 'this contract says it is a countdown reward modu
 
 // ---- the launch's flags
 
-export const CD_FLAGS = ['cd-window', 'cd-max-round', 'cd-idle', 'cd-payout', 'cd-last', 'cd-dev', 'cd-entries', 'cd-min-buy', 'cd-min-pot', 'cd-max-payout', 'cd-seed']
+export const CD_FLAGS = ['cd-window', 'cd-max-round', 'cd-idle', 'cd-payout', 'cd-last', 'cd-dev', 'cd-entries', 'cd-min-buy', 'cd-min-pot', 'cd-max-payout', 'cd-seed', 'cd-seed-again']
 export const CD_USAGE = '--countdown-reward --cd-max-payout <amount> [--cd-window 60m] [--cd-max-round 6h] [--cd-idle 30d] [--cd-payout 30] [--cd-last 20] [--cd-dev 0] [--cd-entries 10] [--cd-min-buy 0.05] [--cd-min-pot 0.1] [--cd-seed <amount>]'
 export const CD_ALONE = '--cd-* settings go with --countdown-reward (a launch whose tax recipient is a countdown reward module)'
 

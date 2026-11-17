@@ -203,7 +203,8 @@ function answer(b) {
       case 'rewardQuote': result = WBNB; break
       case 'token': result = mm.token ?? zeroAddress; break
       case 'pot': case 'potAvailable': result = mm.pot; break
-      case 'reservedTotal': case 'claimTotal': case 'devOwed': case 'lastRoundId': case 'lastFinalizedAt': result = 0n; break
+      case 'devOwed': result = mm.devOwedFake ?? 0n; break
+      case 'reservedTotal': case 'claimTotal': case 'lastRoundId': case 'lastFinalizedAt': result = 0n; break
       case 'cur': result = 0; break
       case 'deadline': result = mm.deadline; break
       case 'lastCountedAt': result = mm.deadline ? mm.deadline - 1800n : 0n; break
@@ -403,7 +404,12 @@ try {
   // nothing pending and the books show no seed: the fund never landed, so it is built again, with a warning
   world.nonce = { latest: 6, pending: 6 }
   modules.get(MODULE).pot = BNB(0.1) // less than the seed arrived (a stray transfer someone booked)
-  assert.match((await launch()).warning, /did not land \(0\.1 WBNB of 0\.2 arrived/)
+  await refused(() => launch(), /built a fund of the seed before.*0\.1 WBNB of 0\.2 arrived.*waiting for approval in the Binance App: approve only one.*--cd-seed-again/)
+  assert.match((await launch({ 'cd-seed-again': true })).warning, /--cd-seed-again: a second fund of the seed \(the books show 0\.1 WBNB of 0\.2 arrived/)
+  // the dev's part is not counted: a claimDev lowering devOwed never makes the seed look missing (or present)
+  modules.get(MODULE).devOwedFake = BNB(1)
+  assert.equal((await launch({ 'cd-seed-again': true })).step, 'seed', 'the dev\'s part is not the seed')
+  modules.get(MODULE).devOwedFake = 0n
   // a changed --cd-seed is refused
   await refused(() => launch({ 'cd-seed': '0.3' }), /this launch's seed is 0\.2 WBNB, not the 0\.3/)
   // graduated before the seed was seen: never decided, never funded again
