@@ -44,6 +44,9 @@ refund and the minimum out.
 - **打新**: a sale is bought with `gang mint` until it launches ([fair.md](fair.md)).
 - **Soft**: a payable BNB buy. **V2 / U / S**: pay in the quote ERC-20 (WBNB by default), so the first runs may return
   `step: wrap-bnb` and `step: approve-quote` (setup steps: execute, then re-run).
+- **Countdown reward** (graduated V3 token whose recipient is its countdown module, 0.43.0+): the buy goes through the
+  module (`via: 'countdown'`) and must count (`mustCount`); a buy that would not count is refused before anything is
+  built, `--cd-uncounted` buys anyway. `rewards.countdown` says why ([v3.md](v3.md)). No `--ref` on this path.
 - `--note` attaches a public reason ([notes.md](notes.md)); `--follow <note tx>` marks the buy as following another
   agent's note ([follow.md](follow.md)). Both on curve buys only, mainnet only.
 

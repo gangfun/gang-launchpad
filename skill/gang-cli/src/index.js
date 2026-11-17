@@ -30,6 +30,7 @@ import { runCombo, COMBO_EVENT_ABIS } from './combo.js'
 import { runCapped, CAPPED_EVENT_ABIS } from './capped.js'
 import { runFloor, FLOOR_ABI, FLOOR_EVENT_ABIS } from './floor.js'
 import { runBase, BASE_EVENT_ABIS } from './base.js'
+import { CD_ALONE, CD_FLAGS, COUNTDOWN_EVENT_ABIS, runCountdown } from './countdown.js'
 import { GRAD_ALONE, GRAD_EVENT_ABIS, GRAD_FLAGS, runGradReward } from './gradreward.js'
 import { wantsPoolModule } from './promote.js'
 import { runWeekly } from './weekly.js'
@@ -542,6 +543,28 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          with the pad before the tx) → bind → the rest of the launch. Not with --buyback /
                                          --lp / --after-cap / --recipient / --vault; with --promote the promoter share stays
                                          on the curve. Quote: WBNB (default), GANG or one listed in the pad's QuoteRegistry.
+  gang create … --buy-tax <1-5> --sell-tax <1-5> --countdown-reward --cd-max-payout <amount> [--cd-window 60m]
+                                         [--cd-max-round 6h] [--cd-idle 30d] [--cd-payout 30] [--cd-last 20] [--cd-dev 0]
+                                         [--cd-entries 10] [--cd-min-buy 0.05] [--cd-min-pot 0.1] [--cd-seed <amount>] [--dev-buy …]
+                                         V3, taxed, countdown reward (倒计时奖励, GangCountdownReward, countdown-v1; BSC testnet
+                                         now, mainnet not live yet): your share of the pool tax becomes a reward for buyers.
+                                         After graduation each buy of at least --cd-min-buy through the module (gang buy)
+                                         puts the countdown --cd-window ahead, never past --cd-max-round from the round's
+                                         first counted buy. When it runs out, the round's last --cd-entries counted buys
+                                         share --cd-payout % of the pool (at most --cd-max-payout, required): equal shares,
+                                         the last buy --cd-last % of the payout on top (a round that ends at its cap: equal
+                                         shares only). No round starts under --cd-min-pot; after --cd-idle days with no
+                                         counted buy anyone may pay the last round again (finalize). --cd-dev % of the tax
+                                         stays yours (claim-dev). --cd-min-buy / --cd-min-pot default to 0.05 / 0.1 BNB on a
+                                         WBNB-quoted token and must be given for another quote. --cd-seed adds that much of
+                                         the quote to the pool after the bind (approve, fund). The preview shows the % of
+                                         pool volume that reaches the pool, what a round pays at most and what taking every
+                                         slot costs. Anyone, you included, can take slots with several wallets; only buys
+                                         through the module count. PERMANENT: every setting. Steps: the token's address
+                                         first (as --floor), clone your module for it → create → bind → seed → the rest of
+                                         the launch. Not with --floor / --buyback / --lp / --split / --tax-cap / --recipient /
+                                         --vault; with --promote the promoter share stays on the curve. Quote: WBNB, GANG or
+                                         one listed in the pad's QuoteRegistry
   gang create --fair … [--shares <n>] --bond <quote> [--bond-hold …] --bond-days <7-90>
                                          打新: create (the dev's --shares are bought in it) → bond. Progress is read from the
                                          chain (a token this wallet created with this symbol since the plan); a run that finds
@@ -854,12 +877,35 @@ FLOOR (a V3 token whose recipient is a floor module, floor-v1; GANG_FLOOR_FACTOR
   gang floor bind --token <addr>         anyone: bind the module to the token it was cloned for (the launch does it).
                                          --module <addr> instead of --token names a module directly (not for redeem).
                                          Gas, --testnet, --calldata, --from as gang capped
+COUNTDOWN REWARD (倒计时奖励, a V3 token whose recipient is its countdown module, countdown-v1; GANG_COUNTDOWN_FACTORY /
+GANG_TESTNET_COUNTDOWN_FACTORY; BSC testnet now, mainnet not live yet):
+  gang buy --token <addr> --amount <n> [--cd-uncounted]
+                                         graduated: the buy goes through the token's countdown module (WBNB-quoted: BNB, or
+                                         the quote after an approve with --use-quote; another quote: approve, then
+                                         buyWithQuote; --pay-bnb is refused), on the token's own pair. It must count by
+                                         default (a buy that would not, reverts NotCounted and buys nothing; the preview
+                                         says so first); --cd-uncounted buys through it anyway. rewards.countdown: counted
+                                         or not and why, the round, its deadline and cap, the pool, your estimated share if
+                                         no other counted buy came. No --ref / --promoter / --follow; a note is not carried.
+                                         Curve buys never count; sells never take out slots (no holding check)
+  gang countdown status --token <addr>   the rules, the pool, the running round (deadline, cap, its slots oldest first),
+                                         the round before, what is due (settle / finalize) and this wallet's (or --from's)
+                                         claimable — and whether GangCountdownRewardFactory made the module and cloned it
+                                         for this token: if not, a warning, and no other gang countdown command is built
+  gang countdown claim --token <addr> [--to <addr>]
+                                         a buyer: everything credited to this wallet, paid to --to (default this wallet)
+  gang countdown settle --token <addr>   anyone, once a round passed its deadline: end it and credit its slots
+  gang countdown finalize --token <addr> anyone, after the idle days with no counted buy: pay the last round's slots once
+                                         more (at most the max payout)
+  gang countdown claim-dev --token <addr>
+                                         anyone: send the dev its --cd-dev % of the tax (always to the dev). --testnet,
+                                         --calldata, --from as elsewhere
   gang execute --request-id <id>         broadcast a previewed call
   gang tx --pending                      a trade that waited for Binance App approval (execute: pendingConfirmation): find its tx
                                          in the wallet's history by the exact call previewed, then as gang tx --hash below
   gang tx --hash <0x..> [--testnet]      wait for receipt and decode Gang events: V2 / Soft / U / S, GangLaunchpad (V3 /
                                          打新, 铸币飞轮, tax routers, vaults), GangFlywheelPad (铸币飞轮 pads), split modules,
-                                         LP splitters, combined and capped recipients, floor modules (publishes a queued --note; mainnet). GangLaunchpad events
+                                         LP splitters, combined and capped recipients, floor and countdown modules (publishes a queued --note; mainnet). GangLaunchpad events
                                          carry units: "raw" (amounts in wei, 18 decimals; bps / shares as is)
 
 --note is PUBLIC: shown on gang.fun next to the trade. Its hash goes into the tx calldata, so it is provably written
@@ -1353,6 +1399,7 @@ async function routed(verb) {
   if (flag('promoter') && verb !== 'buy') fail('--promoter applies to gang buy only: a wallet binds by its first buy', { token })
   const kind = await padKind(token, verb)
   if (flag('promoter') && kind !== 'v3') fail('--promoter is for V3 curve tokens on GangLaunchpad 3.0', { token, kind })
+  if (flag('cd-uncounted') && !(verb === 'buy' && kind === 'v3')) fail('--cd-uncounted applies to gang buy of a graduated V3 token with a countdown reward', { token, kind })
   // 铸币飞轮 mints name the inviter in the contract call (fly.js); every other buy / mint carries the invite tag
   if (flag('ref') && kind !== 'fly') await resolveRef(fromArg() || (bawStatus() === 'CONNECTED' ? bawAddress() : null))
   const io = { ...PAD_IO, out: tagKind(kind) }
@@ -1457,9 +1504,9 @@ const PREFLIGHT_NEXT = [
 // commands whose JSON result carries `update`; `watch` streams NDJSON and help is plain text
 const UPDATE_CHECKED = new Set(['version', '--version', '-v', 'preflight', 'list', 'trending', 'invite', 'weekly', 'hot', 'new', 'near-grad', 'notes', 'agents', 'token', 'info', 'status', 'portfolio', 'quote',
   'buy', 'follow', 'sell', 'claim', 'mint', 'withdraw', 'release', 'upload-logo', 'create', 'execute', 'tx', 'fair', 'v3', 'bond',
-  'buyback', 'split', 'lp', 'combo', 'capped', 'floor', 'base', 'grad-reward', 'fly', 'creator-fee', 'promote', 'call-bond'])
+  'buyback', 'split', 'lp', 'combo', 'capped', 'floor', 'base', 'grad-reward', 'countdown', 'fly', 'creator-fee', 'promote', 'call-bond'])
 // gang tx decodes these beside the V2 / Soft / U / S pads' events (GangLaunchpad: both kinds; the tax router; the vaults)
-const GANG_EVENT_ABIS = [...V3_EVENT_ABIS, ...FAIR_EVENT_ABIS, ...FLY_EVENT_ABIS, ...SPLIT_EVENT_ABIS, ...LP_EVENT_ABIS, ...COMBO_EVENT_ABIS, ...CAPPED_EVENT_ABIS, ...FLOOR_EVENT_ABIS, ...BASE_EVENT_ABIS, ...GRAD_EVENT_ABIS, ...PROMOTE_EVENT_ABIS, CALL_BOND_ABI]
+const GANG_EVENT_ABIS = [...V3_EVENT_ABIS, ...FAIR_EVENT_ABIS, ...FLY_EVENT_ABIS, ...SPLIT_EVENT_ABIS, ...LP_EVENT_ABIS, ...COMBO_EVENT_ABIS, ...CAPPED_EVENT_ABIS, ...FLOOR_EVENT_ABIS, ...COUNTDOWN_EVENT_ABIS, ...BASE_EVENT_ABIS, ...GRAD_EVENT_ABIS, ...PROMOTE_EVENT_ABIS, CALL_BOND_ABI]
 // Split with three amounts is the event of four module kinds, and the amounts mean different things in each (a buy-back
 // splitter's toBuyback / toDev, an LP splitter's toLp / toDev, a promoter pool's toEscrow / toDev, a floor module's
 // toTreasury / toPayees): gang tx asks the
@@ -1602,6 +1649,10 @@ async function main() {
   // --bond-hold / --bond-days / --restart only mean something in a chained launch (--dev-buy / --bond); never drop them silently
   // gang fair create and gang create --fair are 打新 creates; the rest V3
   const launchKind = cmd === 'fair' || (cmd === 'create' && flag('fair')) ? 'fair' : 'v3'
+  const cdFlag = CD_FLAGS.find((f) => flag(f))
+  if (cdFlag && !tokenCreate) fail(`--${cdFlag} only applies when creating a token (gang create --countdown-reward …)`)
+  if (flag('countdown-reward') && !tokenCreate) fail('--countdown-reward only applies when creating a token: gang create … --countdown-reward --cd-max-payout <amount>')
+  if (tokenCreate && cdFlag && !flag('countdown-reward')) fail(`--${cdFlag}: ${CD_ALONE}`)
   if (tokenCreate && !flyCreate && !isLaunch(launchKind, flag, opt)) {
     // a 打新 dev buys with --shares in the create itself: say so here, not "add --bond" (which would only lead to that)
     if (launchKind === 'fair' && flag('dev-buy')) fail(FAIR_DEV_BUY)
@@ -1611,6 +1662,7 @@ async function main() {
     const floorFlag = ['floor', 'redeem-fee'].find((f) => flag(f))
     if (floorFlag && launchKind === 'fair') fail(`--${floorFlag} is for V3 tokens: it makes the tax recipient a floor module, and a 打新 token has no recipient`)
     if (flag('redeem-fee')) fail(REDEEM_FEE_ALONE)
+    if (flag('countdown-reward') && launchKind === 'fair') fail('--countdown-reward is for V3 tokens: it makes the tax recipient a countdown reward module, and a 打新 token has no recipient')
     const lone = LAUNCH_FLAGS.find((f) => flag(f))
     if (lone) fail(`--${lone} only applies to a launch in one command: add --bond <quote>${launchKind === 'fair' ? '' : ' (or --dev-buy <quote> / --buyback <pct> / --split <addr>:<pct>,… / --lp <pct> / --tax-cap <amount> / --floor)'}`)
   }
@@ -1665,6 +1717,8 @@ async function main() {
       return runBase(args[1], { opt, flag, out, fail, summarize: summarizePreview })
     case 'grad-reward':
       return runGradReward(args[1], { opt, flag, out, fail, summarize: summarizePreview })
+    case 'countdown':
+      return runCountdown(args[1], { opt, flag, out, fail, summarize: summarizePreview })
     case 'weekly':
       return runWeekly(args[1], { opt, flag, out, fail, resolveLogo: resolveLogoUri })
     case 'capabilities':
@@ -2031,7 +2085,9 @@ async function main() {
       return out(await txReport(hash))
     }
     default:
-      console.log(HELP); process.exit(!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help' ? 0 : 1)
+      // the help is longer than a pipe's buffer (64 KiB): exit only once it is all written, or a pipe gets it cut short
+      process.stdout.write(`${HELP}\n`, () => process.exit(!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help' ? 0 : 1))
+      return
   }
 }
 
