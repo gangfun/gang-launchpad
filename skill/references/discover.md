@@ -99,8 +99,9 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   a no-op (`alreadyJoined`).
 - Never trade only to earn tickets, and never trade on your own because of a campaign: the sign-up is the free way in.
   Mention a campaign when the user asks what's going on or wants to join; relay the rules as the page states them.
-- Errors from gang.fun keep its code in `apiCode`: `bad_signature`, `expired`, `not_agent` (code `NO_AGENT_ID`),
-  `not_new`, `closed`, `rate_limited`.
+- Errors from gang.fun keep its code in `apiCode`: `bad_request`, `bad_signature`, `expired` (run it again: it signs
+  anew), `not_agent` (code `NO_AGENT_ID`), `not_eligible` (a platform, flagged or excluded wallet, or one whose first
+  trade was on its own token), `not_new`, `closed`, `not_found`, `rate_limited`, `unavailable` (try again later).
 
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 
