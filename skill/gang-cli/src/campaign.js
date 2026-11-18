@@ -23,7 +23,9 @@ const SIGN_TTL_S = 30 * 60 // the server takes up to 1 hour ahead
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/
 const SIGN_IN = 'sign in to baw (baw auth signin): the sign-up is signed by the Agent wallet that joins'
 // gang.fun's refusal → the CLI's code (DEVELOPERS.md)
-const API_CODES = { not_agent: 'NO_AGENT_ID', rate_limited: 'NETWORK', bad_field: 'USAGE' }
+const API_CODES = { not_agent: 'NO_AGENT_ID', rate_limited: 'NETWORK', unavailable: 'NETWORK', bad_request: 'USAGE' }
+const RETRY_CODES = new Set(['expired', 'rate_limited', 'unavailable'])
+const PRINTED = Symbol('printed')
 
 export const campaignUrl = (slug) => `https://gang.fun/campaign/${slug}`
 
@@ -72,7 +74,9 @@ export function mineOf(m) {
 /** runCampaign(sub, rest, io): sub = 'join' or a slug or undefined; io = { flag, out, fail } from index.js. */
 export async function runCampaign(sub, rest, { flag, out, fail }) {
   const join = sub === 'join'
-  const slugArg = join ? rest[0] : sub
+  const extra = join ? rest.slice(1) : rest
+  if (extra.length) fail(`unexpected ${JSON.stringify(extra[0])}: gang campaign [<slug>] | gang campaign join [<slug>] [--yes]`)
+  const slugArg = (join ? rest[0] : sub)?.toLowerCase()
   if (slugArg != null && !SLUG_RE.test(slugArg)) fail(`gang campaign takes a campaign slug like agent-season (got ${JSON.stringify(slugArg)})`)
   const signedIn = () => { try { return bawStatus() === 'CONNECTED' } catch { return false } }
   const read = async (path) => {
@@ -85,6 +89,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     const items = Array.isArray(l?.items) ? l.items : []
     if (items.length === 1) return items[0].slug
     if (!items.length) return null
+    if (!join) { out({ success: true, live: items.map((i) => ({ slug: i.slug, title: titleOf(i.title), status: i.status, url: campaignUrl(i.slug) })), note: CAMPAIGN_NOTE }); return PRINTED }
     return fail(`several campaigns are live: name one (${items.map((i) => i.slug).join(', ')})`, { campaigns: items.map((i) => i.slug) })
   }
   const mine = async (slug, w) => {
@@ -94,6 +99,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   const wallet = () => (signedIn() ? (() => { try { return bawAddress() } catch { return null } })() : null)
 
   const slug = await pick()
+  if (slug === PRINTED) return undefined // the list of live campaigns was printed
   if (!slug) {
     if (join) fail('no gang.fun campaign is live now')
     return out({ success: true, live: [], note: 'No gang.fun campaign is live now.' })
@@ -102,24 +108,28 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   if (!c) fail(`gang.fun has no campaign ${slug}`)
   const w = wallet()
   const me = await mine(slug, w)
+  // can this wallet sign up at all? (the server refuses otherwise, after the user approved a signature for nothing)
+  const joinOpen = c.status === 'live' && c.tickets != null && c.rules?.ticket?.join !== false
+  const notNew = me?.status === 'not_new'
 
   if (!join) {
     return out({
       success: true, campaign: summary(c), ...(me && { mine: me }),
-      ...(!me?.tickets?.base && c.status === 'live' && { next: `gang campaign join ${slug}` }),
+      ...(!me?.tickets?.base && joinOpen && !notNew && { next: `gang campaign join ${slug}` }),
       note: CAMPAIGN_NOTE,
     })
   }
 
-  if (c.status !== 'live') fail(`${slug} is not open for sign-up (status ${c.status})`, { campaign: summary(c) })
+  if (!joinOpen) fail(`${slug} is not open for sign-up (status ${c.status})`, { campaign: summary(c) })
   if (!w) fail(SIGN_IN)
+  if (notNew) fail(`${w} traded on Gang before ${slug} started: the sign-up is for new wallets (invites still earn tickets)`, { apiCode: 'not_new', code: 'ERROR' })
   if (me?.joined) return out({ success: true, campaign: slug, wallet: w.toLowerCase(), alreadyJoined: true, mine: me, url: campaignUrl(slug) })
   if (!flag('yes')) {
     return out({
       success: true, preview: true, join: { campaign: slug, wallet: w.toLowerCase() },
       signs: 'an EIP-712 sign-up message with the Agent wallet: no transaction, no gas, no cost',
       ...(me?.tickets?.base && { alreadyHasBaseTicket: true, why: 'This wallet already has its base ticket from a trade: signing up adds no ticket.' }),
-      confirm: `${['gang', ...process.argv.slice(2)].map(shellWord).join(' ')} --yes`,
+      confirm: ['gang', 'campaign', 'join', slug, '--yes'].map(shellWord).join(' '),
       note: `Nothing was signed or sent. On the user's OK run confirm. ${CAMPAIGN_NOTE}`,
     })
   }
@@ -132,12 +142,12 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   } catch (e) {
     fail(e.message, {
       ...(e.apiCode && { apiCode: e.apiCode, code: API_CODES[e.apiCode] || 'ERROR' }),
-      ...(e.retryable && { retry: 'same command again' }),
+      ...((e.retryable || RETRY_CODES.has(e.apiCode)) && { retry: 'same command again' }),
     })
   }
   return out({
     success: true, campaign: slug, wallet: w.toLowerCase(), joined: true, ...(r.joined_at && { joinedAt: when(r.joined_at) }),
-    ...(r.tickets && { tickets: r.tickets }), url: campaignUrl(slug),
+    ...(r.tickets != null && { tickets: r.tickets }), url: campaignUrl(slug),
   })
 }
 

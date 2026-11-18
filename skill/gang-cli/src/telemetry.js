@@ -91,7 +91,7 @@ export function clientOf(raw = process.env.GANG_CLIENT) {
 /** The event for one command (argv after `gang`) and its JSON result. */
 export function eventOf(argv, o = {}) {
   const c = NAME.test(argv[0] ?? '') ? argv[0] : 'other'
-  const s = WITH_SUB.has(c) && NAME.test(argv[1] ?? '') ? argv[1] : ''
+  const s = WITH_SUB.has(c) && NAME.test(argv[1] ?? '') && (c !== 'campaign' || argv[1] === 'join') ? argv[1] : ''
   const f = [...new Set(argv.filter((a) => a.startsWith('--')).map((a) => a.slice(2)))].filter((n) => NAME.test(n)).slice(0, MAX_FLAGS)
   const ok = o.success !== false
   const pf = c === 'preflight'

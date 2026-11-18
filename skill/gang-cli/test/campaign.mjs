@@ -59,6 +59,7 @@ assert.match(CAMPAIGN_NOTE, /never trade only to earn tickets/i)
 const LIVE = {
   now, slug: 'agent-season', type: 'onboarding', title: { zh: '入帮季', en: 'Agent Season' }, status: 'live',
   window: { start: now - 3600, end: now + 86400 }, tickets: { total: 10, holders: 8, prizes_now: 1 }, lottery: { status: 'open' },
+  rules: { ticket: { enabled: true, min_u: 0, join: true } },
 }
 let campaigns = { 'agent-season': LIVE }
 let live = [{ slug: 'agent-season' }]
@@ -125,6 +126,10 @@ try {
   assert.equal(r.campaign.tickets.prizesNow, 1)
   r = await run(['campaign', 'Bad Slug'])
   assert.equal(r.success, false)
+  r = await run(['campaign', 'AGENT-SEASON'])
+  assert.equal(r.campaign.slug, 'agent-season', 'slugs are case-insensitive')
+  r = await run(['campaign', 'agent-season', 'join'])
+  assert.equal(r.success, false); assert.match(r.error, /unexpected "join"/)
   r = await run(['campaign', 'nope'])
   assert.equal(r.success, false); assert.match(r.error, /no campaign nope/)
 
@@ -135,7 +140,7 @@ try {
   assert.equal(r.preview, true)
   assert.equal(r.join.wallet, acct.address.toLowerCase())
   assert.match(r.signs, /no transaction/)
-  assert.match(r.confirm, /^gang campaign join --yes$/)
+  assert.equal(r.confirm, 'gang campaign join agent-season --yes', 'confirm names the campaign that was previewed')
   assert.equal(posted.length, 0, 'a preview sends nothing')
   r = await run(['campaign', 'join', 'agent-season', '--yes'])
   assert.equal(r.success, true, JSON.stringify(r))
@@ -157,6 +162,29 @@ try {
   joinAnswer = { status: 409, body: { error: 'not_new', message: 'this wallet traded on Gang before the campaign' } }
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, false); assert.equal(r.apiCode, 'not_new')
+  joinAnswer = { status: 400, body: { error: 'expired', message: 'signature expired' } }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.retry, 'same command again', 'expired: running it again signs anew')
+  joinAnswer = { status: 200, body: { ok: true, wallet: acct.address.toLowerCase(), joined_at: now, tickets: 0 } }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.tickets, 0, 'a count of 0 is kept')
+
+  // the wallet row says not_new: refused before anything is signed
+  walletRow = { status: 'not_new', tickets: { base: 0, revisit: 0, invite: 2, total: 2 } }
+  let n = posted.length
+  r = await run(['campaign'])
+  assert.equal(r.next, undefined, 'no sign-up hint for an old wallet')
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_new'); assert.equal(posted.length, n)
+  walletRow = null
+
+  // sign-up switched off for the campaign: no hint, refused
+  campaigns = { 'agent-season': { ...LIVE, rules: { ticket: { enabled: true, join: false } } } }
+  r = await run(['campaign'])
+  assert.equal(r.next, undefined)
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/); assert.equal(posted.length, n)
+  campaigns = { 'agent-season': LIVE }
 
   // already joined: no second signature; a base ticket from a trade is said in the preview
   walletRow = { status: 'none', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now }
@@ -176,6 +204,8 @@ try {
   assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/)
   live = [{ slug: 'a' }, { slug: 'b' }]
   r = await run(['campaign'])
+  assert.equal(r.success, true); assert.deepEqual(r.live.map((x) => x.slug), ['a', 'b'])
+  r = await run(['campaign', 'join'])
   assert.equal(r.success, false); assert.deepEqual(r.campaigns, ['a', 'b'])
   live = []
   r = await run(['campaign'])
