@@ -63,7 +63,7 @@ const LIVE = {
 let campaigns = { 'agent-season': LIVE }
 let live = [{ slug: 'agent-season' }]
 let walletRow = null
-let joinAnswer = { status: 200, body: { ok: true, wallet: acct.address.toLowerCase(), joined_at: now, tickets: { base: 1, revisit: 0, invite: 0, total: 1 } } }
+let joinAnswer = { status: 200, body: { ok: true, wallet: acct.address.toLowerCase(), joined_at: now, tickets: 1 } }
 const posted = []
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
@@ -140,7 +140,7 @@ try {
   r = await run(['campaign', 'join', 'agent-season', '--yes'])
   assert.equal(r.success, true, JSON.stringify(r))
   assert.equal(r.joined, true)
-  assert.deepEqual(r.tickets, { base: 1, revisit: 0, invite: 0, total: 1 })
+  assert.equal(r.tickets, 1)
   assert.equal(posted.length, 1)
   const p = posted[0]
   assert.equal(p.slug, 'agent-season')
