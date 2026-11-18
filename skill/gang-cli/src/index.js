@@ -456,7 +456,7 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          the pool through GangRouter; during protection a buy is checked for the Agent ID and
                                          the cap left first. gang claim / gang release (= gang fly claim-dev). --note is not
                                          matched to these txs yet
-  LAUNCH in one command (one tx per run: execute it, then run the very same command again until launch.stage = done):
+  LAUNCH in one command (one tx per run: show it, execute it on the user's OK, then run the very same command again until launch.stage = done):
   gang create … --dev-buy <quote> [--bond <quote> [--bond-hold <tokens|N%|all>] --bond-days <7-90>]
                                          V3: create → the dev buys on the curve (--dev-buy, as gang buy) → bonds what it
                                          holds (--bond-hold, default all; gang bond post). Wrap / approve steps come in between

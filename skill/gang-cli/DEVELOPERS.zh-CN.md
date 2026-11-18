@@ -66,7 +66,7 @@ gang buy --token 0x… --amount 0.01     预览：模拟执行并返回 requestI
 gang execute --request-id <id>         发送
 ```
 
-- 如果预览的 `step` 是 `wrap-bnb`、`approve` 或 `approve-quote`，这是准备步骤。先执行它，用 `gang tx` 等交易上链，再重新运行同一条命令。
+- 如果预览的 `step` 是 `wrap-bnb`、`approve` 或 `approve-quote`，这是准备步骤：像其他写操作一样展示给用户，用户同意后再执行；用 `gang tx` 等交易上链，再重新运行同一条命令，并展示新的预览。
 - `pendingConfirmation: true` 表示用户要在币安 App 里确认，之后运行 `gang tx --pending`。
 - 如果 `gang execute` 超时，交易可能已经发出。不要重发，先用 `gang status` 检查。
 

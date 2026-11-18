@@ -75,7 +75,7 @@ supply) instead, and `--cover` is not available.
 | `gang bond tx --hash <0x..>` | anyone | decode GangBond events |
 
 All take `--testnet`, `--calldata` (raw tx) and `--from <addr>` ([trade.md](trade.md#raw-transactions-and-other-wallets)).
-Writes print a preview → `gang execute`; none carries a `--note`. Relay any `warning` in the output.
+Writes print a preview → show it → the user's OK → `gang execute`; none carries a `--note`. Relay any `warning` in the output.
 `post` / `topup` of a WBNB-quoted token pay native BNB; `--use-wbnb` pays WBNB instead (approve first, then re-run).
 A `burn` preview made while no chunk is ready sends the maximum minimum: if a chunk has become buyable by the time it
 lands, it reverts instead of buying unpriced; re-run for a priced preview.

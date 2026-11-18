@@ -132,7 +132,7 @@ gang bond settle --token <addr>                                  # 任何人，T
 gang bond refund --token <addr>                                  # 创建者：押后 30 天仍未开盘，先申请，3 天公告期后再执行一次取回
 gang bond burn --token <addr> | gang bond tx --hash <0x..>       # 推进一块回购销毁 / 解析 GangBond 事件
 #   创建者用 gang sell（内盘或外盘）/ gang withdraw 卖到低于 X 会被拒，除非加 --break-bond（过了 T：--settle-first 先取回）
-# 一条命令发射：每次运行产出一笔交易，执行后再运行同一条命令，直到 launch.stage = done
+# 一条命令发射：每次运行产出一笔交易，每笔先展示预览、用户同意后执行，再运行同一条命令，直到 launch.stage = done
 gang create … --dev-buy <报价币数量> [--bond <数量> [--bond-hold <枚数|N%|all>] --bond-days <7-90>]  # V3：发币 → dev 内盘买入 → 押金
 gang create … --buy-tax 3 --sell-tax 3 --buyback 50 [--buyback-to 0x…] [--dev-buy …]  # V3：接收地址那份税 50% 回购销毁，其余给你（或 --buyback-to 指定的地址）
 gang buyback status|set|set-payee|apply --token 0x… [--pct 0-100] [--to 0x…]  # 回购合约：比例（提高立即生效，下调 3 天后）、收款地址（立即生效）、待回购金额

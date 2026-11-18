@@ -66,7 +66,7 @@ gang buy --token 0x… --amount 0.01     preview: simulates and returns a reques
 gang execute --request-id <id>         sends it
 ```
 
-- A preview whose `step` is `wrap-bnb`, `approve` or `approve-quote` is setup. Execute it, wait for its transaction with `gang tx`, then run the same command again.
+- A preview whose `step` is `wrap-bnb`, `approve` or `approve-quote` is setup: show it like any other write, execute it on the user's yes, wait for its transaction with `gang tx`, then run the same command again and show that preview.
 - `pendingConfirmation: true` means the user must approve in the Binance App. Then run `gang tx --pending`.
 - If `gang execute` times out, the transaction may still have gone out. Never send it again: check `gang status`.
 
