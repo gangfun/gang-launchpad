@@ -176,6 +176,11 @@ try {
   assert.equal(r.next, undefined, 'no sign-up hint for an old wallet')
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, false); assert.equal(r.apiCode, 'not_new'); assert.equal(posted.length, n)
+  walletRow = { status: 'excluded', tickets: { base: 0, revisit: 0, invite: 0, total: 0 } }
+  r = await run(['campaign'])
+  assert.equal(r.next, undefined)
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible'); assert.equal(posted.length, n, 'nothing signed or sent')
   walletRow = null
 
   // sign-up switched off for the campaign: no hint, refused

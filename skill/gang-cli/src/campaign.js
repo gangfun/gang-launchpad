@@ -111,11 +111,12 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   // can this wallet sign up at all? (the server refuses otherwise, after the user approved a signature for nothing)
   const joinOpen = c.status === 'live' && c.tickets != null && c.rules?.ticket?.join !== false
   const notNew = me?.status === 'not_new'
+  const excluded = me?.status === 'excluded'
 
   if (!join) {
     return out({
       success: true, campaign: summary(c), ...(me && { mine: me }),
-      ...(!me?.tickets?.base && joinOpen && !notNew && { next: `gang campaign join ${slug}` }),
+      ...(!me?.tickets?.base && joinOpen && !notNew && !excluded && { next: `gang campaign join ${slug}` }),
       note: CAMPAIGN_NOTE,
     })
   }
@@ -123,6 +124,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   if (!joinOpen) fail(`${slug} is not open for sign-up (status ${c.status})`, { campaign: summary(c) })
   if (!w) fail(SIGN_IN)
   if (notNew) fail(`${w} traded on Gang before ${slug} started: the sign-up is for new wallets (invites still earn tickets)`, { apiCode: 'not_new', code: 'ERROR' })
+  if (excluded) fail(`${w} is not eligible for ${slug}`, { apiCode: 'not_eligible', code: 'ERROR' })
   if (me?.joined) return out({ success: true, campaign: slug, wallet: w.toLowerCase(), alreadyJoined: true, mine: me, url: campaignUrl(slug) })
   if (!flag('yes')) {
     return out({
