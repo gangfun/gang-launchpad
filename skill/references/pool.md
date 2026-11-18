@@ -23,7 +23,7 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [
   let the wallet estimate it, or give at least **750k**. Too little reverts with `SwapBackOutOfGas`; the output says so
   in `gas`.
 - **Approvals cover only this trade's amount**: a sell first returns `step: approve` (the token → the router), a quote
-  buy `step: approve-quote` (and `wrap-bnb` before it when WBNB is short). Execute, then run the same command again
+  buy `step: approve-quote` (and `wrap-bnb` before it when WBNB is short). Show it, execute on the user's OK, then run the same command again
   (`next` / `then` show what follows). With `--calldata` all txs come at once in `steps[]`; the trade there is not
   simulated, since it needs the approve mined first.
 - **The router is checked before any step**, since an approve to the wrong address would hand it the tokens. `… is not

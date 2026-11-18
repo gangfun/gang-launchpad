@@ -59,8 +59,7 @@ They go into the token's **metadata JSON** (with the logo), uploaded to gang.fun
 (`ipfs://<cid>`) and the uploaded `metadata`: show the links with the rest of the preview.
 
 - **Only links the user gave you.** Never make up a site or an X account, and don't fill in the user's own X account
-  unless they say to. If the user hasn't mentioned links, ask once; if none, leave both out. When the user skipped
-  confirmation, leave out any link they didn't give.
+  unless they say to. If the user hasn't mentioned links, ask once; if none, leave both out.
 - `--website`: an http(s) link to a domain, no IP address or port (`example.com` becomes `https://example.com/`).
   `--twitter`: an X handle (`@name`) or an x.com / twitter.com link (profile, post, community), stored as
   `https://x.com/…` without tracking parameters. `bad_website` / `bad_twitter`: fix it with the user, don't guess.

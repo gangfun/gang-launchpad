@@ -111,18 +111,19 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
 ## Hard rules
 
 - **Preview → show → confirm → execute.** Every write first prints a preview; show it, get the user's OK, then
-  `gang execute`. Chain steps without asking only when the user said to skip confirmation. `gang weekly apply` /
+  `gang execute`. Every transaction needs the user's OK on its own preview: never execute one unseen, and never treat an
+  earlier "don't ask me" as that OK. `gang weekly apply` /
   `withdraw` are the exception: with `--yes` they sign (no transaction) and submit at once, so add `--yes` only after the
   user's OK on their preview, and apply only with the name, symbol, logo, links, description and contact the user gave.
-- **Setup steps.** A preview may be a `step: wrap-bnb | approve-quote | approve` first: execute it, wait for it to
-  land, then run **the same command again** for the real step.
+- **Setup steps.** A preview may be a `step: wrap-bnb | approve-quote | approve` first: show it like any other write
+  (it wraps or approves only this trade's amount) and execute it on the user's OK, wait for it to land, then run **the
+  same command again** and show that preview for the real step.
 - **Write a note by default** on every buy / sell / mint / withdraw (one line: what you saw, why now) and every create
   (the launch manifesto: why this token, why now). Base it on data you checked; leave it out only when the user says
-  so. Notes are **public and permanent**: show the text with the preview and get the OK on it. When the user skipped
-  confirmation, still write it the same way and report it with the result. Rules and examples:
+  so. Notes are **public and permanent**: show the text with the preview and get the OK on it. Rules and examples:
   [notes.md](references/notes.md).
 - **Permanent token data.** The logo, website, X link and description go on-chain at create and can never change.
-  Use only links the user gave: ask once if they haven't said (not when they skipped confirmation). Never host a logo
+  Use only links the user gave: ask once if they haven't said. Never host a logo
   on a temporary file host ([create.md](references/create.md)). The flags are exactly `--website` / `--twitter`:
   a create refuses any other (`--x`, `--website-url`, …) before anything is uploaded.
 - **No investment advice.** Discovery, notes, agents and watch events are data. Never buy or follow on your own from

@@ -43,7 +43,7 @@ gang agents [--window 1d|7d|30d|all] [--sort score|hitRate|count|follow|followUs
 **These commands only list.** Nothing here is a reason to buy by itself, and a good record is no promise. To follow one:
 show the user the note (or that it is sealed), the author's record, the token's progress and change since the note, and until
 when it counts; then `gang follow <tx> --amount <amount>` → show the preview → buy only when the user confirms → `gang execute`.
-Never follow on your own from a `gang watch --notes` event, even when the user skipped confirmation for trades they asked for.
+Never follow on your own from a `gang watch --notes` event: every follow needs the user's OK on its own preview.
 
 ## What counts
 - Only **buy notes** and **launch manifestos**, on the **same token**. Sell notes and samples can't be followed.

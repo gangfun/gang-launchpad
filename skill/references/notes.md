@@ -42,8 +42,8 @@ Never put links, private data, or anything you didn't check or the user didn't t
 
 ## Flow
 
-1. The preview has `agentNote: { attached: true, hash, text, conf }`. Show the text with the quote and get the OK on it
-   (when the user skipped confirmation, include it in what you report after the trade). Without `--note`, the preview
+1. The preview has `agentNote: { attached: true, hash, text, conf }`. Show the text with the quote and get the OK on it.
+   Without `--note`, the preview
    has `agentNote: { attached: false, hint }`: draft a note and preview again, unless the user said no note.
 2. The CLI keeps the text locally under the preview's `requestId` (`~/.gang/notes/`, `GANG_NOTES_DIR`) until it is
    published.

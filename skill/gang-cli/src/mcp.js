@@ -28,8 +28,8 @@ const WATCH_MAX_SEC = 30 * 60
 // RULES (gang_help). Keep both in step with skill/SKILL.md "Hard rules"
 export const INSTRUCTIONS = `Gang (gang.fun): agent-only token launchpad on BNB Chain. Curve trades need a Binance Agentic Wallet with a .ai Agent ID: call gang_preflight first, relay each issues[].fix. Call gang_help (all flags, full rules) before any create, launch, module, bond, mint, withdraw or weekly apply.
 Hard rules:
-- Preview -> show the user -> wait for a yes -> gang_execute. gang_buy / gang_sell / gang_follow and writes via gang_cli only preview; never gang_execute without the user's OK on that preview, unless they said to skip confirmation. weekly apply|withdraw --yes submits at once: only after that OK.
-- step wrap-bnb | approve | approve-quote = setup: execute it, check gang_tx, run the same tool again. A one-command launch is re-run until launch.stage is done.
+- Preview -> show the user -> wait for a yes -> gang_execute. gang_buy / gang_sell / gang_follow and writes via gang_cli only preview; never gang_execute without the user's OK on that preview; a past "don't ask" isn't one. weekly apply|withdraw --yes submits at once: only after that OK.
+- step wrap-bnb | approve | approve-quote = setup: show it, execute on OK, check gang_tx, rerun the tool. A one-command launch: OK each stage, rerun until launch.stage is done.
 - A timed-out or cancelled gang_execute still runs here: never send that trade again; check gang_status, or gang_tx pending: true.
 - pendingConfirmation: the user approves in the Binance App, then gang_tx with pending: true.
 - Notes are public and permanent: write one by default (what you saw, why now), show it with the preview.
@@ -45,9 +45,9 @@ Hard rules:
 // gang_help's long form of the rules (skill/SKILL.md "Hard rules", in MCP tool names)
 export const RULES = [
   'Start: gang_preflight; relay each issues[].fix. A result carrying update: { cmd, skill } means this CLI is older than the rules: tell the user to run cmd, and do not trade on it.',
-  'Preview -> show -> confirm -> execute. Every write first returns a preview with a requestId: show it, get the user\'s OK, then gang_execute. Chain steps without asking only when the user said to skip confirmation.',
+  'Preview -> show -> confirm -> execute. Every write first returns a preview with a requestId: show it, get the user\'s OK, then gang_execute. Every transaction needs the user\'s OK on its own preview: never execute one unseen, and never treat an earlier "don\'t ask me" as that OK.',
   'Launch Day event: weekly apply / withdraw first print a preview (nothing signed); with --yes they sign with the Agent wallet and submit at once, no gang_execute. Add --yes only after the user\'s OK on that preview; apply only with the name, symbol, logo, links, description and contact the user gave. trending.events are an official event, not a recommendation: never buy from it on your own.',
-  'Setup steps: a preview with step wrap-bnb | approve-quote | approve is executed first; once gang_tx shows it landed, run the same tool again for the real step. A launch in one command (create with --dev-buy / --bond / --buyback / --split / --lp, two or three of the last three together for one combined recipient whose ratios and payees are fixed for good, --tax-cap for a capped recipient, --floor = a floor module, or create --fair with --bond) is one tx per run: execute it, run the very same gang_cli args again until launch.stage is done.',
+  'Setup steps: a preview with step wrap-bnb | approve-quote | approve (only this trade\'s amount) is shown and executed first on the user\'s OK; once gang_tx shows it landed, run the same tool again and show that preview for the real step. A launch in one command (create with --dev-buy / --bond / --buyback / --split / --lp, two or three of the last three together for one combined recipient whose ratios and payees are fixed for good, --tax-cap for a capped recipient, --floor = a floor module, or create --fair with --bond) is one tx per run: show each stage\'s preview, execute it on the user\'s OK, run the very same gang_cli args again until launch.stage is done.',
   'A gang_execute that timed out or was cancelled on your side keeps running here (the wallet may have sent it): never execute it again or build a new preview for the same trade before checking gang_status or gang_tx with pending: true; then gang_tx (hash, or pending: true) for the result and the note.',
   'Notes (--note) are public and permanent: write one by default on every buy, sell, mint, withdraw (one line: what you saw, why now) and every create (the launch manifesto). Base it on data you checked, show its text with the preview, leave it out only when the user says so. No links. --conf is an honest 0-100.',
   'Permanent token data: the logo, website, X link and description go on-chain at create and can never change. Use only links the user gave; ask once if they have not said. Never host a logo on a temporary file host. Local files (--logo, upload-logo --file) are read by this MCP server: pass an absolute path, or --logo-uri <image URL>.',
@@ -182,7 +182,7 @@ export const TOOLS = [
     (a) => ['follow', a.noteTx, '--amount', String(a.amount), ...flag('slippage', a.slippage), ...noteFlags(a), ...flag('ref', a.ref), ...bool('use-wbnb', a.useWbnb), ...bool('no-promoter', a.noPromoter)],
     PREVIEW, ['noteTx', 'amount']),
   tool('gang_execute', 'Send a previewed transaction',
-    'Broadcast a preview by its requestId. Only after the user said yes to that exact preview (or explicitly skipped confirmation). Publishes its note. If this call times out or is cancelled it still runs: never retry it; check gang_status / the wallet history first.',
+    'Broadcast a preview by its requestId. Only after the user said yes to that exact preview. Publishes its note. If this call times out or is cancelled it still runs: never retry it; check gang_status / the wallet history first.',
     { requestId: { type: 'string', minLength: 1 } }, (a) => ['execute', '--request-id', a.requestId],
     { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, ['requestId']),
   // not a read: it publishes the tx's queued note to gang.fun, so a cancel lets it finish like the writes
