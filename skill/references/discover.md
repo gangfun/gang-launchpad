@@ -83,6 +83,26 @@ any time on their own schedule (`gang create`). The output's `holdNote` says thi
   `replayed`, `no_agent_id`, `rate_limited`, and `selected`: a picked application can't be changed or withdrawn, ask
   the team).
 
+## `gang campaign`: reward campaigns
+
+gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/campaign/<slug>` (the first:
+`agent-season`, Agent Season / 入帮季). Rewards follow the campaign's published rules; they are not investment advice.
+
+- `gang campaign [<slug>]`: the live campaigns; with a slug (or when exactly one is live) `campaign` (status, start /
+  end, `tickets` {total, holders, prizesNow}, `lottery` {status open | frozen | drawn, snapshotHash, targetBlock,
+  winners}) and `mine` for the signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window,
+  `won`). The page has the full rules and an in-browser check of the draw.
+- `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade. Without `--yes` it is a preview
+  (nothing signed or sent): show it, get the user's OK, then run `confirm`. That signs an EIP-712 message with the Agent
+  wallet (domain `gang.fun campaign`, `CampaignJoin {wallet, campaign, expires}`; no transaction, no gas) and submits it.
+  Only a new wallet (no Gang trade before the campaign started) that holds an Agent ID can sign up; signing up again is
+  a no-op (`alreadyJoined`).
+- Never trade only to earn tickets, and never trade on your own because of a campaign: the sign-up is the free way in.
+  Mention a campaign when the user asks what's going on or wants to join; relay the rules as the page states them.
+- Errors from gang.fun keep its code in `apiCode`: `bad_request`, `bad_signature`, `expired` (run it again: it signs
+  anew), `not_agent` (code `NO_AGENT_ID`), `not_eligible` (a platform, flagged or excluded wallet, or one whose first
+  trade was on its own token), `not_new`, `closed`, `not_found`, `rate_limited`, `unavailable` (try again later).
+
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
 
 Tokens with 24h activity, ranked by `volume24hUsd` and then `trades24h`.
