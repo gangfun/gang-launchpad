@@ -340,7 +340,8 @@ try {
     const pf = await run(['preflight'], { GANG_TELEMETRY: '0' })
     assert.equal(pf.success, false)
     assert.deepEqual(pf.issues.map((i) => i.code), ['NOT_SIGNED_IN'])
-    assert.equal(pf.guide.url, 'https://gang.fun/start')
+    assert.equal(pf.issues[0].url, 'https://gang.fun/start#sign-in')
+    assert.equal(pf.guide.url, 'https://gang.fun/start#sign-in')
     assert.match(pf.guide.note, /setup/)
     assert.equal(pf.next, undefined)
   }

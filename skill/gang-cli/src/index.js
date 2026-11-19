@@ -18,6 +18,7 @@ import { NOTE_TX, MIN_FOLLOW_USD, REASONS, noteLink, checkFollow, amountUsd, loc
 import { rememberPreview, previewFor, pendingPreviews, claimedTxHashes } from './previews.js'
 import { matchPending } from './pending.js'
 import { UA, VERSION, checkUpdate } from './version.js'
+import { setupIssue, guideUrl } from './setup.js'
 import { runFair, FAIR_EVENT_ABIS } from './fair.js'
 import { runV3, v3Ctx, V3_EVENT_ABIS } from './v3.js'
 import { runBond } from './bond.js'
@@ -1503,8 +1504,6 @@ function create() {
 }
 
 // after a clean preflight: where a first trade usually starts
-// gang.fun's setup page: every preflight issue code, step by step, for the user to open on their phone (gang-web-legacy /start)
-const SETUP_GUIDE = 'https://gang.fun/start'
 // a wallet that can't pay: what to tell the user (gang preflight prints the wallet's address)
 const FUND_HOW = 'send BNB on BNB Smart Chain (BEP-20) to the Agentic Wallet address (gang preflight shows it), keeping about 0.002 BNB more than the trade for gas'
 const FUND_HINT = `Top up: ${FUND_HOW}; then run the same command again. Nothing was sent.`
@@ -1754,18 +1753,18 @@ async function main() {
     case 'preflight': {
       const issues = []
       const status = bawStatus()
-      if (status !== 'CONNECTED') issues.push({ code: 'NOT_SIGNED_IN', fix: 'Run `baw auth signin` and confirm in the Binance App.' })
+      if (status !== 'CONNECTED') issues.push(setupIssue('NOT_SIGNED_IN', 'Run `baw auth signin` and confirm in the Binance App.'))
       let me = null, settings = null, agent = false, balance = null, balanceCut = false
       if (status === 'CONNECTED') {
         me = bawAddress(); settings = bawSettings()
-        if (!settings.devMode?.enabled) issues.push({ code: 'DEV_MODE_OFF', fix: 'Enable Developer Mode in Binance App → Agentic Wallet settings.' })
-        if (!settings.tradeAllTokens) issues.push({ code: 'TRADE_ALL_TOKENS_OFF', fix: 'Enable "Trade all tokens" in Binance App → Agentic Wallet settings, otherwise SELLING Gang tokens is blocked by risk control (buying still works).' })
+        if (!settings.devMode?.enabled) issues.push(setupIssue('DEV_MODE_OFF', 'Enable Developer Mode in Binance App → Agentic Wallet settings.'))
+        if (!settings.tradeAllTokens) issues.push(setupIssue('TRADE_ALL_TOKENS_OFF', 'Enable "Trade all tokens" in Binance App → Agentic Wallet settings, otherwise SELLING Gang tokens is blocked by risk control (buying still works).'))
         // the BNB balance, read beside the Agent ID check (after the last baw call, which blocks the event loop). Capped at
         // 3 s: with every RPC down, the transport's retries would hold preflight for far longer. Null when unread
         const cap = new Promise((r) => { const t = setTimeout(() => { balanceCut = true; r(null) }, 3000); t.unref?.() })
         balance = Promise.race([client.getBalance({ address: me }), cap]).catch(() => null)
         agent = await createGateAgent(me)
-        if (!agent) issues.push({ code: 'NO_AGENT_ID', fix: 'Claim a .ai Agent ID in Binance Wallet (Agent ID banner). Gang only lets Agent ID holders buy/create.' })
+        if (!agent) issues.push(setupIssue('NO_AGENT_ID', 'Claim a .ai Agent ID in Binance Wallet (Agent ID banner). Gang only lets Agent ID holders buy/create.'))
       }
       // after the baw calls: they block the event loop, and the fetch's short timeout would run out meanwhile
       const hot = trendingBlock({ wallet: me })
@@ -1782,7 +1781,7 @@ async function main() {
         ...(bnb != null && { bnb: fmt(bnb) }), ...(warnings.length && { warnings }),
         note: 'New create → GangLaunchpad (gang create = gang v3 create; gang fair create for 打新). LaunchpadV2 / Soft / U / S take no new tokens: existing buy / sell only.',
         ...(!issues.length && { next: PREFLIGHT_NEXT }),
-        ...(issues.length && { guide: { url: SETUP_GUIDE, note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone; give it with the fixes.' } }),
+        ...(issues.length && { guide: { url: guideUrl(issues), note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone, opened at the earliest step still to do; give it with the fixes (each issue\'s url is its own step).' } }),
         ...await hot.then((t) => (t ? { trending: t } : {})),
       })
       // the cut-off read is still pending and would keep the process (and an MCP host waiting on it) alive: exit once printed
