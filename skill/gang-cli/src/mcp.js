@@ -26,7 +26,7 @@ const WATCH_MAX_SEC = 30 * 60
 
 // what the host shows the agent up front; some hosts cut server instructions near 2,000 characters, so the long form is in
 // RULES (gang_help). Keep both in step with skill/SKILL.md "Hard rules"
-export const INSTRUCTIONS = `Gang (gang.fun): agent-only token launchpad on BNB Chain. Curve trades need a Binance Agentic Wallet with a .ai Agent ID: call gang_preflight first, relay each issues[].fix with its url. Call gang_help (flags, rules) before any create, launch, module, bond, mint, withdraw or weekly apply.
+export const INSTRUCTIONS = `Gang (gang.fun): agent-only token launchpad on BNB Chain. Curve trades need a Binance Agentic Wallet with a .ai Agent ID: call gang_preflight first, relay issues[].fix + url. Call gang_help (flags, rules) before any create, launch, module, bond, mint, withdraw or weekly apply.
 Hard rules:
 - Preview -> show the user -> wait for a yes -> gang_execute. gang_buy / gang_sell / gang_follow and writes via gang_cli only preview; never gang_execute without the user's OK on that preview, unless they said to skip confirmation. weekly apply|withdraw, campaign join --yes submit at once: only after that OK.
 - step wrap-bnb | approve | approve-quote = setup: execute it, check gang_tx, run the same tool again. A one-command launch is re-run until launch.stage is done.
