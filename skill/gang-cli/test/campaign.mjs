@@ -15,7 +15,7 @@ import { promisify } from 'node:util'
 import { recoverTypedDataAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
-const { joinTypedData, summary, mineOf, noteFor, joinClosed, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
+const { joinTypedData, summary, mineOf, noteFor, joinClosed, takesJoin, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'gang-campaign-'))
 
@@ -66,8 +66,16 @@ assert.match(CAMPAIGN_NOTE_CLOSED, /as the campaign's rules say \(see notice/)
 assert.doesNotMatch(CAMPAIGN_NOTE_CLOSED, /GANG 3\.0|any amount/, 'no campaign-specific rule in the CLI: the notice carries it')
 assert.match(CAMPAIGN_NOTE_CLOSED, /signed up earlier keep/)
 assert.equal(joinClosed({ rules: { ticket: { join: false } } }), true)
-assert.equal(joinClosed({ rules: { ticket: {} } }), false, 'no join key = open (older configs)')
+assert.equal(joinClosed({ rules: { ticket: {} } }), true, 'no join key = closed (the server refuses a join without it)')
+assert.equal(joinClosed({ rules: {} }), true)
+assert.equal(joinClosed({ rules: { ticket: { join: true } } }), false)
+assert.equal(takesJoin({ status: 'live', tickets: {}, rules: { ticket: {} } }), false, 'no join key')
 assert.equal(noteFor({ rules: { ticket: { join: true } } }), CAMPAIGN_NOTE)
+assert.equal(takesJoin({ status: 'live', tickets: {}, rules: { ticket: { join: true } } }), true)
+assert.equal(takesJoin({ status: 'live', tickets: {}, rules: { ticket: { join: false } } }), false, 'sign-up closed')
+assert.equal(takesJoin({ status: 'live', tickets: null, rules: { ticket: { join: true } } }), false, 'no tickets')
+assert.equal(takesJoin({ status: 'ended', tickets: {}, rules: { ticket: { join: true } } }), false, 'not live')
+assert.equal(takesJoin(null), false)
 assert.equal(noteFor({ rules: { ticket: { join: false } } }), CAMPAIGN_NOTE_CLOSED)
 {
   const s = summary({ slug: 'x', status: 'live', window: {}, rules: { ticket: { join: false }, page: { notice_en: '  Sign-up closed.  ' } } })
@@ -267,12 +275,52 @@ try {
   walletRow = null
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/)
+  // two live campaigns: status lists both; join without a slug takes the one whose sign-up is open
+  const OPEN = (slug) => ({ ...LIVE, slug })
+  const SHUT = (slug) => ({ ...LIVE, slug, rules: { ticket: { enabled: true, join: false } } })
   live = [{ slug: 'a' }, { slug: 'b' }]
+  campaigns = { a: OPEN('a'), b: SHUT('b') }
   r = await run(['campaign'])
   assert.equal(r.success, true); assert.deepEqual(r.live.map((x) => x.slug), ['a', 'b'])
   assert.equal(r.note, CAMPAIGN_NOTE_LIST)
+  n = posted.length
   r = await run(['campaign', 'join'])
-  assert.equal(r.success, false); assert.deepEqual(r.campaigns, ['a', 'b'])
+  assert.equal(r.success, true, JSON.stringify(r)); assert.equal(r.preview, true)
+  assert.equal(r.join.campaign, 'a'); assert.equal(r.confirm, 'gang campaign join a --yes')
+  campaigns = { a: SHUT('a'), b: OPEN('b') }
+  joinAnswer = { status: 200, body: { ok: true, wallet: acct.address.toLowerCase(), joined_at: now, tickets: 1 } }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, true, JSON.stringify(r)); assert.equal(r.joined, true); assert.equal(posted.at(-1).slug, 'b')
+  n = posted.length
+  // both open: asks for one, listing only those that take a sign-up
+  live = [{ slug: 'a' }, { slug: 'b' }, { slug: 'c' }]
+  campaigns = { a: OPEN('a'), b: OPEN('b'), c: SHUT('c') }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.deepEqual(r.campaigns, ['a', 'b']); assert.match(r.error, /name one/)
+  assert.equal(posted.length, n, 'nothing signed or sent')
+  // none open (one closed, one without tickets): says so, nothing signed
+  live = [{ slug: 'a' }, { slug: 'b' }]
+  campaigns = { a: SHUT('a'), b: { ...OPEN('b'), tickets: null } }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'closed'); assert.deepEqual(r.campaigns, ['a', 'b'])
+  assert.match(r.error, /no live gang\.fun campaign takes a free sign-up/); assert.match(r.error, /never trade only to earn tickets/i)
+  assert.equal(r.preview, undefined); assert.equal(posted.length, n)
+  // one live campaign that takes no sign-up: the same refusal shape (apiCode closed, live slugs in campaigns)
+  live = [{ slug: 'a' }]
+  r = await run(['campaign', 'join'])
+  assert.equal(r.success, false); assert.match(r.error, /sign-up for a is closed/)
+  assert.equal(r.apiCode, 'closed'); assert.equal(r.code, 'ERROR'); assert.deepEqual(r.campaigns, ['a'])
+  campaigns = { a: { ...OPEN('a'), rules: { ticket: { enabled: true } } } }
+  r = await run(['campaign', 'join'])
+  assert.equal(r.apiCode, 'closed', 'a config without ticket.join takes no sign-up'); assert.deepEqual(r.campaigns, ['a'])
+  campaigns = { a: { ...OPEN('a'), tickets: null } }
+  r = await run(['campaign', 'join'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'closed'); assert.deepEqual(r.campaigns, ['a'])
+  assert.match(r.error, /no live gang\.fun campaign takes a free sign-up/); assert.equal(posted.length, n)
+  // with a slug, no campaigns list
+  r = await run(['campaign', 'join', 'a'])
+  assert.equal(r.success, false); assert.equal(r.campaigns, undefined)
+  campaigns = { 'agent-season': LIVE }
   live = []
   r = await run(['campaign'])
   assert.equal(r.success, true); assert.deepEqual(r.live, [])
