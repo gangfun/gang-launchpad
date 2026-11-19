@@ -94,7 +94,9 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window, `won`). The page has the full
   rules and an in-browser check of the draw.
 - `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
-  (its rules can close it at any time). Without `--yes` it is a preview
+  (its rules can close it at any time). Without a slug (0.46.1+) it takes the live campaign whose sign-up is open; when
+  several are, it fails with their slugs in `campaigns` (ask the user which), and when none is (one live or several),
+  it says so (`apiCode: "closed"`, the live slugs in `campaigns`). Without `--yes` it is a preview
   (nothing signed or sent): show it, get the user's OK, then run `confirm`. That signs an EIP-712 message with the Agent
   wallet (domain `gang.fun campaign`, `CampaignJoin {wallet, campaign, expires}`; no transaction, no gas) and submits it.
   Only a new wallet (no Gang trade before the campaign started) that holds an Agent ID can sign up; signing up again is
