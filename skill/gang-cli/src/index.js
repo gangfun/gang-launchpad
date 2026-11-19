@@ -18,6 +18,7 @@ import { NOTE_TX, MIN_FOLLOW_USD, REASONS, noteLink, checkFollow, amountUsd, loc
 import { rememberPreview, previewFor, pendingPreviews, claimedTxHashes } from './previews.js'
 import { matchPending } from './pending.js'
 import { UA, VERSION, checkUpdate } from './version.js'
+import { setupIssue, guideUrl } from './setup.js'
 import { runFair, FAIR_EVENT_ABIS } from './fair.js'
 import { runV3, v3Ctx, V3_EVENT_ABIS } from './v3.js'
 import { runBond } from './bond.js'
@@ -1503,11 +1504,6 @@ function create() {
 }
 
 // after a clean preflight: where a first trade usually starts
-// gang.fun's setup page: every preflight issue code, step by step, for the user to open on their phone (gang-web-legacy /start)
-const SETUP_GUIDE = 'https://gang.fun/start'
-// each preflight issue's own step on that page (stable anchors), so the user lands on the one to do
-const SETUP_STEP = { NOT_SIGNED_IN: 'sign-in', NO_AGENT_ID: 'agent-id', DEV_MODE_OFF: 'dev-mode', TRADE_ALL_TOKENS_OFF: 'trade-all' }
-const setupIssue = (code, fix) => ({ code, fix, url: SETUP_STEP[code] ? `${SETUP_GUIDE}#${SETUP_STEP[code]}` : SETUP_GUIDE })
 // a wallet that can't pay: what to tell the user (gang preflight prints the wallet's address)
 const FUND_HOW = 'send BNB on BNB Smart Chain (BEP-20) to the Agentic Wallet address (gang preflight shows it), keeping about 0.002 BNB more than the trade for gas'
 const FUND_HINT = `Top up: ${FUND_HOW}; then run the same command again. Nothing was sent.`
@@ -1785,7 +1781,7 @@ async function main() {
         ...(bnb != null && { bnb: fmt(bnb) }), ...(warnings.length && { warnings }),
         note: 'New create → GangLaunchpad (gang create = gang v3 create; gang fair create for 打新). LaunchpadV2 / Soft / U / S take no new tokens: existing buy / sell only.',
         ...(!issues.length && { next: PREFLIGHT_NEXT }),
-        ...(issues.length && { guide: { url: issues[0].url, note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone, opened at the first issue\'s step; give it with the fixes (each issue\'s url is its own step).' } }),
+        ...(issues.length && { guide: { url: guideUrl(issues), note: 'Step-by-step setup (Agentic Wallet, Agent ID, Developer Mode, Trade all tokens) for the user to open on their phone, opened at the earliest step still to do; give it with the fixes (each issue\'s url is its own step).' } }),
         ...await hot.then((t) => (t ? { trending: t } : {})),
       })
       // the cut-off read is still pending and would keep the process (and an MCP host waiting on it) alive: exit once printed
