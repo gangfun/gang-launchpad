@@ -15,7 +15,7 @@ import { promisify } from 'node:util'
 import { recoverTypedDataAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
-const { joinTypedData, summary, mineOf, noteFor, joinClosed, takesJoin, isCash, kindOf, signUpOf, wholeU, rewardsOf, CAMPAIGN_NOTE_CASH, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
+const { joinTypedData, summary, mineOf, noteFor, joinClosed, takesJoin, isCash, hasCash, kindOf, signUpOf, wholeU, rewardsOf, CAMPAIGN_NOTE_CASH, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'gang-campaign-'))
 
@@ -91,15 +91,18 @@ const CASH = {
   now, slug: 'cash-one', type: 'onboarding', title: { en: 'Cash One' }, status: 'live',
   window: { start: now - 3600, end: now + 86400 }, tickets: null, lottery: null,
   rules: {
-    count: { kinds: ['buy', 'mint'] },
+    count: { tracks: ['v3', 'fair'], pads: ['0x2bebed4be8c8f46c17776c71d7a6a45dbc5cab29', '0x000000000000000000000000000000000000abcd'], quotes: ['0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', '0x55d398326f99059ff775485246999027b3197955'], kinds: ['buy', 'mint'] },
+    require_agent_id: true,
     new_user: { cash: true, threshold_u: 0.95, revisit_min_u: 0.95, revisit_after_s: 86400, revisit_within_s: 7 * 86400, tiers: [{ slots: 100, first_u: 1, revisit_u: 0.5 }, { slots: 400, first_u: 0.5, revisit_u: 0.25 }] },
-    invite: null, ticket: null, dev_board: { prizes_u: [30, 20, 10] }, payout: { user_asset: 'GANG', dev_asset: 'GANG' },
+    invite: null, ticket: null, dev_board: { metric: 'revisited_new_wallets', prizes_u: [30, 20, 10], min_count: 3 }, payout: { user_asset: 'GANG', dev_asset: 'GANG' },
   },
   slots: { open: 500, total: 500, entered: 12, waitlist: 0, left: 488 },
   periods: [{ id: 1 }, { id: 2 }],
 }
 {
-  assert.equal(wholeU(0.95), 1); assert.equal(wholeU(1), 1); assert.equal(wholeU(0), 0); assert.equal(wholeU(1.0000001), 1); assert.equal(wholeU(1.2), 2)
+  // the smallest whole U at or above the real threshold (6 decimals): never shown lower than it is
+  for (const [u, w] of [[0.95, 1], [1, 1], [1.004, 2], [1.05, 2], [0.004, 1], [0, 0], [1.0000001, 1], [1.2, 2], [0.1 + 0.2, 1], [3 * 1.1, 4]]) assert.equal(wholeU(u), w, `wholeU(${u})`)
+  assert.equal(wholeU(null), null)
   assert.equal(isCash(CASH), true); assert.equal(kindOf(CASH), 'cash'); assert.equal(signUpOf(CASH), 'none')
   assert.equal(isCash({ status: 'live', tickets: {}, rules: { new_user: { cash: false }, ticket: { join: true } } }), false)
   assert.equal(kindOf({ tickets: {}, rules: { ticket: { join: true } } }), 'tickets')
@@ -112,20 +115,42 @@ const CASH = {
   assert.equal(rw.asset, 'GANG')
   assert.equal(rw.entry.minU, 1); assert.match(rw.entry.text, /≥1 U/); assert.doesNotMatch(rw.entry.text, /0\.95/)
   assert.match(rw.counts, /buys and mints only \(sells never count\), net of fees/)
+  assert.deepEqual(rw.counted, {
+    kinds: ['buy', 'mint'], tracks: ['v3', 'fair'], agentId: true,
+    pads: [{ address: '0x2bebed4be8c8f46c17776c71d7a6a45dbc5cab29', name: 'GangLaunchpad 3.0' }, { address: '0x000000000000000000000000000000000000abcd', name: null }],
+    quotes: [{ address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB' }, { address: '0x55d398326f99059ff775485246999027b3197955', symbol: 'USDT' }],
+  })
+  assert.equal(rw.who.newWalletsOnly, true); assert.equal(rw.who.agentId, true)
+  assert.match(rw.entry.text, /^a new wallet \(its first Gang trade is in the window; one that traded on Gang before gets nothing\) holding an Agent ID/)
+  assert.match(rw.entry.text, /on GangLaunchpad 3\.0 or 0x0+abcd/); assert.match(rw.entry.text, /paid in WBNB or USDT/)
+  assert.match(rw.entry.text, /of GangLaunchpad curve tokens or 打新 fair mint/)
+  {
+    const any = rewardsOf({ ...CASH, rules: { ...CASH.rules, count: { kinds: ['buy'] }, require_agent_id: false } })
+    assert.deepEqual({ ...any.counted }, { kinds: ['buy'], tracks: null, pads: null, quotes: null, agentId: false }, 'null = any')
+    assert.doesNotMatch(any.entry.text, /Agent ID| on GangLaunchpad| on 0x|paid in/); assert.match(any.counts, /^buys only/)
+  }
   assert.deepEqual(rw.perWallet, [{ slots: 100, firstU: 1, comeBackU: 0.5 }, { slots: 400, firstU: 0.5, comeBackU: 0.25 }])
   assert.deepEqual({ ...rw.comeBack, text: undefined }, { minU: 1, after: '1 d', within: '7 d', text: undefined })
   assert.match(rw.comeBack.text, /≥1 U from 1 d to 7 d after/)
   assert.deepEqual(rw.slots, { total: 500, open: 500, left: 488, entered: 12 })
-  assert.deepEqual(rw.devBoard, { prizesU: [30, 20, 10], perPeriod: true, periods: 2, asset: 'GANG' })
+  assert.deepEqual(rw.devBoard, { prizesU: [30, 20, 10], perPeriod: true, periods: 2, asset: 'GANG', metric: 'revisited_new_wallets', minCount: 3 })
   for (const t of [rw.counts, rw.entry.text, rw.comeBack.text]) assert.doesNotMatch(t, /\bsell(s)? count/i)
   const s = summary(CASH)
   assert.equal(s.kind, 'cash'); assert.equal(s.signUp, 'none'); assert.deepEqual(s.rewards, rw); assert.equal(s.tickets, undefined)
   assert.equal(rewardsOf(LIVE_T), null, 'a ticket campaign has no rewards block')
   const t = summary(LIVE_T)
   assert.equal(t.kind, 'tickets'); assert.equal(t.rewards, undefined); assert.equal(t.signUp, undefined)
-  const m = mineOf({ wallet: '0xa', status: 'entered', slot: 7, amount_u: 1.234, earned_u: 1.5, paid: 1, revisit: { due_from: now, due_until: now + 60, min_u: 0.95, done: false } }, CASH)
+  const m = mineOf({ wallet: '0xa', status: 'entered', slot: 7, tier: 1, amount_u: 1.234, first_u: 1, revisit_u: 0.5, earned_u: 1.5, paid: 1, revisit: { due_from: now, due_until: now + 60, min_u: 0.95, done: false } }, CASH)
   assert.deepEqual({ ...m.cash, comeBack: { ...m.cash.comeBack, from: !!m.cash.comeBack.from, until: !!m.cash.comeBack.until } },
-    { status: 'entered', slot: 7, amountU: 1.234, comeBack: { from: true, until: true, minU: 1, done: false }, earnedU: 1.5, paidU: 1, asset: 'GANG' })
+    { status: 'entered', slot: 7, tier: 1, amountU: 1.234, firstU: 1, comeBackU: 0.5, comeBack: { from: true, until: true, minU: 1, done: false }, earnedU: 1.5, paidU: 1, asset: 'GANG' })
+  // both: tickets and cash per wallet → kind cash+tickets, both blocks, the ticket sign-up
+  const BOTH = { ...CASH, tickets: { total: 3, holders: 2, prizes_now: 1 }, lottery: { status: 'open' }, rules: { ...CASH.rules, ticket: { enabled: true, join: true } } }
+  assert.equal(kindOf(BOTH), 'cash+tickets'); assert.equal(hasCash(BOTH), true); assert.equal(isCash(BOTH), false)
+  assert.equal(signUpOf(BOTH), 'open'); assert.equal(takesJoin(BOTH), true); assert.equal(noteFor(BOTH), CAMPAIGN_NOTE)
+  const sb = summary(BOTH)
+  assert.equal(sb.kind, 'cash+tickets'); assert.deepEqual(sb.tickets, { total: 3, holders: 2, prizesNow: 1 }); assert.equal(sb.rewards.entry.minU, 1); assert.equal(sb.signUp, undefined)
+  const mb = mineOf({ wallet: '0xa', status: 'entered', tickets: { base: 1, total: 1 } }, BOTH)
+  assert.equal(mb.tickets.base, 1); assert.equal(mb.cash.status, 'entered')
   assert.equal(mineOf({ wallet: '0xa', status: 'entered' }, LIVE_T).cash, undefined, 'ticket campaign: no cash progress')
   assert.equal(mineOf({ wallet: '0xa', status: 'pending' }, CASH).cash.comeBack, null)
 }
@@ -387,7 +412,8 @@ try {
   for (const a of [['campaign', 'join', 'cash-one'], ['campaign', 'join', 'cash-one', '--yes'], ['campaign', 'join']]) {
     r = await run(a)
     assert.equal(r.success, false); assert.equal(r.apiCode, 'no_signup'); assert.equal(r.code, 'ERROR')
-    assert.match(r.error, /has no sign-up: trading normally counts/); assert.match(r.error, /Nothing was signed or sent/)
+    assert.match(r.error, /^this campaign has no sign-up \(cash-one\): counted trades are recorded automatically/); assert.match(r.error, /Nothing was signed or sent/)
+    assert.match(r.error, /never trade only to earn campaign rewards or tickets/i); assert.doesNotMatch(r.error, /trading normally counts/)
     assert.doesNotMatch(r.error, /sign-up for .* is closed/, 'not the ticket campaign closed message')
     assert.equal(posted.length, n)
   }
@@ -400,6 +426,14 @@ try {
   walletRow = null
   r = await run(['campaign', 'join'])
   assert.equal(r.preview, true); assert.equal(r.join.campaign, 'a')
+  // none takes a sign-up and one is a cash campaign: the refusal points to rewards or tickets
+  campaigns = { 'cash-one': CASH, a: SHUT('a') }
+  r = await run(['campaign', 'join'])
+  assert.equal(r.apiCode, 'closed'); assert.match(r.error, /shows how its rewards or tickets work/)
+  live = [{ slug: 'a' }, { slug: 'b' }]
+  campaigns = { a: SHUT('a'), b: SHUT('b') }
+  r = await run(['campaign', 'join'])
+  assert.match(r.error, /shows how its tickets come/, 'ticket campaigns only: tickets wording')
   live = []
   r = await run(['campaign'])
   assert.equal(r.success, true); assert.deepEqual(r.live, [])

@@ -93,14 +93,18 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   winners}, 0.45.1+: `notice`, the page's one-line notice, if any, and `signUp: "closed"` once the sign-up closed) and `mine` for the
   signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window, `won`). The page has the full
   rules and an in-browser check of the draw.
-- Two kinds (0.47.0+, `kind`): `tickets` (above) and `cash`, a campaign with cash rewards: no tickets or lottery, and no
-  sign-up (`signUp: "none"`): a wallet enters by its counted trades. Its `campaign.rewards`: `asset` (what it pays in),
-  `counts` (buys and mints only, net of fees; sells never count), `entry` {minU, text} (the entry threshold, rounded up to
-  whole U), `perWallet` [{slots, firstU, comeBackU}] (the amount per wallet by slot tier, in U, paid in `asset`),
-  `comeBack` {minU, after, within, text} (the come-back buy and its window after the first trade), `slots` {total, open,
-  left, entered}, `devBoard` {prizesU, perPeriod, periods, asset} (the DEV board prizes per period). `mine.cash`: `status`
-  (pending | entered | waitlist | excluded | …), `slot`, `amountU` (counted so far), `comeBack` {from, until, minU, done},
-  `earnedU`, `paidU`, `asset`. With several live campaigns, each `live` row has `kind` and `signUp` (open | closed | none).
+- Kinds (0.47.0+, `kind`): `tickets` (above), `cash` (a campaign with cash rewards: no tickets or lottery, and no
+  sign-up, `signUp: "none"`: a wallet enters by its counted trades) and `cash+tickets` (both blocks; the sign-up is the
+  ticket one). `campaign.rewards`: `asset` (what it pays in), `counts` (buys and mints only, net of fees; sells never
+  count), `counted` {kinds, tracks, pads [{address, name}], quotes [{address, symbol}], agentId} (null = any), `who`
+  {newWalletsOnly, agentId, text}: only a new wallet, whose first Gang trade is in the window, can enter (one that
+  traded on Gang before gets nothing), `entry` {minU, text} (the entry threshold: the smallest whole U at or above it),
+  `perWallet` [{slots, firstU, comeBackU}] (the amount per wallet by slot tier, in U, paid in `asset`), `comeBack`
+  {minU, after, within, text} (the come-back buy and its window after the first trade), `slots` {total, open, left,
+  entered}, `devBoard` {prizesU, perPeriod, periods, asset, metric, minCount} (the DEV board prizes per period).
+  `mine.cash`: `status` (pending | entered | waitlist | excluded | …), `slot`, `tier`, `amountU` (counted so far),
+  `firstU` / `comeBackU` (the wallet's amounts, once entered), `comeBack` {from, until, minU, done}, `earnedU`, `paidU`,
+  `asset`. With several live campaigns, each `live` row has `kind` and `signUp` (open | closed | none).
 - `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
   (its rules can close it at any time). Without a slug (0.46.1+) it takes the live campaign whose sign-up is open; when
   several are, it fails with their slugs in `campaigns` (ask the user which), and when none is (one live or several),

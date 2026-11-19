@@ -390,8 +390,9 @@ U / S pads) and run that kind's trade. Results of V3 / 打新 / 铸币飞轮 tok
                                          withdraw my application while applications are open (--yes signs and sends)
   gang campaign [<slug>]                 gang.fun's reward campaigns (gang.fun/campaign/<slug>, 0.45.0+): the live ones; with
                                          a slug (or when one is live) its rules summary, tickets, lottery and my progress.
-                                         0.47.0+: kind tickets | cash; a cash campaign shows rewards (entry, come-back, per
-                                         wallet, slots, DEV board) and my cash progress, and has no sign-up.
+                                         0.47.0+: kind tickets | cash | cash+tickets; cash shows rewards (who and what
+                                         counts, entry, come-back, per wallet, slots, DEV board) and my cash progress; a
+                                         cash-only campaign has no sign-up.
                                          Rewards follow the campaign's public rules; not investment advice
   gang campaign join [<slug>] [--yes]    the free sign-up (base ticket without a trade), while the campaign has it open.
                                          Without --yes: a preview, nothing signed or sent. --yes signs it with the Agent
