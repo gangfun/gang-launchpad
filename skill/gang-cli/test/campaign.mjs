@@ -15,7 +15,7 @@ import { promisify } from 'node:util'
 import { recoverTypedDataAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
-const { joinTypedData, summary, mineOf, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE } = await import('../src/campaign.js')
+const { joinTypedData, summary, mineOf, noteFor, joinClosed, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'gang-campaign-'))
 
@@ -54,6 +54,27 @@ const now = Math.floor(Date.now() / 1000)
   assert.equal(mineOf({ wallet: '0xb' }).tickets.total, 0)
 }
 assert.match(CAMPAIGN_NOTE, /never trade only to earn tickets/i)
+// sign-up closed by the config: the note says so, keeps the safety rule and never sends to `campaign join`
+for (const n of [CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST]) {
+  assert.match(n, /never trade only to earn tickets/i)
+  assert.match(n, /never on your own/i)
+  assert.match(n, /user's decision, previewed and confirmed/)
+  assert.doesNotMatch(n, /campaign join|same base ticket/)
+}
+assert.match(CAMPAIGN_NOTE_CLOSED, /sign-up is closed/)
+assert.match(CAMPAIGN_NOTE_CLOSED, /as the campaign's rules say \(see notice/)
+assert.doesNotMatch(CAMPAIGN_NOTE_CLOSED, /GANG 3\.0|any amount/, 'no campaign-specific rule in the CLI: the notice carries it')
+assert.match(CAMPAIGN_NOTE_CLOSED, /signed up earlier keep/)
+assert.equal(joinClosed({ rules: { ticket: { join: false } } }), true)
+assert.equal(joinClosed({ rules: { ticket: {} } }), false, 'no join key = open (older configs)')
+assert.equal(noteFor({ rules: { ticket: { join: true } } }), CAMPAIGN_NOTE)
+assert.equal(noteFor({ rules: { ticket: { join: false } } }), CAMPAIGN_NOTE_CLOSED)
+{
+  const s = summary({ slug: 'x', status: 'live', window: {}, rules: { ticket: { join: false }, page: { notice_en: '  Sign-up closed.  ' } } })
+  assert.equal(s.notice, 'Sign-up closed.'); assert.equal(s.signUp, 'closed')
+  const o = summary({ slug: 'x', status: 'live', window: {}, rules: { ticket: { join: true }, page: { notice_en: 7 } } })
+  assert.equal(o.notice, undefined); assert.equal(o.signUp, undefined)
+}
 
 // --- the CLI against a fake gang.fun and a fake baw ---
 const LIVE = {
@@ -183,13 +204,46 @@ try {
   assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible'); assert.equal(posted.length, n, 'nothing signed or sent')
   walletRow = null
 
-  // sign-up switched off for the campaign: no hint, refused
-  campaigns = { 'agent-season': { ...LIVE, rules: { ticket: { enabled: true, join: false } } } }
+  // sign-up closed by the campaign's config (rules.ticket.join = false): no hint, no signature, the notice comes through
+  const NOTICE = 'Free sign-up is closed: the base ticket now comes from a first buy or mint on GANG 3.0.'
+  campaigns = { 'agent-season': { ...LIVE, rules: { ticket: { enabled: true, join: false }, page: { notice_en: NOTICE } } } }
+  r = await run(['campaign'], { withBaw: false })
+  assert.equal(r.success, true)
+  assert.equal(r.next, undefined, 'no next once the sign-up closed (and never one that points to a trade)')
+  assert.equal(r.campaign.notice, NOTICE); assert.equal(r.campaign.signUp, 'closed')
+  assert.equal(r.note, CAMPAIGN_NOTE_CLOSED)
   r = await run(['campaign'])
-  assert.equal(r.next, undefined)
+  assert.equal(r.next, undefined); assert.equal(r.note, CAMPAIGN_NOTE_CLOSED)
+  for (const a of [['campaign', 'join'], ['campaign', 'join', '--yes']]) {
+    r = await run(a)
+    assert.equal(r.success, false); assert.equal(r.apiCode, 'closed'); assert.equal(r.code, 'ERROR')
+    assert.match(r.error, /sign-up for agent-season is closed/); assert.match(r.error, /signed up earlier keep their ticket/)
+    assert.match(r.error, /Nothing was signed or sent/); assert.match(r.error, /gang\.fun\/campaign\/agent-season/)
+    assert.doesNotMatch(r.error, /GANG 3\.0/)
+    assert.equal(r.preview, undefined); assert.equal(r.confirm, undefined, 'nothing to confirm or sign')
+    assert.equal(r.campaign.notice, NOTICE)
+    assert.equal(posted.length, n)
+  }
+  r = await run(['campaign', 'join'], { withBaw: false })
+  assert.equal(r.apiCode, 'closed', 'closed is said before asking to sign in')
+  // an earlier sign-up keeps its ticket
+  walletRow = { status: 'entered', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now - 60 }
   r = await run(['campaign', 'join', '--yes'])
-  assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/); assert.equal(posted.length, n)
+  assert.equal(r.success, true); assert.equal(r.alreadyJoined, true); assert.equal(r.mine.tickets.base, 1); assert.equal(posted.length, n)
+  // joined but excluded afterwards: not eligible, never alreadyJoined
+  walletRow = { status: 'excluded', tickets: { base: 0, revisit: 0, invite: 0, total: 0 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible'); assert.equal(r.alreadyJoined, undefined); assert.equal(posted.length, n)
+  walletRow = null
   campaigns = { 'agent-season': LIVE }
+
+  // the server closed it after the CLI read the open config: 409 closed comes back as the same clear refusal
+  joinAnswer = { status: 409, body: { error: 'closed', message: 'sign-up is closed' } }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'closed'); assert.equal(r.code, 'ERROR')
+  assert.match(r.error, /sign-up for agent-season is closed/); assert.equal(r.retry, undefined)
+  assert.match(r.error, /signed up earlier keep their ticket/); assert.match(r.error, /never trade only to earn tickets/i)
+  n = posted.length
 
   // already joined: no second signature; a base ticket from a trade is said in the preview
   walletRow = { status: 'none', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now }
@@ -202,14 +256,21 @@ try {
   r = await run(['campaign'])
   assert.equal(r.mine.tickets.total, 1); assert.equal(r.next, undefined)
 
-  // not live: no sign-up; several live: name one; none live
+  // not live: no sign-up; a wallet that joined still reads alreadyJoined, an excluded one is refused
   campaigns = { 'agent-season': { ...LIVE, status: 'ended' } }
+  walletRow = { status: 'entered', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, true); assert.equal(r.alreadyJoined, true)
+  walletRow = { status: 'excluded', tickets: { base: 0, revisit: 0, invite: 0, total: 0 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible')
   walletRow = null
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/)
   live = [{ slug: 'a' }, { slug: 'b' }]
   r = await run(['campaign'])
   assert.equal(r.success, true); assert.deepEqual(r.live.map((x) => x.slug), ['a', 'b'])
+  assert.equal(r.note, CAMPAIGN_NOTE_LIST)
   r = await run(['campaign', 'join'])
   assert.equal(r.success, false); assert.deepEqual(r.campaigns, ['a', 'b'])
   live = []
