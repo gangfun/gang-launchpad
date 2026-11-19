@@ -62,7 +62,8 @@ for (const n of [CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST]) {
   assert.doesNotMatch(n, /campaign join|same base ticket/)
 }
 assert.match(CAMPAIGN_NOTE_CLOSED, /sign-up is closed/)
-assert.match(CAMPAIGN_NOTE_CLOSED, /first buy or mint on GANG 3\.0/)
+assert.match(CAMPAIGN_NOTE_CLOSED, /as the campaign's rules say \(see notice/)
+assert.doesNotMatch(CAMPAIGN_NOTE_CLOSED, /GANG 3\.0|any amount/, 'no campaign-specific rule in the CLI: the notice carries it')
 assert.match(CAMPAIGN_NOTE_CLOSED, /signed up earlier keep/)
 assert.equal(joinClosed({ rules: { ticket: { join: false } } }), true)
 assert.equal(joinClosed({ rules: { ticket: {} } }), false, 'no join key = open (older configs)')
@@ -217,7 +218,8 @@ try {
     r = await run(a)
     assert.equal(r.success, false); assert.equal(r.apiCode, 'closed'); assert.equal(r.code, 'ERROR')
     assert.match(r.error, /sign-up for agent-season is closed/); assert.match(r.error, /signed up earlier keep their ticket/)
-    assert.match(r.error, /Nothing was signed or sent/)
+    assert.match(r.error, /Nothing was signed or sent/); assert.match(r.error, /gang\.fun\/campaign\/agent-season/)
+    assert.doesNotMatch(r.error, /GANG 3\.0/)
     assert.equal(r.preview, undefined); assert.equal(r.confirm, undefined, 'nothing to confirm or sign')
     assert.equal(r.campaign.notice, NOTICE)
     assert.equal(posted.length, n)
@@ -228,6 +230,10 @@ try {
   walletRow = { status: 'entered', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now - 60 }
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, true); assert.equal(r.alreadyJoined, true); assert.equal(r.mine.tickets.base, 1); assert.equal(posted.length, n)
+  // joined but excluded afterwards: not eligible, never alreadyJoined
+  walletRow = { status: 'excluded', tickets: { base: 0, revisit: 0, invite: 0, total: 0 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible'); assert.equal(r.alreadyJoined, undefined); assert.equal(posted.length, n)
   walletRow = null
   campaigns = { 'agent-season': LIVE }
 
@@ -250,8 +256,14 @@ try {
   r = await run(['campaign'])
   assert.equal(r.mine.tickets.total, 1); assert.equal(r.next, undefined)
 
-  // not live: no sign-up; several live: name one; none live
+  // not live: no sign-up; a wallet that joined still reads alreadyJoined, an excluded one is refused
   campaigns = { 'agent-season': { ...LIVE, status: 'ended' } }
+  walletRow = { status: 'entered', tickets: { base: 1, revisit: 0, invite: 0, total: 1 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, true); assert.equal(r.alreadyJoined, true)
+  walletRow = { status: 'excluded', tickets: { base: 0, revisit: 0, invite: 0, total: 0 }, joined_at: now - 60 }
+  r = await run(['campaign', 'join', '--yes'])
+  assert.equal(r.success, false); assert.equal(r.apiCode, 'not_eligible')
   walletRow = null
   r = await run(['campaign', 'join', '--yes'])
   assert.equal(r.success, false); assert.match(r.error, /not open for sign-up/)

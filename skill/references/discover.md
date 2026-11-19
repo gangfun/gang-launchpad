@@ -90,7 +90,7 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
 
 - `gang campaign [<slug>]`: the live campaigns; with a slug (or when exactly one is live) `campaign` (status, start /
   end, `tickets` {total, holders, prizesNow}, `lottery` {status open | frozen | drawn, snapshotHash, targetBlock,
-  winners}, `notice`: the page's one-line notice, if any; `signUp: "closed"` once the sign-up closed) and `mine` for the
+  winners}, 0.45.1+: `notice`, the page's one-line notice, if any, and `signUp: "closed"` once the sign-up closed) and `mine` for the
   signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window, `won`). The page has the full
   rules and an in-browser check of the draw.
 - `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
@@ -101,7 +101,7 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   a no-op (`alreadyJoined`).
 - Once a campaign closed its sign-up (`signUp: "closed"`; the server answers `closed`), `join` signs nothing and says so
   (`apiCode: "closed"`); wallets that signed up earlier keep their ticket. The base ticket then comes as the campaign's
-  rules say (`agent-season`: a new wallet's first buy or mint on GANG 3.0, any amount); relay `notice` and the rules.
+  rules say (`agent-season`: a new wallet's first buy or mint on GANG 3.0); relay `notice` and the rules.
 - Never trade only to earn tickets, and never trade on your own because of a campaign: any trade is the user's
   decision, previewed and confirmed like every other. While a sign-up is open, it is the free way in.
   Mention a campaign when the user asks what's going on or wants to join; relay the rules as the page states them.

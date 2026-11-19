@@ -22,10 +22,10 @@ const NO_TICKET_TRADES = "Never trade only to earn tickets, and never on your ow
 /** The note while the campaign's free sign-up is open. */
 export const CAMPAIGN_NOTE = `${RULES_NOTE} Never trade only to earn tickets: the free sign-up (gang campaign join) gives the same base ticket.`
 /** The note once the campaign closed its sign-up (rules.ticket.join = false). */
-export const CAMPAIGN_NOTE_CLOSED = `${RULES_NOTE} The free sign-up is closed: the base ticket now comes from a new wallet's first buy or mint on GANG 3.0 (any amount); wallets that signed up earlier keep theirs. ${NO_TICKET_TRADES}`
+export const CAMPAIGN_NOTE_CLOSED = `${RULES_NOTE} The free sign-up is closed: tickets now come as the campaign's rules say (see notice and the campaign page); wallets that signed up earlier keep theirs. ${NO_TICKET_TRADES}`
 /** The note for a list of campaigns (each may have its sign-up open or closed). */
 export const CAMPAIGN_NOTE_LIST = `${RULES_NOTE} ${NO_TICKET_TRADES}`
-const CLOSED_MSG = (slug) => `the free sign-up for ${slug} is closed: wallets that signed up earlier keep their ticket; the base ticket now comes from a new wallet's first buy or mint on GANG 3.0. Nothing was signed or sent. ${NO_TICKET_TRADES}`
+const CLOSED_MSG = (slug) => `the free sign-up for ${slug} is closed: wallets that signed up earlier keep their ticket; tickets now come as the campaign's rules say (see notice and ${campaignUrl(slug)}). Nothing was signed or sent. ${NO_TICKET_TRADES}`
 export const CAMPAIGN_DOMAIN = { name: 'gang.fun campaign', version: '1', chainId: 56 }
 const DOMAIN_TYPE = [{ name: 'name', type: 'string' }, { name: 'version', type: 'string' }, { name: 'chainId', type: 'uint256' }]
 export const JOIN_TYPE = [{ name: 'wallet', type: 'address' }, { name: 'campaign', type: 'string' }, { name: 'expires', type: 'uint256' }]
@@ -142,13 +142,13 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     })
   }
 
-  // an earlier sign-up keeps its ticket, also once the sign-up closed
+  // an earlier sign-up keeps its ticket, also once the sign-up closed or the campaign ended; an excluded wallet has none
+  if (excluded) fail(`${w} is not eligible for ${slug}`, { apiCode: 'not_eligible', code: 'ERROR' })
   if (me?.joined) return out({ success: true, campaign: slug, wallet: w.toLowerCase(), alreadyJoined: true, mine: me, url: campaignUrl(slug) })
   if (closed && c.status === 'live') fail(CLOSED_MSG(slug), { apiCode: 'closed', code: 'ERROR', campaign: summary(c), note: CAMPAIGN_NOTE_CLOSED })
   if (!joinOpen) fail(`${slug} is not open for sign-up (status ${c.status})`, { campaign: summary(c) })
   if (!w) fail(SIGN_IN)
   if (notNew) fail(`${w} traded on Gang before ${slug} started: the sign-up is for new wallets (invites still earn tickets)`, { apiCode: 'not_new', code: 'ERROR' })
-  if (excluded) fail(`${w} is not eligible for ${slug}`, { apiCode: 'not_eligible', code: 'ERROR' })
   if (!flag('yes')) {
     return out({
       success: true, preview: true, join: { campaign: slug, wallet: w.toLowerCase() },
