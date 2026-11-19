@@ -90,14 +90,20 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
 
 - `gang campaign [<slug>]`: the live campaigns; with a slug (or when exactly one is live) `campaign` (status, start /
   end, `tickets` {total, holders, prizesNow}, `lottery` {status open | frozen | drawn, snapshotHash, targetBlock,
-  winners}) and `mine` for the signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window,
-  `won`). The page has the full rules and an in-browser check of the draw.
-- `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade. Without `--yes` it is a preview
+  winners}, `notice`: the page's one-line notice, if any; `signUp: "closed"` once the sign-up closed) and `mine` for the
+  signed-in wallet (`tickets` {base, revisit, invite, total}, `joined`, `revisit` window, `won`). The page has the full
+  rules and an in-browser check of the draw.
+- `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
+  (its rules can close it at any time). Without `--yes` it is a preview
   (nothing signed or sent): show it, get the user's OK, then run `confirm`. That signs an EIP-712 message with the Agent
   wallet (domain `gang.fun campaign`, `CampaignJoin {wallet, campaign, expires}`; no transaction, no gas) and submits it.
   Only a new wallet (no Gang trade before the campaign started) that holds an Agent ID can sign up; signing up again is
   a no-op (`alreadyJoined`).
-- Never trade only to earn tickets, and never trade on your own because of a campaign: the sign-up is the free way in.
+- Once a campaign closed its sign-up (`signUp: "closed"`; the server answers `closed`), `join` signs nothing and says so
+  (`apiCode: "closed"`); wallets that signed up earlier keep their ticket. The base ticket then comes as the campaign's
+  rules say (`agent-season`: a new wallet's first buy or mint on GANG 3.0, any amount); relay `notice` and the rules.
+- Never trade only to earn tickets, and never trade on your own because of a campaign: any trade is the user's
+  decision, previewed and confirmed like every other. While a sign-up is open, it is the free way in.
   Mention a campaign when the user asks what's going on or wants to join; relay the rules as the page states them.
 - Errors from gang.fun keep its code in `apiCode`: `bad_request`, `bad_signature`, `expired` (run it again: it signs
   anew), `not_agent` (code `NO_AGENT_ID`), `not_eligible` (a platform, flagged or excluded wallet, or one whose first
