@@ -1,6 +1,6 @@
 /**
  * `gang preflight` with a signed-in wallet (0.41.0+): the BNB balance, a LOW_BNB warning that doesn't fail preflight, and
- * a balance read that hangs being cut off so preflight still answers and exits. Setup issues (0.46.0+) each carry a url to
+ * a balance read that hangs being cut off so preflight still answers and exits. Setup issues (0.46.1+) each carry a url to
  * their step on gang.fun/start, and guide.url opens at the earliest of those steps in page order. A fake baw and a fake JSON-RPC node.
  *
  *   node skill/gang-cli/test/preflight.mjs
