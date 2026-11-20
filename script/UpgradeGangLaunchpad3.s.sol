@@ -22,6 +22,7 @@ import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 import {Pad3VanityDeployer} from "../src/gang/Pad3VanityDeployer.sol";
 import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
+import {IGangAgentWindow} from "../src/gang/interfaces/IGangAgentWindow.sol";
 
 /// @title UpgradeGangLaunchpad3 — move the GangLaunchpad 3.0 proxy to a new implementation, checked before the Safe
 ///        signs (audit 3C M-1 / L-3)
@@ -191,6 +192,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         Snapshot memory before = _snapshot(p, s, _servesVaultMode(s.pad), new bool[](0));
         _warnNoPromoteProbes(p);
         _warnNoBaseProbes(p);
+        (bool windowBefore, bytes memory windowState) = _agentWindowState(p);
         uint256 snap = vm.snapshotState();
         _sendPrep(u.prepTo, u.prepCall, u.upgrader, true);
         vm.prank(u.upgrader);
@@ -204,6 +206,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
         }
         _checkNewFairEntry(p, before.newFairEntry);
+        _checkAgentWindow(p, windowBefore, windowState);
         // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
         // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
         _checkPad3(s, c, x);
@@ -217,6 +220,49 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _setGrad(s.pad);
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
+    }
+
+    /// @dev Whether `p` serves the agent window (SPEC-AGENT-WINDOW-2026-11-20; its views answer from Pad3GradModule)
+    ///      and, if so, each of the newest SAMPLE tokens' window and wallet cap. Raw staticcalls: before the first
+    ///      upgrade to it the selectors don't exist (the pad reverts), which reads as "not served".
+    function _agentWindowState(GangLaunchpad3 p) internal view returns (bool served, bytes memory st) {
+        (bool ok, bytes memory ret) =
+            address(p).staticcall(abi.encodeCall(IGangAgentWindow.MAX_AGENT_WINDOW_MINUTES, ()));
+        if (!ok || ret.length != 32) return (false, "");
+        served = true;
+        IGangAgentWindow w = IGangAgentWindow(address(p));
+        uint256 n = p.tokenCount();
+        uint256 k = n < SAMPLE ? n : SAMPLE;
+        for (uint256 i; i < k; i++) {
+            address t = p.allTokens(n - 1 - i);
+            st = abi.encode(st, t, w.agentOpenAt(t), p.kindOf(t) == 1 && w.walletCapOn(t));
+        }
+    }
+
+    /// @dev After the upgrade the pad serves the agent window with its bounds. On the first upgrade to it, each of the
+    ///      newest SAMPLE tokens (all created before it) is still agent only (`openAt` 0) with its wallet cap as the
+    ///      pad's switch says; on a later upgrade, their windows and caps are the ones read before it (`before`), so a
+    ///      token that has a window doesn't fail the check. That the pad links this build's CurveLogic3 is
+    ///      `_checkLibs` / `_checkImplCode`'s, not this check's.
+    function _checkAgentWindow(GangLaunchpad3 p, bool servedBefore, bytes memory before) internal view {
+        IGangAgentWindow w = IGangAgentWindow(address(p));
+        if (w.MIN_AGENT_WINDOW_MINUTES() != 1 || w.MAX_AGENT_WINDOW_MINUTES() != 1440) {
+            revert WiringCheck("upgrade: agent window bounds");
+        }
+        if (servedBefore) {
+            (, bytes memory afterUp) = _agentWindowState(p);
+            if (keccak256(afterUp) != keccak256(before)) revert WiringCheck("upgrade: a token's agent window changed");
+            return;
+        }
+        uint256 n = p.tokenCount();
+        uint256 k = n < SAMPLE ? n : SAMPLE;
+        for (uint256 i; i < k; i++) {
+            address t = p.allTokens(n - 1 - i);
+            if (w.agentOpenAt(t) != 0 || w.agentWindowOpen(t)) revert WiringCheck("upgrade: an old token opened");
+            if (p.kindOf(t) == 1 && w.walletCapOn(t) != p.walletCapEnabled()) {
+                revert WiringCheck("upgrade: an old token's wallet cap changed");
+            }
+        }
     }
 
     function _checkVanity(address proxy, address upgrader) internal {

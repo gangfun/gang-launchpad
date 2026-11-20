@@ -26,6 +26,8 @@ import {FairLogic} from "./FairLogic.sol";
 import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {Pad3VanityStore} from "./Pad3VanityStore.sol";
+import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
+import {IGangAgentWindow} from "./interfaces/IGangAgentWindow.sol";
 
 /// @title GangLaunchpad 3.0 — the upgradeable Gang pad: one permanent address for both launch kinds
 /// @notice GangLaunchpad 2.0 (bonding curve V3 with the creator's 70% of the 1% fee and graduation tiers, and 打新)
@@ -347,6 +349,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         );
         gradTargetOf[token] = gradBnb;
         _record(token, logoURI, KIND_CURVE);
+        // the agent window the creator registered (SPEC-AGENT-WINDOW §5.2): written once, here; Pad3Module's
+        // `_createCurve` does the same, line for line
+        uint40 openAt = Pad3AgentWindowStore.consume(curves[token].creator, token);
+        if (openAt != 0) emit IGangAgentWindow.AgentWindowSet(token, openAt);
     }
 
     function buy(address token, uint256 quoteIn, uint256 minTokensOut)
@@ -452,7 +458,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     }
 
     function walletRoom(address token, address buyer) external view returns (uint256) {
-        return CurveLogic.walletRoom(_config.walletCapEnabled, token, buyer, _lockedOf(token, buyer));
+        return CurveLogic.walletRoom(CurveLogic.walletCapOn(_config, token), token, buyer, _lockedOf(token, buyer));
     }
 
     // ---------------------------------------------------------------- 打新

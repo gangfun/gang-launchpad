@@ -21,6 +21,8 @@ import {Pad3VanityStore} from "./Pad3VanityStore.sol";
 import {Pad3VanityDeployer} from "./Pad3VanityDeployer.sol";
 import {Pad3FlyModule} from "./Pad3FlyModule.sol";
 import {Pad3BaseStore} from "./Pad3BaseStore.sol";
+import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
+import {IGangAgentWindow} from "./interfaces/IGangAgentWindow.sol";
 import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 import {GangBaseVault} from "./GangBaseVault.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
@@ -102,9 +104,9 @@ contract Pad3Module is
     /// @notice 3.0's 铸币飞轮 module (Pad3FlyModule): every selector this module does not define runs there,
     ///         delegatecalled (the pad's call, still in the proxy's storage). The last link: it has no fallback.
     address public immutable flyModule;
-    /// @notice 冲毕业奖励's claims, refund and views (Pad3GradModule, moved out for the 24 KB limit): the selectors
-    ///         `_isGrad` lists run there, delegatecalled. No immutables of its own, so the deploy scripts compare its
-    ///         code with this build's as is.
+    /// @notice 冲毕业奖励's claims, refund and views, and the agent window's entry and views (Pad3GradModule, moved
+    ///         out for the 24 KB limit): the selectors `_isGrad` lists run there, delegatecalled. No immutables of its
+    ///         own, so the deploy scripts compare its code with this build's as is.
     address public immutable gradModule;
 
     constructor(
@@ -132,20 +134,30 @@ contract Pad3Module is
         wbnb = wbnb_;
     }
 
-    /// @notice Selectors not defined here: 冲毕业奖励's (Pad3GradModule's), else the 铸币飞轮 mode's (Pad3FlyModule's).
+    /// @notice Selectors not defined here: 冲毕业奖励's and the agent window's (Pad3GradModule's), else the 铸币飞轮
+    ///         mode's (Pad3FlyModule's).
     fallback() external payable {
         if (_isGrad(msg.sig)) _delegate(gradModule);
         _toFly();
     }
 
-    /// @dev Pad3GradModule's selectors (the IGangGradReward functions not defined here).
+    /// @dev Pad3GradModule's selectors (the IGangGradReward functions not defined here, and the agent window's).
     function _isGrad(bytes4 s) private pure returns (bool) {
         return s == IGangGradReward.claimGradReward.selector || s == IGangGradReward.settleGradReward.selector
             || s == IGangGradReward.sweepGradReward.selector || s == IGangGradReward.retryCarry.selector
             || s == IGangGradReward.requestGradRefund.selector || s == IGangGradReward.cancelGradRefund.selector
             || s == IGangGradReward.gradRefund.selector || s == IGangGradReward.gradReward.selector
             || s == IGangGradReward.gradEntries.selector || s == IGangGradReward.gradClaimable.selector
-            || s == IGangGradReward.gradRewardDeps.selector;
+            || s == IGangGradReward.gradRewardDeps.selector || _isAgentWindow(s);
+    }
+
+    /// @dev The agent window's entry and views (IGangAgentWindow), served by Pad3GradModule for the 24 KB limit.
+    function _isAgentWindow(bytes4 s) private pure returns (bool) {
+        return s == IGangAgentWindow.setNextAgentWindow.selector || s == IGangAgentWindow.nextAgentWindowOf.selector
+            || s == IGangAgentWindow.agentOpenAt.selector || s == IGangAgentWindow.agentWindowOpen.selector
+            || s == IGangAgentWindow.canTradeCurve.selector || s == IGangAgentWindow.walletCapOn.selector
+            || s == IGangAgentWindow.MIN_AGENT_WINDOW_MINUTES.selector
+            || s == IGangAgentWindow.MAX_AGENT_WINDOW_MINUTES.selector;
     }
 
     /// @dev This call, as it came, delegatecalled to `m` (never comes back).
@@ -556,6 +568,10 @@ contract Pad3Module is
         emit TokenVersionSet(token, TOKEN_VERSION);
         logoURIOf[token] = logoURI;
         allTokens.push(token);
+        // the agent window the creator registered (SPEC-AGENT-WINDOW §5.2): written once, here and in
+        // GangLaunchpad3._createCurve, line for line
+        uint40 openAt = Pad3AgentWindowStore.consume(curves[token].creator, token);
+        if (openAt != 0) emit IGangAgentWindow.AgentWindowSet(token, openAt);
     }
 
     // ---------------------------------------------------------------- promoter share
@@ -626,8 +642,9 @@ contract Pad3Module is
 
     /// @inheritdoc IGangPromote
     function canBind(address token, address wallet, address promoter) external view returns (bool) {
+        // `_bindable` checks the wallet's Agent ID (the gate is on here)
         return wallet != address(0) && _config.agentGateEnabled && !curves[token].graduated
-            && PadCommon.isAgent(_config, wallet) && _bindable(token, wallet, promoter);
+            && _bindable(token, wallet, promoter);
     }
 
     /// @dev Bindings are for good, so this is the only way in: never a wallet that has traded the token, never the
@@ -635,7 +652,10 @@ contract Pad3Module is
     function _bindable(address token, address wallet, address promoter) private view returns (bool) {
         Pad3PromoteStore.Layout storage l = Pad3PromoteStore.layout();
         return l.termsOf[token].shareBps != 0 && !l.bindingOf[token][wallet].traded && promoter != address(0)
-            && promoter != wallet && promoter != curves[token].creator && PadCommon.isAgent(_config, promoter);
+            && promoter != wallet && promoter != curves[token].creator && PadCommon.isAgent(_config, promoter)
+            // the bound wallet too (SPEC-AGENT-WINDOW §4): past a token's agent window the gate no longer stops a
+            // wallet without an Agent ID, and a binding is for good
+            && PadCommon.isAgent(_config, wallet);
     }
 
     /// @dev GangLaunchpad3._payIn: `funds` of `quote` into the pad, as WBNB from msg.value (== funds), else pulled exactly
