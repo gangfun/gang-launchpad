@@ -2,7 +2,7 @@
 
 BSC 主网（chainId 56），2026-11-20。平台 Safe 在共用的 QuoteRegistry 上登记 ANTB，`graduationQuoteAmount` 填 0。做法和 [USDT / USDC / USD1 那次](MAINNET-QUOTE-REGISTRY-STABLES-2026-11-01.md)一样。
 
-**状态：Safe batch 已备好，等待签名执行。**
+**状态：已执行。**
 
 ## 为什么
 
@@ -34,7 +34,7 @@ BSC 主网（chainId 56），2026-11-20。平台 Safe 在共用的 QuoteRegistry
 | QuoteRegistry | `0x8b93919862830ea6A720B28C7D0C42fCbb849F17`（owner = 平台 Safe） |
 | 调用 | `setQuote(0x38Dd…0Fc53, true, 0)` |
 | Safe batch | `docs/MAINNET-QUOTE-REGISTRY-ANTB-SAFE-BATCH-2026-11-20.json` |
-| Safe 执行 | 待执行 |
+| Safe 执行 | [`0x2de1f2e2…8443`](https://bscscan.com/tx/0x2de1f2e24248abc824255c91c9b9cd4282692005fd6e2e95f41dcdb3e2738443)，区块 134681591，一条 `QuoteUpdated` |
 
 ## 影响
 
@@ -53,3 +53,9 @@ BSC 主网（chainId 56），2026-11-20。平台 Safe 在共用的 QuoteRegistry
 | `test_fork_antb_comboOnPad3` | 30% 回购、30% 加池、收款人 70:30 的组合模块，用 ANTB 报价在 3.0 发币（abcd 地址）并毕业；池子卖出产生的税以 ANTB 付给模块；keeper 循环做了 7 次回购和 7 次加池，买到的币和 LP 进 0xdead；KOL 收到 ANTB。ANTB 的转账都走它自己的暂停和 compliance 检查 |
 
 说明：测试关掉了 pad 的单钱包上限，让几个买家就能填满曲线；测试买家的 ANTB 从参考池地址转出（ANTB 余额在命名空间存储里，不用 `deal`）。
+
+执行后在主网上复查：
+
+- `isQuoted(ANTB)` 为 true，`graduationAmount(ANTB)` 为 0。
+- 3.0 的 `graduationAmountOf(ANTB, 0x5AFB…1a31)` 约 56.44 ANTB（默认目标），只随价格波动；不传参考池仍然报 `RefPoolRequired`。
+- 3.0 线上 split 和组合工厂的实现合约，`keeperServes(ANTB)` 都是 true。
