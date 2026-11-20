@@ -108,16 +108,16 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
 - Buy-reward campaigns (0.48.0+, `type: "buy_reward"`, `kind: "buy"`, `signUp: "none"`): a token reward split into
   periods, shared among wallets by their counted buys under public versioned rules (`version`). `campaign.reward`
   {token, symbol, decimals, total (whole tokens), totalUnits}; `campaign.rules` {mode (`net_held`: buys still held at
-  settlement — after the campaign ends with payout `end_only`, at each period's end with `per_period` — a sell, or a
-  withdrawal of minted tokens, any time before then takes the amount back out; `gross_buys`: buys as made), includeMints,
+  settlement — after the campaign ends with payout `end_only`, at each period's end with `per_period` — a sell or
+  transfer (or a withdrawal of minted tokens) any time before then takes the amount back out; `gross_buys`: buys as made), includeMints,
   capUPerWalletPeriod, tokenShareCapBps, creatorShareCapBps, minTokenAge, excludeOwnTokens, agentId, newOnly {before},
   pads, quotes, payout (`end_only` | `per_period`), priceSource, text (the rules in short words)}; `campaign.periods`
   [{id, start, end, status, reward, wallets (current period only), published {at, payees, reward}}], `currentPeriod`.
   `mine`: `status` (eligible | not_new | not_agent | excluded | pending) and `statusText`, `updatedAt`, `periods` [{id,
   countedU, rawU, capU, then `estimatedReward` with `estimate: true` before the period is published, or `reward`,
-  `units` and `txHash` after (`reward: "0"` with `why` when the wallet is not in the published list)}], and
-  `estimateNote` with any estimate: it can still go down (sells before settlement, other wallets' buys) and uses
-  current prices, while the final count uses the settlement snapshot. `join` signs nothing (`apiCode: "no_signup"`). Relay the rules as stated; never suggest a trade
+  `units` and `txHash` after, from the wallet row (`reward: "0"` with `why` when the published results pay this
+  wallet nothing)}], and `estimateNote` with any estimate: it can still go down (for `net_held`, sells or transfers
+  before settlement; other wallets' buys) and uses current prices, while the final count uses the settlement snapshot. `join` signs nothing (`apiCode: "no_signup"`). Relay the rules as stated; never suggest a trade
   for the reward.
 - `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
   (its rules can close it at any time). Without a slug (0.46.1+) it takes the live campaign whose sign-up is open; when

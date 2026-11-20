@@ -218,10 +218,19 @@ export function tokensOf(units, decimals) {
   if (decimals == null || decimals === '' || !Number.isInteger(Number(decimals)) || Number(decimals) < 0 || Number(decimals) > 255) return null
   return formatUnits(BigInt(String(units)), Number(decimals))
 }
-/** price_source in words ("pool_twap" → "pool twap"); the raw value stays in priceSource. */
-const priceWords = (x) => (typeof x === 'string' && x.trim() ? x.trim().replace(/[_-]+/g, ' ') : null)
-/** What an estimate is and why it can still change. */
-export const ESTIMATE_NOTE = `An estimate, not final: it can go down (sells or withdrawals before settlement, other wallets' counted buys). It values amounts in U at current prices; the final count uses the settlement snapshot.`
+const PRICE_WORDS = { settle_snapshot: "U values at the settlement snapshot's prices" }
+/** price_source in words (known ones by name, others with underscores as spaces); the raw value stays in priceSource. */
+export const priceWords = (x) => (typeof x === 'string' && x.trim() ? PRICE_WORDS[x.trim()] ?? x.trim().replace(/[_-]+/g, ' ') : null)
+/** What a sell-like move is for these rules: a sell or transfer, and a withdrawal when mints count. */
+const outflow = (r) => (r?.include_mints === true ? 'a sell, transfer or withdrawal' : 'a sell or transfer')
+/** What an estimate is and why it can still change, for this campaign's rules. */
+export function estimateNoteOf(c) {
+  const r = c?.rules ?? {}
+  const down = r.mode === 'gross_buys'
+    ? "other wallets' counted buys"
+    : `${r.include_mints === true ? 'sells, transfers or withdrawals' : 'sells or transfers'} before settlement, other wallets' counted buys`
+  return `An estimate, not final: it can go down (${down}). It values amounts in U at current prices; the final count uses the settlement snapshot.`
+}
 const pct = (bps) => (num(bps) == null ? null : `${Math.round(Number(bps)) / 100}%`)
 const PAYOUT_TEXT = {
   end_only: 'paid once after the campaign ends, by the published results of each period',
@@ -254,7 +263,7 @@ export function buyRulesOf(c) {
   const newBefore = r.new_only && typeof r.new_only === 'object' ? when(r.new_only.before) ?? r.new_only.before ?? null : null
   // net_held: what is still held when it is settled; end_only (the default) settles after the campaign ends, per_period
   // at each period's end. A sell (or, for mints, a withdrawal) any time before then takes that amount back out
-  const out = mints ? 'a sell or withdrawal' : 'a sell'
+  const out = outflow(r)
   const counts = mode === 'net_held'
     ? (r.payout === 'per_period'
       ? `net ${what} ${where}, still held at the end of each period: ${out} before then takes that amount back out`
@@ -262,7 +271,8 @@ export function buyRulesOf(c) {
     : `${what} ${where}, as made (gross: a later sell does not take it back out)`
   const price = priceWords(r.price_source)
   const text = [
-    `Counts: ${counts}, valued in U${price ? ` (price: ${price})` : ''}.`,
+    `Counts: ${counts}, valued in U.`,
+    price && `Prices: ${price}.`,
     capU != null && `At most ${capU} U counted per wallet per period.`,
     (num(r.token_share_cap_bps) != null || num(r.creator_share_cap_bps) != null) && `Share caps: ${[
       num(r.token_share_cap_bps) != null && `buyers of one token together earn at most ${pct(r.token_share_cap_bps)} of a period's reward`,
@@ -306,24 +316,20 @@ function buySummary(c) {
 
 /** Is this period of the campaign published (periods[].published)? */
 const isPublished = (c, id) => (Array.isArray(c?.periods) ? c.periods : []).some((x) => String(x.id) === String(id) && x.published)
-/** Published periods the wallet row has no units for (only these need the payout list). */
-export const missingUnits = (m, c) => (Array.isArray(m?.periods) ? m.periods : []).some((p) => p.units == null && isPublished(c, p.id))
 
 /**
- * The signed-in wallet's buy-reward row. After a period is published the row carries its units and tx; payouts (GET
- * /campaigns/:slug/payouts items, read only when a published period's row lacks units) fill that in. A published period
- * with no units for the wallet paid it nothing: reward 0, never an estimate.
+ * The signed-in wallet's buy-reward row (GET /campaigns/:slug/wallet/:address). Once a period is published the row
+ * carries the wallet's units and tx; a published period without units paid this wallet nothing: reward 0, never an
+ * estimate.
  */
-export function buyMineOf(m, c, payouts) {
+export function buyMineOf(m, c) {
   const dec = (m.reward ?? c.reward ?? {}).decimals
-  const paid = (Array.isArray(payouts) ? payouts : []).filter((x) => String(x.wallet).toLowerCase() === String(m.wallet).toLowerCase())
   const periods = (Array.isArray(m.periods) ? m.periods : []).map((p) => {
-    const po = paid.find((x) => String(x.period) === String(p.id))
-    const units = p.units ?? po?.units ?? null
-    const tx = p.tx_hash ?? po?.tx_hash ?? null
+    const units = p.units ?? null
+    const tx = p.tx_hash ?? null
     const base = { id: p.id, start: when(p.start), end: when(p.end), countedU: num(p.counted_u) ?? 0, rawU: num(p.raw_u), capU: num(p.cap_u) }
     if (units != null) return { ...base, reward: tokensOf(units, dec), units: String(units), ...(tx && { txHash: tx }) }
-    if (isPublished(c, p.id)) return { ...base, reward: '0', units: '0', published: true, why: 'not in the published list' }
+    if (isPublished(c, p.id)) return { ...base, reward: '0', units: '0', published: true, why: 'no payout to this wallet in the published results' }
     return { ...base, estimatedReward: tokensOf(p.est_units ?? '0', dec), estimate: true }
   })
   return {
@@ -331,7 +337,7 @@ export function buyMineOf(m, c, payouts) {
     symbol: (m.reward ?? c.reward ?? {}).symbol ?? null,
     ...(m.updated_at != null && { updatedAt: when(m.updated_at) }),
     periods,
-    ...(periods.some((p) => p.estimate) && { estimateNote: ESTIMATE_NOTE }),
+    ...(periods.some((p) => p.estimate) && { estimateNote: estimateNoteOf(c) }),
   }
 }
 /** runCampaign(sub, rest, io): sub = 'join' or a slug or undefined; io = { flag, out, fail } from index.js. */
@@ -379,13 +385,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   }
   const mine = async (slug, w, c) => {
     if (!w) return null
-    try {
-      const row = await apiGet(`/campaigns/${slug}/wallet/${w.toLowerCase()}`, undefined, '')
-      if (!row || !isBuyReward(c)) return mineOf(row, c)
-      // the row carries units and tx once a period is published: the payout list only when a published period lacks them
-      const po = missingUnits(row, c) ? await apiGet(`/campaigns/${slug}/payouts`, undefined, '').catch(() => null) : null
-      return buyMineOf(row, c, po?.items)
-    } catch { return null }
+    try { return mineOf(await apiGet(`/campaigns/${slug}/wallet/${w.toLowerCase()}`, undefined, ''), c) } catch { return null }
   }
   const wallet = () => (signedIn() ? (() => { try { return bawAddress() } catch { return null } })() : null)
 
