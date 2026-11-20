@@ -39,7 +39,7 @@ BSC 主网（chainId 56），2026-11-20。平台 Safe 在共用的 QuoteRegistry
 ## 影响
 
 - **毕业金额不变。** `graduationAmount(ANTB)` 仍是 0，3.0 照旧按创建者的参考池折算；不传参考池仍然报 `RefPoolRequired`。
-- **哪些 pad。** GangLaunchpad 1.0 `0x15CF…4365`、2.0 `0x7703…e557`、3.0 `0x2bEb…AB29` 和 vault pad `0xE908…0A11` 的 `quoteRegistry()` 都是这个登记表，登记前就都能用 ANTB 加参考池定价（`graduationAmountOf(ANTB, 0x5AFB…1a31)`：1.0 约 94.16 ANTB，其余约 56.49 ANTB）。所以这次登记对这几个 pad 上的模块都生效，不只是 3.0。LaunchpadV2 用的是另一个登记表 `0x053C…060D`，不受影响。
+- **哪些 pad。** GangLaunchpad 1.0 `0x15CF…4365`、2.0 `0x7703…e557`、3.0 `0x2bEb…AB29` 和 vault pad `0xE908…0A11` 的 `quoteRegistry()` 都是这个登记表，登记前就都能用 ANTB 加参考池定价（`graduationAmountOf(ANTB, 0x5AFB…1a31)`：1.0 约 94.16 ANTB，其余约 56.49 ANTB）。所以这次登记对这几个 pad 上的模块都生效，不只是 3.0。LaunchpadV2 用的是另一个登记表 `0x053C…060D`，不受影响。两个 Flywheel pad 也读这个登记表，但只读 `graduationAmount`（仍是 0），所以对它们没有实际影响。
 - **模块。** 已部署的模块克隆在 `keeperServes` 里实时读登记表，登记后对 ANTB 返回 true，keeper 开始处理。倒计时、底价、封顶模块创建时也检查 `keeperServes`，登记后可以用 ANTB 创建。
 - **CLI。** 发币前实时读登记表（`skill/gang-cli/src/launch.js` 的 `isQuoted`），登记后放行 ANTB。不用发新版本。
 
