@@ -212,12 +212,16 @@ export function mineOf(m, c) {
 
 // --- buy-reward campaigns (type buy_reward, 0.48.0+) ---
 
-/** Base units (an integer string) → whole tokens as a decimal string (null when not an integer). */
+/** Base units (an integer string) → whole tokens as a decimal string; null when units or decimals are not integers. */
 export function tokensOf(units, decimals) {
   if (units == null || !/^\d+$/.test(String(units))) return null
-  const d = Number.isInteger(Number(decimals)) && Number(decimals) >= 0 ? Number(decimals) : 18
-  return formatUnits(BigInt(String(units)), d)
+  if (decimals == null || decimals === '' || !Number.isInteger(Number(decimals)) || Number(decimals) < 0 || Number(decimals) > 255) return null
+  return formatUnits(BigInt(String(units)), Number(decimals))
 }
+/** price_source in words ("pool_twap" → "pool twap"); the raw value stays in priceSource. */
+const priceWords = (x) => (typeof x === 'string' && x.trim() ? x.trim().replace(/[_-]+/g, ' ') : null)
+/** What an estimate is and why it can still change. */
+export const ESTIMATE_NOTE = `An estimate, not final: it can go down (sells or withdrawals before settlement, other wallets' counted buys). It values amounts in U at current prices; the final count uses the settlement snapshot.`
 const pct = (bps) => (num(bps) == null ? null : `${Math.round(Number(bps)) / 100}%`)
 const PAYOUT_TEXT = {
   end_only: 'paid once after the campaign ends, by the published results of each period',
@@ -248,16 +252,22 @@ export function buyRulesOf(c) {
   const capU = num(r.cap_u_per_wallet_period)
   const age = num(r.min_token_age_s)
   const newBefore = r.new_only && typeof r.new_only === 'object' ? when(r.new_only.before) ?? r.new_only.before ?? null : null
+  // net_held: what is still held when it is settled; end_only (the default) settles after the campaign ends, per_period
+  // at each period's end. A sell (or, for mints, a withdrawal) any time before then takes that amount back out
+  const out = mints ? 'a sell or withdrawal' : 'a sell'
   const counts = mode === 'net_held'
-    ? `net ${what} ${where}, still held at the end of each period: sells and withdrawals take that amount back out`
+    ? (r.payout === 'per_period'
+      ? `net ${what} ${where}, still held at the end of each period: ${out} before then takes that amount back out`
+      : `net ${what} ${where}, still held at settlement after the campaign ends: ${out} any time before then takes that amount back out`)
     : `${what} ${where}, as made (gross: a later sell does not take it back out)`
+  const price = priceWords(r.price_source)
   const text = [
-    `Counts: ${counts}, valued in U${r.price_source ? ` (price: ${r.price_source})` : ''}.`,
+    `Counts: ${counts}, valued in U${price ? ` (price: ${price})` : ''}.`,
     capU != null && `At most ${capU} U counted per wallet per period.`,
     (num(r.token_share_cap_bps) != null || num(r.creator_share_cap_bps) != null) && `Share caps: ${[
-      num(r.token_share_cap_bps) != null && `one token at most ${pct(r.token_share_cap_bps)} of a period's reward`,
-      num(r.creator_share_cap_bps) != null && `one creator at most ${pct(r.creator_share_cap_bps)}`,
-    ].filter(Boolean).join(', ')}.`,
+      num(r.token_share_cap_bps) != null && `buyers of one token together earn at most ${pct(r.token_share_cap_bps)} of a period's reward`,
+      num(r.creator_share_cap_bps) != null && `buyers of all of one creator's tokens together at most ${pct(r.creator_share_cap_bps)}`,
+    ].filter(Boolean).join('; ')}.`,
     age && `A token counts once it is at least ${span(age)} old.`,
     r.exclude_own_tokens === true && "Trades of the wallet's own tokens (ones it created) do not count.",
     r.agent_id === true && 'Only wallets holding an Agent ID.',
@@ -282,7 +292,7 @@ function buySummary(c) {
     slug: c.slug, title: titleOf(c.title), status: c.status, kind: 'buy', type: 'buy_reward',
     start: when(w.start), end: when(w.ended_at ?? w.end), ...(noticeOf(c) && { notice: noticeOf(c) }), signUp: 'none',
     version: c.version ?? null,
-    reward: { token: rw.token ?? null, symbol: rw.symbol ?? null, decimals: num(dec), total: tokensOf(rw.total_units, dec), totalUnits: rw.total_units ?? null },
+    reward: { token: rw.token ?? null, symbol: rw.symbol ?? null, decimals: tokensOf('0', dec) == null ? null : Number(dec), total: tokensOf(rw.total_units, dec), totalUnits: rw.total_units ?? null },
     rules: buyRulesOf(c),
     periods: periods.map((p) => ({
       id: p.id, start: when(p.start), end: when(p.end), status: p.status ?? null, reward: tokensOf(p.units, dec),
@@ -294,27 +304,34 @@ function buySummary(c) {
   }
 }
 
-/** The signed-in wallet's buy-reward row; payouts (GET /campaigns/:slug/payouts items) fill a published period's tx. */
+/** Is this period of the campaign published (periods[].published)? */
+const isPublished = (c, id) => (Array.isArray(c?.periods) ? c.periods : []).some((x) => String(x.id) === String(id) && x.published)
+/** Published periods the wallet row has no units for (only these need the payout list). */
+export const missingUnits = (m, c) => (Array.isArray(m?.periods) ? m.periods : []).some((p) => p.units == null && isPublished(c, p.id))
+
+/**
+ * The signed-in wallet's buy-reward row. After a period is published the row carries its units and tx; payouts (GET
+ * /campaigns/:slug/payouts items, read only when a published period's row lacks units) fill that in. A published period
+ * with no units for the wallet paid it nothing: reward 0, never an estimate.
+ */
 export function buyMineOf(m, c, payouts) {
   const dec = (m.reward ?? c.reward ?? {}).decimals
   const paid = (Array.isArray(payouts) ? payouts : []).filter((x) => String(x.wallet).toLowerCase() === String(m.wallet).toLowerCase())
+  const periods = (Array.isArray(m.periods) ? m.periods : []).map((p) => {
+    const po = paid.find((x) => String(x.period) === String(p.id))
+    const units = p.units ?? po?.units ?? null
+    const tx = p.tx_hash ?? po?.tx_hash ?? null
+    const base = { id: p.id, start: when(p.start), end: when(p.end), countedU: num(p.counted_u) ?? 0, rawU: num(p.raw_u), capU: num(p.cap_u) }
+    if (units != null) return { ...base, reward: tokensOf(units, dec), units: String(units), ...(tx && { txHash: tx }) }
+    if (isPublished(c, p.id)) return { ...base, reward: '0', units: '0', published: true, why: 'not in the published list' }
+    return { ...base, estimatedReward: tokensOf(p.est_units ?? '0', dec), estimate: true }
+  })
   return {
     wallet: m.wallet, status: m.status ?? null, statusText: BUY_STATUS_TEXT[m.status] ?? null,
     symbol: (m.reward ?? c.reward ?? {}).symbol ?? null,
-    periods: (Array.isArray(m.periods) ? m.periods : []).map((p) => {
-      const po = paid.find((x) => String(x.period) === String(p.id))
-      const units = p.units ?? po?.units ?? null
-      const tx = p.tx_hash ?? po?.tx_hash ?? null
-      return {
-        id: p.id, start: when(p.start), end: when(p.end), countedU: num(p.counted_u) ?? 0, rawU: num(p.raw_u), capU: num(p.cap_u),
-        ...(units != null
-          ? { reward: tokensOf(units, dec), units: String(units), ...(tx && { txHash: tx }) }
-          : p.est_units != null && {
-            estimatedReward: tokensOf(p.est_units, dec), estimate: true,
-            ...(typeof p.estimate === 'string' && { estimateBasis: p.estimate }),
-          }),
-      }
-    }),
+    ...(m.updated_at != null && { updatedAt: when(m.updated_at) }),
+    periods,
+    ...(periods.some((p) => p.estimate) && { estimateNote: ESTIMATE_NOTE }),
   }
 }
 /** runCampaign(sub, rest, io): sub = 'join' or a slug or undefined; io = { flag, out, fail } from index.js. */
@@ -357,7 +374,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     // --yes signs at once: with several live, only the slug the user OK'd (the preview's confirm names it)
     if (flag('yes') && open.length) return fail(`several campaigns are live: name the one to sign up for (gang campaign join <slug> --yes, as the preview's confirm says: ${open.join(', ')})`, { code: 'USAGE', campaigns: open })
     if (open.length === 1) return open[0]
-    if (!open.length) return fail(`no live gang.fun campaign takes a free sign-up now (live: ${liveSlugs.join(', ')}); gang campaign <slug> shows how its ${views.some((v) => hasCash(v) || isBuyReward(v)) ? 'rewards or tickets work' : 'tickets come'}. ${NO_TICKET_TRADES}`, { apiCode: 'closed', code: 'ERROR', campaigns: liveSlugs })
+    if (!open.length) return fail(`no live gang.fun campaign takes a free sign-up now (live: ${liveSlugs.join(', ')}); gang campaign <slug> shows how its ${views.some((v) => hasCash(v) || isBuyReward(v)) ? 'rewards or tickets work' : 'tickets come'}. ${NO_TICKET_TRADES}`, { apiCode: 'closed', code: 'ERROR', campaigns: liveSlugs, ...(views.some(isBuyReward) && { note: CAMPAIGN_NOTE_BUY }) })
     return fail(`several live campaigns take a free sign-up: name one (gang campaign join <slug>: ${open.join(', ')})`, { campaigns: open })
   }
   const mine = async (slug, w, c) => {
@@ -365,9 +382,8 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     try {
       const row = await apiGet(`/campaigns/${slug}/wallet/${w.toLowerCase()}`, undefined, '')
       if (!row || !isBuyReward(c)) return mineOf(row, c)
-      // a published period: its payout rows (404 until something is published) fill in units and tx
-      const published = Array.isArray(c.periods) && c.periods.some((p) => p.published)
-      const po = published ? await apiGet(`/campaigns/${slug}/payouts`, undefined, '').catch(() => null) : null
+      // the row carries units and tx once a period is published: the payout list only when a published period lacks them
+      const po = missingUnits(row, c) ? await apiGet(`/campaigns/${slug}/payouts`, undefined, '').catch(() => null) : null
       return buyMineOf(row, c, po?.items)
     } catch { return null }
   }

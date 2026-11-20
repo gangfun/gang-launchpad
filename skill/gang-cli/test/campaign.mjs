@@ -16,7 +16,7 @@ import { recoverTypedDataAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 
 const { joinTypedData, summary, mineOf, noteFor, joinClosed, takesJoin, isCash, hasCash, kindOf, signUpOf, wholeU, rewardsOf, CAMPAIGN_NOTE_CASH,
-  isBuyReward, noSignUp, tokensOf, buyRulesOf, buyMineOf, CAMPAIGN_NOTE_BUY, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
+  isBuyReward, noSignUp, tokensOf, buyRulesOf, buyMineOf, missingUnits, CAMPAIGN_NOTE_BUY, ESTIMATE_NOTE, CAMPAIGN_DOMAIN, CAMPAIGN_NOTE, CAMPAIGN_NOTE_CLOSED, CAMPAIGN_NOTE_LIST } = await import('../src/campaign.js')
 const CLI = fileURLToPath(new URL('../src/index.js', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'gang-campaign-'))
 
@@ -164,8 +164,8 @@ const BUY = {
   reward: { token: '0x000000000000000000000000000000000000beef', symbol: 'GANG', decimals: 18, total_units: `1000000${E18}` },
   rules: {
     cap_u_per_wallet_period: 50, token_share_cap_bps: 2000, creator_share_cap_bps: 3000, min_token_age_s: 3600, exclude_own_tokens: true,
-    include_mints: true, quotes: [{ address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB' }, { address: '0x55d398326f99059ff775485246999027b3197955', symbol: 'USDT' }],
-    pads: ['0x2bebed4be8c8f46c17776c71d7a6a45dbc5cab29'], agent_id: true, new_only: null, mode: 'net_held', payout: 'end_only', price_source: 'pool price',
+    include_mints: false, quotes: [{ address: '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c', symbol: 'WBNB' }, { address: '0x55d398326f99059ff775485246999027b3197955', symbol: 'USDT' }],
+    pads: ['0x2bebed4be8c8f46c17776c71d7a6a45dbc5cab29'], agent_id: true, new_only: { before: now - 86400 }, mode: 'net_held', payout: 'end_only', price_source: 'pool_spot',
   },
   periods: [
     { id: 1, start: now - 86400, end: now, units: `500000${E18}`, status: 'frozen', published: null },
@@ -186,17 +186,27 @@ const BUY = {
   assert.doesNotMatch(CAMPAIGN_NOTE_BUY, /campaign join|gang buy/)
   assert.equal(tokensOf(`1000000${E18}`, 18), '1000000'); assert.equal(tokensOf('1500000', 6), '1.5'); assert.equal(tokensOf('12', 0), '12')
   assert.equal(tokensOf(null, 18), null); assert.equal(tokensOf('1.5', 18), null); assert.equal(tokensOf('-1', 18), null)
+  for (const d of [null, undefined, '', -1, 1.5, 'x']) assert.equal(tokensOf('1', d), null, `decimals ${d}: never guessed`)
+  assert.equal(summary({ ...BUY, reward: { ...BUY.reward, decimals: null } }).reward.decimals, null)
+  assert.equal(summary({ ...BUY, reward: { ...BUY.reward, decimals: null } }).reward.total, null)
   const r = buyRulesOf(BUY)
-  assert.equal(r.mode, 'net_held'); assert.equal(r.includeMints, true); assert.equal(r.capUPerWalletPeriod, 50)
+  assert.equal(r.mode, 'net_held'); assert.equal(r.includeMints, false); assert.equal(r.capUPerWalletPeriod, 50)
   assert.equal(r.tokenShareCapBps, 2000); assert.equal(r.creatorShareCapBps, 3000); assert.equal(r.minTokenAge, '1 h')
-  assert.equal(r.excludeOwnTokens, true); assert.equal(r.agentId, true); assert.equal(r.newOnly, null); assert.equal(r.payout, 'end_only')
+  assert.equal(r.excludeOwnTokens, true); assert.equal(r.agentId, true); assert.ok(r.newOnly.before); assert.equal(r.payout, 'end_only'); assert.equal(r.priceSource, 'pool_spot')
   assert.deepEqual(r.pads, [{ address: '0x2bebed4be8c8f46c17776c71d7a6a45dbc5cab29', name: 'GangLaunchpad 3.0' }])
   assert.deepEqual(r.quotes.map((q) => q.symbol), ['WBNB', 'USDT'])
   const t = r.text.join(' ')
-  assert.match(r.counts, /^net buys and mints on GangLaunchpad 3\.0, paid in WBNB or USDT, still held at the end of each period: sells and withdrawals take that amount back out/)
-  assert.match(t, /At most 50 U counted per wallet per period/); assert.match(t, /one token at most 20% of a period's reward, one creator at most 30%/)
+  // end_only (the default): held at settlement after the campaign end; a sell any time before then takes it out
+  assert.equal(r.counts, 'net buys on GangLaunchpad 3.0, paid in WBNB or USDT, still held at settlement after the campaign ends: a sell any time before then takes that amount back out')
+  assert.doesNotMatch(r.counts, /mints|withdrawal|end of each period/, 'no mints: no withdrawals')
+  assert.equal(buyRulesOf({ ...BUY, rules: { ...BUY.rules, payout: undefined } }).counts, r.counts, 'no payout key: end_only')
+  const pp = buyRulesOf({ ...BUY, rules: { ...BUY.rules, include_mints: true, payout: 'per_period' } })
+  assert.match(pp.counts, /^net buys and mints on .*, still held at the end of each period: a sell or withdrawal before then takes that amount back out$/)
+  assert.match(t, /\(price: pool spot\)/, 'price source in words')
+  assert.match(t, /At most 50 U counted per wallet per period/)
+  assert.match(t, /buyers of one token together earn at most 20% of a period's reward; buyers of all of one creator's tokens together at most 30%/)
   assert.match(t, /at least 1 h old/); assert.match(t, /own tokens .* do not count/); assert.match(t, /Agent ID/)
-  assert.match(t, /paid once after the campaign ends/); assert.doesNotMatch(t, /New wallets only/)
+  assert.match(t, /paid once after the campaign ends/); assert.match(t, /New wallets only \(no Gang trade before \d{4}-/)
   const g = buyRulesOf({ ...BUY, rules: { ...BUY.rules, mode: 'gross_buys', include_mints: false, pads: null, quotes: [], min_token_age_s: 0, exclude_own_tokens: false, agent_id: false, new_only: { before: now - 86400 }, payout: 'per_period' } })
   assert.match(g.counts, /^buys on Gang, as made \(gross/); assert.doesNotMatch(g.counts, /mints|withdrawals/)
   assert.equal(g.pads, null); assert.equal(g.quotes, null); assert.equal(g.minTokenAge, null); assert.ok(g.newOnly.before)
@@ -209,16 +219,25 @@ const BUY = {
   assert.deepEqual(s.rules, r); assert.equal(s.tickets, undefined); assert.equal(s.rewards, undefined)
   assert.deepEqual(s.periods.map((p) => [p.id, p.status, p.reward, p.wallets]), [[1, 'frozen', '500000', undefined], [2, 'live', '500000', 7]])
   assert.match(s.periods[0].start, /^\d{4}-\d\d-\d\d \d\d:\d\d UTC/, 'local times')
-  // the wallet: counted U vs cap and an estimate before publishing; units and tx after
-  const m = mineOf({ wallet: '0xa', type: 'buy_reward', status: 'eligible', reward: BUY.reward, periods: [
-    { id: 1, start: now - 86400, end: now, counted_u: 50, raw_u: 80, cap_u: 50, est_units: null, estimate: null, units: `2000${E18}`, tx_hash: '0xt1' },
-    { id: 2, start: now, end: now + 86400, counted_u: 12.5, raw_u: 12.5, cap_u: 50, est_units: `1234500000000000000000`, estimate: 'by counted U so far', units: null, tx_hash: null },
-  ] }, BUY)
+  // the wallet: counted U vs cap and an estimate before publishing; units and tx after (API shape: est_units a string,
+  // '0' when none; estimate a boolean)
+  const PUB = { ...BUY, periods: [{ ...BUY.periods[0], status: 'published', published: { at: now, payees: 2, units: `500000${E18}` } }, BUY.periods[1]] }
+  const m = mineOf({ wallet: '0xa', type: 'buy_reward', status: 'eligible', reward: BUY.reward, updated_at: now, periods: [
+    { id: 1, start: now - 86400, end: now, counted_u: 50, raw_u: 80, cap_u: 50, est_units: '0', estimate: false, units: `2000${E18}`, tx_hash: '0xt1' },
+    { id: 2, start: now, end: now + 86400, counted_u: 12.5, raw_u: 12.5, cap_u: 50, est_units: '1234500000000000000000', estimate: true, units: null, tx_hash: null },
+  ] }, PUB)
+  assert.ok(m.updatedAt); assert.equal(m.estimateNote, ESTIMATE_NOTE)
+  assert.match(ESTIMATE_NOTE, /can go down \(sells or withdrawals before settlement, other wallets' counted buys\)/); assert.match(ESTIMATE_NOTE, /current prices; the final count uses the settlement snapshot/)
   assert.equal(m.status, 'eligible'); assert.match(m.statusText, /^eligible/); assert.equal(m.symbol, 'GANG'); assert.equal(m.tickets, undefined)
   assert.deepEqual({ ...m.periods[0], start: undefined, end: undefined }, { id: 1, start: undefined, end: undefined, countedU: 50, rawU: 80, capU: 50, reward: '2000', units: `2000${E18}`, txHash: '0xt1' })
-  assert.deepEqual({ ...m.periods[1], start: undefined, end: undefined }, { id: 2, start: undefined, end: undefined, countedU: 12.5, rawU: 12.5, capU: 50, estimatedReward: '1234.5', estimate: true, estimateBasis: 'by counted U so far' })
+  assert.deepEqual({ ...m.periods[1], start: undefined, end: undefined }, { id: 2, start: undefined, end: undefined, countedU: 12.5, rawU: 12.5, capU: 50, estimatedReward: '1234.5', estimate: true })
+  // published, but the wallet has no units in it: 0, never an estimate
+  const z = mineOf({ wallet: '0xa', status: 'eligible', reward: BUY.reward, periods: [{ id: 1, counted_u: 3, cap_u: 50, est_units: `9${E18}`, estimate: true, units: null, tx_hash: null }] }, PUB)
+  assert.deepEqual([z.periods[0].reward, z.periods[0].units, z.periods[0].why, z.periods[0].estimate, z.periods[0].estimatedReward], ['0', '0', 'not in the published list', undefined, undefined])
+  assert.equal(z.estimateNote, undefined)
+  assert.equal(missingUnits({ periods: [{ id: 1, units: null }] }, PUB), true); assert.equal(missingUnits({ periods: [{ id: 1, units: '5' }, { id: 2, units: null }] }, PUB), false)
   // a payout row fills in a published period the wallet row has no units for
-  const f = buyMineOf({ wallet: '0xA', status: 'eligible', periods: [{ id: 1, counted_u: 3, cap_u: 50, units: null, tx_hash: null }] }, BUY, [{ period: 1, wallet: '0xa', units: `7${E18}`, amount: '7', tx_hash: '0xp' }, { period: 1, wallet: '0xb', units: '1', tx_hash: '0xq' }])
+  const f = buyMineOf({ wallet: '0xA', status: 'eligible', periods: [{ id: 1, counted_u: 3, cap_u: 50, est_units: '0', estimate: true, units: null, tx_hash: null }] }, PUB, [{ period: 1, wallet: '0xa', units: `7${E18}`, amount: '7', tx_hash: '0xp' }, { period: 1, wallet: '0xb', units: '1', tx_hash: '0xq' }])
   assert.equal(f.periods[0].reward, '7'); assert.equal(f.periods[0].txHash, '0xp')
   for (const st of ['not_new', 'not_agent', 'excluded', 'pending']) assert.ok(mineOf({ wallet: '0xa', status: st, periods: [] }, BUY).statusText, st)
   assert.match(mineOf({ wallet: '0xa', status: 'not_new', periods: [] }, BUY).statusText, /earns nothing/)
@@ -234,13 +253,14 @@ let campaigns = { 'agent-season': LIVE }
 let live = [{ slug: 'agent-season' }]
 let walletRow = null
 let payouts = null
+let payoutReads = 0
 let joinAnswer = { status: 200, body: { ok: true, wallet: acct.address.toLowerCase(), joined_at: now, tickets: 1 } }
 const posted = []
 const server = createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)) }
   if (req.method === 'GET' && url.pathname === '/api/campaigns') return send(200, { now, items: live })
-  if (req.method === 'GET' && /^\/api\/campaigns\/[a-z0-9-]+\/payouts$/.test(url.pathname)) return payouts ? send(200, payouts) : send(404, { error: 'not_found' })
+  if (req.method === 'GET' && /^\/api\/campaigns\/[a-z0-9-]+\/payouts$/.test(url.pathname) && ++payoutReads) return payouts ? send(200, payouts) : send(404, { error: 'not_found' })
   let m = /^\/api\/campaigns\/([a-z0-9-]+)\/wallet\/(0x[0-9a-f]{40})$/.exec(url.pathname)
   if (req.method === 'GET' && m) return walletRow ? send(200, { wallet: m[2], ...walletRow }) : send(404, { error: 'not_found' })
   m = /^\/api\/campaigns\/([a-z0-9-]+)$/.exec(url.pathname)
@@ -515,29 +535,36 @@ try {
   }
   r = await run(['campaign'], { withBaw: false })
   okBuy(r); assert.equal(r.mine, undefined); assert.equal(r.campaign.currentPeriod, 2); assert.equal(r.campaign.periods[1].wallets, 7)
-  assert.match(r.campaign.rules.text.join(' '), /still held at the end of each period/)
+  assert.match(r.campaign.rules.text.join(' '), /still held at settlement after the campaign ends: a sell any time before then/)
   walletRow = { type: 'buy_reward', status: 'eligible', reward: BUY.reward, periods: [
-    { id: 1, start: now - 86400, end: now, counted_u: 20, raw_u: 20, cap_u: 50, est_units: `400${E18}`, estimate: null, units: null, tx_hash: null },
-    { id: 2, start: now, end: now + 86400, counted_u: 50, raw_u: 75, cap_u: 50, est_units: `900${E18}`, estimate: null, units: null, tx_hash: null },
+    { id: 1, start: now - 86400, end: now, counted_u: 20, raw_u: 20, cap_u: 50, est_units: `400${E18}`, estimate: true, units: null, tx_hash: null },
+    { id: 2, start: now, end: now + 86400, counted_u: 50, raw_u: 75, cap_u: 50, est_units: `900${E18}`, estimate: true, units: null, tx_hash: null },
   ] }
   r = await run(['campaign', 'buy-week'])
-  okBuy(r); assert.equal(r.mine.wallet, acct.address.toLowerCase()); assert.equal(r.mine.status, 'eligible')
+  okBuy(r); assert.equal(r.mine.wallet, acct.address.toLowerCase()); assert.equal(r.mine.status, 'eligible'); assert.equal(r.mine.estimateNote, ESTIMATE_NOTE)
   assert.deepEqual(r.mine.periods.map((p) => [p.id, p.countedU, p.rawU, p.capU, p.estimatedReward, p.estimate, p.reward]), [[1, 20, 20, 50, '400', true, undefined], [2, 50, 75, 50, '900', true, undefined]])
-  walletRow = { type: 'buy_reward', status: 'not_new', reward: BUY.reward, periods: [{ id: 2, counted_u: 0, raw_u: 30, cap_u: 50, est_units: null, units: null, tx_hash: null }] }
+  walletRow = { type: 'buy_reward', status: 'not_new', reward: BUY.reward, periods: [{ id: 2, counted_u: 0, raw_u: 30, cap_u: 50, est_units: '0', estimate: true, units: null, tx_hash: null }] }
   r = await run(['campaign', 'buy-week'])
-  okBuy(r); assert.equal(r.mine.status, 'not_new'); assert.match(r.mine.statusText, /earns nothing/); assert.equal(r.mine.periods[0].estimatedReward, undefined)
+  okBuy(r); assert.equal(r.mine.status, 'not_new'); assert.match(r.mine.statusText, /earns nothing/); assert.equal(r.mine.periods[0].estimatedReward, '0')
+  assert.equal(payoutReads, 0, 'nothing published: the payout list is not read')
   // published: units and tx (the payout list fills a period the wallet row has none for)
   campaigns = { 'buy-week': { ...BUY, status: 'ended', current_period: null, periods: [{ ...BUY.periods[0], status: 'published', published: { at: now + 60, payees: 3, units: `500000${E18}` } }, { ...BUY.periods[1], status: 'live', wallets: undefined }] } }
-  walletRow = { type: 'buy_reward', status: 'eligible', reward: BUY.reward, periods: [{ id: 1, counted_u: 20, raw_u: 20, cap_u: 50, est_units: null, units: null, tx_hash: null }, { id: 2, counted_u: 5, cap_u: 50, est_units: `10${E18}`, units: null, tx_hash: null }] }
+  walletRow = { type: 'buy_reward', status: 'eligible', reward: BUY.reward, periods: [{ id: 1, counted_u: 20, raw_u: 20, cap_u: 50, est_units: '0', estimate: false, units: null, tx_hash: null }, { id: 2, counted_u: 5, cap_u: 50, est_units: `10${E18}`, estimate: true, units: null, tx_hash: null }] }
   payouts = { items: [{ period: 1, wallet: acct.address.toLowerCase(), units: `400${E18}`, amount: '400', tx_hash: '0xpaid' }] }
   r = await run(['campaign', 'buy-week'])
   assert.equal(r.success, true); assert.equal(r.next, undefined); assert.equal(r.note, CAMPAIGN_NOTE_BUY)
   assert.deepEqual(r.campaign.periods[0].published.reward, '500000'); assert.equal(r.campaign.periods[0].published.payees, 3)
   assert.equal(r.mine.periods[0].reward, '400'); assert.equal(r.mine.periods[0].txHash, '0xpaid'); assert.equal(r.mine.periods[0].estimate, undefined)
-  assert.equal(r.mine.periods[1].estimatedReward, '10')
-  walletRow = { ...walletRow, periods: [{ id: 1, counted_u: 20, cap_u: 50, units: `401${E18}`, tx_hash: '0xrow' }] }
+  assert.equal(r.mine.periods[1].estimatedReward, '10'); assert.equal(payoutReads, 1)
+  walletRow = { ...walletRow, periods: [{ id: 1, counted_u: 20, cap_u: 50, est_units: '0', estimate: false, units: `401${E18}`, tx_hash: '0xrow' }] }
   r = await run(['campaign', 'buy-week'])
   assert.equal(r.mine.periods[0].reward, '401'); assert.equal(r.mine.periods[0].txHash, '0xrow', 'the wallet row wins')
+  assert.equal(payoutReads, 1, 'the row has its units: the payout list is not read')
+  // published and the wallet is not in it: 0, not an estimate
+  payouts = { items: [] }
+  walletRow = { ...walletRow, periods: [{ id: 1, counted_u: 2, cap_u: 50, est_units: `5${E18}`, estimate: true, units: null, tx_hash: null }] }
+  r = await run(['campaign', 'buy-week'])
+  assert.equal(r.mine.periods[0].reward, '0'); assert.equal(r.mine.periods[0].why, 'not in the published list'); assert.equal(r.mine.periods[0].estimate, undefined)
   payouts = null
   // join: refused before anything is signed, with a slug, with --yes, and without a slug
   campaigns = { 'buy-week': BUY, a: OPEN('a') }
@@ -561,7 +588,7 @@ try {
   live = [{ slug: 'buy-week' }, { slug: 'b' }]
   campaigns = { 'buy-week': BUY, b: SHUT('b') }
   r = await run(['campaign', 'join'])
-  assert.equal(r.apiCode, 'closed'); assert.match(r.error, /shows how its rewards or tickets work/); assert.equal(posted.length, n)
+  assert.equal(r.apiCode, 'closed'); assert.match(r.error, /shows how its rewards or tickets work/); assert.equal(r.note, CAMPAIGN_NOTE_BUY); assert.equal(posted.length, n)
 
   live = []
   r = await run(['campaign'])
