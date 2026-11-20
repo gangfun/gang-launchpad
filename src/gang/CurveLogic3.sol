@@ -36,8 +36,8 @@ import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
 ///         7. the graduation reward (docs/SPEC-GRAD-REWARD-2026-11-17.md): on a token that has one, counted buys and
 ///            sells are booked (Pad3GradStore) and graduation books the pool; no price, fee or refund changes.
 ///         8. the agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md): from a token's `openAt` on, the Agent gate lets
-///            every wallet trade it (`canTrade`) and the 1% wallet cap is off unless it has a graduation reward
-///            (`walletCapOn`); a token without a window trades exactly as before.
+///            every wallet trade it (`canTrade`) and the 1% wallet cap is off (`walletCapOn`); a token without a
+///            window trades exactly as before.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -537,13 +537,12 @@ library CurveLogic3 {
         return PadCommon.isAgent(c, trader);
     }
 
-    /// @dev The 1% wallet cap applies to `token` now: the pad's cap is on, and the token is not open yet or has a
-    ///      graduation reward (whose pool is shared by what each entry spent: SPEC-GRAD-REWARD's "1% cap as before").
-    ///      The one definition: `_prepBuy`, `quoteBuy` and the pad's `walletRoom` / `walletCapOn` views all read it.
+    /// @dev The 1% wallet cap applies to `token` now: the pad's cap is on and the token is not open. Past `openAt`
+    ///      the cap is per address and any contract is one, so it would stop no one (SPEC-AGENT-WINDOW §7.2): off for
+    ///      every token, a graduation reward's too. The one definition: `_prepBuy`, `quoteBuy` and the pad's
+    ///      `walletRoom` / `walletCapOn` views all read it.
     function walletCapOn(IGangLaunchpad.Config storage c, address token) internal view returns (bool) {
-        if (!c.walletCapEnabled) return false;
-        if (!Pad3AgentWindowStore.isOpen(token)) return true;
-        return Pad3GradStore.layout().rewardOf[token].state != Pad3GradStore.NONE;
+        return c.walletCapEnabled && !Pad3AgentWindowStore.isOpen(token);
     }
 
     function _graduate(IGangLaunchpad.Config storage c, address token, IGangLaunchpad.Curve storage cv) private {

@@ -8,8 +8,10 @@ import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../../src/gang/Pad3Module.sol";
 import {Pad3AgentWindowStore} from "../../src/gang/Pad3AgentWindowStore.sol";
+import {Pad3VanityDeployer} from "../../src/gang/Pad3VanityDeployer.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangAgentWindow} from "../../src/gang/interfaces/IGangAgentWindow.sol";
+import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
 import {IGangGradReward, IGangGradRewardBase} from "../../src/gang/interfaces/IGangGradReward.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
@@ -58,7 +60,6 @@ contract AWSweeper {
 contract Pad3AgentWindowTest is GangFixture {
     uint16 internal constant MINUTES = 60;
 
-    event NextAgentWindowSet(address indexed creator, uint16 windowMinutes);
     event AgentWindowSet(address indexed token, uint40 openAt);
 
     GangLaunchpad3 internal pad3;
@@ -92,14 +93,30 @@ contract Pad3AgentWindowTest is GangFixture {
         wbnb.approve(address(pad), type(uint256).max);
     }
 
-    function _register(uint16 m) internal {
+    bytes4 internal constant CREATE_V3 =
+        bytes4(keccak256("create(string,string,string,string,address,address,(uint16,uint16,uint16,address))"));
+
+    /// @dev `data` (a curve create entry) run by `creator` through createWithAgentWindow.
+    function _withWindow(uint16 m, bytes memory data) internal returns (address t) {
         vm.prank(creator);
-        aw.setNextAgentWindow(m);
+        t = aw.createWithAgentWindow(m, data);
+    }
+
+    function _v3Data() internal view returns (bytes memory) {
+        return abi.encodeWithSelector(
+            CREATE_V3, "Curve", "CRV", "logo", "meta", address(wbnb), address(0), _tax(0, 0, 0, address(0))
+        );
+    }
+
+    function _promoteData() internal view returns (bytes memory) {
+        return abi.encodeCall(
+            pm.createWithPromote,
+            ("B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, 2_000, 30 days)
+        );
     }
 
     function _createOpen(uint16 m) internal returns (address t) {
-        _register(m);
-        t = _createV3(creator, address(wbnb), _tax(0, 0, 0, address(0)));
+        t = _withWindow(m, _v3Data());
     }
 
     function _open(address t) internal {
@@ -136,25 +153,61 @@ contract Pad3AgentWindowTest is GangFixture {
         assertEq(aw.MAX_AGENT_WINDOW_MINUTES(), 1440);
     }
 
-    // ---------------------------------------------------------------- register / consume
-    function test_register_boundsAndClear() public {
-        vm.startPrank(creator);
-        vm.expectEmit(true, false, false, true, address(pad));
-        emit NextAgentWindowSet(creator, 1);
-        aw.setNextAgentWindow(1);
-        assertEq(aw.nextAgentWindowOf(creator), 1);
-        aw.setNextAgentWindow(1440);
-        assertEq(aw.nextAgentWindowOf(creator), 1440);
-        vm.expectRevert(IGangAgentWindow.BadAgentWindow.selector);
-        aw.setNextAgentWindow(1441);
-        vm.expectRevert(IGangAgentWindow.BadAgentWindow.selector);
-        aw.setNextAgentWindow(type(uint16).max);
-        aw.setNextAgentWindow(0);
-        assertEq(aw.nextAgentWindowOf(creator), 0);
-        vm.stopPrank();
+    /// @dev The namespace's first member is `openAt` (pinned: a reorder would move every token's window).
+    function test_slot_openAtIsTheFirstMember() public {
+        address t = _createOpen(MINUTES);
+        bytes32 raw = vm.load(address(pad), keccak256(abi.encode(t, Pad3AgentWindowStore.SLOT)));
+        assertEq(uint256(raw), aw.agentOpenAt(t));
+        assertGt(uint256(raw), 0);
     }
 
-    function test_noRegistration_agentOnlyForGood() public {
+    // ---------------------------------------------------------------- createWithAgentWindow
+    function test_wrapper_bounds() public {
+        vm.startPrank(creator);
+        vm.expectRevert(IGangAgentWindow.BadAgentWindow.selector);
+        aw.createWithAgentWindow(0, _v3Data());
+        vm.expectRevert(IGangAgentWindow.BadAgentWindow.selector);
+        aw.createWithAgentWindow(1441, _v3Data());
+        vm.expectRevert(IGangAgentWindow.BadAgentWindow.selector);
+        aw.createWithAgentWindow(type(uint16).max, _v3Data());
+        vm.stopPrank();
+        address a = _withWindow(1, _v3Data());
+        assertEq(aw.agentOpenAt(a), block.timestamp + 60);
+        address b = _withWindow(1440, _v3Data());
+        assertEq(aw.agentOpenAt(b), block.timestamp + 1440 * 60);
+    }
+
+    /// @dev Only curve create entries (or createWithSalt): never a 打新 create, a trade, itself, or short data.
+    function test_wrapper_onlyCurveCreates() public {
+        bytes memory fair = abi.encodeWithSelector(
+            bytes4(
+                keccak256(
+                    "create(string,string,string,string,address,address,(uint256,uint16,uint16,uint16,uint16),uint256)"
+                )
+            ),
+            "F",
+            "F",
+            "l",
+            "m",
+            address(wbnb),
+            address(0),
+            _mintCfg(5, 100, 6_000, 100, 100),
+            uint256(1)
+        );
+        bytes[4] memory bad = [
+            fair,
+            abi.encodeCall(pad.buy, (address(1), 1 ether, 0)),
+            abi.encodeCall(aw.createWithAgentWindow, (1, _v3Data())),
+            bytes(hex"1234")
+        ];
+        for (uint256 i; i < bad.length; i++) {
+            vm.prank(creator);
+            vm.expectRevert(IGangAgentWindow.BadAgentWindowCall.selector);
+            aw.createWithAgentWindow(MINUTES, bad[i]);
+        }
+    }
+
+    function test_noWindow_agentOnlyForGood() public {
         address t = _createV3(creator, address(wbnb), _tax(0, 0, 0, address(0)));
         assertEq(aw.agentOpenAt(t), 0);
         vm.warp(block.timestamp + 3650 days);
@@ -164,10 +217,9 @@ contract Pad3AgentWindowTest is GangFixture {
         pad.buy(t, 0.01 ether, 0);
     }
 
-    function test_create_writesOpenAtAndClears() public {
-        _register(MINUTES);
+    function test_create_writesOpenAtOnce() public {
         vm.recordLogs();
-        address t = _createV3(creator, address(wbnb), _tax(0, 0, 0, address(0)));
+        address t = _createOpen(MINUTES);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         Vm.Log memory last = logs[logs.length - 1];
         assertEq(last.topics[0], AgentWindowSet.selector);
@@ -175,42 +227,34 @@ contract Pad3AgentWindowTest is GangFixture {
         uint40 openAt = uint40(block.timestamp + uint256(MINUTES) * 60);
         assertEq(last.data, abi.encode(openAt));
         assertEq(aw.agentOpenAt(t), openAt);
-        assertEq(aw.nextAgentWindowOf(creator), 0);
-        // the next create takes none
+        // nothing is left for the next create, the creator's or anyone's (same transaction here: transient storage)
         address t2 = _createV3(creator, address(wbnb), _tax(0, 0, 0, address(0)));
         assertEq(aw.agentOpenAt(t2), 0);
+        address t3 = _createV3(_newAgent(), address(wbnb), _tax(0, 0, 0, address(0)));
+        assertEq(aw.agentOpenAt(t3), 0);
     }
 
-    function test_create_everyCurveEntryConsumes() public {
-        _register(5);
-        vm.prank(creator);
-        address a = pad3.createWithGradTarget(
-            "A", "A", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 6 ether
+    function test_create_curveEntries() public {
+        address a = _withWindow(
+            5,
+            abi.encodeCall(
+                pad3.createWithGradTarget,
+                ("A", "A", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 6 ether)
+            )
         );
         assertEq(aw.agentOpenAt(a), block.timestamp + 300);
-
-        _register(7);
-        vm.prank(creator);
-        address b = pm.createWithPromote(
-            "B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, 2_000, 30 days
-        );
+        assertEq(pad.gradTargetOf(a), 6 ether);
+        address b = _withWindow(7, _promoteData());
         assertEq(aw.agentOpenAt(b), block.timestamp + 420);
-        assertEq(aw.nextAgentWindowOf(creator), 0);
+        (uint16 share,) = pm.promoteOf(b);
+        assertEq(share, 2_000);
     }
 
-    function test_create_fairDoesNotConsume() public {
-        _register(MINUTES);
-        address f = _createFair(creator, address(wbnb), 1);
-        assertEq(aw.agentOpenAt(f), 0);
-        assertEq(aw.nextAgentWindowOf(creator), MINUTES);
-    }
-
-    function test_register_onlyOwnCreates() public {
-        _register(MINUTES);
-        address other = _newAgent();
-        address t = _createV3(other, address(wbnb), _tax(0, 0, 0, address(0)));
-        assertEq(aw.agentOpenAt(t), 0);
-        assertEq(aw.nextAgentWindowOf(creator), MINUTES);
+    /// @dev The entry's own checks still run: a non-Agent creator is refused inside, and the whole call reverts.
+    function test_wrapper_entryChecksStillRun() public {
+        vm.prank(human);
+        vm.expectRevert(IGangLaunchpad.NotAgent.selector);
+        aw.createWithAgentWindow(MINUTES, _v3Data());
     }
 
     // ---------------------------------------------------------------- the gate
@@ -314,11 +358,7 @@ contract Pad3AgentWindowTest is GangFixture {
         pad3.sellToken(0, t, human, 1 ether, 0, 0, address(0));
         vm.stopPrank();
         // the promoter entry, on a token with a promoter share
-        _register(MINUTES);
-        vm.prank(creator);
-        address p = pm.createWithPromote(
-            "B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, 2_000, 30 days
-        );
+        address p = _withWindow(MINUTES, _promoteData());
         vm.prank(human, human);
         vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         pm.buyWithPromoter{value: 0.01 ether}(p, 0.01 ether, 0, agent);
@@ -483,42 +523,139 @@ contract Pad3AgentWindowTest is GangFixture {
         h.check(pad3, true, abi.encode(st, uint256(1)));
     }
 
+    // ---------------------------------------------------------------- createWithSalt (mainnet's only create path)
+    function _enableVanity() internal returns (Pad3VanityDeployer factory) {
+        factory = new Pad3VanityDeployer(address(pad), address(tokenDeployer), address(flyDeployer));
+        vm.prank(owner);
+        pm.enableVanity(address(factory));
+    }
+
+    /// @dev Pad3Vanity.t.sol's miner: a salt whose token address starts with 0xabcd.
+    function _mine(Pad3VanityDeployer factory, bytes32 initHash, address dev)
+        internal
+        pure
+        returns (bytes32 salt, address predicted)
+    {
+        address deployer = address(factory);
+        bytes memory buffer = new bytes(85);
+        for (uint256 i;; i++) {
+            uint256 hash;
+            assembly ("memory-safe") {
+                let ptr := add(buffer, 32)
+                mstore(ptr, dev)
+                mstore(add(ptr, 32), i)
+                let effectiveSalt := keccak256(ptr, 64)
+                mstore(ptr, shl(248, 0xff))
+                mstore(add(ptr, 1), shl(96, deployer))
+                mstore(add(ptr, 21), effectiveSalt)
+                mstore(add(ptr, 53), initHash)
+                hash := keccak256(ptr, 85)
+            }
+            if (uint16(hash) == 0xabcd) return (bytes32(i), address(uint160(hash)));
+        }
+    }
+
+    function test_salt_curveCreateGetsTheWindow() public {
+        Pad3VanityDeployer factory = _enableVanity();
+        bytes32 hash = factory.tokenInitCodeHash("Curve", "CRV", "meta", address(0), 0, 0, false);
+        (bytes32 salt, address expected) = _mine(factory, hash, creator);
+        address t = _withWindow(MINUTES, abi.encodeCall(pm.createWithSalt, (salt, _v3Data())));
+        assertEq(t, expected);
+        assertEq(aw.agentOpenAt(t), block.timestamp + uint256(MINUTES) * 60);
+        // a plain create is refused once vanity is on: the wrapper changes nothing there
+        vm.prank(creator);
+        vm.expectRevert();
+        aw.createWithAgentWindow(MINUTES, _v3Data());
+    }
+
+    /// @dev createWithSalt around a 打新 create makes no curve token: the window is not used, the whole call reverts.
+    function test_salt_fairCreate_windowNotUsed() public {
+        Pad3VanityDeployer factory = _enableVanity();
+        bytes32 hash = factory.tokenInitCodeHash("Fair", "FAIR", "meta", address(handler), 100, 100, true);
+        (bytes32 salt,) = _mine(factory, hash, creator);
+        bytes memory fair = abi.encodeWithSignature(
+            "create(string,string,string,string,address,address,(uint256,uint16,uint16,uint16,uint16),uint256)",
+            "Fair",
+            "FAIR",
+            "logo",
+            "meta",
+            address(wbnb),
+            address(0),
+            _mintCfg(10 ether, 50, 6000, 100, 100),
+            uint256(1)
+        );
+        // the same call without the wrapper works (so the revert below is the wrapper's)
+        uint256 snap = vm.snapshotState();
+        vm.prank(creator);
+        pm.createWithSalt(salt, fair);
+        vm.revertToState(snap);
+        vm.prank(creator);
+        vm.expectRevert(IGangAgentWindow.AgentWindowNotUsed.selector);
+        aw.createWithAgentWindow(MINUTES, abi.encodeCall(pm.createWithSalt, (salt, fair)));
+    }
+
+    // ---------------------------------------------------------------- vault mode
+    /// @dev A vault-bound token with a window: once open, every wallet trades it, but its own vault still never does,
+    ///      and neither the pad's view nor the registry quotes the vault (audit B L-1).
+    function test_vault_neverQuotedForItsOwnVault() public {
+        AWContractTrader vault = new AWContractTrader();
+        vm.startPrank(owner);
+        pm.setVault(address(vault), true);
+        pm.setVaultCreator(address(vault), creator);
+        padRegistry3.addPad(address(pad));
+        vm.stopPrank();
+        address t = _withWindow(
+            1,
+            abi.encodeCall(
+                pm.createWithVault,
+                ("V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(vault))
+            )
+        );
+        assertEq(pm.vaultOf(t), address(vault));
+        _open(t);
+        assertTrue(aw.canTradeCurve(t, human));
+        assertFalse(aw.canTradeCurve(t, address(vault)));
+        (uint256 r,,,) = padRegistry3.previewBuy(t, address(vault), 0.01 ether);
+        assertEq(r, 0);
+        assertEq(_quote(t, address(vault), 0.01 ether), 0);
+        wbnb.mintUnlimited(address(vault), 1 ether);
+        vm.expectRevert(IGangVaultPad.VaultCannotTrade.selector);
+        vault.buy(pad, IERC20(address(wbnb)), t, 0.01 ether);
+    }
+
     // ---------------------------------------------------------------- graduation reward
     function _gradToken() internal returns (address t) {
         AWMockModuleAdmin admin = new AWMockModuleAdmin();
         vm.prank(owner);
         pm.setGradReward(true, address(admin), makeAddr("countdownFactory"));
-        _register(MINUTES);
-        vm.prank(creator);
-        t = pm.createWithGradReward(
-            "G",
-            "G",
-            "l",
-            "m",
-            address(wbnb),
-            address(0),
-            _tax(0, 0, 0, address(0)),
-            9 ether,
-            IGangGradRewardBase.GradConfig({
-                seed: 1 ether,
-                minBuy: 0.01 ether,
-                entries: 10,
-                lastBps: 3_000,
-                carryBps: 0,
-                refundAfter: 90 days,
-                promoteBps: 0,
-                promoteWindow: 0
-            })
+        IGangGradRewardBase.GradConfig memory cfg = IGangGradRewardBase.GradConfig({
+            seed: 1 ether,
+            minBuy: 0.01 ether,
+            entries: 10,
+            lastBps: 3_000,
+            carryBps: 0,
+            refundAfter: 90 days,
+            promoteBps: 0,
+            promoteWindow: 0
+        });
+        t = _withWindow(
+            MINUTES,
+            abi.encodeCall(
+                IGangGradReward.createWithGradReward,
+                ("G", "G", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, cfg)
+            )
         );
         assertGt(aw.agentOpenAt(t), 0);
     }
 
-    function test_gradReward_keepsTheCapWhenOpen() public {
+    /// @dev No exception for a graduation reward: past openAt its cap is off too (it would stop no one).
+    function test_gradReward_capOffWhenOpen() public {
         address t = _gradToken();
-        _open(t);
         assertTrue(aw.walletCapOn(t));
-        assertEq(pad.walletRoom(t, human), pad.MAX_PER_WALLET());
-        assertEq(_buy(human, t, 1 ether), pad.MAX_PER_WALLET());
+        _open(t);
+        assertFalse(aw.walletCapOn(t));
+        assertEq(pad.walletRoom(t, human), type(uint256).max);
+        assertGt(_buy(human, t, 1 ether), pad.MAX_PER_WALLET());
     }
 
     function test_gradReward_countsOnlyAgentsWhenOpen() public {
@@ -541,11 +678,7 @@ contract Pad3AgentWindowTest is GangFixture {
 
     // ---------------------------------------------------------------- promoter share
     function test_promote_humanNotBoundWhenOpen() public {
-        _register(1);
-        vm.prank(creator);
-        address t = pm.createWithPromote(
-            "B", "B", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, 2_000, 30 days
-        );
+        address t = _withWindow(1, _promoteData());
         address promoter = _newAgent();
         _open(t);
         assertFalse(pm.canBind(t, human, promoter));

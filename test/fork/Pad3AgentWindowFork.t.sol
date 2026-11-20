@@ -18,18 +18,33 @@ import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {FlyUpgradeHarness} from "./Pad3LiveUpgrade.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
 
+/// @dev The Safe batch JSON the script prints (its `_batchJson`) and the registry implementation it resolved.
+contract WindowBatchHarness is FlyUpgradeHarness {
+    function batchJson(address admin, bytes memory call, address proxy) external view returns (string memory) {
+        return _batchJson(true, M.OWNER_SAFE, new address[](0), new bytes[](0), admin, call, proxy);
+    }
+
+    function regImpl() external view returns (address) {
+        return _regImpl;
+    }
+}
+
 interface IWBNBWin {
     function deposit() external payable;
     function approve(address, uint256) external returns (bool);
 }
 
 /// @notice The agent window on a mainnet fork (docs/SPEC-AGENT-WINDOW-2026-11-20.md): UpgradeGangLaunchpad3 run
-///         against the live proxy (its checks and simulation, `_checkAgentWindow` included), the upgrade sent as the
-///         Safe, the registry upgraded to this build as the Safe; the newest live tokens are still agent only with
-///         their cap. Then a token with a 60-minute window is created through createWithSalt: inside the window a
-///         wallet without an Agent ID is refused (pad and registry), an Agent buys under the 1% cap; at `openAt` the
-///         same wallet buys (the registry quotes it to the wei) and one buy takes it to graduation on the real
-///         Pancake V2 pair. Agent IDs are mocked per address on this fork only. No broadcast.
+///         against the live proxy with PAD3_REGISTRY_UPGRADE (deploying the pad's and the registry's new
+///         implementations; its checks and simulation, `_checkAgentWindow` and the registry read-back included), then
+///         re-run read-only over the deployed addresses; the Safe batch it prints (the pad upgrade, then the registry
+///         upgrade, nothing else) is sent as the Safe. Every registered pad's newest token is quoted the same for a
+///         wallet without an Agent ID and for an Agent, before and after; the newest live 3.0 token is still agent
+///         only with its cap. Then a token with a 60-minute window is created through
+///         createWithAgentWindow(createWithSalt(...)): inside the window a wallet without an Agent ID is refused (pad
+///         and registry), an Agent buys under the 1% cap; at `openAt` the same wallet buys past 1% at the registry's
+///         quote, and one buy takes it to graduation on the real Pancake V2 pair. Agent IDs are mocked per address on
+///         this fork only. No broadcast.
 /// @dev BSC_RPC_URL required (skipped if absent); BSC_FORK_BLOCK optional. Link the live PoolCheck:
 ///      --libraries src/launchpad-v2/PoolCheck.sol:PoolCheck:0xd2B159820749f178503E4faBCB18A7Ae4492bDb3
 contract Pad3AgentWindowForkTest is Test {
@@ -58,48 +73,68 @@ contract Pad3AgentWindowForkTest is Test {
         uint256 before = p.tokenCount();
         address oldToken = p.allTokens(before - 1);
 
-        // the script: deploys this build, checks it, simulates the upgrade (with `_checkAgentWindow`)
+        address human = _actor(false);
+        address agent = _actor(true);
+        bytes memory quotesBefore = _legacyQuotes(human, agent);
+
+        // the script, first run: deploys the pad's and the registry's new implementations, checks, simulates
         (, uint256 key) = makeAddrAndKey("agent window fork deployer");
         vm.deal(vm.addr(key), 10 ether);
         _env(key);
-        FlyUpgradeHarness upgrade = new FlyUpgradeHarness();
+        WindowBatchHarness upgrade = new WindowBatchHarness();
         vm.pauseGasMetering();
         upgrade.run();
         vm.resumeGasMetering();
         address next = upgrade.deployedImpl();
-        assertTrue(next != address(0));
+        address regImpl = upgrade.regImpl();
+        assertTrue(next != address(0) && regImpl != address(0));
 
-        // the Safe's upgrade: only the implementation slot moves
+        // the read-only re-run over them: the run that prints the batch the Safe signs (its simulation runs again)
+        vm.setEnv("PAD3_IMPL", vm.toString(next));
+        vm.setEnv("PAD_REGISTRY_IMPL", vm.toString(regImpl));
+        WindowBatchHarness again = new WindowBatchHarness();
+        vm.pauseGasMetering();
+        again.run();
+        vm.resumeGasMetering();
+        address admin = R.adminOf(PAD3);
+        address regAdmin = R.adminOf(M.PAD_REGISTRY);
+        string memory json = again.batchJson(
+            admin, abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(PAD3), next, "")), PAD3
+        );
+        assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), admin, "the pad upgrade first");
+        assertEq(vm.parseJsonAddress(json, ".transactions[1].to"), regAdmin, "the registry upgrade last");
+        assertEq(
+            vm.parseJsonBytes(json, ".transactions[1].data"),
+            abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(M.PAD_REGISTRY), regImpl, ""))
+        );
+        assertFalse(vm.keyExistsJson(json, ".transactions[2]"), "two calls");
+
+        // the Safe sends it, as printed: the pad's upgrade moves only its implementation slot
         vm.record();
-        vm.prank(M.OWNER_SAFE);
-        ProxyAdmin(R.adminOf(PAD3)).upgradeAndCall(ITransparentUpgradeableProxy(PAD3), next, "");
+        _send(json, 0);
         (, bytes32[] memory writes) = vm.accesses(PAD3);
         assertEq(writes.length, 1, "only the implementation slot");
         assertEq(writes[0], R.IMPLEMENTATION_SLOT);
+        _send(json, 1);
+        assertEq(R.implementationOf(PAD3), next);
+        assertEq(R.implementationOf(M.PAD_REGISTRY), regImpl);
         assertEq(p.owner(), M.OWNER_SAFE);
+        assertEq(reg.owner(), M.OWNER_SAFE);
         assertEq(p.tokenCount(), before);
-
-        // and the registry, to this build (its storage is untouched: one function changed)
-        address regImpl = address(new GangPadRegistry());
-        vm.prank(M.OWNER_SAFE);
-        ProxyAdmin(R.adminOf(M.PAD_REGISTRY)).upgradeAndCall(ITransparentUpgradeableProxy(M.PAD_REGISTRY), regImpl, "");
+        assertEq(_legacyQuotes(human, agent), quotesBefore, "every pad's newest token: same quotes");
 
         // live tokens: agent only, cap as before
         assertEq(w.MAX_AGENT_WINDOW_MINUTES(), 1440);
         assertEq(w.agentOpenAt(oldToken), 0);
         if (p.kindOf(oldToken) == 1) assertEq(w.walletCapOn(oldToken), p.walletCapEnabled());
 
-        // a token with a 60-minute window, through createWithSalt (direct create is refused with abcd on)
+        // a token with a 60-minute window: createWithAgentWindow(createWithSalt(...)), mainnet's only create path
         address creator = _actor(true);
-        vm.prank(creator, creator);
-        w.setNextAgentWindow(MINUTES);
         address t = _saltCreate(creator, factory);
         uint40 openAt = w.agentOpenAt(t);
         assertEq(openAt, block.timestamp + uint256(MINUTES) * 60);
-        assertEq(w.nextAgentWindowOf(creator), 0);
 
         // inside the window: a wallet without an Agent ID is refused, an Agent buys under the cap
-        address human = _actor(false);
         assertFalse(p.isAgent(human));
         (uint256 q,,,) = reg.previewBuy(t, human, 0.1 ether);
         assertEq(q, 0, "registry: no quote for a human");
@@ -107,7 +142,6 @@ contract Pad3AgentWindowForkTest is Test {
         vm.prank(human, human);
         vm.expectRevert(IGangLaunchpad.NotAgent.selector);
         p.buy(t, 0.1 ether, 0);
-        address agent = _actor(true);
         _wrap(agent, 1 ether);
         vm.prank(agent, agent);
         assertEq(p.buy(t, 1 ether, 0), p.MAX_PER_WALLET(), "the 1% cap in the window");
@@ -140,8 +174,32 @@ contract Pad3AgentWindowForkTest is Test {
             GangLaunchpad3.createWithGradTarget, ("Win", "WIN", "", "meta", address(0), address(0), none, 6 ether)
         );
         vm.prank(creator, creator);
-        t = m.createWithSalt(salt, data);
+        t = w.createWithAgentWindow(MINUTES, abi.encodeCall(m.createWithSalt, (salt, data)));
         assertEq(t, expected);
+    }
+
+    /// @dev Each registered pad's newest token: the registry's quote of a 0.1 buy for `human` and for `agent`.
+    function _legacyQuotes(address human, address agent) internal view returns (bytes memory st) {
+        address[] memory pads = reg.pads();
+        for (uint256 i; i < pads.length; i++) {
+            (bool ok, bytes memory ret) = pads[i].staticcall(abi.encodeWithSignature("tokenCount()"));
+            if (!ok || ret.length != 32 || abi.decode(ret, (uint256)) == 0) continue;
+            (ok, ret) =
+                pads[i].staticcall(abi.encodeWithSignature("allTokens(uint256)", abi.decode(ret, (uint256)) - 1));
+            if (!ok) continue;
+            address t = abi.decode(ret, (address));
+            (uint256 h,,,) = reg.previewBuy(t, human, 0.1 ether);
+            (uint256 a,,,) = reg.previewBuy(t, agent, 0.1 ether);
+            st = abi.encode(st, t, h, a);
+        }
+    }
+
+    function _send(string memory json, uint256 i) internal {
+        string memory k = string.concat(".transactions[", vm.toString(i), "]");
+        vm.prank(M.OWNER_SAFE);
+        (bool ok,) =
+            vm.parseJsonAddress(json, string.concat(k, ".to")).call(vm.parseJsonBytes(json, string.concat(k, ".data")));
+        assertTrue(ok, "a transaction of the Safe batch");
     }
 
     /// @dev A fresh wallet; `agent`: its Agent ID mocked on this fork (the registry's other answers are the real ones).
@@ -175,6 +233,8 @@ contract Pad3AgentWindowForkTest is Test {
         vm.setEnv("PAD3_GRAD_HANDLER_ADMIN", vm.toString(address(0)));
         vm.setEnv("PAD3_GRAD_COUNTDOWN_FACTORY", vm.toString(address(0)));
         vm.setEnv("PAD3_IMPL", vm.toString(address(0)));
+        vm.setEnv("PAD3_REGISTRY_UPGRADE", "true");
+        vm.setEnv("PAD_REGISTRY_IMPL", vm.toString(address(0)));
         vm.setEnv("PAD3_INIT_CALL", "0x");
         vm.setEnv("PAD3_FLY_HANDLER", vm.toString(address(0)));
         vm.setEnv("PAD3_FLY_TOKEN_DEPLOYER", vm.toString(address(0)));

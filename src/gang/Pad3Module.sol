@@ -153,10 +153,9 @@ contract Pad3Module is
 
     /// @dev The agent window's entry and views (IGangAgentWindow), served by Pad3GradModule for the 24 KB limit.
     function _isAgentWindow(bytes4 s) private pure returns (bool) {
-        return s == IGangAgentWindow.setNextAgentWindow.selector || s == IGangAgentWindow.nextAgentWindowOf.selector
-            || s == IGangAgentWindow.agentOpenAt.selector || s == IGangAgentWindow.agentWindowOpen.selector
-            || s == IGangAgentWindow.canTradeCurve.selector || s == IGangAgentWindow.walletCapOn.selector
-            || s == IGangAgentWindow.MIN_AGENT_WINDOW_MINUTES.selector
+        return s == IGangAgentWindow.createWithAgentWindow.selector || s == IGangAgentWindow.agentOpenAt.selector
+            || s == IGangAgentWindow.agentWindowOpen.selector || s == IGangAgentWindow.canTradeCurve.selector
+            || s == IGangAgentWindow.walletCapOn.selector || s == IGangAgentWindow.MIN_AGENT_WINDOW_MINUTES.selector
             || s == IGangAgentWindow.MAX_AGENT_WINDOW_MINUTES.selector;
     }
 
