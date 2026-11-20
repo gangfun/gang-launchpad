@@ -280,6 +280,7 @@ registry 的 `_curve` 被 `previewBuy` 和 `previewSell` 共用，原来用 pad 
 ### 9.2 主网签名前后要核对的
 
 - **签名前**：
+  - 从 `BaseCreated` 日志整理出所有 base 币，填进 `PAD3_BASE_PROBES`。脚本只比对最新的 25 个币，不在其中的 base 币要靠这个变量逐个比对 base vault 和底仓；没设时脚本会打印 WARNING；
   - 用部署好的地址（`PAD3_IMPL`、`PAD_REGISTRY_IMPL`、飞轮依赖）只读重跑脚本，拿到批次 JSON，记下它的 SHA-256 并归档到 `docs/`；
   - `cast code` 确认新 `CurveLogic3`（以及地址变了的 `FairLogic`、`LegacyRoute`）在链上有代码，并且和 artifact 一致（metadata 除外）；
   - 在 BscScan 验证所有新合约：pad impl、`Pad3Module`、`Pad3GradModule`、`Pad3FlyModule`（若有新部署）、`CurveLogic3`、registry impl；
@@ -352,4 +353,23 @@ registry 的 `_curve` 被 `previewBuy` 和 `previewSell` 共用，原来用 pad 
 - 直接调用模块实现合约无害；
 - registry 对每一代 pad 都能正确回退。
 
-这次修复改了合约逻辑（发币入口、上限规则、vault 报价），需要再做一轮独立复审，之后才能上测试网。
+### 11.3 修复复审（2026-11-21，提交 `ba6de5b`）
+
+结论：没有 critical / high / medium。已核实的部分：
+- 新入口的 transient 存储全程落在 proxy 的上下文里；
+- 窗口不会被别人的币用掉，重入也无法写入窗口；
+- 窗口不会遗留给同一笔交易里后面发的币；
+- 返回值解码、selector 白名单正确；
+- 上限规则只有一处定义；
+- vault 报价修复正确；
+- registry 升级脚本的检查和顺序正确；
+- 没设窗口的币行为和 main 一致。
+
+| 发现 | 处理 |
+|---|---|
+| L-1：升级脚本 `_registryState` 只比对 0 地址的报价，碰不到新的 gate 路径 | 增加一个固定的、没有 Agent ID 的地址（`REGISTRY_PROBE_WALLET`），它的买入和卖出报价也在升级前后比对 |
+| Info：接口注释说 `createWithBase` 只能经 `createWithSalt` 付款 | 改正：直接调用和经 `createWithSalt` 调用都可以 |
+| Info：命名空间删掉了一个成员 | 那是草稿 `fe5b664` 的 `pendingMinutes`，从没部署过（主网、测试网都没有），注释里写明 |
+| Info：测试注释过时；缺 4 个用例 | 改注释；补测试：经新入口调 `createWithBase` 时带 value（多 1 wei 回滚 `BadMsgValue`）；不可 payable 的入口带 value 回滚（同样的调用不带 value 能成功）；内层错误原样抛出（没有授权的 `createWithVault`）；合约 creator 在同一个调用里连续发币不串窗口 |
+
+这一轮只改了脚本、注释和测试，没有改合约逻辑。按流程，对这次小改动再做一次快速复审，然后上测试网。

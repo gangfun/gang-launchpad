@@ -78,6 +78,9 @@ import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
 ///      pad, `padOf` and the fresh-wallet quotes `previewBuy` / `previewSell` with what they were before both upgrades.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
+    /// @dev A fixed address with no code and no Agent ID, for `_registryState`'s gated quotes (keccak256 of a label).
+    address internal constant REGISTRY_PROBE_WALLET =
+        address(uint160(uint256(keccak256("gang.registry.probe.wallet"))));
 
     /// @dev One upgrade as `_simulate` runs it.
     struct Up {
@@ -323,9 +326,12 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         ProxyAdmin(_regAdmin).upgradeAndCall(ITransparentUpgradeableProxy(_reg), _regImpl, "");
     }
 
-    /// @dev The registry's pads and, for the newest SAMPLE tokens of each, `padOf` and the fresh-wallet quotes (a 0.01
-    ///      quote-unit buy, a 1-token sell): the reads an aggregator makes that this upgrade must not change. Empty when
-    ///      no registry upgrade is asked.
+    /// @dev The registry's pads and, for the newest SAMPLE tokens of each, `padOf` and the quotes of a 0.01 quote-unit
+    ///      buy and a 1-token sell, for a fresh wallet (address 0: no gate check) and for REGISTRY_PROBE_WALLET, a fixed
+    ///      address without an Agent ID (it goes through the new gate path, `canTradeCurve` / `isAgent`). Nothing
+    ///      opens or closes between the two reads (same block, only the upgrades in between), so its quotes must stay
+    ///      as they were: 0 for a token not open, the open curve's quote for one that is. Empty when no registry
+    ///      upgrade is asked (audit re-review L-1).
     function _registryState() internal view returns (address[] memory pads, bytes memory st) {
         if (_regImpl == address(0)) return (pads, st);
         GangPadRegistry g = GangPadRegistry(_reg);
@@ -341,7 +347,9 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
                 address t = abi.decode(ret, (address));
                 (uint256 out,,,) = g.previewBuy(t, address(0), 0.01 ether);
                 (uint256 back,) = g.previewSell(t, address(0), 1 ether);
-                st = abi.encode(st, t, g.padOf(t), out, back);
+                (uint256 outP,,,) = g.previewBuy(t, REGISTRY_PROBE_WALLET, 0.01 ether);
+                (uint256 backP,) = g.previewSell(t, REGISTRY_PROBE_WALLET, 1 ether);
+                st = abi.encode(st, t, g.padOf(t), out, back, outP, backP);
             }
         }
     }

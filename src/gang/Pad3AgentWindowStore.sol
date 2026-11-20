@@ -11,7 +11,8 @@ pragma solidity 0.8.28;
 ///         The window being created is held in TRANSIENT storage for the one `createWithAgentWindow` call: it can't be
 ///         left over for a later create, and a revert discards it.
 ///         UPGRADES: members are only ever appended at the end (never reordered, retyped or removed) and SLOT never
-///         changes; test/gang3/Pad3AgentWindow.t.sol pins both.
+///         changes; test/gang3/Pad3AgentWindow.t.sol pins both. (A draft's second member, never deployed anywhere,
+///         was dropped before release.)
 library Pad3AgentWindowStore {
     /// @dev Window bounds, in minutes (1 minute to 24 hours).
     uint16 internal constant MIN_MINUTES = 1;

@@ -9,7 +9,10 @@ import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../../src/gang/Pad3Module.sol";
 import {Pad3AgentWindowStore} from "../../src/gang/Pad3AgentWindowStore.sol";
 import {Pad3VanityDeployer} from "../../src/gang/Pad3VanityDeployer.sol";
+import {GangBaseVault} from "../../src/gang/GangBaseVault.sol";
+import {IGangBasePad} from "../../src/gang/interfaces/IGangBasePad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
+import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {IGangAgentWindow} from "../../src/gang/interfaces/IGangAgentWindow.sol";
 import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
 import {IGangGradReward, IGangGradRewardBase} from "../../src/gang/interfaces/IGangGradReward.sol";
@@ -44,6 +47,26 @@ contract AWContractTrader {
     }
 }
 
+/// @dev A contract creator (holding an Agent ID in the tests) making several creates in one call: one with a window,
+///      then plain ones, then a failed wrapper (caught), then a plain one.
+contract AWCreatorContract {
+    function run(IGangAgentWindow aw, GangLaunchpad pad, bytes memory windowed, bytes memory plain)
+        external
+        returns (address[3] memory t)
+    {
+        t[0] = aw.createWithAgentWindow(5, windowed);
+        (bool ok, bytes memory ret) = address(pad).call(plain);
+        require(ok, "plain create");
+        t[1] = abi.decode(ret, (address));
+        try aw.createWithAgentWindow(5, hex"1234") returns (address) {
+            revert("bad wrapper call went through");
+        } catch {}
+        (ok, ret) = address(pad).call(plain);
+        require(ok, "plain create");
+        t[2] = abi.decode(ret, (address));
+    }
+}
+
 /// @dev Many contract buyers in one tx: the atomic sweep the spec accepts (SPEC-AGENT-WINDOW §3).
 contract AWSweeper {
     function sweep(GangLaunchpad pad, IERC20 quote, address token, uint256 n, uint256 each) external {
@@ -55,8 +78,9 @@ contract AWSweeper {
     }
 }
 
-/// @notice The agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md): registered before a curve create, written at it,
-///         and from `openAt` on the gate lets every wallet trade and the 1% cap is off (not on a graduation reward).
+/// @notice The agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md): passed to createWithAgentWindow around a curve
+///         create and written at it; from `openAt` on the gate lets every wallet trade and the 1% cap is off (every
+///         token, a graduation reward's too).
 contract Pad3AgentWindowTest is GangFixture {
     uint16 internal constant MINUTES = 60;
 
@@ -592,6 +616,62 @@ contract Pad3AgentWindowTest is GangFixture {
         vm.prank(creator);
         vm.expectRevert(IGangAgentWindow.AgentWindowNotUsed.selector);
         aw.createWithAgentWindow(MINUTES, abi.encodeCall(pm.createWithSalt, (salt, fair)));
+    }
+
+    /// @dev createWithBase straight through the wrapper: the value reaches it (its exact cost; one wei more reverts).
+    function test_wrapper_createWithBase_carriesValue() public {
+        GangBaseVault impl = new GangBaseVault(address(pad));
+        vm.prank(owner);
+        pm.setBaseVaultImpl(address(impl));
+        uint256 cost = pm.previewBaseCost(9 ether, 500);
+        bytes memory data = abi.encodeCall(
+            pm.createWithBase,
+            ("Base", "BASE", "logo", "meta", _tax(0, 0, 0, address(0)), 9 ether, IGangBasePad.BaseConfig(500, 30))
+        );
+        vm.prank(creator);
+        vm.expectRevert(IGangLaunchpad3.BadMsgValue.selector);
+        aw.createWithAgentWindow{value: cost + 1}(10, data);
+        vm.prank(creator);
+        address t = aw.createWithAgentWindow{value: cost}(10, data);
+        assertEq(aw.agentOpenAt(t), block.timestamp + 600);
+        assertTrue(pm.baseVaultOf(t) != address(0));
+    }
+
+    /// @dev A value sent with a non-payable entry reverts the whole call: the entry's own callvalue check, which
+    ///      reverts with no data (the same call without a value goes through).
+    function test_wrapper_valueToNonPayableEntryReverts() public {
+        vm.deal(creator, 1 ether);
+        vm.prank(creator);
+        vm.expectRevert(bytes(""));
+        aw.createWithAgentWindow{value: 1}(MINUTES, _v3Data());
+        assertGt(aw.agentOpenAt(_withWindow(MINUTES, _v3Data())), 0);
+    }
+
+    /// @dev The inner entry's own error comes out unchanged (createWithVault without a grant).
+    function test_wrapper_innerErrorBubbles() public {
+        AWContractTrader vault = new AWContractTrader();
+        vm.prank(owner);
+        pm.setVault(address(vault), true);
+        vm.prank(creator);
+        vm.expectRevert(IGangVaultPad.NotVaultCreator.selector);
+        aw.createWithAgentWindow(
+            MINUTES,
+            abi.encodeCall(
+                pm.createWithVault,
+                ("V", "V", "l", "m", address(wbnb), address(0), _tax(0, 0, 0, address(0)), 9 ether, address(vault))
+            )
+        );
+    }
+
+    /// @dev A contract creator: the window goes to the one token created inside the wrapper, never to the plain creates
+    ///      it makes after it in the same call, a caught failed wrapper included.
+    function test_wrapper_contractCreator_noLeak() public {
+        AWCreatorContract c = new AWCreatorContract();
+        agents.mint(address(c), 9_999);
+        address[3] memory t = c.run(aw, pad, _v3Data(), _v3Data());
+        assertEq(aw.agentOpenAt(t[0]), block.timestamp + 300);
+        assertEq(aw.agentOpenAt(t[1]), 0);
+        assertEq(aw.agentOpenAt(t[2]), 0);
     }
 
     // ---------------------------------------------------------------- vault mode

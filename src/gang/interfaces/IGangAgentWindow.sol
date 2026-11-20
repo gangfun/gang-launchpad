@@ -21,8 +21,9 @@ interface IGangAgentWindow {
     ///         `createWithBase`, `createWithGradReward`) or `createWithSalt` around one of them, as the caller, in this
     ///         same call, and gives the token it creates a window of `windowMinutes`: `openAt` = now + windowMinutes
     ///         minutes. Every check and event of the entry still runs. Reverts AgentWindowNotUsed when no curve token
-    ///         came out of it for the caller (e.g. a 打新 / 铸币飞轮 create inside `createWithSalt`). Payable only for
-    ///         what the entry itself takes (`createWithBase` through `createWithSalt`).
+    ///         came out of it for the caller (e.g. a 打新 / 铸币飞轮 create inside `createWithSalt`). Payable for what the
+    ///         entry itself takes (`createWithBase`, directly or through `createWithSalt`); a value sent with any other
+    ///         entry reverts the whole call.
     function createWithAgentWindow(uint16 windowMinutes, bytes calldata data) external payable returns (address token);
 
     /// @notice When `token` opens to every wallet; 0 = never (agent only).
