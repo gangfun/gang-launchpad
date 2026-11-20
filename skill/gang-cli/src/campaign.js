@@ -15,11 +15,16 @@
  * come-back buy; a DEV board per period). A cash campaign has no sign-up: counted trades enter by themselves. A
  * campaign can have both (kind cash+tickets): it shows both blocks, and its sign-up is the ticket one.
  *
+ * A buy-reward campaign (type buy_reward, 0.48.0+; kind buy) shares a token reward per period among wallets by their
+ * counted buys (and mints, if its rules say so), capped per wallet per period, under public versioned rules. It has no
+ * sign-up either. Before a period is published the wallet's share is an estimate; once published, its units and tx.
+ *
  * The sign-up proves which Agent wallet joins without a trade. It is open only while the campaign's config says so
  * (rules.ticket.join = true, as the server checks; a config without the key is closed): otherwise nothing is signed,
  * earlier sign-ups keep their ticket, and the notes say where the base ticket comes from
  * now. Either way an agent never trades only to earn campaign rewards or tickets, and never on its own.
  */
+import { formatUnits } from 'viem'
 import { get as apiGet } from './discover.js'
 import { bawAddress, bawStatus } from './baw.js'
 import { localTime } from './follow.js'
@@ -34,6 +39,8 @@ export const CAMPAIGN_NOTE = `${RULES_NOTE} Never trade only to earn campaign re
 export const CAMPAIGN_NOTE_CASH = `${RULES_NOTE} No sign-up: counted trades (buys and mints; sells never count) enter automatically; see rewards. ${NO_TICKET_TRADES}`
 /** The note once the campaign closed its sign-up (rules.ticket.join not true). */
 export const CAMPAIGN_NOTE_CLOSED = `${RULES_NOTE} The free sign-up is closed: tickets now come as the campaign's rules say (see notice and the campaign page); wallets that signed up earlier keep theirs. ${NO_TICKET_TRADES}`
+/** The note for a buy-reward campaign (type buy_reward): no sign-up, an amount per period by counted buys. */
+export const CAMPAIGN_NOTE_BUY = `A gang.fun reward campaign: rewards follow its public, versioned rules (see rules and version) and are not investment advice. No sign-up: counted trades are recorded automatically; estimates are not final until a period is published. An agent never trades only to earn campaign rewards, and never on its own: any trade is the user's decision, previewed and confirmed.`
 /** The note for a list of campaigns (each may have its sign-up open or closed). */
 export const CAMPAIGN_NOTE_LIST = `${RULES_NOTE} ${NO_TICKET_TRADES}`
 const CLOSED_MSG = (slug) => `the free sign-up for ${slug} is closed: wallets that signed up earlier keep their ticket; tickets now come as the campaign's rules say (see notice and ${campaignUrl(slug)}). Nothing was signed or sent. ${NO_TICKET_TRADES}`
@@ -60,20 +67,24 @@ export function joinTypedData(wallet, campaign, expires) {
 
 /** Is the campaign's free sign-up closed? Open only with rules.ticket.join = true (the server refuses otherwise). */
 export const joinClosed = (c) => c?.rules?.ticket?.join !== true
+/** A buy-reward campaign (type buy_reward): a token reward per period by counted buys; no tickets, no sign-up. */
+export const isBuyReward = (c) => c?.type === 'buy_reward'
 /** Does this campaign (GET /campaigns/:slug) take a free sign-up now? Live, with tickets, its sign-up not closed. */
-export const takesJoin = (c) => c?.status === 'live' && c.tickets != null && !joinClosed(c)
+export const takesJoin = (c) => c?.status === 'live' && !isBuyReward(c) && c.tickets != null && !joinClosed(c)
 /** A campaign with cash rewards (no tickets; rules.new_user pays per wallet) rather than a ticket campaign. */
 /** Does the campaign pay cash per wallet (rules.new_user.cash not false)? Alone (isCash) or beside tickets. */
-export const hasCash = (c) => c?.rules?.new_user != null && c.rules.new_user.cash !== false
+export const hasCash = (c) => !isBuyReward(c) && c?.rules?.new_user != null && c.rules.new_user.cash !== false
 /** A campaign with cash rewards only (no tickets): it has no sign-up. */
 export const isCash = (c) => c != null && c.tickets == null && hasCash(c)
-export const kindOf = (c) => (isCash(c) ? 'cash' : hasCash(c) ? 'cash+tickets' : 'tickets')
-/** open | closed | none (a cash campaign has no sign-up). */
-export const signUpOf = (c) => (isCash(c) ? 'none' : joinClosed(c) ? 'closed' : 'open')
-/** The note that fits this campaign's sign-up state. */
-export const noteFor = (c) => (isCash(c) ? CAMPAIGN_NOTE_CASH : joinClosed(c) ? CAMPAIGN_NOTE_CLOSED : CAMPAIGN_NOTE)
+export const kindOf = (c) => (isBuyReward(c) ? 'buy' : isCash(c) ? 'cash' : hasCash(c) ? 'cash+tickets' : 'tickets')
+/** A campaign with no sign-up at all: cash only, or buy reward. */
+export const noSignUp = (c) => isBuyReward(c) || isCash(c)
+/** open | closed | none (a cash or buy-reward campaign has no sign-up). */
+export const signUpOf = (c) => (noSignUp(c) ? 'none' : joinClosed(c) ? 'closed' : 'open')
+/** The note that fits this campaign's kind and sign-up state. */
+export const noteFor = (c) => (isBuyReward(c) ? CAMPAIGN_NOTE_BUY : isCash(c) ? CAMPAIGN_NOTE_CASH : joinClosed(c) ? CAMPAIGN_NOTE_CLOSED : CAMPAIGN_NOTE)
 const noticeOf = (c) => {
-  const n = c?.rules?.page?.notice_en
+  const n = isBuyReward(c) ? c?.notice?.en : c?.rules?.page?.notice_en
   return typeof n === 'string' && n.trim() ? n.trim().slice(0, 500) : null
 }
 
@@ -158,6 +169,7 @@ export function rewardsOf(c) {
 
 /** The parts of GET /campaigns/:slug an agent needs (the page has the rest). */
 export function summary(c) {
+  if (isBuyReward(c)) return buySummary(c)
   const w = c.window ?? {}
   return {
     slug: c.slug, title: titleOf(c.title), status: c.status, kind: kindOf(c),
@@ -179,6 +191,7 @@ export function summary(c) {
 /** The signed-in wallet's row (GET /campaigns/:slug/wallet/:address), or null; c (the campaign) adds its cash progress. */
 export function mineOf(m, c) {
   if (!m || typeof m !== 'object') return null
+  if (isBuyReward(c)) return buyMineOf(m, c)
   const t = m.tickets ?? {}
   return {
     wallet: m.wallet, status: m.status ?? null, agentId: m.agent_id ?? null,
@@ -197,6 +210,113 @@ export function mineOf(m, c) {
   }
 }
 
+// --- buy-reward campaigns (type buy_reward, 0.48.0+) ---
+
+/** Base units (an integer string) → whole tokens as a decimal string (null when not an integer). */
+export function tokensOf(units, decimals) {
+  if (units == null || !/^\d+$/.test(String(units))) return null
+  const d = Number.isInteger(Number(decimals)) && Number(decimals) >= 0 ? Number(decimals) : 18
+  return formatUnits(BigInt(String(units)), d)
+}
+const pct = (bps) => (num(bps) == null ? null : `${Math.round(Number(bps)) / 100}%`)
+const PAYOUT_TEXT = {
+  end_only: 'paid once after the campaign ends, by the published results of each period',
+  per_period: 'paid after each period, once its results are published',
+}
+const BUY_STATUS_TEXT = {
+  eligible: 'eligible: its counted trades earn a share of each period',
+  not_new: "not a new wallet (it traded on Gang before the campaign's cut-off): it earns nothing in this campaign",
+  not_agent: 'holds no Agent ID: its trades do not count',
+  excluded: 'excluded by the campaign rules: it earns nothing',
+  pending: 'not decided yet: shown once its trades are checked',
+}
+
+/** A buy-reward campaign's rules in short words (rules of GET /campaigns/:slug). */
+export function buyRulesOf(c) {
+  const r = c.rules ?? {}
+  const mode = r.mode === 'gross_buys' ? 'gross_buys' : 'net_held'
+  const mints = r.include_mints === true
+  const pads = Array.isArray(r.pads) && r.pads.length ? r.pads.map((a) => ({ address: a, name: padName(a) })) : null
+  const quotes = Array.isArray(r.quotes) && r.quotes.length
+    ? r.quotes.map((q) => (q && typeof q === 'object' ? { address: q.address ?? null, symbol: q.symbol ?? QUOTE_SYMBOLS[String(q.address).toLowerCase()] ?? null } : { address: q, symbol: QUOTE_SYMBOLS[String(q).toLowerCase()] ?? null }))
+    : null
+  const what = mints ? 'buys and mints' : 'buys'
+  const where = [
+    pads ? `on ${listOf(pads.map((p) => p.name ?? p.address))}` : 'on Gang',
+    quotes && `paid in ${listOf(quotes.map((q) => q.symbol ?? q.address))}`,
+  ].filter(Boolean).join(', ')
+  const capU = num(r.cap_u_per_wallet_period)
+  const age = num(r.min_token_age_s)
+  const newBefore = r.new_only && typeof r.new_only === 'object' ? when(r.new_only.before) ?? r.new_only.before ?? null : null
+  const counts = mode === 'net_held'
+    ? `net ${what} ${where}, still held at the end of each period: sells and withdrawals take that amount back out`
+    : `${what} ${where}, as made (gross: a later sell does not take it back out)`
+  const text = [
+    `Counts: ${counts}, valued in U${r.price_source ? ` (price: ${r.price_source})` : ''}.`,
+    capU != null && `At most ${capU} U counted per wallet per period.`,
+    (num(r.token_share_cap_bps) != null || num(r.creator_share_cap_bps) != null) && `Share caps: ${[
+      num(r.token_share_cap_bps) != null && `one token at most ${pct(r.token_share_cap_bps)} of a period's reward`,
+      num(r.creator_share_cap_bps) != null && `one creator at most ${pct(r.creator_share_cap_bps)}`,
+    ].filter(Boolean).join(', ')}.`,
+    age && `A token counts once it is at least ${span(age)} old.`,
+    r.exclude_own_tokens === true && "Trades of the wallet's own tokens (ones it created) do not count.",
+    r.agent_id === true && 'Only wallets holding an Agent ID.',
+    r.new_only && `New wallets only (no Gang trade before ${newBefore ?? 'the campaign'}).`,
+    PAYOUT_TEXT[r.payout] && `Reward: ${PAYOUT_TEXT[r.payout]}.`,
+  ].filter(Boolean)
+  return {
+    mode, counts, includeMints: mints, capUPerWalletPeriod: capU,
+    tokenShareCapBps: num(r.token_share_cap_bps), creatorShareCapBps: num(r.creator_share_cap_bps),
+    minTokenAge: age ? span(age) : null, excludeOwnTokens: r.exclude_own_tokens === true, agentId: r.agent_id === true,
+    newOnly: r.new_only ? { before: newBefore } : null, pads, quotes, payout: r.payout ?? null, priceSource: r.price_source ?? null,
+    text,
+  }
+}
+
+function buySummary(c) {
+  const w = c.window ?? {}
+  const rw = c.reward ?? {}
+  const dec = rw.decimals
+  const periods = Array.isArray(c.periods) ? c.periods : []
+  return {
+    slug: c.slug, title: titleOf(c.title), status: c.status, kind: 'buy', type: 'buy_reward',
+    start: when(w.start), end: when(w.ended_at ?? w.end), ...(noticeOf(c) && { notice: noticeOf(c) }), signUp: 'none',
+    version: c.version ?? null,
+    reward: { token: rw.token ?? null, symbol: rw.symbol ?? null, decimals: num(dec), total: tokensOf(rw.total_units, dec), totalUnits: rw.total_units ?? null },
+    rules: buyRulesOf(c),
+    periods: periods.map((p) => ({
+      id: p.id, start: when(p.start), end: when(p.end), status: p.status ?? null, reward: tokensOf(p.units, dec),
+      ...(p.wallets != null && { wallets: num(p.wallets) }),
+      ...(p.published && { published: { at: when(p.published.at), payees: num(p.published.payees), reward: tokensOf(p.published.units, dec) } }),
+    })),
+    currentPeriod: c.current_period ?? null,
+    url: campaignUrl(c.slug),
+  }
+}
+
+/** The signed-in wallet's buy-reward row; payouts (GET /campaigns/:slug/payouts items) fill a published period's tx. */
+export function buyMineOf(m, c, payouts) {
+  const dec = (m.reward ?? c.reward ?? {}).decimals
+  const paid = (Array.isArray(payouts) ? payouts : []).filter((x) => String(x.wallet).toLowerCase() === String(m.wallet).toLowerCase())
+  return {
+    wallet: m.wallet, status: m.status ?? null, statusText: BUY_STATUS_TEXT[m.status] ?? null,
+    symbol: (m.reward ?? c.reward ?? {}).symbol ?? null,
+    periods: (Array.isArray(m.periods) ? m.periods : []).map((p) => {
+      const po = paid.find((x) => String(x.period) === String(p.id))
+      const units = p.units ?? po?.units ?? null
+      const tx = p.tx_hash ?? po?.tx_hash ?? null
+      return {
+        id: p.id, start: when(p.start), end: when(p.end), countedU: num(p.counted_u) ?? 0, rawU: num(p.raw_u), capU: num(p.cap_u),
+        ...(units != null
+          ? { reward: tokensOf(units, dec), units: String(units), ...(tx && { txHash: tx }) }
+          : p.est_units != null && {
+            estimatedReward: tokensOf(p.est_units, dec), estimate: true,
+            ...(typeof p.estimate === 'string' && { estimateBasis: p.estimate }),
+          }),
+      }
+    }),
+  }
+}
 /** runCampaign(sub, rest, io): sub = 'join' or a slug or undefined; io = { flag, out, fail } from index.js. */
 export async function runCampaign(sub, rest, { flag, out, fail }) {
   const join = sub === 'join'
@@ -237,12 +357,19 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     // --yes signs at once: with several live, only the slug the user OK'd (the preview's confirm names it)
     if (flag('yes') && open.length) return fail(`several campaigns are live: name the one to sign up for (gang campaign join <slug> --yes, as the preview's confirm says: ${open.join(', ')})`, { code: 'USAGE', campaigns: open })
     if (open.length === 1) return open[0]
-    if (!open.length) return fail(`no live gang.fun campaign takes a free sign-up now (live: ${liveSlugs.join(', ')}); gang campaign <slug> shows how its ${views.some(hasCash) ? 'rewards or tickets work' : 'tickets come'}. ${NO_TICKET_TRADES}`, { apiCode: 'closed', code: 'ERROR', campaigns: liveSlugs })
+    if (!open.length) return fail(`no live gang.fun campaign takes a free sign-up now (live: ${liveSlugs.join(', ')}); gang campaign <slug> shows how its ${views.some((v) => hasCash(v) || isBuyReward(v)) ? 'rewards or tickets work' : 'tickets come'}. ${NO_TICKET_TRADES}`, { apiCode: 'closed', code: 'ERROR', campaigns: liveSlugs })
     return fail(`several live campaigns take a free sign-up: name one (gang campaign join <slug>: ${open.join(', ')})`, { campaigns: open })
   }
   const mine = async (slug, w, c) => {
     if (!w) return null
-    try { return mineOf(await apiGet(`/campaigns/${slug}/wallet/${w.toLowerCase()}`, undefined, ''), c) } catch { return null }
+    try {
+      const row = await apiGet(`/campaigns/${slug}/wallet/${w.toLowerCase()}`, undefined, '')
+      if (!row || !isBuyReward(c)) return mineOf(row, c)
+      // a published period: its payout rows (404 until something is published) fill in units and tx
+      const published = Array.isArray(c.periods) && c.periods.some((p) => p.published)
+      const po = published ? await apiGet(`/campaigns/${slug}/payouts`, undefined, '').catch(() => null) : null
+      return buyMineOf(row, c, po?.items)
+    } catch { return null }
   }
   const wallet = () => (signedIn() ? (() => { try { return bawAddress() } catch { return null } })() : null)
 
@@ -258,7 +385,7 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
   const me = await mine(slug, w, c)
   // can this wallet sign up at all? (the server refuses otherwise, after the user approved a signature for nothing)
   const closed = joinClosed(c)
-  const joinOpen = c.status === 'live' && c.tickets != null && !closed
+  const joinOpen = takesJoin(c)
   const notNew = me?.status === 'not_new'
   const excluded = me?.status === 'excluded'
 
@@ -270,6 +397,8 @@ export async function runCampaign(sub, rest, { flag, out, fail }) {
     })
   }
 
+  // a buy-reward campaign has no sign-up: nothing to sign, and no reason to trade for it
+  if (isBuyReward(c)) fail(`this campaign has no sign-up (${slug}): it rewards counted trades under its public rules, recorded automatically (gang campaign ${slug} shows them). Nothing was signed or sent. ${NO_TICKET_TRADES}`, { apiCode: 'no_signup', code: 'ERROR', ...(liveSlugs && { campaigns: liveSlugs }), campaign: summary(c), note: CAMPAIGN_NOTE_BUY })
   // a campaign with cash rewards has no sign-up at all: nothing to sign, and no reason to trade for it
   if (isCash(c)) fail(`this campaign has no sign-up (${slug}): counted trades are recorded automatically (gang campaign ${slug} shows its rewards). Nothing was signed or sent. ${NO_TICKET_TRADES}`, { apiCode: 'no_signup', code: 'ERROR', ...(liveSlugs && { campaigns: liveSlugs }), campaign: summary(c), note: CAMPAIGN_NOTE_CASH })
   // an earlier sign-up keeps its ticket, also once the sign-up closed or the campaign ended; an excluded wallet has none
