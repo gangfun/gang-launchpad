@@ -105,6 +105,20 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   `mine.cash`: `status` (pending | entered | waitlist | excluded | …), `slot`, `tier`, `amountU` (counted so far),
   `firstU` / `comeBackU` (the wallet's amounts, once entered), `comeBack` {from, until, minU, done}, `earnedU`, `paidU`,
   `asset`. With several live campaigns, each `live` row has `kind` and `signUp` (open | closed | none).
+- Buy-reward campaigns (0.48.0+, `type: "buy_reward"`, `kind: "buy"`, `signUp: "none"`): a token reward split into
+  periods, shared among wallets by their counted buys under public versioned rules (`version`). `campaign.reward`
+  {token, symbol, decimals, total (whole tokens), totalUnits}; `campaign.rules` {mode (`net_held`: buys still held at
+  settlement — after the campaign ends with payout `end_only`, at each period's end with `per_period` — a sell or
+  transfer (or a withdrawal of minted tokens) any time before then takes the amount back out; `gross_buys`: buys as made), includeMints,
+  capUPerWalletPeriod, tokenShareCapBps, creatorShareCapBps, minTokenAge, excludeOwnTokens, agentId, newOnly {before},
+  pads, quotes, payout (`end_only` | `per_period`), priceSource, text (the rules in short words)}; `campaign.periods`
+  [{id, start, end, status, reward, wallets (current period only), published {at, payees, reward}}], `currentPeriod`.
+  `mine`: `status` (eligible | not_new | not_agent | excluded | pending) and `statusText`, `updatedAt`, `periods` [{id,
+  countedU, rawU, capU, then `estimatedReward` with `estimate: true` before the period is published, or `reward`,
+  `units` and `txHash` after, from the wallet row (`reward: "0"` with `why` when the published results pay this
+  wallet nothing)}], and `estimateNote` with any estimate: it can still go down (for `net_held`, sells or transfers
+  before settlement; other wallets' buys) and uses current prices, while the final count uses the settlement snapshot. `join` signs nothing (`apiCode: "no_signup"`). Relay the rules as stated; never suggest a trade
+  for the reward.
 - `gang campaign join [<slug>] [--yes]`: the free sign-up, a base ticket without a trade, while the campaign has it open
   (its rules can close it at any time). Without a slug (0.46.1+) it takes the live campaign whose sign-up is open; when
   several are, it fails with their slugs in `campaigns` (ask the user which), and when none is (one live or several),
@@ -123,7 +137,7 @@ gang.fun runs reward campaigns with public rules, shown at `https://gang.fun/cam
   Mention a campaign when the user asks what's going on or wants to join; relay the rules as the page states them.
 - Errors from gang.fun keep its code in `apiCode`: `bad_request`, `bad_signature`, `expired` (run it again: it signs
   anew), `not_agent` (code `NO_AGENT_ID`), `not_eligible` (a platform, flagged or excluded wallet, or one whose first
-  trade was on its own token), `not_new`, `closed`, `no_signup` (said by the CLI: a cash campaign, nothing to sign), `not_found`,
+  trade was on its own token), `not_new`, `closed`, `no_signup` (said by the CLI: a cash or buy-reward campaign, nothing to sign), `not_found`,
   `rate_limited`, `unavailable` (try again later).
 
 ## `gang hot [--limit 10] [--track …] [--include-graduated]`
