@@ -1,7 +1,7 @@
 # 规格 · Agent 专属窗口（GangLaunchpad 3.0 曲线币）
 
 - 日期：2026-11-20（2026-11-21 按正式审计修订，见 §11）
-- 状态：**已实现，正式审计的修复待独立复审**。上线前还要完成：独立复审、测试网验收、§6 的链下改动、主网批准。
+- 状态：**已实现、已审计、修复已复审，测试网已升级并验收通过**（`docs/TESTNET-AGENT-WINDOW-2026-11-21.md`）。主网上线前还要完成：§6 的链下改动、CLI 等配套、主网明确批准。
 - 范围：GangLaunchpad 3.0 的曲线币（`KIND_CURVE`）。打新（`KIND_FAIR`）、铸币飞轮（`KIND_FLY`）、2.0 / 1.0 pad 不变。
 - 相关源码：
   - `src/gang/Pad3AgentWindowStore.sol`、`src/gang/interfaces/IGangAgentWindow.sol`
