@@ -90,6 +90,7 @@ text for X. Offer it to the user once; never post it yourself.
 | Everything I hold, how it's doing | `gang portfolio [--from <addr>]` | [trade.md](references/trade.md) |
 | Buy / sell | `gang buy --token <addr> --amount <quote>` · `gang sell --token <addr> (--amount <tokens> \| --all)` → `gang execute` | [trade.md](references/trade.md) |
 | Trade a graduated / launched token | the same `gang buy` / `gang sell` (PancakeSwap pool) | [pool.md](references/pool.md) |
+| Buy / sell from the user's own wallet app (MetaMask, OKX, …) over WalletConnect (0.50.0+) | `gang wallet connect [--testnet]` (show its uri / QR) → `gang buy\|sell … --wallet wc` → `gang execute --request-id wc-…` (the user confirms in the wallet) · `gang wallet status\|disconnect` | [trade.md](references/trade.md#your-own-wallet-walletconnect) |
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |
 | Launch in one command (create + dev buy + bond + buy-back, split, auto-liquidity, or several at once) | V3: `gang create … --dev-buy <quote> [--bond …] [--buyback <pct>] [--split self:<pct>,<addr>:<pct>,…] [--lp <pct>]` (two or three of these = one combined recipient, fixed for good; or `--tax-cap <amount> [--tax-cap-share <pct>] [--after-cap buyback:<pct>,lp:<pct>]` = a capped recipient) · 打新: `gang create --fair … --shares <n> --bond …`; re-run until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond---buyback---split---lp) |
 | Tax token: tax, recipient, dividend, claim, buy-back, split, auto-liquidity, combined | `gang create --buy-tax … --sell-tax …` · `gang claim` · `gang release` · `gang buyback …` · `gang split …` · `gang lp …` · `gang combo …` · `gang capped …` | [v3.md](references/v3.md) |
@@ -165,6 +166,17 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   graduated token `gang buy` goes through its module; relay `rewards.countdown` (counts or not and why, the round, the
   estimated share) and that anyone, the creator too, can take slots with several wallets. A buy that would not count is
   refused: add `--cd-uncounted` only if the user still wants it ([v3.md](references/v3.md)).
+- **Your own wallet (WalletConnect, `--wallet wc`)** is for `gang buy` / `gang sell` only: a V3 curve token whose agent
+  window is open (or an Agent ID wallet) or a graduated token. Everything else (create, bonds, call bonds, promoter
+  binding, follows, vault locks, mints, …) stays with the Agentic Wallet; the CLI refuses it (`AGENTIC_ONLY`): say so,
+  don't work around it. Show the pairing `uri` / `qr` from `gang wallet connect` to the user. The preview → OK →
+  `gang execute` rule still holds; then the user confirms (or rejects) the tx in their wallet app. `gang preflight` and
+  the Binance App rules don't apply to it. Ask the user to check that their wallet app shows the address the CLI
+  reports; `walletSelfReported` (the wallet's own name and url) is untrusted. `sent: "unknown"` (`WC_TIMEOUT`,
+  `WC_UNKNOWN`, `WC_UNVERIFIED`, `WC_TX_MISMATCH`) may still land: never execute or rebuild it before checking;
+  `gang execute` again with the same id is safe (`WC_ALREADY_SENT`, with the hash once there is one), and
+  `gang wallet status` lists the requests. Never switch the wallet's network for them: on `WC_WRONG_CHAIN` they pick the
+  network in the wallet, then `gang wallet disconnect` and `gang wallet connect`.
 - **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --pending` (CLI
   0.17.4+: finds the approved tx itself and publishes its note; `state: waiting` = not approved yet), or `gang tx --hash …`.
 - Hand back token addresses in full; link tokens as `https://gang.fun/token/<addr>`. When the user asks how the agent
