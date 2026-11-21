@@ -21,6 +21,7 @@ const v3 = (n, o = {}) => ({
 let mode = 'stream' // 'stream' | 'none' (an older server: /stream is 404)
 const seen = [] // { path, lastId } of every /stream request
 let script = null // (res, lastId) → writes this connection's messages
+let pollItems = null // () → the /v3/tokens rows a poll gets (default: one plain V3 token)
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   if (url.pathname === '/stream') {
@@ -30,7 +31,7 @@ const server = http.createServer((req, res) => {
     return script(res, req.headers['last-event-id'] || null)
   }
   // the polling fallback's lists: one V3 token, every other list empty
-  const items = url.pathname === '/v3/tokens' ? [v3(1)] : []
+  const items = url.pathname === '/v3/tokens' ? (pollItems ? pollItems() : [v3(1)]) : []
   res.writeHead(200, { 'content-type': 'application/json' })
   res.end(JSON.stringify({ items, hasMore: false, nextOffset: null }))
 })
@@ -142,6 +143,60 @@ async function run(opts, n, ms = 8000) {
   const lines = await run({ events: new Set(['near_grad']) }, 1)
   assert.match(seen[0].path, /events=near_grad/)
   assert.deepEqual(lines.filter((l) => !l.meta).map((e) => e.event), ['near_grad'])
+}
+
+// agent-window events: asked for by name only, sent through with openAt / opensInSec / link; not asking = not asked
+{
+  seen.length = 0
+  const t = Math.floor(Date.now() / 1000)
+  script = (res) => {
+    res.write(msg({ event: 'ready', at: 1, tokens: 0 }, 1))
+    res.write(msg({ event: 'window_created', at: 2, rate: 600, openAt: t + 3600, row: v3(10, { agentWindow: { openAt: t + 3600, open: false } }) }))
+    res.write(msg({ event: 'new_token', at: 2, rate: 600, row: v3(10) }))
+    res.write(msg({ event: 'window_opened', at: 2, rate: 600, openAt: t - 1, row: v3(11, { agentWindow: { openAt: t - 1, open: true } }) }))
+    res.write(msg({ event: 'snapshot', at: 2 }, 2))
+  }
+  const lines = await run({ events: new Set(['window_created', 'window_opened']) }, 2)
+  assert.match(seen[0].path, /events=window_created%2Cwindow_opened/)
+  const evs = lines.filter((l) => !l.meta)
+  assert.deepEqual(evs.map((e) => `${e.event}:${Number(e.token)}`), ['window_created:16', 'window_opened:17'] /* addr(10), addr(11) read as hex */)
+  assert.equal(evs[0].openAtUnix, t + 3600)
+  assert.equal(evs[0].openAt, new Date((t + 3600) * 1000).toISOString())
+  assert.ok(evs[0].opensInSec > 3500 && evs[0].opensInSec <= 3600)
+  assert.equal(evs[0].link, `https://gang.fun/token/${addr(10)}`)
+  assert.equal(evs[1].opensInSec, 0)
+  assert.match(evs[1].next, /^gang buy --token/)
+  // the default watch does not ask the server for window events
+  seen.length = 0
+  await run({}, 1, 1500)
+  assert.doesNotMatch(seen[0].path, /window_/)
+}
+
+// poll mode: the first poll marks what is past; then created / opening / opened, each once
+{
+  const t = Math.floor(Date.now() / 1000)
+  let polls = 0
+  // 12: open from the start (no event); 13: a 1h window just made; 14: a 30 min window 5 min from openAt; 15: opens now
+  pollItems = () => {
+    polls++
+    const rows = [
+      v3(12, { agentWindow: { openAt: t - 60, open: true }, createdAt: t - 600 }),
+      v3(15, { agentWindow: { openAt: polls === 1 ? t + 30 : t - 1, open: polls > 1 }, createdAt: t - 300 }),
+    ]
+    if (polls > 1) {
+      rows.push(v3(13, { agentWindow: { openAt: t + 3600, open: false }, createdAt: t }))
+      rows.push(v3(14, { agentWindow: { openAt: t + 300, open: false }, createdAt: t - 1500 }))
+    }
+    return rows
+  }
+  const lines = await run({ poll: true, intervalSec: 0.2, events: new Set(['window_created', 'window_opening', 'window_opened']) }, 4, 4000)
+  const evs = lines.filter((l) => !l.meta).map((e) => `${e.event}:${Number(e.token)}`)
+  assert.deepEqual(evs.sort(), ['window_created:19', 'window_created:20', 'window_opened:21', 'window_opening:20'] /* addr(13..15) as hex */)
+  // without window events asked for, the same polls say nothing about windows
+  polls = 0
+  const plain = await run({ poll: true, intervalSec: 0.2 }, 10, 1200)
+  assert.ok(plain.filter((l) => !l.meta).every((e) => !e.event.startsWith('window_')))
+  pollItems = null
 }
 
 // an older server (no /stream): polls, as before
