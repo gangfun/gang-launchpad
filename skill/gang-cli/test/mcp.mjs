@@ -71,11 +71,9 @@ assert.equal((await rpc('nope')).error.code, -32601)
 
 const { tools } = (await rpc('tools/list')).result
 const names = tools.map((t) => t.name)
-assert.equal(tools.length, 21)
+assert.equal(tools.length, 18)
 for (const n of ['gang_help', 'gang_preflight', 'gang_trending', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_portfolio', 'gang_notes', 'gang_agents',
-  'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_wallet_connect', 'gang_wallet_status', 'gang_wallet_disconnect', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
-assert.equal(tools.find((t) => t.name === 'gang_wallet_status').annotations.readOnlyHint, true)
-assert.equal(tools.find((t) => t.name === 'gang_wallet_connect').annotations.readOnlyHint, false)
+  'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)
 assert.equal(tools.find((t) => t.name === 'gang_hot').annotations.readOnlyHint, true)
@@ -107,18 +105,6 @@ assert.deepEqual(unions, [])
   assert.deepEqual(args('gang_status', { token: addr(1), from: addr(2), slippage: 2, testnet: true }),
     ['status', '--token', addr(1), '--from', addr(2), '--slippage', '2', '--testnet'])
   assert.deepEqual(args('gang_portfolio', {}), ['portfolio'])
-  // WalletConnect: buy / sell take wallet: "wc"; connect never blocks the host (--no-wait returns the uri at once)
-  assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', wallet: 'wc' }).slice(5), ['--wallet', 'wc'])
-  assert.deepEqual(args('gang_sell', { token: addr(1), all: true, wallet: 'wc' }), ['sell', '--token', addr(1), '--all', '--wallet', 'wc'])
-  assert.deepEqual(args('gang_wallet_connect', {}), ['wallet', 'connect', '--no-wait'])
-  assert.deepEqual(args('gang_wallet_connect', { testnet: true, timeout: 600 }), ['wallet', 'connect', '--no-wait', '--timeout', '600', '--testnet'])
-  assert.deepEqual(args('gang_wallet_status', {}), ['wallet', 'status'])
-  assert.deepEqual(args('gang_wallet_disconnect', {}), ['wallet', 'disconnect'])
-  assert.match(invalid(buy, { token: addr(1), amount: '1', wallet: 'baw' }), /must be one of wc/)
-  assert.match(invalid(buy, { token: addr(1), amount: '1', wallet: 'wc', promoter: addr(2) }), /only buys and sells/)
-  assert.match(invalid(buy, { token: addr(1), amount: '1', wallet: 'wc', follow: `0x${'a'.repeat(64)}` }), /only buys and sells/)
-  assert.match(invalid(sell, { token: addr(1), all: true, wallet: 'wc', breakBond: true }), /only buys and sells/)
-  assert.equal(invalid(sell, { token: addr(1), all: true, wallet: 'wc', breakBond: false }), null)
   assert.deepEqual(args('gang_portfolio', { from: addr(2) }), ['portfolio', '--from', addr(2)])
   assert.deepEqual(args('gang_follow', { noteTx: `0x${'a'.repeat(64)}`, amount: '0.1', useWbnb: true }),
     ['follow', `0x${'a'.repeat(64)}`, '--amount', '0.1', '--use-wbnb'])
@@ -191,7 +177,6 @@ for (const [name, args, re] of [
   ['gang_cli', { args: ['buy', '--token', '0x1111111111111111111111111111111111111111', '--help'] }, /use the gang_help tool/],
   ['gang_cli', { args: ['create', '-h'] }, /use the gang_help tool/],
   ['gang_cli', { args: ['mcp'] }, /gang mcp is this server/],
-  ['gang_cli', { args: ['wallet', 'connect'] }, /use gang_wallet_connect/],
   ['gang_watch', { timeout: 'soon' }, /timeout must look like 90, 50s, 5m or 1h \(got soon\)/],
   ['gang_watch', { interval: '10x' }, /interval must look like/],
   ['gang_watch', { webhook: 'ftp://x' }, /webhook must be an http\(s\) URL/],
