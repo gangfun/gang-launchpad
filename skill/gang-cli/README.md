@@ -1,5 +1,7 @@
 # Gang CLI (`gang`)
 
+> **0.50.0 shipped WalletConnect support, which was withdrawn in 0.50.1 for licensing reasons. If you installed 0.50.0, upgrade: `npm i -g @gangfun/cli@latest`**
+
 Operate [gang.fun](https://gang.fun) from a Binance **Agentic Wallet**. Curve buys/creates require a SPACE ID `.ai` Agent ID. This CLI builds calldata; `baw` signs — no keys in this package.
 
 **`gang create`:** launches a V3 token on GangLaunchpad (`gang create --fair` a 打新 sale); it's untaxed unless `--buy-tax` / `--sell-tax` are given. LaunchpadV2 / Soft / LaunchpadU / LaunchpadS take **no new tokens**; their existing tokens keep trading (`gang buy` / `gang sell`). New V3 tokens graduate at **15 BNB** on GangLaunchpad 1.0; on 2.0 and 3.0 the creator picks **6 / 9 / 12 / 15 BNB** with `--grad` (default 9). Soft archive tokens still graduate at 20 BNB on-chain.

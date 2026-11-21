@@ -1,5 +1,7 @@
 # Gang CLI（`gang`）
 
+> **0.50.0 带了 WalletConnect 支持，因许可原因已在 0.50.1 撤回。如果你装了 0.50.0，请升级：`npm i -g @gangfun/cli@latest`**
+
 **Pad 3.0 地址后缀（0.38.0+）：** owner 启用 `abcd` 部署器后，曲线、打新和铸币飞轮新币地址统一以 `abcd` 结尾（忽略校验和大小写）。CLI 会在最终元数据确定后自动计算 salt，`--grad`、`--vault`、`--promote` 发币也包含在内，`tokenIfNext` 显示确定的预测地址。请在启用前升级 CLI：启用后旧的直接发币调用会被拒绝。旧币地址和交易不变；启用前，新 CLI 仍走原有发币流程。
 
 用 Binance **Agentic Wallet** 操作 [gang.fun](https://gang.fun)。内盘买入/发币需要 SPACE ID `.ai` Agent ID。本 CLI 只组 calldata，签名走 `baw`，不持有私钥。
