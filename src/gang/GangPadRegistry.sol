@@ -34,6 +34,11 @@ interface IGangPadQuoteView {
     function PROTOCOL_FEE_BPS() external view returns (uint256);
 }
 
+/// @dev GangLaunchpad 3.0's agent window (IGangAgentWindow): whether `account` passes the Agent gate on `token` now.
+interface IGangPadAgentWindow {
+    function canTradeCurve(address token, address account) external view returns (bool);
+}
+
 /// @dev GangToken's pointer to the pad that created it.
 interface IGangTokenPad {
     function launchpad() external view returns (address);
@@ -248,9 +253,24 @@ contract GangPadRegistry is IGangPadRegistry, Initializable {
             bool graduated,,,,,
         ) = p.curves(token);
         if (creator == address(0) || graduated) return (p, s, false);
-        if (trader != address(0) && p.agentGateEnabled() && !p.isAgent(trader)) return (p, s, false);
+        if (trader != address(0) && p.agentGateEnabled() && !_passesGate(p, token, trader)) return (p, s, false);
         s = CurveState({realQuote: realQuote, sold: sold, gradAmt: gradAmt, virtualQuote: virtualQuote});
         live = true;
+    }
+
+    /// @dev `trader` passes the pad's Agent gate on `token`: a pad with agent windows (GangLaunchpad 3.0 from
+    ///      SPEC-AGENT-WINDOW-2026-11-20 on) answers `canTradeCurve` (an open token lets every wallet in); any other
+    ///      pad, or one whose answer is not a single word (no such function: it reverts, or a fallback that returns
+    ///      nothing), is read as before, by `isAgent`. A low-level call, not try/catch: a bad return must fall back,
+    ///      not revert the quote.
+    function _passesGate(IGangPadQuoteView p, address token, address trader) internal view returns (bool) {
+        (bool ok, bytes memory ret) =
+            address(p).staticcall(abi.encodeWithSelector(IGangPadAgentWindow.canTradeCurve.selector, token, trader));
+        if (ok && ret.length == 32) {
+            uint256 word = abi.decode(ret, (uint256));
+            if (word <= 1) return word == 1;
+        }
+        return p.isAgent(trader);
     }
 
     /// @dev CurveLogic._recomputeFee: the gross that buys `net` after the fee (capped at quoteIn), its fee, and the net

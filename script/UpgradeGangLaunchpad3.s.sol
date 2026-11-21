@@ -22,6 +22,9 @@ import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 import {Pad3VanityDeployer} from "../src/gang/Pad3VanityDeployer.sol";
 import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
+import {IGangAgentWindow} from "../src/gang/interfaces/IGangAgentWindow.sol";
+import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
+import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
 
 /// @title UpgradeGangLaunchpad3 — move the GangLaunchpad 3.0 proxy to a new implementation, checked before the Safe
 ///        signs (audit 3C M-1 / L-3)
@@ -67,8 +70,17 @@ import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
 ///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
 ///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
 ///      the carry opens with script/SetGradRewardCountdown.s.sol, run without --libraries). The pad owner must own it.
+///      Optional PAD3_REGISTRY_UPGRADE=true (docs/SPEC-AGENT-WINDOW-2026-11-20.md §5.6, audit C M-1): GangPadRegistry
+///      (GANG_PAD_REGISTRY) moves to this build's code in the same batch, last: PAD_REGISTRY_IMPL (or deployed here)
+///      must be this build's GangPadRegistry, locked; its ProxyAdmin must be owned by the pad's upgrader. The
+///      simulation upgrades it after the pad, then runs GangPadRegistryDeployLib.check (impl code, locked, ProxyAdmin,
+///      owner, no pending owner, the same pads in order) and compares, for the newest SAMPLE tokens of each registered
+///      pad, `padOf` and the fresh-wallet quotes `previewBuy` / `previewSell` with what they were before both upgrades.
 contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     uint256 internal constant SAMPLE = 25;
+    /// @dev A fixed address with no code and no Agent ID, for `_registryState`'s gated quotes (keccak256 of a label).
+    address internal constant REGISTRY_PROBE_WALLET =
+        address(uint160(uint256(keccak256("gang.registry.probe.wallet"))));
 
     /// @dev One upgrade as `_simulate` runs it.
     struct Up {
@@ -91,6 +103,11 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     bool internal _grad;
     address internal _gradAdmin;
     address internal _gradFactory;
+    /// @dev Optional GangPadRegistry upgrade, last in the same batch (PAD3_REGISTRY_UPGRADE): proxy, its new
+    ///      implementation and its ProxyAdmin.
+    address internal _reg;
+    address internal _regImpl;
+    address internal _regAdmin;
 
     struct Snapshot {
         bytes32 settings;
@@ -132,6 +149,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _grad = vm.envOr("PAD3_GRAD_REWARD", false);
         if (_grad) _checkGrad(s, c, upgrader);
         bool deployed = _resolveFly(GangLaunchpad3(payable(current)), impl, s, c, pk, upgrader);
+        if (vm.envOr("PAD3_REGISTRY_UPGRADE", false) && _resolveRegistry(x.padRegistry, upgrader, pk)) deployed = true;
         (address[] memory prepTo, bytes[] memory prepCall) = _flyPrep(s, c.keeper, c.dexRouter, upgrader);
 
         if (impl == address(0)) {
@@ -167,6 +185,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             _enableVanity(proxy);
             _setBaseImpl(proxy);
             _setGrad(proxy);
+            _upgradeRegistry();
             vm.stopBroadcast();
             console.log("upgraded (testnet, the deploy wallet owns the ProxyAdmin)");
             return s;
@@ -182,6 +201,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (_abcd != address(0)) console.log("(enable abcd addresses after the upgrade in the same batch)");
         if (_baseImpl != address(0)) console.log("(set the base vault implementation last, in the same batch)");
         if (_grad) console.log("(open the graduation reward last, in the same batch)");
+        if (_regImpl != address(0)) console.log("(then move GangPadRegistry to this build, last, in the same batch)");
         console.log(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call, proxy));
     }
 
@@ -191,6 +211,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         Snapshot memory before = _snapshot(p, s, _servesVaultMode(s.pad), new bool[](0));
         _warnNoPromoteProbes(p);
         _warnNoBaseProbes(p);
+        (bool windowBefore, bytes memory windowState) = _agentWindowState(p);
+        (address[] memory regPads, bytes memory regQuotes) = _registryState();
         uint256 snap = vm.snapshotState();
         _sendPrep(u.prepTo, u.prepCall, u.upgrader, true);
         vm.prank(u.upgrader);
@@ -204,6 +226,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
         }
         _checkNewFairEntry(p, before.newFairEntry);
+        _checkAgentWindow(p, windowBefore, windowState);
         // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
         // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
         _checkPad3(s, c, x);
@@ -215,8 +238,120 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _setBaseImpl(s.pad);
         if (_grad) vm.prank(u.upgrader);
         _setGrad(s.pad);
+        if (_regImpl != address(0)) {
+            vm.prank(u.upgrader);
+            _upgradeRegistry();
+            D.check(D.Registry(_reg, _regImpl, _regAdmin), GangPadRegistry(_reg).owner(), regPads);
+            (, bytes memory regAfter) = _registryState();
+            if (keccak256(regAfter) != keccak256(regQuotes)) revert WiringCheck("registry: a quote or padOf changed");
+        }
         vm.revertToState(snap);
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
+    }
+
+    /// @dev Whether `p` serves the agent window (SPEC-AGENT-WINDOW-2026-11-20; its views answer from Pad3GradModule)
+    ///      and, if so, each of the newest SAMPLE tokens' window and wallet cap. Raw staticcalls: before the first
+    ///      upgrade to it the selectors don't exist (the pad reverts), which reads as "not served".
+    function _agentWindowState(GangLaunchpad3 p) internal view returns (bool served, bytes memory st) {
+        (bool ok, bytes memory ret) =
+            address(p).staticcall(abi.encodeCall(IGangAgentWindow.MAX_AGENT_WINDOW_MINUTES, ()));
+        if (!ok || ret.length != 32) return (false, "");
+        served = true;
+        IGangAgentWindow w = IGangAgentWindow(address(p));
+        uint256 n = p.tokenCount();
+        uint256 k = n < SAMPLE ? n : SAMPLE;
+        for (uint256 i; i < k; i++) {
+            address t = p.allTokens(n - 1 - i);
+            st = abi.encode(st, t, w.agentOpenAt(t), p.kindOf(t) == 1 && w.walletCapOn(t));
+        }
+    }
+
+    /// @dev After the upgrade the pad serves the agent window with its bounds. On the first upgrade to it, each of the
+    ///      newest SAMPLE tokens (all created before it) is still agent only (`openAt` 0) with its wallet cap as the
+    ///      pad's switch says; on a later upgrade, their windows and caps are the ones read before it (`before`), so a
+    ///      token that has a window doesn't fail the check. That the pad links this build's CurveLogic3 is
+    ///      `_checkLibs` / `_checkImplCode`'s, not this check's.
+    function _checkAgentWindow(GangLaunchpad3 p, bool servedBefore, bytes memory before) internal view {
+        IGangAgentWindow w = IGangAgentWindow(address(p));
+        if (w.MIN_AGENT_WINDOW_MINUTES() != 1 || w.MAX_AGENT_WINDOW_MINUTES() != 1440) {
+            revert WiringCheck("upgrade: agent window bounds");
+        }
+        if (servedBefore) {
+            (, bytes memory afterUp) = _agentWindowState(p);
+            if (keccak256(afterUp) != keccak256(before)) revert WiringCheck("upgrade: a token's agent window changed");
+            return;
+        }
+        uint256 n = p.tokenCount();
+        uint256 k = n < SAMPLE ? n : SAMPLE;
+        for (uint256 i; i < k; i++) {
+            address t = p.allTokens(n - 1 - i);
+            if (w.agentOpenAt(t) != 0 || w.agentWindowOpen(t)) revert WiringCheck("upgrade: an old token opened");
+            if (p.kindOf(t) == 1 && w.walletCapOn(t) != p.walletCapEnabled()) {
+                revert WiringCheck("upgrade: an old token's wallet cap changed");
+            }
+        }
+    }
+
+    /// @dev PAD3_REGISTRY_UPGRADE: the registry's new implementation (PAD_REGISTRY_IMPL, or deployed now: returns true),
+    ///      checked to be this build's GangPadRegistry and locked, and the registry's ProxyAdmin owned by `upgrader`
+    ///      (one Safe signs the whole batch). Refused when the registry already runs this build.
+    function _resolveRegistry(address reg, address upgrader, uint256 pk) internal returns (bool deployed) {
+        if (reg == address(0)) revert WiringCheck("GANG_PAD_REGISTRY");
+        D.Registry memory r = D.load(reg);
+        if (R.sameCode(r.impl, type(GangPadRegistry).runtimeCode)) {
+            revert WiringCheck("registry already runs this build: omit PAD3_REGISTRY_UPGRADE");
+        }
+        if (ProxyAdmin(r.proxyAdmin).owner() != upgrader) revert WiringCheck("registry ProxyAdmin owner");
+        address impl = _envAddr("PAD_REGISTRY_IMPL", address(0));
+        if (impl == address(0)) {
+            vm.startBroadcast(pk);
+            impl = address(new GangPadRegistry());
+            vm.stopBroadcast();
+            deployed = true;
+            console.log("new GangPadRegistry implementation (deployed now; pass it as PAD_REGISTRY_IMPL)", impl);
+        } else {
+            console.log("new GangPadRegistry implementation (PAD_REGISTRY_IMPL)", impl);
+        }
+        if (!R.sameCode(impl, type(GangPadRegistry).runtimeCode)) revert WiringCheck("PAD_REGISTRY_IMPL code");
+        (uint64 v,) = R.initState(impl);
+        if (v != type(uint64).max || GangPadRegistry(impl).owner() != address(0)) {
+            revert WiringCheck("PAD_REGISTRY_IMPL not locked");
+        }
+        (_reg, _regImpl, _regAdmin) = (reg, impl, r.proxyAdmin);
+    }
+
+    /// @dev Sent by the caller (pranked as the upgrader in the simulation, broadcast on testnet); nothing when not asked.
+    function _upgradeRegistry() internal {
+        if (_regImpl == address(0)) return;
+        ProxyAdmin(_regAdmin).upgradeAndCall(ITransparentUpgradeableProxy(_reg), _regImpl, "");
+    }
+
+    /// @dev The registry's pads and, for the newest SAMPLE tokens of each, `padOf` and the quotes of a 0.01 quote-unit
+    ///      buy and a 1-token sell, for a fresh wallet (address 0: no gate check) and for REGISTRY_PROBE_WALLET, a fixed
+    ///      address without an Agent ID (it goes through the new gate path, `canTradeCurve` / `isAgent`). Nothing
+    ///      opens or closes between the two reads (same block, only the upgrades in between), so its quotes must stay
+    ///      as they were: 0 for a token not open, the open curve's quote for one that is. Empty when no registry
+    ///      upgrade is asked (audit re-review L-1).
+    function _registryState() internal view returns (address[] memory pads, bytes memory st) {
+        if (_regImpl == address(0)) return (pads, st);
+        GangPadRegistry g = GangPadRegistry(_reg);
+        pads = g.pads();
+        for (uint256 i; i < pads.length; i++) {
+            (bool ok, bytes memory ret) = pads[i].staticcall(abi.encodeWithSignature("tokenCount()"));
+            if (!ok || ret.length != 32) continue;
+            uint256 n = abi.decode(ret, (uint256));
+            uint256 k = n < SAMPLE ? n : SAMPLE;
+            for (uint256 j; j < k; j++) {
+                (ok, ret) = pads[i].staticcall(abi.encodeWithSignature("allTokens(uint256)", n - 1 - j));
+                if (!ok || ret.length != 32) continue;
+                address t = abi.decode(ret, (address));
+                (uint256 out,,,) = g.previewBuy(t, address(0), 0.01 ether);
+                (uint256 back,) = g.previewSell(t, address(0), 1 ether);
+                (uint256 outP,,,) = g.previewBuy(t, REGISTRY_PROBE_WALLET, 0.01 ether);
+                (uint256 backP,) = g.previewSell(t, REGISTRY_PROBE_WALLET, 1 ether);
+                st = abi.encode(st, t, g.padOf(t), out, back, outP, backP);
+            }
+        }
     }
 
     function _checkVanity(address proxy, address upgrader) internal {
@@ -321,6 +456,18 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (_grad) {
             j = string.concat(
                 j, _tx(proxy, abi.encodeCall(Pad3Module.setGradReward, (true, _gradAdmin, _gradFactory)), true)
+            );
+        }
+        if (_regImpl != address(0)) {
+            j = string.concat(
+                j,
+                _tx(
+                    _regAdmin,
+                    abi.encodeCall(
+                        ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(_reg), _regImpl, bytes(""))
+                    ),
+                    true
+                )
             );
         }
         j = string.concat(j, "]}");

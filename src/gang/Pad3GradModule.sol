@@ -6,19 +6,28 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
-import {IGangGradRewardBase} from "./interfaces/IGangGradReward.sol";
+import {IGangGradReward, IGangGradRewardBase} from "./interfaces/IGangGradReward.sol";
 import {Pad3GradStore} from "./Pad3GradStore.sol";
+import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
+import {IGangAgentWindow} from "./interfaces/IGangAgentWindow.sol";
+import {CurveLogic3} from "./CurveLogic3.sol";
+import {Pad3VaultStore} from "./Pad3VaultStore.sol";
+import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
+import {IGangPromote} from "./interfaces/IGangPromote.sol";
+import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 
 /// @title Pad3GradModule — 冲毕业奖励's claims, refund, sweep and views (docs/SPEC-GRAD-REWARD-2026-11-17.md), moved
 ///        out of Pad3Module for its 24 KB limit
 /// @notice Never called directly: Pad3Module's fallback delegatecalls it for IGangGradReward's selectors that
 ///         Pad3Module does not define (Pad3Module itself is delegatecalled by the pad), so it runs in the proxy's
 ///         storage, with the proxy's balance and the caller as msg.sender. The create and the owner switch stay in
-///         Pad3Module; the curve's hooks are Pad3GradStore's.
+///         Pad3Module; the curve's hooks are Pad3GradStore's. Also serves the agent window's entry and views
+///         (IGangAgentWindow, docs/SPEC-AGENT-WINDOW-2026-11-20.md), for the same 24 KB reason; the window is written
+///         by the creates and read by CurveLogic3.
 /// @dev STORAGE: as Pad3Module: OZ Ownable / Ownable2Step / ReentrancyGuard (slots 0–2; `nonReentrant` acts on the
 ///      proxy's guard), then a mirror of GangLaunchpad3's variables in its order (test/gang3/GangLaunchpad3Layout.t.sol
 ///      checks it); the reward's own state is Pad3GradStore's namespace. No immutables, no owner functions.
-contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, Ownable2Step, ReentrancyGuard {
+contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, IGangAgentWindow, Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     /// @notice How long a refund request is public before the dev can take the pool back.
@@ -27,6 +36,10 @@ contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, Ownable2Step, Re
     uint32 public constant GRAD_REFUND_WINDOW = 3 days;
     /// @notice After graduation, how long buyers have to claim; then the rest is swept.
     uint32 public constant GRAD_CLAIM_WINDOW = 180 days;
+    /// @inheritdoc IGangAgentWindow
+    uint16 public constant MIN_AGENT_WINDOW_MINUTES = Pad3AgentWindowStore.MIN_MINUTES;
+    /// @inheritdoc IGangAgentWindow
+    uint16 public constant MAX_AGENT_WINDOW_MINUTES = Pad3AgentWindowStore.MAX_MINUTES;
 
     // ---------------------------------------------------------------- mirror of GangLaunchpad3's layout (slot 3 on)
     Config internal _config;
@@ -45,6 +58,71 @@ contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, Ownable2Step, Re
     mapping(address caller => bool) internal isCaller;
 
     constructor() Ownable(address(0xdEaD)) {}
+
+    // ---------------------------------------------------------------- agent window (SPEC-AGENT-WINDOW-2026-11-20; here for Pad3Module's 24 KB)
+    /// @inheritdoc IGangAgentWindow
+    /// @dev As `createWithSalt`: the chosen entry runs delegatecalled on the proxy (its own checks, reentrancy guard and
+    ///      events), msg.sender and msg.value unchanged. The window is held in transient storage for this call only and
+    ///      taken by the first curve create the caller makes in it (`Pad3AgentWindowStore.consume`); a call that makes
+    ///      none reverts, so a window is never left for a later create.
+    function createWithAgentWindow(uint16 windowMinutes, bytes calldata data) external payable returns (address token) {
+        if (windowMinutes < MIN_AGENT_WINDOW_MINUTES || windowMinutes > MAX_AGENT_WINDOW_MINUTES) {
+            revert BadAgentWindow();
+        }
+        if (data.length < 4 || !_isCurveCreate(bytes4(data[:4]))) revert BadAgentWindowCall();
+        Pad3AgentWindowStore.setPending(msg.sender, windowMinutes);
+        (bool ok, bytes memory result) = address(this).delegatecall(data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        (, uint16 left) = Pad3AgentWindowStore.pending();
+        if (left != 0) revert AgentWindowNotUsed();
+        token = abi.decode(result, (address));
+        if (Pad3AgentWindowStore.layout().openAt[token] == 0) revert AgentWindowNotUsed();
+    }
+
+    /// @inheritdoc IGangAgentWindow
+    function agentOpenAt(address token) external view returns (uint40) {
+        return Pad3AgentWindowStore.layout().openAt[token];
+    }
+
+    /// @inheritdoc IGangAgentWindow
+    function agentWindowOpen(address token) external view returns (bool) {
+        return Pad3AgentWindowStore.isOpen(token);
+    }
+
+    /// @inheritdoc IGangAgentWindow
+    /// @dev A token's own vault never trades it on the curve (the pad's `_checkCurveTrader`): false for it, so the
+    ///      registry doesn't quote it (audit B L-1).
+    function canTradeCurve(address token, address account) external view returns (bool) {
+        if (account != address(0) && account == Pad3VaultStore.layout().vaultOf[token]) return false;
+        if (account == address(0)) return !_config.agentGateEnabled || Pad3AgentWindowStore.isOpen(token);
+        return CurveLogic3.canTrade(_config, token, account);
+    }
+
+    /// @inheritdoc IGangAgentWindow
+    function walletCapOn(address token) external view returns (bool) {
+        return CurveLogic3.walletCapOn(_config, token);
+    }
+
+    /// @dev The curve create entries (and `createWithSalt`, whose own list then picks one of its entries; a 打新 /
+    ///      铸币飞轮 create there makes no curve token, so `createWithAgentWindow` reverts AgentWindowNotUsed).
+    function _isCurveCreate(bytes4 s) private pure returns (bool) {
+        return s
+                == bytes4(
+                keccak256("create(string,string,string,string,address,address,(uint16,uint16,uint16,address))")
+            )
+            || s
+                == bytes4(
+                keccak256(
+                "createWithGradTarget(string,string,string,string,address,address,(uint16,uint16,uint16,address),uint256)"
+            )
+            ) || s == IGangVaultPad.createWithVault.selector || s == IGangPromote.createWithPromote.selector
+            || s == IGangBasePad.createWithBase.selector || s == IGangGradReward.createWithGradReward.selector
+            || s == bytes4(keccak256("createWithSalt(bytes32,bytes)"));
+    }
 
     function settleGradReward(address token) external nonReentrant {
         _gradSettle(token);

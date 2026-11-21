@@ -4,6 +4,9 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IGangGradRewardBase} from "./interfaces/IGangGradReward.sol";
+import {IGangLaunchpad} from "./interfaces/IGangLaunchpad.sol";
+import {PadCommon} from "./PadCommon.sol";
+import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
 
 /// @dev The countdown reward module's entry for the carry (GangCountdownReward): pulls exactly `amount` of its quote
 ///      from the caller (the allowance the pad gives it) into its pool, with no dev part.
@@ -98,11 +101,21 @@ library Pad3GradStore {
     }
 
     // ---------------------------------------------------------------- curve hooks (CurveLogic3)
-    /// @dev A curve buy of `token` by `trader`. Counted when the Agent gate is on (off, a contract wallet could fill
-    ///      the list for free) and it actually spent `minBuy`, or it is the buy that graduates the token.
-    function onBuy(address token, address trader, uint256 spent, uint256 tokens, bool graduates, bool gated) internal {
+    /// @dev A curve buy of `token` by `trader`. Counted when the Agent gate is on and `trader` holds an Agent ID (off,
+    ///      or a wallet without one on a token past its agent window, a contract wallet could fill the list for free)
+    ///      and it actually spent `minBuy`, or it is the buy that graduates the token. Inside the window the gate let
+    ///      only Agents buy, so the Agent ID is read only on an open token (and only once the reward is active).
+    function onBuy(
+        IGangLaunchpad.Config storage c,
+        address token,
+        address trader,
+        uint256 spent,
+        uint256 tokens,
+        bool graduates
+    ) internal {
         Reward storage r = layout().rewardOf[token];
-        if (r.state != ACTIVE || !gated) return;
+        if (r.state != ACTIVE || !c.agentGateEnabled) return;
+        if (Pad3AgentWindowStore.isOpen(token) && !PadCommon.isAgent(c, trader)) return;
         if (spent < r.minBuy && !graduates) return;
         uint64 seq = r.seq + 1;
         r.seq = seq;

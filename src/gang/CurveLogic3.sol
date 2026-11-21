@@ -14,6 +14,7 @@ import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 import {PadCommon} from "./PadCommon.sol";
 import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 import {Pad3GradStore} from "./Pad3GradStore.sol";
+import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
 
 /// @title CurveLogic3 — GangLaunchpad 3.0's bonding-curve path: CurveLogic (2.0) with the entries 3.0's own
 ///        aggregator interface needs, the curve's math and rules unchanged
@@ -34,6 +35,9 @@ import {Pad3GradStore} from "./Pad3GradStore.sol";
 ///            are `buy`'s.
 ///         7. the graduation reward (docs/SPEC-GRAD-REWARD-2026-11-17.md): on a token that has one, counted buys and
 ///            sells are booked (Pad3GradStore) and graduation books the pool; no price, fee or refund changes.
+///         8. the agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md): from a token's `openAt` on, the Agent gate lets
+///            every wallet trade it (`canTrade`) and the 1% wallet cap is off (`walletCapOn`); a token without a
+///            window trades exactly as before.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -209,7 +213,7 @@ library CurveLogic3 {
     ) external returns (uint256 tokensOut) {
         IGangLaunchpad.Curve storage cv = _live(curves, token);
         if (quoteIn == 0) revert IGangLaunchpad.ZeroAmount();
-        _requireAgent(c, trader);
+        _requireTrader(c, token, trader);
 
         BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn, locked);
         if (v.tokensOut < minTokensOut) revert IGangLaunchpad.Slippage();
@@ -261,7 +265,7 @@ library CurveLogic3 {
         uint256 quoteIn,
         uint256 locked
     ) private view returns (BuyVars memory v) {
-        bool capped = c.walletCapEnabled;
+        bool capped = walletCapOn(c, token);
         uint256 room = walletRoom(capped, token, trader, locked);
         if (capped && room == 0) revert IGangLaunchpad.WalletCapReached();
 
@@ -338,7 +342,7 @@ library CurveLogic3 {
         if (v.refundGross > 0) IERC20(quoteAddr).safeTransfer(trader, v.refundGross);
         bool graduates = cv.realQuote >= v.gradAmt;
         // 冲毕业奖励 (SPEC-GRAD-REWARD §3): a no-op for a token without one (one read)
-        Pad3GradStore.onBuy(token, trader, quoteIn - v.refundGross, v.tokensOut, graduates, c.agentGateEnabled);
+        Pad3GradStore.onBuy(c, token, trader, quoteIn - v.refundGross, v.tokensOut, graduates);
         if (graduates) _graduate(c, token, cv);
         tokensOut = v.tokensOut;
     }
@@ -423,7 +427,7 @@ library CurveLogic3 {
     ) external returns (uint256 quoteToUser) {
         IGangLaunchpad.Curve storage cv = _live(curves, token);
         if (tokensIn == 0) revert IGangLaunchpad.ZeroAmount();
-        _requireAgent(c, trader);
+        _requireTrader(c, token, trader);
 
         uint256 quoteOut = _quoteOut(cv, tokensIn);
         uint256 protocolFee = (quoteOut * PROTOCOL_FEE_BPS) / PadCommon.BPS;
@@ -468,8 +472,8 @@ library CurveLogic3 {
         if (cv.creator == address(0) || cv.graduated || quoteIn == 0) return (0, 0, 0, 0);
         // audit 3B I-1 / 3A I-3: 0 like GangPadRegistry / the gateway, not a panic (no real buy gets near it)
         if (quoteIn > type(uint256).max / PadCommon.BPS) return (0, 0, 0, 0);
-        if (trader != address(0) && c.agentGateEnabled && !PadCommon.isAgent(c, trader)) return (0, 0, 0, 0);
-        if (c.walletCapEnabled && walletRoom(true, token, trader, locked) == 0) return (0, 0, 0, 0);
+        if (trader != address(0) && !canTrade(c, token, trader)) return (0, 0, 0, 0);
+        if (walletCapOn(c, token) && walletRoom(true, token, trader, locked) == 0) return (0, 0, 0, 0);
         BuyVars memory v = _prepBuy(c, cv, token, trader, quoteIn, locked);
         return (v.tokensOut, quoteIn - v.refundGross, v.protocolFee, v.refundGross);
     }
@@ -517,6 +521,28 @@ library CurveLogic3 {
     // ---------------------------------------------------------------- internal
     function _requireAgent(IGangLaunchpad.Config storage c, address account) private view {
         if (c.agentGateEnabled && !PadCommon.isAgent(c, account)) revert IGangLaunchpad.NotAgent();
+    }
+
+    /// @dev The Agent gate of a curve trade (buy / sell, every entry): `_requireAgent` until the token's `openAt`.
+    function _requireTrader(IGangLaunchpad.Config storage c, address token, address trader) private view {
+        if (!canTrade(c, token, trader)) revert IGangLaunchpad.NotAgent();
+    }
+
+    /// @dev `trader` passes the Agent gate on curve token `token` now: the pad's gate is off, the token is open (its
+    ///      agent window ended: any wallet, contracts included), or `trader` holds an Agent ID. The window is read
+    ///      first: an open token's trades make no external call. `trader` must not be address(0) (callers with a
+    ///      "fresh wallet" 0 skip the Agent check themselves). Internal: also inlined into the pad's views.
+    function canTrade(IGangLaunchpad.Config storage c, address token, address trader) internal view returns (bool) {
+        if (!c.agentGateEnabled || Pad3AgentWindowStore.isOpen(token)) return true;
+        return PadCommon.isAgent(c, trader);
+    }
+
+    /// @dev The 1% wallet cap applies to `token` now: the pad's cap is on and the token is not open. Past `openAt`
+    ///      the cap is per address and any contract is one, so it would stop no one (SPEC-AGENT-WINDOW §7.2): off for
+    ///      every token, a graduation reward's too. The one definition: `_prepBuy`, `quoteBuy` and the pad's
+    ///      `walletRoom` / `walletCapOn` views all read it.
+    function walletCapOn(IGangLaunchpad.Config storage c, address token) internal view returns (bool) {
+        return c.walletCapEnabled && !Pad3AgentWindowStore.isOpen(token);
     }
 
     function _graduate(IGangLaunchpad.Config storage c, address token, IGangLaunchpad.Curve storage cv) private {
