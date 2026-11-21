@@ -211,9 +211,12 @@ const shownSession = (s, now = Date.now()) => ({
   expiresInMin: Math.max(0, Math.round((s.expiresAt - now) / 60_000)),
 })
 
-/** Forget the session and every key the sign client kept (requests waiting to be sent go too). */
+/**
+ * Forget the session and every key the sign client kept. The requests and what became of them (their hashes) stay for
+ * their day: a request is bound to its session's topic, so it can't be sent through another one.
+ */
 export function forget() {
-  for (const name of [SESSION, STORE, CONNECT, REQ_DIR]) remove(file(name))
+  for (const name of [SESSION, STORE, CONNECT]) remove(file(name))
 }
 
 /**
@@ -576,7 +579,11 @@ export function claimRequest(id, now = Date.now()) {
   try { fd = openSync(sentPath(id), 'wx', 0o600) } catch (e) {
     if (e.code === 'EEXIST') {
       const sent = readJson(sentPath(id))
-      throw new WcError('this request was already handed to the wallet once: never send it again. Check the wallet\'s activity (gang tx --hash <hash> if it has one), then build a new one if needed', 'WC_ALREADY_SENT', sent?.txHash ? { txHash: sent.txHash } : {})
+      if (sent && sent.sent === false && !sent.txHash) {
+        throw new WcError(`this request was refused before it reached the wallet (${sent.error ?? 'refused'}): nothing was sent. Build a fresh one with the same command`, 'WC_ALREADY_SENT', { sent: false, previous: sent.error ?? null })
+      }
+      throw new WcError('this request was already handed to the wallet once: never send it again. Check the wallet\'s activity (gang tx --hash <hash> if it has one), then build a new one if needed', 'WC_ALREADY_SENT',
+        { sent: sent?.txHash ? true : 'unknown', ...(sent?.txHash && { txHash: sent.txHash }), ...(sent?.error && { previous: sent.error }) })
     }
     throw e
   }
@@ -665,20 +672,21 @@ const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)', 'f
 const CURVES = parseAbi(['function curves(address token) view returns (address creator, address quote, uint128 realQuote, uint128 sold, uint128 gradAmt, uint128 virtualQuote, bool graduated, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address pair, address refPair)'])
 const ZERO = '0x0000000000000000000000000000000000000000'
 
-/** A GangLaunchpad token's quote, read from the known pads (null when none has it). */
-async function quoteOf(read, targets, token) {
+/** A GangLaunchpad token's pad and quote, read from the known pads ({ pad: null, quote: null } when none has it). */
+async function curveOf(read, targets, token) {
   for (const pad of targets.pads ?? []) {
     try {
       const c = await read.readContract({ address: pad, abi: CURVES, functionName: 'curves', args: [token] })
-      if (c && !same(c[0], ZERO)) return c[1]
+      if (c && !same(c[0], ZERO)) return { pad, quote: c[1] }
     } catch { /* not this pad */ }
   }
-  return null
+  return { pad: null, quote: null }
 }
+const quoteOf = async (read, targets, token) => (await curveOf(read, targets, token)).quote
 const unitsOf = async (read, token, amount) => {
   let d = 18
   try { d = Number(await read.readContract({ address: token, abi: ERC20, functionName: 'decimals' })) } catch { /* 18 */ }
-  return parseUnits(String(amount), d)
+  return parseUnits(String(amount).trim(), d)
 }
 
 /**
@@ -704,8 +712,10 @@ export async function bindApprove({ tx, call, next = null, intent, read, targets
     else if (fn === 'buyWithQuote') want = { token: await quoteOf(read, targets, intent.token), amount: n.args.quoteIn }
     else refuse(`${fn} takes no approve`)
   } else {
-    const spenderOk = (targets.pads ?? []).some((x) => same(x, S)) || (isAddress(module ?? '') && same(S, module))
-    if (!spenderOk) refuse('the spender is not a gang pad or the token\'s countdown module')
+    // the token's own pad (the one whose curves() has it), or for a buy the token's countdown module
+    const { pad: home } = await curveOf(read, targets, intent.token)
+    const spenderOk = (home && same(S, home)) || (intent.side === 'buy' && isAddress(module ?? '') && same(S, module))
+    if (!spenderOk) refuse('the spender is not the token\'s own pad (or, for a buy, its countdown module)')
     if (intent.side === 'sell') {
       const amount = intent.all
         ? await read.readContract({ address: intent.token, abi: ERC20, functionName: 'balanceOf', args: [session.address] })
@@ -793,11 +803,14 @@ export function mismatchOf(want, got) {
  * receipt decoded, the note published), onShow(text) before asking the wallet, onHash(hash) once it answers, client (a
  * sign client; tests). Never throws for a refusal: → the result to print.
  */
-export async function executeRequest(id, session, { read, targets, timeoutS = SEND_TIMEOUT_S.def, moduleOk, report, onShow = () => {}, onHash = () => {}, client = null }) {
+export async function executeRequest(id, session, deps) {
+  return cleanStrings(await executeInner(id, session, deps))
+}
+async function executeInner(id, session, { read, targets, timeoutS = SEND_TIMEOUT_S.def, moduleOk, report, onShow = () => {}, onHash = () => {}, client = null }) {
   if (!client) await projectId() // gang.fun being down must not use up the request
   const rec = claimRequest(id)
   const notSent = (e, extra = {}) => {
-    markSent(id, { error: e.code || 'WC_ERROR' })
+    markSent(id, { error: e.code || 'WC_ERROR', sent: false })
     return { success: false, error: e.message, code: e.code || 'WC_ERROR', requestId: id, sent: false, ...(e.extra || {}), ...extra, next: `nothing was sent; build a fresh request: ${rec.rerun ?? 'the same gang buy / sell --wallet wc'}` }
   }
   let shows
@@ -823,8 +836,8 @@ export async function executeRequest(id, session, { read, targets, timeoutS = SE
   try {
     hash = await sendRequest(rec, session, { timeoutS, targets, client })
   } catch (e) {
-    markSent(id, { error: e.code || 'WC_ERROR' })
     const unknown = !!e.extra?.requested
+    markSent(id, { error: e.code || 'WC_ERROR', sent: unknown ? 'unknown' : false })
     const { requested: _r, ...extra } = e.extra || {}
     return {
       success: false, error: e.message, code: e.code || 'WC_ERROR', requestId: id, request: shows, ...extra, sent: unknown ? 'unknown' : false,

@@ -168,7 +168,7 @@ try {
   writeFileSync(join(process.env.GANG_WC_DIR, 'store.json'), '{"k":1}', { mode: 0o600 })
   const exp = wc.readSession()
   assert.equal(exp.expired, true)
-  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR), [], 'session and sign-client keys deleted')
+  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR).filter((n) => n !== 'requests'), [], 'session and sign-client keys deleted')
   assert.equal(wc.status().connected, false)
 
   // --- what a request may call
@@ -312,6 +312,15 @@ try {
   await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, to: WBNB } }), 'WC_ERROR', /not exactly the trade/)
   await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, data: call('approve', [ROUTER, half]) } }), 'WC_ERROR', /spender/)
   await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, to: ROUTER, data: call('approve', [ROUTER, half]) } }), 'WC_ERROR')
+  // only the token's own pad (the one whose curves() has it): another gang pad is refused, as is the module on a sell
+  const PAD2 = '0x770331a9accdb53ACb4a45B6c5B7D151fADCe557'
+  const T2 = { ...TARGETS, pads: [PAD, PAD2] }
+  await throwsCode(() => wc.buildPreview({ ...curveApprove, tx: { ...curveApprove.tx, data: call('approve', [PAD2, half]) } }, S, { targets: T2, read, intent: buyIntent, rerun: 'x' }), 'WC_ERROR', /own pad/)
+  await throwsCode(() => P({ success: true, step: 'approve', module: MODULE, tx: { chainId: 56, from: ME, to: TOKEN, data: call('approve', [MODULE, 10n ** 18n]), value: '0' } }, { side: 'sell', token: TOKEN, amount: '1' }), 'WC_ERROR', /own pad/)
+  // a countdown module's approve on a buy is bound like the pad's (the module itself is checked on chain at execute)
+  assert.equal((await P({ success: true, step: 'approve-quote', approve: '0.5', module: MODULE, tx: { chainId: 56, from: ME, to: QUOTE, data: call('approve', [MODULE, half]), value: '0' } })).request.approves.exact, true)
+  // --amount as typed (with a space) still binds
+  assert.equal((await P(curveApprove, { ...buyIntent, amount: ' 0.5 ' })).request.approves.exact, true)
   // a sell approves the traded token itself, exactly --amount (or the whole balance with --all)
   bal(TOKEN, ME, 7n * 10n ** 18n)
   const sellApprove = { success: true, step: 'approve', token: TOKEN, tx: { chainId: 56, from: ME, to: TOKEN, data: call('approve', [PAD, 7n * 10n ** 18n]), value: '0' } }
@@ -334,6 +343,12 @@ try {
   assert.match(pp.note, /for the next step/)
   await throwsCode(() => P({ ...pool, steps: [{ ...pool.steps[0], tx: { ...pool.steps[0].tx, data: call('approve', [ROUTER, half + 1n]) } }, pool.steps[1]] }), 'WC_ERROR', /not exactly/)
   await throwsCode(() => P({ ...pool, steps: [pool.steps[0], { ...pool.steps[1], tx: { ...poolBuyTx, to: PAD } }] }), 'WC_ERROR', /spender/)
+  // a pool build that wraps first (steps: wrap, approve, trade): the wrap is the request, the rest come on re-runs
+  const wrapFirst = { ...pool, steps: [{ step: 'wrap-bnb', wrap: '0.5', tx: { chainId: 56, from: ME, to: WBNB, data: call('deposit', []), value: String(half) } }, ...pool.steps] }
+  const pw = await P(wrapFirst)
+  assert.equal(pw.request.function, 'deposit')
+  assert.deepEqual(pw.then.stepsLeft, ['approve-quote', 'pool-buy'])
+  assert.equal(pw.success, true)
   // a wrap: at most what the buy spends
   await throwsCode(() => P({ ...wrap, tx: { ...wrap.tx, value: String(half + 1n) } }), 'WC_ERROR', /more than the buy spends/)
   await throwsCode(() => P(wrap, { side: 'sell', token: TOKEN, amount: '1' }), 'WC_ERROR')
@@ -372,6 +387,10 @@ try {
   chain.receipt = null
   res = await exec(await P(curveApprove))
   assert.deepEqual([res.success, res.code, res.sent], [false, 'WC_UNVERIFIED', 'unknown'])
+  // a wallet's error text can't carry control or direction characters into the result
+  res = await exec(await P(curveApprove), { answer: () => { throw new Error('boom \u202e\u0085 evil') } })
+  assert.equal(res.code, 'WC_UNKNOWN')
+  assert.ok(!/[\u202e\u0085]/.test(JSON.stringify(res)))
   // rejected in the wallet: nothing sent, and it says how to try again
   res = await exec(await P(curveApprove), { answer: () => { throw Object.assign(new Error('User rejected.'), { code: 5000 }) } })
   assert.deepEqual([res.code, res.sent], ['WC_REJECTED', false])
@@ -383,6 +402,8 @@ try {
   res = await exec(later)
   assert.deepEqual([res.code, res.sent], ['NO_FUNDS', false])
   assert.equal(requests.length, before)
+  const again2 = await throwsCode(() => wc.executeRequest(later.requestId, S, { read, targets: TARGETS, client: sender(), moduleOk: async () => true, report: async () => ({}) }), 'WC_ALREADY_SENT', /refused before it reached the wallet/)
+  assert.deepEqual([again2.extra.sent, again2.extra.previous], [false, 'NO_FUNDS'])
   bal(QUOTE, ME, half)
   // a countdown module the factory did not make for this token: refused before the wallet
   const cdBuy = await P(cd)
@@ -390,6 +411,9 @@ try {
   assert.deepEqual([res.code, res.sent], ['WC_ERROR', false])
   assert.match(res.error, /countdown factory/)
   assert.equal(requests.length, before)
+  // a disconnect forgets the keys, not the record of what was sent (and its hash)
+  wc.forget()
+  assert.ok(wc.listRequests().some((x) => x.txHash === HASH))
   // the wallet ended the session: forgotten here, so status and connect aren't stuck
   writeSession(session(56))
   const gone = await P(curveApprove)
@@ -465,7 +489,7 @@ try {
   const t0 = Date.now()
   r = await run(['sell', '--token', TOKEN, '--all', '--wallet', 'wc'], { GANG_WC_PROJECT_ID: '' })
   assert.ok(Date.now() - t0 < 10_000, 'an expired session is retired without waiting on the network')
-  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR), [])
+  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR).filter((n) => n !== 'requests'), [], 'keys gone; the request records stay')
   assert.equal(r.out.code, 'WC_NO_SESSION')
   assert.match(r.out.error, /expired/)
   // gang wallet status / disconnect from the files; execute of an unknown wc request, before any network
