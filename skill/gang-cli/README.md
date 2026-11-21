@@ -299,9 +299,10 @@ gang agents --window 30d --sort follow
 
 `gang buy` / `gang sell` can trade from a wallet app of the user's (MetaMask, OKX, Trust, …) over WalletConnect v2:
 the CLI shows a pairing QR code, and the user confirms every transaction in the wallet. The CLI never holds a key.
+The WalletConnect project ID comes from gang.fun (`GET https://gang.fun/api/walletconnect`, kept in memory for the run);
+`GANG_WC_PROJECT_ID` overrides it.
 
 ```bash
-export GANG_WC_PROJECT_ID=<your WalletConnect / Reown Cloud project ID>
 gang wallet connect                 # QR code + uri; approve in the wallet app (BSC; --testnet: BSC testnet)
 gang buy --token 0x… --amount 0.05 --wallet wc
 gang execute --request-id wc-…      # the wallet asks the user to confirm; then the receipt
@@ -384,7 +385,7 @@ timed-out `gang_execute`, check `gang_status` / the wallet history instead of ex
 | `GANG_CDN_BASE` | CDN serving uploads as `<base>/ipfs/<cid>` (default `https://cdn.gang.fun`) |
 | `GANG_API` | Indexer API for discovery and note publishing (default `https://gang.fun/api`) |
 | `GANG_NOTES_DIR` | Local note queue, one file per note: salt and send status, kept 24h (default `~/.gang/notes`); `previews/` in it records what each trade preview carried (note, follow) for `gang execute`, also kept 24h |
-| `GANG_WC_PROJECT_ID` | WalletConnect / Reown Cloud project ID for `--wallet wc` (0.50.0+). Read from the environment only, never printed |
+| `GANG_WC_PROJECT_ID` | WalletConnect / Reown Cloud project ID for `--wallet wc` (0.50.0+). Overrides the one gang.fun serves (`<GANG_API>/walletconnect`); never printed or written to disk |
 | `GANG_WC_DIR` | Where the WalletConnect session and its keys are kept (default `~/.gang/wc`; directory 0700, files 0600) |
 | `GANG_STREAM` | `0`: `gang watch` market mode polls instead of using the server's stream (same as `--poll`) |
 | `GANG_TELEMETRY` | `0` turns off the anonymous usage counts (0.24.0+; `DO_NOT_TRACK=1` too). See [Telemetry](#telemetry) |

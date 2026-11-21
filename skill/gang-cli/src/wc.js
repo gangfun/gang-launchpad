@@ -5,7 +5,8 @@
  * key. Only approve / WBNB wrap / buy / sell calls are ever sent this way (ALLOWED below); every other write stays with the
  * Binance Agentic Wallet.
  *
- * The project ID comes only from GANG_WC_PROJECT_ID and is never printed (scrub). Everything kept on disk (the sign
+ * The project ID comes from GANG_WC_PROJECT_ID, else from gang.fun (<GANG_API>/walletconnect), is kept in memory for the
+ * run only and is never printed (scrub). Everything kept on disk (the sign
  * client's keys and session, our session record, the pending requests) is under ~/.gang/wc (GANG_WC_DIR), the directory
  * 0700 and every file 0600. A session is used for SESSION_TTL_MS (24 h) at most, whatever the wallet granted.
  *
@@ -13,7 +14,7 @@
  * command starts as before.
  */
 import { randomBytes } from 'node:crypto'
-import { chmodSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { decodeFunctionData, formatUnits, isAddress, isHex, parseAbi, toFunctionSelector, toHex } from 'viem'
@@ -41,19 +42,40 @@ const REQ_DIR = 'requests'
 
 // ---------------------------------------------------------------- project ID: env only, never printed
 
-/** The WalletConnect project ID from GANG_WC_PROJECT_ID (never from a file or a flag); throws without a valid one. */
-export function projectId(env = process.env) {
-  const id = String(env.GANG_WC_PROJECT_ID ?? '').trim()
-  if (!id) throw new WcError('WalletConnect needs a project ID: set GANG_WC_PROJECT_ID (a WalletConnect / Reown Cloud project ID) in the environment', 'WC_NO_PROJECT_ID')
-  if (!/^[0-9a-f]{32}$/i.test(id)) throw new WcError('GANG_WC_PROJECT_ID is not a WalletConnect project ID (32 hex characters)', 'WC_NO_PROJECT_ID')
+const PROJECT_ID_RE = /^[0-9a-f]{32}$/i
+let resolvedId = null // this run only: never written to disk
+export const UNAVAILABLE = 'WalletConnect is unavailable right now; set GANG_WC_PROJECT_ID or retry'
+
+/**
+ * The WalletConnect project ID: GANG_WC_PROJECT_ID when set, else gang.fun's (GET <GANG_API>/walletconnect →
+ * { projectId }). Kept in memory for this run only; never written to a file, never printed (scrub). Throws WcError.
+ */
+export async function projectId({ env = process.env, fetchImpl = globalThis.fetch, api = (env.GANG_API || 'https://gang.fun/api').replace(/\/+$/, '') } = {}) {
+  const own = String(env.GANG_WC_PROJECT_ID ?? '').trim()
+  if (own) {
+    if (!PROJECT_ID_RE.test(own)) throw new WcError('GANG_WC_PROJECT_ID is not a WalletConnect project ID (32 hex characters)', 'WC_NO_PROJECT_ID')
+    resolvedId = own
+    return own
+  }
+  if (resolvedId) return resolvedId
+  let id = null
+  try {
+    const r = await fetchImpl(`${api}/walletconnect`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) })
+    if (r.ok) id = String((await r.json())?.projectId ?? '').trim()
+  } catch { /* unreachable: below */ }
+  if (!id || !PROJECT_ID_RE.test(id)) throw new WcError(UNAVAILABLE, 'WC_NO_PROJECT_ID')
+  resolvedId = id
   return id
 }
+/** The ID this run uses, for a child process's env (memory to memory, never a file or argv); null before projectId(). */
+export const knownProjectId = () => resolvedId
 
 /** `text` with the project ID (and any projectId= / auth= query value) taken out: for every message and error we print. */
 export function scrub(text, env = process.env) {
   let s = String(text ?? '').replace(/([?&](?:projectId|auth)=)[^&\s"'`]+/gi, '$1<redacted>')
-  const id = String(env.GANG_WC_PROJECT_ID ?? '').trim()
-  if (id.length >= 8) s = s.split(id).join('<project id>')
+  for (const id of new Set([String(env.GANG_WC_PROJECT_ID ?? '').trim(), resolvedId ?? ''])) {
+    if (id.length >= 8) s = s.split(id).join('<project id>')
+  }
   return s
 }
 
@@ -67,9 +89,17 @@ export class WcError extends Error {
 
 // ---------------------------------------------------------------- files: dir 0700, files 0600, atomic writes
 
+/** The directory, made 0700 if new. Refused when it is a symlink, not this user's, or can't be made 0700: keys go nowhere else. */
 function ensureDir(path = dir()) {
   mkdirSync(path, { recursive: true, mode: 0o700 })
-  try { chmodSync(path, 0o700) } catch { /* not ours to change */ }
+  if (process.platform === 'win32') return
+  const st = lstatSync(path)
+  if (!st.isDirectory() || st.isSymbolicLink()) throw new WcError(`${path} is not a plain directory: WalletConnect keys are not kept there`, 'WC_ERROR')
+  if (typeof process.getuid === 'function' && st.uid !== process.getuid()) throw new WcError(`${path} belongs to another user: WalletConnect keys are not kept there`, 'WC_ERROR')
+  if ((st.mode & 0o777) !== 0o700) {
+    try { chmodSync(path, 0o700) } catch { /* checked below */ }
+    if ((lstatSync(path).mode & 0o777) !== 0o700) throw new WcError(`${path} can't be made private (0700): WalletConnect keys are not kept there`, 'WC_ERROR')
+  }
 }
 export function writeJson(path, obj) {
   ensureDir(join(path, '..'))
@@ -88,22 +118,27 @@ const remove = (path) => { try { rmSync(path, { force: true, recursive: true }) 
  * `gang wallet connect` can be used by a later `gang execute`. Written through on every change.
  */
 export class FileStorage {
-  constructor(path = file(STORE)) {
+  /** mayWrite(): false once this process no longer owns the store (a disconnect forgot it meanwhile): then nothing is written back. */
+  constructor(path = file(STORE), mayWrite = () => true) {
     this.path = path
-    this.data = readJson(path) ?? {}
+    this.mayWrite = mayWrite
+    this.data = Object.assign(Object.create(null), readJson(path) ?? {})
   }
   async getKeys() { return Object.keys(this.data) }
   async getEntries() { return Object.entries(this.data) }
   async getItem(key) { return this.data[key] }
-  async setItem(key, value) { this.data[key] = value; writeJson(this.path, this.data) }
-  async removeItem(key) { delete this.data[key]; writeJson(this.path, this.data) }
+  async setItem(key, value) { this.data[key] = value; this.flush() }
+  async removeItem(key) { delete this.data[key]; this.flush() }
+  flush() { if (this.mayWrite()) writeJson(this.path, this.data) }
 }
+/** This process may write the sign client's store: a session is saved, or the pairing waiting is this process's own. */
+const ownsStore = () => !!readJson(file(SESSION)) || readJson(file(CONNECT))?.pid === process.pid
 
 // ---------------------------------------------------------------- the sign client (lazy)
 
 /** A SignClient on our file storage, with its logs and WalletConnect's own telemetry off. */
 export async function signClient() {
-  const id = projectId()
+  const id = await projectId()
   ensureDir()
   let mod
   try { mod = await import('@walletconnect/sign-client') } catch (e) {
@@ -111,7 +146,7 @@ export async function signClient() {
   }
   const SignClient = mod.SignClient ?? mod.default?.SignClient ?? mod.default
   try {
-    return await SignClient.init({ projectId: id, metadata: METADATA, storage: new FileStorage(), logger: 'silent', telemetryEnabled: false })
+    return await SignClient.init({ projectId: id, metadata: METADATA, storage: new FileStorage(file(STORE), ownsStore), logger: 'silent', telemetryEnabled: false })
   } catch (e) {
     throw new WcError(`could not start WalletConnect: ${e?.message || e}`, 'WC_NETWORK')
   }
@@ -194,6 +229,12 @@ const pidAlive = (pid) => {
   try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' }
 }
 
+/** A pairing another live process is waiting on (gang wallet connect, --no-wait or not), or null. */
+export function pendingPairing(now = Date.now()) {
+  const c = readJson(file(CONNECT))
+  return c?.state === 'pairing' && c.pid !== process.pid && c.waitUntil > now && pidAlive(c.pid) ? c : null
+}
+
 /**
  * Start a session on `chainId` and wait for the wallet to approve it. onUri(uri) as soon as the pairing URI exists (print
  * it, draw its QR); keep() is asked once it is approved (false: drop it, unsaved). Refuses while a session is live or
@@ -206,11 +247,10 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
     throw new WcError(`a wallet is connected already (${live.session.address} on ${NETWORKS[live.session.chainId]}): gang wallet disconnect first`, 'WC_CONNECTED')
   }
   // a gang wallet connect --no-wait still waiting in the background: one pairing at a time
-  const pending = readJson(file(CONNECT))
-  if (pending?.state === 'pairing' && pending.pid !== process.pid && pending.waitUntil > now() && pidAlive(pending.pid)) {
+  if (pendingPairing(now())) {
     throw new WcError('a connect is already waiting for the wallet (gang wallet status shows its uri): approve it there, or gang wallet disconnect to cancel it', 'WC_CONNECTED')
   }
-  projectId() // before anything is written
+  if (!given) await projectId() // before anything is written
   // a fresh store: no keys of an older (expired / disconnected) session stay around
   if (!given) forget()
   const client = given ?? await signClient()
@@ -221,6 +261,8 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
       r = await client.connect({ optionalNamespaces: { eip155: { chains: [chain], methods: METHODS, events: EVENTS } } })
     } catch (e) { throw new WcError(`could not reach the WalletConnect relay: ${e?.message || e}`, 'WC_NETWORK') }
     if (!r?.uri) throw new WcError('WalletConnect gave no pairing URI', 'WC_ERROR')
+    const t0 = now()
+    writeJson(file(CONNECT), { state: 'pairing', uri: r.uri, chainId, pid: process.pid, startedAt: t0, waitUntil: t0 + timeoutS * 1000 })
     await onUri(r.uri)
     let session
     try {
@@ -230,8 +272,8 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
       throw new WcError(`the wallet did not connect: ${e?.message || e}`, 'WC_REFUSED')
     }
     const address = accountOn(session, chainId)
-    // keep(): false once gang wallet disconnect cancelled the pairing meanwhile: the session is ended, not saved
-    if (!keep()) {
+    // keep(): false once gang wallet disconnect cancelled the pairing meanwhile (its record is gone): ended, not saved
+    if (!keep() || (!given && readJson(file(CONNECT))?.pid !== process.pid)) {
       try { await client.disconnect({ topic: session.topic, reason: { code: 6000, message: 'User disconnected' } }) } catch { /* best effort */ }
       throw new WcError('the connect was cancelled (gang wallet disconnect) before the wallet approved it', 'WC_REFUSED')
     }
@@ -249,6 +291,7 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
     writeJson(file(SESSION), rec)
     return shownSession(rec, t)
   } finally {
+    if (readJson(file(CONNECT))?.pid === process.pid) remove(file(CONNECT))
     if (!given) await closeClient(client)
   }
 }
@@ -316,6 +359,24 @@ export function decodeAllowed(data) {
 }
 
 const big = (v) => (typeof v === 'bigint' ? v.toString() : v)
+// the result fields a request shows next to the decoded call (kept with it, so gang execute rebuilds what it shows)
+const SHOWN_FIELDS = ['step', 'token', 'approve', 'spend', 'amount', 'quote', 'expectTokens', 'expectOut', 'minTokensOut', 'minOut', 'module']
+
+/**
+ * gang execute: the stored request checked again from its tx alone (the same rules as when it was built, with the
+ * targets known now) → { shows } made from the tx, never the stored ones. Throws WcError.
+ */
+export function recheck(rec, session, targets) {
+  return toRequest({ ...(rec.fields ?? {}), tx: rec.tx }, session, { targets, now: rec.createdAt, id: rec.requestId })
+}
+/** The countdown module a request calls or approves, or null. */
+export function moduleOf(rec) {
+  const call = decodeAllowed(rec?.tx?.data)
+  if (!call) return null
+  if ((call.functionName === 'buy' && 'mustCount' in call.args) || call.functionName === 'buyWithQuote') return rec.tx.to
+  if (call.functionName === 'approve' && rec.fields?.module && same(call.args.spender, rec.fields.module)) return call.args.spender
+  return null
+}
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase()
 const ROUTER_FNS = new Set(['v3Buy', 'v3BuyBNB', 'poolBuyBNB', 'poolBuy', 'poolSell', 'poolSellForBNB'])
 
@@ -328,7 +389,10 @@ function checkTarget(fn, to, args, countdownBuy, o, targets) {
   if (!targets) throw new WcError('internal: no known contracts to check the step against', 'WC_ERROR')
   const { pads = [], routers = [], wbnb } = targets
   const known = (list, a) => list.some((x) => same(x, a))
+  // the module comes from the step's own result here; gang execute checks on chain that the countdown factory made it
   const module = countdownBuy || (fn === 'approve' && o?.module) ? o?.module : null
+  if (fn === 'approve' && args.amount >= 2n ** 255n) throw new WcError('refused: an unlimited approval (gang approves exactly the trade\'s amount)', 'WC_ERROR')
+  if (fn === 'approve' && args.amount === 0n) throw new WcError('refused: an approval of 0', 'WC_ERROR')
   let ok
   if (fn === 'deposit') ok = same(to, wbnb)
   else if (countdownBuy) ok = isAddress(module ?? '') && same(to, module)
@@ -385,7 +449,8 @@ export function toRequest(o, session, { targets, now = Date.now(), id = `wc-${ra
     }),
   }
   const tx_ = { chainId: Number(tx.chainId), from: tx.from, to: tx.to, data: tx.data, value: value.toString(), ...(tx.gas && { gas: String(tx.gas) }) }
-  return { id, rec: { requestId: id, tx: tx_, shows, createdAt: now, expiresAt: now + REQUEST_TTL_MS, topic: session.topic }, shows }
+  const fields = Object.fromEntries(SHOWN_FIELDS.filter((k) => o[k] != null && typeof o[k] !== 'object').map((k) => [k, String(o[k])]))
+  return { id, rec: { requestId: id, tx: tx_, fields, shows, createdAt: now, expiresAt: now + REQUEST_TTL_MS, topic: session.topic }, shows }
 }
 
 /** One line per field for the terminal (stderr), before the wallet is asked. */
@@ -402,7 +467,8 @@ export function describe(shows) {
   }
   if (shows.valueBnb !== '0') l.push(`  BNB sent with it: ${shows.valueBnb}`)
   l.push('  confirm it in your wallet app (or reject it there)')
-  return l.join('\n')
+  // token symbols and the like come from the chain: no terminal control characters
+  return l.join('\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')
 }
 
 // ---------------------------------------------------------------- requests waiting for gang execute
@@ -457,13 +523,14 @@ const REJECTED = /reject|denied|cancel|declin|user disapproved/i
  * Refuses a session that is not on the request's chain (never switches it). Throws WcError (code WC_REJECTED when the
  * user said no, WC_TIMEOUT when no answer came: then it may still be sent, so never resend).
  */
-export async function sendRequest(rec, session, { client: given = null, timeoutS = SEND_TIMEOUT_S.def } = {}) {
+export async function sendRequest(rec, session, { client: given = null, timeoutS = SEND_TIMEOUT_S.def, targets = null } = {}) {
   const { tx } = rec
   if (session.topic !== rec.topic) throw new WcError('this request was built for another WalletConnect session: run the same gang buy / sell --wallet wc again', 'WC_WRONG_WALLET')
   if (String(tx.from).toLowerCase() !== String(session.address).toLowerCase()) throw new WcError(`the request is from ${tx.from}, the connected wallet is ${session.address}`, 'WC_WRONG_WALLET')
   if (Number(tx.chainId) !== Number(session.chainId)) throw new WcError(`the request is on chain ${tx.chainId}, the wallet session on ${session.chainId}`, 'WC_WRONG_CHAIN')
   // the call is checked again here: the request file is ours, but nothing but these calls ever leaves through WC
   if (!decodeAllowed(tx.data)) throw new WcError('--wallet wc only sends approve, BNB wrap, buy and sell calls', 'AGENTIC_ONLY')
+  if (targets) recheck(rec, session, targets)
   const client = given ?? await signClient()
   try {
     let live
@@ -476,22 +543,26 @@ export async function sendRequest(rec, session, { client: given = null, timeoutS
     }
     const params = {
       from: tx.from, to: tx.to, data: tx.data, value: toHex(BigInt(tx.value ?? 0)),
+      // in the tx too, not only the request's envelope: a wallet that signs on its own current network refuses a mismatch
+      chainId: toHex(Number(tx.chainId)),
       ...(tx.gas && { gas: toHex(BigInt(tx.gas)) }),
     }
     let hash
     try {
       hash = await withTimeout(
-        client.request({ topic: session.topic, chainId: `eip155:${tx.chainId}`, request: { method: 'eth_sendTransaction', params: [params] }, expiry: Math.max(300, timeoutS) }),
+        // the request outlives our wait, so our timeout always comes first and says "may still be sent"
+        client.request({ topic: session.topic, chainId: `eip155:${tx.chainId}`, request: { method: 'eth_sendTransaction', params: [params] }, expiry: Math.max(300, timeoutS + 120) }),
         timeoutS * 1000,
-        () => new WcError(`no answer from the wallet within ${timeoutS} s: it may still send it. Never resend: check the wallet's activity first`, 'WC_TIMEOUT'))
+        () => new WcError(`no answer from the wallet within ${timeoutS} s: it may still send it. Never resend: check the wallet's activity first`, 'WC_TIMEOUT', { requested: true }))
     } catch (e) {
       if (e instanceof WcError) throw e
       const msg = String(e?.message ?? e)
+      // only the user's own no means nothing went out; any other failure after the request left may still be sent
       if (e?.code === 4001 || e?.code === 5000 || REJECTED.test(msg)) throw new WcError('the wallet rejected the request: nothing was sent', 'WC_REJECTED')
-      throw new WcError(`the wallet answered with an error: ${msg}`, 'WC_ERROR')
+      throw new WcError(`the wallet answered with an error: ${msg}. It may still send the tx: never resend before checking the wallet's activity`, 'WC_UNKNOWN', { requested: true })
     }
     if (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
-      throw new WcError('the wallet answered without a tx hash: check its activity before trying again', 'WC_TIMEOUT', { answer: String(hash).slice(0, 80) })
+      throw new WcError('the wallet answered without a tx hash: check its activity before trying again', 'WC_UNKNOWN', { requested: true, answer: String(hash).slice(0, 80) })
     }
     return hash.toLowerCase()
   } finally {

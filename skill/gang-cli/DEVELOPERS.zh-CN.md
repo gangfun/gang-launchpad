@@ -128,9 +128,10 @@ deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的�
 | `WC_NO_SESSION` / `WC_CONNECTED` | 没有 WalletConnect 会话（或已超过 24 小时过期）：`gang wallet connect`。/ 已经连着一个：先 `gang wallet disconnect` |
 | `WC_WRONG_CHAIN` / `WC_WRONG_WALLET` | 会话的链或地址和这笔交易不一致：请用户在钱包里选好网络后重新连接（CLI 不会替用户切换） |
 | `WC_REJECTED` | 用户在钱包里拒绝了：什么都没发出 |
-| `WC_TIMEOUT` | 钱包没有及时回应：它仍可能发出这笔交易，确认之前不要重新执行或重建 |
+| `WC_TIMEOUT` / `WC_UNKNOWN` | 钱包没有及时回应，或请求到达钱包后出了别的错（`sent: "unknown"`）：它仍可能发出这笔交易，确认之前不要重新执行或重建 |
+| `WC_TX_MISMATCH` / `WC_UNVERIFIED` | 钱包给的哈希是另一笔交易（或同一调用更早的一笔）/ 链上还查不到：不算已发送，请查看钱包的交易记录 |
 | `WC_EXPIRED` / `WC_ALREADY_SENT` / `WC_NO_REQUEST` | wc-… 请求已超过 10 分钟 / 已经交给钱包一次 / 不在这台机器上：重新生成一个 |
-| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | 没设置 `GANG_WC_PROJECT_ID` / 连不上 relay / 其他 WalletConnect 错误 |
+| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | 拿不到 WalletConnect 项目 ID（gang.fun 没响应，也没设置 `GANG_WC_PROJECT_ID`）：稍后重试 / 连不上 relay / 其他 WalletConnect 错误 |
 | `REVERT` | 模拟执行或链上拒绝了这笔交易 |
 | 合约错误名（如 `NotAgent`） | 对应的合约错误 |
 | 小写单词（如 `not_found`） | 具体的拒绝原因，见 `error` |

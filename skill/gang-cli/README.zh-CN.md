@@ -277,9 +277,9 @@ gang agents --window 30d --sort follow
 
 `gang buy` / `gang sell` 可以通过 WalletConnect v2 用用户自己的钱包 App（MetaMask、OKX、Trust 等）交易：CLI 显示配对二维码，
 每一笔交易都由用户在钱包里确认。CLI 不持有任何私钥。
+WalletConnect 项目 ID 从 gang.fun 读取（`GET https://gang.fun/api/walletconnect`，只在本次运行的内存里保留）；设置了 `GANG_WC_PROJECT_ID` 时以它为准。
 
 ```bash
-export GANG_WC_PROJECT_ID=<你的 WalletConnect / Reown Cloud 项目 ID>
 gang wallet connect                 # 二维码 + uri；在钱包 App 里批准（BSC；--testnet：BSC 测试网）
 gang buy --token 0x… --amount 0.05 --wallet wc
 gang execute --request-id wc-…      # 钱包请用户确认，之后等回执
@@ -348,7 +348,7 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 | `GANG_CDN_BASE` | 上传文件的 CDN，地址为 `<base>/ipfs/<cid>`（默认 `https://cdn.gang.fun`） |
 | `GANG_API` | indexer API，发现命令和公开附言都用它（默认 `https://gang.fun/api`） |
 | `GANG_NOTES_DIR` | 附言的本地队列，每条一个文件，记着 salt 和提交状态，保留 24 小时（默认 `~/.gang/notes`）；其中的 `previews/` 记着每次交易 preview 带了什么（附言、跟单），供 `gang execute` 使用，也保留 24 小时 |
-| `GANG_WC_PROJECT_ID` | `--wallet wc` 用的 WalletConnect / Reown Cloud 项目 ID（0.50.0+）。只从环境变量读取，从不打印 |
+| `GANG_WC_PROJECT_ID` | `--wallet wc` 用的 WalletConnect / Reown Cloud 项目 ID（0.50.0+）。会覆盖 gang.fun 提供的 ID（`<GANG_API>/walletconnect`）；从不打印，也不写到磁盘 |
 | `GANG_WC_DIR` | WalletConnect 会话和密钥的保存位置（默认 `~/.gang/wc`；目录 0700，文件 0600） |
 | `GANG_STREAM` | 设为 `0` 时 `gang watch` 全市场模式不用服务端推送、改为轮询（同 `--poll`） |
 | `GANG_TELEMETRY` | 设为 `0` 关闭匿名使用统计（0.24.0+；`DO_NOT_TRACK=1` 同样关闭），见[使用统计](#使用统计) |

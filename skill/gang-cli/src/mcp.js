@@ -188,7 +188,7 @@ export const TOOLS = [
     { requestId: { type: 'string', minLength: 1 } }, (a) => ['execute', '--request-id', a.requestId],
     { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, ['requestId']),
   tool('gang_wallet_connect', 'Connect a wallet app',
-    'Pair the user\'s own wallet app (MetaMask, OKX, Trust, …) over WalletConnect, for gang_buy / gang_sell with wallet: "wc" only (everything else stays with the Agentic Wallet). Returns uri and qr (the uri as a text QR code) at once: show them to the user to scan and approve in the wallet, then call gang_wallet_status until connected: true. One wallet at a time, kept 24 h at most. Needs GANG_WC_PROJECT_ID in the server\'s environment.',
+    'Pair the user\'s own wallet app (MetaMask, OKX, Trust, …) over WalletConnect, for gang_buy / gang_sell with wallet: "wc" only (everything else stays with the Agentic Wallet). Returns uri and qr (the uri as a text QR code) at once: show them to the user to scan and approve in the wallet, then call gang_wallet_status until connected: true. One wallet at a time, kept 24 h at most.',
     { testnet: { type: 'boolean', description: 'BSC testnet (chain 97) instead of BSC (56)' }, timeout: { type: 'integer', minimum: 30, maximum: 1800, description: 'Seconds to wait for the approval (default 300)' } },
     (a) => ['wallet', 'connect', '--no-wait', ...flag('timeout', a.timeout), ...bool('testnet', a.testnet)],
     { readOnlyHint: false, destructiveHint: false, openWorldHint: true }),

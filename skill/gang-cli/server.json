@@ -41,7 +41,7 @@
         },
         {
           "name": "GANG_WC_PROJECT_ID",
-          "description": "WalletConnect / Reown Cloud project ID: lets gang_buy / gang_sell trade from the user's own wallet app (wallet: \"wc\"); unset: Agentic Wallet only",
+          "description": "Overrides the WalletConnect project ID gang.fun serves, for gang_buy / gang_sell with wallet: \"wc\" (the user's own wallet app)",
           "format": "string"
         }
       ]

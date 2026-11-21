@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -67,9 +67,28 @@ const mode = (p) => statSync(p).mode & 0o777
 
 try {
   // --- the project ID: env only, checked, never printed
-  assert.equal(wc.projectId({ GANG_WC_PROJECT_ID: FAKE_ID }), FAKE_ID)
-  await throwsCode(() => wc.projectId({}), 'WC_NO_PROJECT_ID', /GANG_WC_PROJECT_ID/)
-  await throwsCode(() => wc.projectId({ GANG_WC_PROJECT_ID: 'nope' }), 'WC_NO_PROJECT_ID')
+  // env first; else gang.fun's /walletconnect (mocked here), kept for the run only
+  const noFetch = () => { throw new Error('fetched') }
+  assert.equal(await wc.projectId({ env: { GANG_WC_PROJECT_ID: FAKE_ID }, fetchImpl: noFetch }), FAKE_ID)
+  await throwsCode(() => wc.projectId({ env: { GANG_WC_PROJECT_ID: 'nope' }, fetchImpl: noFetch }), 'WC_NO_PROJECT_ID')
+  const asked = []
+  const SERVED = 'abcdef0123456789abcdef0123456789'
+  const served = (body, ok = true) => async (url) => { asked.push(url); return { ok, json: async () => body } }
+  const fresh = async () => import(`../src/wc.js?run=${Math.random()}`) // a new run: nothing resolved yet
+  let m = await fresh()
+  await throwsCode(() => m.projectId({ env: {}, fetchImpl: served({}, false), api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID', /unavailable right now; set GANG_WC_PROJECT_ID or retry|unavailable right now: set GANG_WC_PROJECT_ID/)
+  await throwsCode(() => m.projectId({ env: {}, fetchImpl: served({ projectId: 'short' }), api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID')
+  await throwsCode(() => m.projectId({ env: {}, fetchImpl: async () => { throw new Error('offline') }, api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID')
+  assert.equal(await m.projectId({ env: {}, fetchImpl: served({ projectId: SERVED }), api: 'https://x.test/api' }), SERVED)
+  assert.equal(asked.at(-1), 'https://x.test/api/walletconnect')
+  const n0 = asked.length
+  assert.equal(await m.projectId({ env: {}, fetchImpl: served({ projectId: SERVED }) }), SERVED)
+  assert.equal(asked.length, n0, 'fetched once per run')
+  assert.equal(m.scrub(`bad ${SERVED}`, {}), 'bad <project id>', 'a served ID is scrubbed too')
+  assert.equal(m.knownProjectId(), SERVED)
+  m = await fresh()
+  assert.equal(await m.projectId({ env: { GANG_API: 'https://y.test/api/' }, fetchImpl: served({ projectId: SERVED }) }), SERVED)
+  assert.equal(asked.at(-1), 'https://y.test/api/walletconnect', 'follows GANG_API')
   assert.equal(wc.scrub(`wss://relay.walletconnect.org/?projectId=${FAKE_ID}&ua=x failed`), 'wss://relay.walletconnect.org/?projectId=<redacted>&ua=x failed')
   assert.equal(wc.scrub(`bad key ${FAKE_ID}`), 'bad key <project id>')
   assert.ok(!new wc.WcError(`relay refused ${FAKE_ID}`).message.includes(FAKE_ID))
@@ -82,6 +101,18 @@ try {
   assert.equal(mode(join(process.env.GANG_WC_DIR, 'store.json')), 0o600)
   await st.removeItem('wc@2:core:keychain')
   assert.deepEqual(await st.getKeys(), [])
+  // a store this process no longer owns (forgotten by a disconnect meanwhile) is not written back
+  const ghost = new wc.FileStorage(join(process.env.GANG_WC_DIR, 'ghost.json'), () => false)
+  await ghost.setItem('k', 1)
+  assert.ok(!readdirSync(process.env.GANG_WC_DIR).includes('ghost.json'))
+  // keys only in a private directory of this user
+  const loose = join(DIR, 'loose')
+  mkdirSync(loose, { mode: 0o755 })
+  chmodSync(loose, 0o755)
+  wc.writeJson(join(loose, 'x.json'), {})
+  assert.equal(mode(loose), 0o700, 'tightened to 0700')
+  symlinkSync(loose, join(DIR, 'link'))
+  await throwsCode(() => wc.writeJson(join(DIR, 'link', 'y.json'), {}), 'WC_ERROR', /not a plain directory/)
 
   // --- connect (mocked client): BSC account saved for 24 h at most; the wrong chain refused and dropped; a timeout
   let disconnected = null
@@ -150,6 +181,11 @@ try {
   assert.equal(wc.toRequest(cd, S, { targets: TARGETS }).shows.function, 'buy')
   const wrap = { success: true, step: 'wrap-bnb', tx: { chainId: 56, from: ME, to: WBNB, data: call('deposit', []), value: '7' } }
   assert.deepEqual(wc.toRequest(wrap, S, { targets: TARGETS }).shows.wraps, { bnb: '0.000000000000000007' })
+  // refused: unlimited and zero approvals
+  await throwsCode(() => wc.toRequest({ ...approveStep, tx: { ...approveStep.tx, data: call('approve', [PAD, 2n ** 256n - 1n]) } }, S, { targets: TARGETS }), 'WC_ERROR', /unlimited/)
+  await throwsCode(() => wc.toRequest({ ...approveStep, tx: { ...approveStep.tx, data: call('approve', [PAD, 0n]) } }, S, { targets: TARGETS }), 'WC_ERROR')
+  // a token symbol can't put terminal control codes on the screen
+  assert.ok(!/\u001b/.test(wc.describe({ ...b.shows, trade: { ...b.shows.trade, quote: 'X\u001b[2J' } })))
   // refused: anything but approve / wrap / buy / sell, unknown targets, BNB on a call that takes none, someone else's step
   await throwsCode(() => wc.toRequest({ ...buyStep, tx: { ...buyStep.tx, data: call('transfer', [OTHER, 1n]) } }, S, { targets: TARGETS }), 'AGENTIC_ONLY')
   await throwsCode(() => wc.toRequest({ ...buyStep, tx: { ...buyStep.tx, to: TOKEN, data: call('postBond', [TOKEN, 1n]) } }, S, { targets: TARGETS }), 'AGENTIC_ONLY')
@@ -186,7 +222,7 @@ try {
   assert.equal(await wc.sendRequest(rec, S, { client: sender(), timeoutS: 60 }), HASH)
   assert.deepEqual(requests.at(-1), {
     topic: 'topic-1', chainId: 'eip155:56', expiry: 300,
-    request: { method: 'eth_sendTransaction', params: [{ from: ME, to: PAD, data: buyStep.tx.data, value: '0x0', gas: '0xb71b0' }] },
+    request: { method: 'eth_sendTransaction', params: [{ from: ME, to: PAD, data: buyStep.tx.data, value: '0x0', chainId: '0x38', gas: '0xb71b0' }] },
   })
   const n = requests.length
   await throwsCode(() => wc.sendRequest(rec, S, { client: sender([1]) }), 'WC_WRONG_CHAIN', /never switches/)
@@ -197,9 +233,25 @@ try {
   await throwsCode(() => wc.sendRequest(rec, S, { client: { session: { get: () => { throw new Error('No matching key') } }, request: () => HASH } }), 'WC_NO_SESSION')
   assert.equal(requests.length, n, 'nothing reaches the wallet when a check fails')
   await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw Object.assign(new Error('User rejected'), { code: 5000 }) }) }), 'WC_REJECTED')
-  await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => '0x1234') }), 'WC_TIMEOUT')
-  await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => new Promise(() => {})), timeoutS: 0.05 }), 'WC_TIMEOUT', /Never resend/)
-  await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw new Error(`relay ?projectId=${FAKE_ID} down`) }) }), 'WC_ERROR', /projectId=<redacted>/)
+  // only the user's no means nothing went out: anything else after the request left may still be sent
+  const rej = await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw Object.assign(new Error('x'), { code: 4001 }) }) }), 'WC_REJECTED')
+  assert.equal(rej.extra.requested, undefined)
+  assert.equal((await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => '0x1234') }), 'WC_UNKNOWN')).extra.requested, true)
+  assert.equal((await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => new Promise(() => {})), timeoutS: 0.05 }), 'WC_TIMEOUT', /Never resend/)).extra.requested, true)
+  const relay = await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw new Error(`relay ?projectId=${FAKE_ID} down`) }) }), 'WC_UNKNOWN', /projectId=<redacted>/)
+  assert.equal(relay.extra.requested, true)
+  assert.match(relay.message, /never resend/)
+  // the request outlives our own wait
+  await wc.sendRequest(rec, S, { client: sender(), timeoutS: 600 })
+  assert.equal(requests.at(-1).expiry, 720)
+  // at send time the stored tx is checked again against the known contracts: a tampered file is refused
+  const nb = requests.length
+  await throwsCode(() => wc.sendRequest({ ...rec, tx: { ...rec.tx, to: OTHER } }, S, { client: sender(), targets: TARGETS }), 'WC_ERROR', /not a gang pad/)
+  assert.equal(requests.length, nb)
+  const again = wc.recheck({ ...b.rec, shows: { lies: true } }, S, TARGETS)
+  assert.deepEqual(again.shows, b.shows, 'shows rebuilt from the tx, never the file')
+  assert.equal(wc.moduleOf(wc.toRequest(cd, S, { targets: TARGETS }).rec), MODULE)
+  assert.equal(wc.moduleOf(b.rec), null)
 
   // --- CLI: --wallet wc on anything but buy / sell is refused before any read
   wc.forget()
@@ -216,6 +268,12 @@ try {
     assert.match(r.out.error, /Binance Agentic Wallet/)
   }
   let r = await run(['buy', '--token', TOKEN, '--amount', '1', '--wallet', 'metamask'])
+  assert.equal(r.out.code, 'USAGE')
+  for (const v of ['buy', 'sell']) {
+    r = await run([v, '--token', TOKEN, '--amount', '1', '--wallet=wc'])
+    assert.equal(r.out.code, 'USAGE', `${v} --wallet=wc`)
+    assert.match(r.out.error, /after a space/)
+  }
   assert.equal(r.out.code, 'USAGE')
   r = await run(['buy', '--token', TOKEN, '--amount', '1', '--wallet', 'wc'])
   assert.equal(r.out.code, 'WC_NO_SESSION')
@@ -247,8 +305,9 @@ try {
   assert.equal(r.out.code, 'WC_NO_REQUEST')
   r = await run(['wallet', 'connect'])
   assert.equal(r.out.code, 'WC_CONNECTED')
-  r = await run(['wallet', 'connect'], { GANG_WC_PROJECT_ID: '' })
+  r = await run(['wallet', 'connect'], { GANG_WC_PROJECT_ID: '', GANG_WC_DIR: join(DIR, 'none') })
   assert.equal(r.out.code, 'WC_NO_PROJECT_ID')
+  assert.match(r.out.error, /unavailable right now/)
   r = await run(['wallet', 'nope'])
   assert.equal(r.out.code, 'USAGE')
   r = await run(['wallet', 'disconnect'], { GANG_WC_PROJECT_ID: '' })

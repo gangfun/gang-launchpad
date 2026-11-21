@@ -74,7 +74,8 @@ only).
 
 ## Your own wallet (WalletConnect)
 
-CLI 0.50.0+, `gang buy` / `gang sell` only, with `GANG_WC_PROJECT_ID` set (a WalletConnect / Reown Cloud project ID).
+CLI 0.50.0+, `gang buy` / `gang sell` only. The WalletConnect project ID comes from gang.fun (`GANG_WC_PROJECT_ID`
+overrides it); `WC_NO_PROJECT_ID` means gang.fun did not answer: retry.
 
 1. `gang wallet connect [--testnet]` prints a pairing `uri` and a QR code; the user scans it with their wallet app
    (MetaMask, OKX, Trust, …) and approves on BSC (testnet: 97). Under MCP, `gang_wallet_connect` returns `uri` and `qr`

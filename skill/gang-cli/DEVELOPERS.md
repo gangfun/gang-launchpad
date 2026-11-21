@@ -131,9 +131,10 @@ Factories: BSC mainnet `0xa1e3117a59104de7D97667cF22f9AB886a5f2957`, BSC testnet
 | `WC_NO_SESSION` / `WC_CONNECTED` | No WalletConnect session (or it expired after 24 h): `gang wallet connect`. / One is connected already: `gang wallet disconnect` first |
 | `WC_WRONG_CHAIN` / `WC_WRONG_WALLET` | The session is on another chain or address than the trade: the user picks the network in the wallet and connects again (never switched for them) |
 | `WC_REJECTED` | The user rejected it in the wallet: nothing was sent |
-| `WC_TIMEOUT` | No answer from the wallet in time: it may still send it, so never execute or rebuild it before checking |
+| `WC_TIMEOUT` / `WC_UNKNOWN` | No answer from the wallet in time, or another failure after the request reached it (`sent: "unknown"`): it may still send it, so never execute or rebuild it before checking |
+| `WC_TX_MISMATCH` / `WC_UNVERIFIED` | The hash the wallet gave is another tx (or an older one of the same call) / is not on chain yet: not counted as sent; check the wallet's activity |
 | `WC_EXPIRED` / `WC_ALREADY_SENT` / `WC_NO_REQUEST` | The wc-… request is older than 10 min / was handed to the wallet once already / is not on this machine: build a fresh one |
-| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | `GANG_WC_PROJECT_ID` is not set / the relay can't be reached / another WalletConnect error |
+| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | no WalletConnect project ID (gang.fun did not answer, and `GANG_WC_PROJECT_ID` is not set): retry / the relay can't be reached / another WalletConnect error |
 | `REVERT` | The simulation or the chain refused it |
 | A contract error name (such as `NotAgent`) | That contract error |
 | A lower-case word (such as `not_found`) | A specific refusal: `error` explains it |
