@@ -54,6 +54,7 @@
 - 实现槽：pad = `0x40E9E53AAA7b7fe1Be14cDfd56fdAb3D97B3a448`，registry = `0xaB1Fd667387aBF4aFD4c57e06b964648fa9EF301`；`module()` = `0xFBcD…A536`，它的 `gradModule()` = `0x8cA0…A7dc`；两个代理的 owner 仍是 Safe。
 - `MAX_AGENT_WINDOW_MINUTES()` = 1440。
 - 最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd`：`agentOpenAt` = 0，`walletCapOn` = true（和 `walletCapEnabled()` 一致），没有 Agent ID 的钱包 `canTradeCurve` = false。
-- 待做：第一个真实窗口币的报价和交易核对；CLI 0.49.0 发布；BscScan 源码验证。
+- CLI 0.49.0 已发布（gangfun/cli `012b236`，npm `@gangfun/cli@0.49.0`）；`npx @gangfun/cli@0.49.0 info` 在主网读到老币 `agentWindow.set = false`。
+- 待做：第一个真实窗口币的报价和交易核对；BscScan 源码验证；网站展示和 `capabilities.json` 刷新。
 
 升级不回滚（spec §9.4）：出问题只做前滚修复。
