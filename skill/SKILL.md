@@ -159,7 +159,8 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
 - **Handoff to the user's own wallet** (`gang buy|sell … --handoff [--from <their wallet>]`, 0.51.0+): only for an open
   agent-window curve token. It prints a prefilled gang.fun link and a QR: show both, with the steps (Binance app → Web3
-  Wallet → Discover → paste the link, or any wallet app's browser). Nothing is signed by it: the user connects and
+  Wallet → Discover → paste the link, or any wallet app's browser; the Binance app's scanner can't open the QR's link, so
+  for Binance always give the link to paste). Nothing is signed by it: the user connects and
   confirms on the page. Never say the trade happened until `gang handoff status --token … --from …` shows
   `traded: true`. No `--note` (the page sends none).
 - **No WalletConnect**: CLI 0.50.1 removed 0.50.0's `gang wallet` / `--wallet wc` (licensing; code `REMOVED`). For a
