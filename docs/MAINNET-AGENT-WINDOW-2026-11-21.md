@@ -7,7 +7,7 @@
 - 上线前已完成：
   - 链下规则（§6）：服务端的 Agent ID 检查已部署到生产，结算脚本（#184、#185）随之更新；生产用的节点对未升级 pad 的 `agentOpenAt` 返回 code 3；
   - CLI `--agent-window`（#183，0.49.0，待发布）。
-- 状态：新实现已部署；Safe 批次已生成并在 fork 上演练通过，**等待签名**。
+- 状态：**已上线**。Safe 于 2026-11-21 13:43（UTC+8）执行升级批次，pad 和 registry 都已是新实现。
 
 ## 部署
 
@@ -45,11 +45,15 @@
 - **节点回报 revert 的方式**：未升级的 pad 上 `agentOpenAt` 在四个公共主网节点都返回 JSON-RPC code 3，服务端和结算脚本据此判断“没有窗口”。
 - **源码验证**：六个新合约都已在 Sourcify 验证（match）。Etherscan v2 的免费 key 已不支持 BSC，BscScan 验证没有做（需要付费 key 或网页手动提交），留作上线后补做。字节码已由脚本逐字节核对。
 
-## 执行后（待补）
+## 执行
 
-- 读回 pad 和 registry 的实现槽、`module()`、`gradModule()`；
-- 最新老币 `agentOpenAt == 0`，`walletCapOn` 和总开关一致；
-- 第一个窗口币的报价和交易；
-- 发布 CLI 0.49.0。
+交易 [`0xa8b20493…88c0`](https://bscscan.com/tx/0xa8b20493ef7c23708b2bdba89da5a5c34302428663dbcacf27328bb1f10c88c0)，区块 134833222（2026-11-21 13:43 UTC+8），gas 112,300，gas price 0.05 gwei。Safe `0x2866…B41E` nonce 59（执行后下一个 nonce 是 60）。回执成功，日志：pad 代理和 registry 代理各一条 `Upgraded`，Safe 一条 `ExecutionSuccess`。
+
+## 执行后核对
+
+- 实现槽：pad = `0x40E9E53AAA7b7fe1Be14cDfd56fdAb3D97B3a448`，registry = `0xaB1Fd667387aBF4aFD4c57e06b964648fa9EF301`；`module()` = `0xFBcD…A536`，它的 `gradModule()` = `0x8cA0…A7dc`；两个代理的 owner 仍是 Safe。
+- `MAX_AGENT_WINDOW_MINUTES()` = 1440。
+- 最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd`：`agentOpenAt` = 0，`walletCapOn` = true（和 `walletCapEnabled()` 一致），没有 Agent ID 的钱包 `canTradeCurve` = false。
+- 待做：第一个真实窗口币的报价和交易核对；CLI 0.49.0 发布；BscScan 源码验证。
 
 升级不回滚（spec §9.4）：出问题只做前滚修复。
