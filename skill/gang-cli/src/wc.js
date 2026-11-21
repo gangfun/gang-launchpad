@@ -54,14 +54,17 @@ export async function projectId({ env = process.env, fetchImpl = globalThis.fetc
   const own = String(env.GANG_WC_PROJECT_ID ?? '').trim()
   if (own) {
     if (!PROJECT_ID_RE.test(own)) throw new WcError('GANG_WC_PROJECT_ID is not a WalletConnect project ID (32 hex characters)', 'WC_NO_PROJECT_ID')
-    resolvedId = own
-    return own
+    resolvedId = own.toLowerCase()
+    return resolvedId
   }
   if (resolvedId) return resolvedId
   let id = null
+  // gang.fun's answer only over https (a plain-http GANG_API could hand out someone else's project)
+  if (!/^https:\/\//i.test(api) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(api)) throw new WcError(UNAVAILABLE, 'WC_NO_PROJECT_ID')
   try {
     const r = await fetchImpl(`${api}/walletconnect`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) })
-    if (r.ok) id = String((await r.json())?.projectId ?? '').trim()
+    const got = r.ok ? (await r.json())?.projectId : null
+    if (typeof got === 'string') id = got.trim().toLowerCase()
   } catch { /* unreachable: below */ }
   if (!id || !PROJECT_ID_RE.test(id)) throw new WcError(UNAVAILABLE, 'WC_NO_PROJECT_ID')
   resolvedId = id
@@ -516,7 +519,8 @@ export const markSent = (id, data) => { try { writeJson(sentPath(id), { ...data,
 
 // ---------------------------------------------------------------- sending
 
-const REJECTED = /reject|denied|cancel|declin|user disapproved/i
+// the user's own no, as wallets word it; any other error may follow a sent tx
+const REJECTED = /user (rejected|denied|declined|disapproved|cancel+ed)|rejected by (the )?user/i
 
 /**
  * eth_sendTransaction of a stored request to the session's wallet; resolves with the tx hash once the user confirmed.

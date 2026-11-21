@@ -194,6 +194,8 @@ async function wcExecute(id) {
   if (timeoutS < SEND_TIMEOUT_S.min) fail(`--timeout is at least ${SEND_TIMEOUT_S.min} s for a wallet request`)
   const r = wcSession()
   if (!r.session) fail(WC_NO_SESSION(r), { code: 'WC_NO_SESSION', requestId: id })
+  // the project ID first: gang.fun being down must not use up the request
+  try { await wcProjectId() } catch (e) { fail(e.message, { code: e.code || 'WC_NO_PROJECT_ID', requestId: id }) }
   let rec
   try { rec = claimRequest(id) } catch (e) { fail(e.message, { code: e.code || 'WC_ERROR', requestId: id, ...(e.extra || {}) }) }
   const testnet = Number(rec.tx.chainId) === 97
@@ -207,6 +209,9 @@ async function wcExecute(id) {
   }
   const badModule = await wcCheckModule(rec, read, targets).catch((e) => `could not check the countdown module: ${(e.shortMessage || e.message || '').split('\n')[0]}`)
   if (badModule) { markSent(id, { error: 'WC_ERROR' }); fail(badModule, { code: 'WC_ERROR', requestId: id, sent: false }) }
+  // the tx can only land after this block: an older one of the same call is not it (block numbers, not the local clock)
+  const sentAfter = await read.getBlockNumber().catch(() => null)
+  if (sentAfter == null) { markSent(id, { error: 'NETWORK' }); fail('the RPC did not answer: nothing was sent (the receipt could not be checked); build a fresh request and try again', { code: 'NETWORK', requestId: id, sent: false }) }
   process.stderr.write(`${scrub(wcDescribe(shows))}\n`)
   let hash
   wcInFlight = true
@@ -233,13 +238,9 @@ async function wcExecute(id) {
     const sent = await read.getTransaction({ hash })
     const diff = wcMismatch(rec.tx, sent)
     // the same call could have landed before (pad buy / sell carry no deadline): it must be newer than this request
-    if (!diff) {
-      const blk = await read.getBlock({ blockNumber: rc.blockNumber }).catch(() => null)
-      if (blk && Number(blk.timestamp) * 1000 < rec.createdAt - 120_000) Object.assign(rec, { old: new Date(Number(blk.timestamp) * 1000).toISOString() })
-    }
-    if (!diff && rec.old) {
+    if (!diff && rc.blockNumber < sentAfter) {
       return wcDone(out({
-        success: false, code: 'WC_TX_MISMATCH', sent: 'unknown', txHash: hash, requestId: id, request: rec.shows, mismatch: { minedAt: rec.old },
+        success: false, code: 'WC_TX_MISMATCH', sent: 'unknown', txHash: hash, requestId: id, request: rec.shows, mismatch: { minedInBlock: Number(rc.blockNumber), requestedAfterBlock: Number(sentAfter) },
         error: 'the wallet answered with an older tx of the same call, mined before this request was built: it is not counted. Check the wallet\'s activity',
       }))
     }

@@ -89,6 +89,10 @@ try {
   m = await fresh()
   assert.equal(await m.projectId({ env: { GANG_API: 'https://y.test/api/' }, fetchImpl: served({ projectId: SERVED }) }), SERVED)
   assert.equal(asked.at(-1), 'https://y.test/api/walletconnect', 'follows GANG_API')
+  m = await fresh()
+  await throwsCode(() => m.projectId({ env: {}, fetchImpl: served({ projectId: SERVED }), api: 'http://evil.test/api' }), 'WC_NO_PROJECT_ID')
+  await throwsCode(() => m.projectId({ env: {}, fetchImpl: served({ projectId: [SERVED] }), api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID')
+  assert.equal(await m.projectId({ env: {}, fetchImpl: served({ projectId: SERVED.toUpperCase() }), api: 'https://x.test/api' }), SERVED)
   assert.equal(wc.scrub(`wss://relay.walletconnect.org/?projectId=${FAKE_ID}&ua=x failed`), 'wss://relay.walletconnect.org/?projectId=<redacted>&ua=x failed')
   assert.equal(wc.scrub(`bad key ${FAKE_ID}`), 'bad key <project id>')
   assert.ok(!new wc.WcError(`relay refused ${FAKE_ID}`).message.includes(FAKE_ID))
@@ -234,6 +238,9 @@ try {
   assert.equal(requests.length, n, 'nothing reaches the wallet when a check fails')
   await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw Object.assign(new Error('User rejected'), { code: 5000 }) }) }), 'WC_REJECTED')
   // only the user's no means nothing went out: anything else after the request left may still be sent
+  // a vague word in another error is not the user's no
+  assert.equal((await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw new Error('relay publish cancelled') }) }), 'WC_UNKNOWN')).extra.requested, true)
+  await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw new Error('User rejected the request.') }) }), 'WC_REJECTED')
   const rej = await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => { throw Object.assign(new Error('x'), { code: 4001 }) }) }), 'WC_REJECTED')
   assert.equal(rej.extra.requested, undefined)
   assert.equal((await throwsCode(() => wc.sendRequest(rec, S, { client: sender([56], () => '0x1234') }), 'WC_UNKNOWN')).extra.requested, true)
