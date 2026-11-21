@@ -226,7 +226,8 @@ try {
   await throwsCode(() => wc.claimRequest(b.id), 'WC_ALREADY_SENT')
   wc.saveRequest({ ...a.rec, expiresAt: Date.now() - 1 })
   await throwsCode(() => wc.claimRequest(a.id), 'WC_EXPIRED')
-  await throwsCode(() => wc.claimRequest(a.id), 'WC_ALREADY_SENT')
+  const expAgain = await throwsCode(() => wc.claimRequest(a.id), 'WC_ALREADY_SENT', /refused before it reached the wallet/)
+  assert.deepEqual([expAgain.extra.sent, expAgain.extra.previous], [false, 'WC_EXPIRED'])
   await throwsCode(() => wc.claimRequest('wc-nope'), 'USAGE')
   await throwsCode(() => wc.claimRequest(`wc-${'0'.repeat(24)}`), 'WC_NO_REQUEST')
 
@@ -349,6 +350,7 @@ try {
   assert.equal(pw.request.function, 'deposit')
   assert.deepEqual(pw.then.stepsLeft, ['approve-quote', 'pool-buy'])
   assert.equal(pw.success, true)
+  assert.equal((await P(wrapFirst, { ...buyIntent, amount: ' 0.5 ' })).request.function, 'deposit', 'a spaced --amount binds a wrap too')
   // a wrap: at most what the buy spends
   await throwsCode(() => P({ ...wrap, tx: { ...wrap.tx, value: String(half + 1n) } }), 'WC_ERROR', /more than the buy spends/)
   await throwsCode(() => P(wrap, { side: 'sell', token: TOKEN, amount: '1' }), 'WC_ERROR')

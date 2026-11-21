@@ -589,6 +589,7 @@ export function claimRequest(id, now = Date.now()) {
   }
   closeSync(fd)
   if (!(rec.expiresAt > now)) {
+    markSent(id, { error: 'WC_EXPIRED', sent: false })
     throw new WcError(`this request expired at ${new Date(rec.expiresAt).toISOString()} (they last ${REQUEST_TTL_MS / 60_000} min, so the price is fresh): run the same gang buy / sell --wallet wc again`, 'WC_EXPIRED')
   }
   return rec
@@ -737,7 +738,7 @@ export async function bindApprove({ tx, call, next = null, intent, read, targets
 /** A BNB wrap may wrap at most what the buy spends. */
 function checkWrap(tx, intent) {
   if (intent?.side !== 'buy' || intent.amount == null) throw new WcError('refused: a wrap outside a buy', 'WC_ERROR')
-  if (BigInt(tx.value ?? 0) > parseUnits(String(intent.amount), 18)) throw new WcError('refused: the wrap is more than the buy spends', 'WC_ERROR')
+  if (BigInt(tx.value ?? 0) > parseUnits(String(intent.amount).trim(), 18)) throw new WcError('refused: the wrap is more than the buy spends', 'WC_ERROR')
 }
 
 // the context of a pool build that stays true for its first step; trade fields go under `then`
