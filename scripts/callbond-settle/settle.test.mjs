@@ -27,7 +27,7 @@ import {
   compareRoot,
   EMPTY_ROOT,
 } from './lib.mjs'
-import { settle, SettleError, NoPayoutError, bondAbi, reverted } from './settle.mjs'
+import { settle, SettleError, NoPayoutError, bondAbi, reverted, failureOf } from './settle.mjs'
 import { getAddress, encodeFunctionResult, getContractError, RpcRequestError } from 'viem'
 
 const tests = []
@@ -809,6 +809,11 @@ test('agent window: only a node-reported revert is "no window"', () => {
   assert.equal(reverted(viemError(-32000, 'header not found')), false)
   assert.equal(reverted(viemError(-32000, 'gas required exceeds allowance (0)')), false, 'a gas cap is a node limit')
   assert.equal(reverted(new Error('execution reverted')), false, 'no code: not a revert')
+})
+
+test('the CLI line: exit 3 and "settle: no payout: " only for a final no-payout', () => {
+  assert.deepEqual(failureOf(new NoPayoutError('the caller x holds no Agent ID')), { line: 'settle: no payout: the caller x holds no Agent ID', code: 3 })
+  assert.deepEqual(failureOf(new SettleError('logs are incomplete')), { line: 'settle: logs are incomplete', code: 1 })
 })
 
 test('agent window: a caller without an Agent ID at the post block pays no follower', async () => {

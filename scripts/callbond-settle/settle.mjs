@@ -5,7 +5,8 @@
 //   RPC_URL=<an archive node keeping full logs> node settle.mjs --bond 0x… --id <n> [--check] [--chunk 2000]
 //
 // Reads balances and the curve at past blocks, so the node must keep old state (a pruned node fails loudly).
-// Exit 3, printing nothing: no follower is ever paid (a caller without an Agent ID posted after the agent window opened).
+// Exit 3, printing nothing on stdout and a stderr line starting `settle: no payout: `: no follower is ever paid (a caller
+// without an Agent ID posted after the agent window opened). Payout jobs take exit 3 as final only with that line.
 // Exits non-zero, printing nothing, when the logs don't reconcile with the contracts' state (checked at the end of
 // every getLogs chunk: public nodes can drop a range without an error), or when the price window isn't final yet.
 // --check: also compare with the root posted for this bond (pending or in effect); the JSON is still printed, and the
@@ -77,6 +78,8 @@ const CLOSED_STATE = 4
 export class SettleError extends Error {}
 /** Settled for good with no payout (exit 3, not a retry): the caller held no Agent ID when it posted after openAt. */
 export class NoPayoutError extends SettleError {}
+/** The CLI's stderr line and exit code for a SettleError: `settle: no payout: …` and 3 only for a NoPayoutError. */
+export const failureOf = (e) => (e instanceof NoPayoutError ? { line: `settle: no payout: ${e.message}`, code: 3 } : { line: `settle: ${e.message}`, code: 1 })
 const fail = (msg) => {
   throw new SettleError(msg)
 }
@@ -533,8 +536,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     result = await settle(client, { bond: args.bond, id: args.id, chunk: BigInt(args.chunk) })
   } catch (e) {
     if (!(e instanceof SettleError)) throw e
-    console.error(`settle: ${e.message}`)
-    process.exit(e instanceof NoPayoutError ? 3 : 1)
+    const f = failureOf(e)
+    console.error(f.line)
+    process.exit(f.code)
   }
   console.log(JSON.stringify(result.out, null, 2))
   if (args.check) {
