@@ -52,8 +52,9 @@ const sameQuote = (answered, quote) => same(answered, quote) || (same(quote, WBN
 export function linkAmount(raw, decimals) {
   const s = String(raw ?? '').trim()
   if (!/^(\d+(\.\d*)?|\.\d+)$/.test(s)) throw new HandoffError('--amount must be a plain decimal (e.g. 0.05)', 'USAGE', { got: raw ?? null })
-  let units
-  try { units = parseUnits(s, decimals) } catch { throw new HandoffError(`--amount has more than ${decimals} decimals`, 'USAGE', { got: raw }) }
+  // parseUnits rounds extra decimals: refuse them, so the link is exactly the amount typed
+  if ((s.split('.')[1] ?? '').replace(/0+$/, '').length > decimals) throw new HandoffError(`--amount has more than ${decimals} decimals`, 'USAGE', { got: raw })
+  const units = parseUnits(s, decimals)
   if (units <= 0n) throw new HandoffError('--amount must be more than 0', 'USAGE', { got: raw })
   const text = formatUnits(units, decimals)
   const [int, frac = ''] = text.split('.')
@@ -74,7 +75,7 @@ export async function qrText(text) {
   const qr = qrcode(0, 'M')
   qr.addData(text, 'Byte')
   qr.make()
-  const n = qr.getModuleCount(), pad = 2
+  const n = qr.getModuleCount(), pad = 4 // the quiet zone the QR spec asks for
   const light = (r, c) => r < 0 || c < 0 || r >= n || c >= n || !qr.isDark(r, c)
   const rows = []
   for (let r = -pad; r < n + pad; r += 2) {
@@ -178,15 +179,17 @@ export async function buildHandoff({ side, token, amount, all = false, from = nu
   }
   const link = tradeLink({ token, side, amount: linkAmt, from })
   const sinceBlock = Number(await read.getBlockNumber())
+  let balanceRaw = null
   if (from) {
     const bal = await r(token, ERC20, 'balanceOf', [from]).catch(() => null)
     remember({ token, from, side, sinceBlock, tokenBalance: bal == null ? null : bal.toString(), at: Date.now() })
+    balanceRaw = bal == null ? null : bal.toString()
   }
   return {
     success: true, handoff: true, chainId: 56, side, token: getAddress(token), symbol: tokenSym, quote: getAddress(quote), quoteSymbol: quoteSym,
     ...(from && { wallet: getAddress(from) }), link, qr: await qrText(link), quoted, ...(funds && { funds }),
     agentWindow: { openAt: new Date(Number(openAt) * 1000).toISOString(), open: true },
-    steps: [STEPS.binance, STEPS.other, STEPS.scan, STEPS.user], sinceBlock,
+    steps: [STEPS.binance, STEPS.other, STEPS.scan, STEPS.user], sinceBlock, ...(balanceRaw != null && { walletTokenBalanceRaw: balanceRaw }),
     signed: false,
     note: 'nothing was signed or sent: the user trades on the page, from their own wallet. Do not say it happened until gang handoff status shows the trade on chain',
     next: from ? `gang handoff status --token ${getAddress(token)} --from ${getAddress(from)} [--timeout 10m]` : 'gang handoff status --token <token> --from <the user\'s wallet> --since ' + sinceBlock,
@@ -206,22 +209,25 @@ function remember(rec) {
     renameSync(`${p}.${process.pid}.tmp`, p)
   } catch { /* the status then needs --since */ }
 }
+const RECORD_TTL_MS = 24 * 3600_000
 const recall = (token, from) => { try { return JSON.parse(readFileSync(recPath(token, from), 'utf8')) } catch { return null } }
 
+// the indexed trader of each event: on 3.0 every entry (the pad, GangRouter) requires trader == tx.origin, so a
+// trade naming the wallet was sent by that wallet itself
+const TRADER_ARG = { Buy: 'buyer', Sell: 'seller', TradeV1: 'trader' }
+
 /**
- * The wallet's trades of the token on the 3.0 pad from `since` (inclusive) to the latest block, matched by the tx
- * sender (a router-paid buy names the router as buyer). → [{ side, txHash, block, quote / tokens amounts }].
+ * The wallet's trades of the token on the 3.0 pad from `since` to `latest` (both inclusive), by the events' indexed
+ * token and trader. → [{ side, txHash, block, quote / tokens amounts }].
  */
 async function tradesSince(read, token, from, since, latest) {
   const pad = handoffPad()
   const found = []
   for (let a = BigInt(since); a <= latest; a += 2000n) {
     const b = a + 1999n > latest ? latest : a + 1999n
-    const logs = (await Promise.all(EVENTS.map((event) => read.getLogs({ address: pad, event, args: { token }, fromBlock: a, toBlock: b })))).flat()
+    const logs = (await Promise.all(EVENTS.map((event) => read.getLogs({ address: pad, event, args: { token, [TRADER_ARG[event.name]]: from }, fromBlock: a, toBlock: b })))).flat()
     for (const l of logs) {
-      const tx = await read.getTransaction({ hash: l.transactionHash }).catch(() => null)
-      const who = l.args.buyer ?? l.args.seller ?? l.args.trader
-      if (!same(tx?.from, from) && !same(who, from)) continue
+      if (!same(l.args.token, token) || !same(l.args[TRADER_ARG[l.eventName]], from)) continue
       const isBuy = l.eventName === 'Buy' || (l.eventName === 'TradeV1' && l.args.isBuy)
       found.push({
         side: isBuy ? 'buy' : 'sell', txHash: l.transactionHash, block: Number(l.blockNumber), event: l.eventName,
@@ -236,23 +242,33 @@ async function tradesSince(read, token, from, since, latest) {
  * gang handoff status: the wallet's trades of the token since the handoff (its block, or --since), and its balance then
  * and now. timeoutS > 0: wait until a trade shows (polling every 5 s). Read-only.
  */
-export async function handoffStatus({ token, from, since = null, timeoutS = 0, read, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5000 }) {
+export async function handoffStatus({ token, from, since = null, balanceAtHandoff = null, timeoutS = 0, read, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), pollMs = 5000, now = () => Date.now() }) {
   if (!isAddress(token ?? '')) throw new HandoffError('--token must be a 0x address', 'USAGE')
   if (!isAddress(from ?? '')) throw new HandoffError('--from <the user\'s wallet> is required: the trade is looked up by its sender', 'USAGE')
-  const rec = recall(token, from)
+  // this machine's record of the last handoff, only while it is fresh: an old one would count old trades
+  const saved = since == null ? recall(token, from) : null
+  const rec = saved && now() - Number(saved.at) < RECORD_TTL_MS ? saved : null
   const start = since ?? rec?.sinceBlock
-  if (start == null) throw new HandoffError('no handoff of this token to this wallet on this machine: pass --since <block> (the sinceBlock a handoff printed)', 'USAGE')
-  const until = Date.now() + timeoutS * 1000
+  if (start == null) {
+    throw new HandoffError(saved ? 'the last handoff of this token to this wallet here is over a day old: pass --since <block> (the sinceBlock its handoff printed)' : 'no handoff of this token to this wallet on this machine: pass --since <block> (the sinceBlock a handoff printed)', 'USAGE')
+  }
+  const before = balanceAtHandoff != null ? BigInt(balanceAtHandoff) : rec?.tokenBalance != null ? BigInt(rec.tokenBalance) : null
+  const until = now() + timeoutS * 1000
+  const trades = []
+  let next = BigInt(start)
   for (;;) {
     const latest = await read.getBlockNumber()
-    const trades = await tradesSince(read, token, from, start, latest)
+    // each round scans only the blocks after the last one: a long wait stays a few calls per round
+    if (latest >= next) {
+      for (const t of await tradesSince(read, token, from, next, latest)) if (!trades.some((x) => x.txHash === t.txHash && x.side === t.side)) trades.push(t)
+      next = latest + 1n
+    }
     const bal = await read.readContract({ address: token, abi: ERC20, functionName: 'balanceOf', args: [from] }).catch(() => null)
-    const before = rec?.tokenBalance != null && since == null ? BigInt(rec.tokenBalance) : null
     const changed = bal != null && before != null && bal !== before
-    if (trades.length || changed || Date.now() >= until) {
+    if (trades.length || changed || now() >= until) {
       return {
         success: true, token: getAddress(token), wallet: getAddress(from), sinceBlock: Number(start), latestBlock: Number(latest),
-        traded: trades.length > 0, trades,
+        traded: trades.length > 0, trades: [...trades],
         ...(bal != null && { tokenBalanceNow: formatUnits(bal, 18) }), ...(before != null && { tokenBalanceAtHandoff: formatUnits(before, 18), balanceChanged: changed }),
         ...(!trades.length && changed && { note: 'the balance changed, but no pad trade by this wallet was found in the logs (a transfer, or the RPC missed the log): check the wallet\'s activity' }),
         ...(!trades.length && !changed && { note: timeoutS > 0 ? `no trade by this wallet within ${timeoutS} s` : 'no trade by this wallet yet', next: 'run it again later, or with --timeout 10m to wait' }),

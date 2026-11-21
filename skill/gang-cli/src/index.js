@@ -1482,7 +1482,8 @@ async function handoff(verb, token) {
   process.stderr.write(`\nOpen this link in the wallet app's browser:\n${r.qr ? `${r.qr}\n` : ''}${r.link}\n\n${HANDOFF_STEPS.binance}\n${HANDOFF_STEPS.other}\n\nWaiting for the trade on chain…\n`)
   const timeoutS = opt('timeout') ? parseDuration(opt('timeout'), 'timeout') : 600
   if (timeoutS > 1800) fail('--timeout is at most 30m')
-  const watched = await handoffStatus({ token, from, timeoutS, read: client })
+  // the start and the balance come from this run, not the local record (which may not have been writable)
+  const watched = await handoffStatus({ token, from, since: BigInt(r.sinceBlock), balanceAtHandoff: r.walletTokenBalanceRaw ?? null, timeoutS, read: client })
   return out({ ...r, status: watched })
 }
 

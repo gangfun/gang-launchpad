@@ -41,7 +41,7 @@ const throwsCode = async (fn, code, re) => {
 const chain = () => ({
   creator: ME, quote: QUOTE, graduated: false, version: 3, openAt: NOW - 60, canTrade: true,
   buy: { out: 1000n * E18, spent: E18 / 2n, fee: E18 / 200n, quote: QUOTE }, sell: { out: E18 / 4n, fee: E18 / 400n, quote: QUOTE },
-  balances: {}, native: 0n, block: 100n, logs: [], txs: {},
+  balances: {}, native: 0n, block: 100n, logs: [], getLogs: [],
 })
 let c = chain()
 const read = {
@@ -61,8 +61,12 @@ const read = {
   },
   getBalance: async () => c.native,
   getBlockNumber: async () => c.block,
-  getLogs: async ({ event, fromBlock, toBlock }) => c.logs.filter((l) => l.eventName === event.name && l.blockNumber >= fromBlock && l.blockNumber <= toBlock),
-  getTransaction: async ({ hash }) => c.txs[hash],
+  // filters by the indexed args it is given, like a node; counts the calls
+  getLogs: async ({ event, args, fromBlock, toBlock }) => {
+    c.getLogs.push([event.name, fromBlock, toBlock])
+    return c.logs.filter((l) => l.eventName === event.name && l.blockNumber >= fromBlock && l.blockNumber <= toBlock
+      && Object.entries(args ?? {}).every(([k, v]) => String(l.args[k]).toLowerCase() === String(v).toLowerCase()))
+  },
 }
 const bal = (token, who, v) => { c.balances[`${token.toLowerCase()}:${who.toLowerCase()}`] = v }
 const B = (o) => h.buildHandoff({ read, now: () => NOW, token: TOKEN, ...o })
@@ -72,7 +76,9 @@ try {
   assert.equal(h.linkAmount('.5', 18).text, '0.5')
   assert.equal(h.linkAmount('0.050', 18).text, '0.05')
   assert.equal(h.linkAmount(' 7 ', 6).units, 7_000_000n)
-  for (const bad of ['0', '1e3', '-1', 'abc', '0x10', '1,5', '', '1000000000001', '0.0000001']) {
+  // more decimals than the token has: refused, never rounded (trailing zeros are fine)
+  assert.equal(h.linkAmount('0.1234560', 6).text, '0.123456')
+  for (const bad of ['0', '1e3', '-1', 'abc', '0x10', '1,5', '', '1000000000001', '0.0000001', '0.1234567']) {
     await throwsCode(() => h.linkAmount(bad, 6), 'USAGE')
   }
   assert.equal(h.tradeLink({ token: TOKEN.toLowerCase(), side: 'buy', amount: '0.05', from: ME }),
@@ -83,9 +89,10 @@ try {
   const link = h.tradeLink({ token: TOKEN, side: 'buy', amount: '0.05', from: ME })
   const text = await h.qrText(link)
   const q = qrcode(0, 'M'); q.addData(link, 'Byte'); q.make()
-  const n = q.getModuleCount(), pad = 2
+  const n = q.getModuleCount(), pad = 4
   const rows = text.split('\n')
   assert.equal(rows.length, Math.ceil((n + 2 * pad) / 2))
+  assert.equal(rows[0], '█'.repeat(n + 2 * pad), 'a light quiet zone of 4 modules')
   for (let r = -pad; r < n + pad; r++) {
     for (let col = -pad; col < n + pad; col++) {
       const ch = rows[Math.floor((r + pad) / 2)][col + pad]
@@ -157,47 +164,55 @@ try {
   assert.equal(anon.link, `https://gang.fun/token/${TOKEN}?trade=sell&amount=all`)
   assert.match(anon.quoted.note, /pass --from/)
 
-  // --- the watch: the wallet's trade since the handoff, by its tx sender (a router-paid buy names the router)
+  // --- the watch: the wallet's trades since the handoff, by the events' indexed token and trader (on 3.0 the trader is
+  // always the tx sender, router-paid buys included)
   c = chain()
   bal(TOKEN, ME, 0n)
   c.block = 1000n
-  await B({ side: 'buy', amount: '0.5', from: ME, ...(bal(QUOTE, ME, E18), {}) })
+  bal(QUOTE, ME, E18)
+  await B({ side: 'buy', amount: '0.5', from: ME })
   let st = await h.handoffStatus({ read, token: TOKEN, from: ME })
   assert.deepEqual([st.traded, st.sinceBlock], [false, 1000])
   assert.match(st.note, /no trade by this wallet yet/)
-  // someone else's trade, and one from before the handoff, don't count
-  c.logs.push({ eventName: 'Buy', blockNumber: 1001n, transactionHash: '0xaa', args: { token: TOKEN, buyer: ROUTER, tokensOut: 1n } })
-  c.txs['0xaa'] = { from: '0x9999999999999999999999999999999999999999' }
+  // someone else's trade, and ours from before the handoff, don't count
+  c.logs.push({ eventName: 'Buy', blockNumber: 1001n, transactionHash: '0xaa', args: { token: TOKEN, buyer: '0x9999999999999999999999999999999999999999', tokensOut: 1n } })
   c.logs.push({ eventName: 'Buy', blockNumber: 999n, transactionHash: '0xbb', args: { token: TOKEN, buyer: ME, tokensOut: 1n } })
-  c.txs['0xbb'] = { from: ME }
   c.block = 1002n
   assert.equal((await h.handoffStatus({ read, token: TOKEN, from: ME })).traded, false)
-  // ours, through the router
-  c.logs.push({ eventName: 'Buy', blockNumber: 1002n, transactionHash: '0xcc', args: { token: TOKEN, buyer: ROUTER, quoteIn: 5n, tokensOut: 7n } })
-  c.txs['0xcc'] = { from: ME }
+  // ours (a Buy and its TradeV1 in the same tx count once)
+  c.logs.push({ eventName: 'Buy', blockNumber: 1002n, transactionHash: '0xcc', args: { token: TOKEN, buyer: ME, quoteIn: 5n, tokensOut: 7n } })
+  c.logs.push({ eventName: 'TradeV1', blockNumber: 1002n, transactionHash: '0xcc', args: { token: TOKEN, trader: ME, isBuy: true, quoteAmount: 5n, tokenAmount: 7n } })
   st = await h.handoffStatus({ read, token: TOKEN, from: ME })
   assert.equal(st.traded, true)
   assert.deepEqual(st.trades.map((t) => [t.side, t.txHash, t.block, t.quoteAmountRaw, t.tokenAmountRaw]), [['buy', '0xcc', 1002, '5', '7']])
   assert.match(st.next, /gang tx --hash 0xcc/)
   // a TradeV1 sell counts too
   c.logs.push({ eventName: 'TradeV1', blockNumber: 1002n, transactionHash: '0xdd', args: { token: TOKEN, trader: ME, isBuy: false, quoteAmount: 3n, tokenAmount: 4n } })
-  c.txs['0xdd'] = { from: ME }
   assert.ok((await h.handoffStatus({ read, token: TOKEN, from: ME })).trades.some((t) => t.side === 'sell' && t.txHash === '0xdd'))
-  // waiting: polls until the trade shows, then stops
+  // waiting: each round scans only the new blocks, and it stops once the trade shows
   c.logs = []
+  c.getLogs = []
   let polls = 0
   const waited = h.handoffStatus({ read, token: TOKEN, from: ME, timeoutS: 60, pollMs: 1, sleep: async () => {
     polls += 1
-    if (polls === 3) { c.logs.push({ eventName: 'Sell', blockNumber: 1002n, transactionHash: '0xee', args: { token: TOKEN, seller: ME, tokensIn: 1n, quoteOut: 1n } }); c.txs['0xee'] = { from: ME } }
+    c.block += 1n
+    if (polls === 3) c.logs.push({ eventName: 'Sell', blockNumber: c.block, transactionHash: '0xee', args: { token: TOKEN, seller: ME, tokensIn: 1n, quoteOut: 1n } })
   } })
-  assert.equal((await waited).traded, true)
+  const w = await waited
+  assert.equal(w.traded, true)
   assert.equal(polls, 3)
+  const ranges = c.getLogs.filter(([name]) => name === 'Sell').map(([, a, b]) => [Number(a), Number(b)])
+  assert.deepEqual(ranges, [[1000, 1002], [1003, 1003], [1004, 1004], [1005, 1005]], 'no rescans')
+  // the start and balance can come from the caller (--wait), not the record
+  assert.equal((await h.handoffStatus({ read, token: TOKEN, from: ME, since: 1005n, balanceAtHandoff: '0' })).sinceBlock, 1005)
   // a balance change with no log found is said, not claimed as a trade
   c.logs = []
   bal(TOKEN, ME, 5n)
   st = await h.handoffStatus({ read, token: TOKEN, from: ME })
   assert.deepEqual([st.traded, st.balanceChanged], [false, true])
   assert.match(st.note, /balance changed/)
+  // a record over a day old is not used: an old trade would look like this one
+  await throwsCode(() => h.handoffStatus({ read, token: TOKEN, from: ME, now: () => Date.now() + 25 * 3600_000 }), 'USAGE', /over a day old/)
   // needs the wallet; and a start: the handoff's record or --since
   await throwsCode(() => h.handoffStatus({ read, token: TOKEN }), 'USAGE', /--from/)
   await throwsCode(() => h.handoffStatus({ read, token: TOKEN, from: '0x2222222222222222222222222222222222222222' }), 'USAGE', /--since/)
