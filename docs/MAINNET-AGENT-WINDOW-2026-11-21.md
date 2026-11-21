@@ -43,7 +43,7 @@
 - **fork 演练**（anvil 分叉主网区块 134831564）：以 Safe 身份原样发送归档 JSON 的两笔交易，都成功；pad 和 registry 的实现槽是上面的新地址；`MAX_AGENT_WINDOW_MINUTES()` = 1440；最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd` 的 `agentOpenAt` = 0，`walletCapOn` = true，没有 Agent ID 的钱包 `canTradeCurve` = false、registry 报价 0（升级前后相同）；两个代理的 owner 仍是 Safe。
 - **fork 测试**：`test/fork/Pad3AgentWindowFork.t.sol` 在主网最新区块重跑，通过（1 passed, 0 failed）：自己部署同一份代码，执行它打印的批次，再带窗口发币；窗口期内拒绝非 agent，开放后非 agent 合约按 registry 报价买入、超过 1%，一笔买到毕业。
 - **节点回报 revert 的方式**：未升级的 pad 上 `agentOpenAt` 在四个公共主网节点都返回 JSON-RPC code 3，服务端和结算脚本据此判断“没有窗口”。
-- **源码验证**：六个新合约都已在 Sourcify 验证（match）。Etherscan v2 的免费 key 已不支持 BSC，BscScan 验证没有做（需要付费 key 或网页手动提交），留作上线后补做。字节码已由脚本逐字节核对。
+- **源码验证**：六个新合约都已在 BscScan（Etherscan v2 接口，构造参数取自部署记录）和 Sourcify 验证。字节码也由脚本逐字节核对。
 
 ## 执行
 
@@ -55,6 +55,6 @@
 - `MAX_AGENT_WINDOW_MINUTES()` = 1440。
 - 最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd`：`agentOpenAt` = 0，`walletCapOn` = true（和 `walletCapEnabled()` 一致），没有 Agent ID 的钱包 `canTradeCurve` = false。
 - CLI 0.49.0 已发布（gangfun/cli `012b236`，npm `@gangfun/cli@0.49.0`）；`npx @gangfun/cli@0.49.0 info` 在主网读到老币 `agentWindow.set = false`。
-- 待做：第一个真实窗口币的报价和交易核对；BscScan 源码验证；网站展示和 `capabilities.json` 刷新。
+- 待做：第一个真实窗口币的报价和交易核对；网站展示和 `capabilities.json` 刷新。
 
 升级不回滚（spec §9.4）：出问题只做前滚修复。
