@@ -5,14 +5,20 @@
 //   RPC_URL=<an archive node keeping full logs> node settle.mjs --bond 0x… --id <n> [--check] [--chunk 2000]
 //
 // Reads balances and the curve at past blocks, so the node must keep old state (a pruned node fails loudly).
+// Exit 3, printing nothing: no follower is ever paid (a caller without an Agent ID posted after the agent window opened).
 // Exits non-zero, printing nothing, when the logs don't reconcile with the contracts' state (checked at the end of
 // every getLogs chunk: public nodes can drop a range without an error), or when the price window isn't final yet.
 // --check: also compare with the root posted for this bond (pending or in effect); the JSON is still printed, and the
 // exit code is non-zero on a mismatch.
+// Agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md §6): from a token's openAt any wallet trades its curve. A follow buy
+// in a block at or after openAt counts only when its tx.from holds an Agent ID (the pad's isAgent) at that block, and a
+// bond posted at or after openAt by a caller without one pays no follower (refused). Before openAt, or for a token
+// without a window, every curve trader is an Agent ID holder by construction: nothing is read.
 import { parseArgs } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { createPublicClient, http, parseAbi, parseAbiItem, getAddress } from 'viem'
 import {
+  readFollowRef,
   FOLLOW_WINDOW,
   PRICE_WINDOW,
   callerBalances,
@@ -50,6 +56,8 @@ export const bondAbi = parseAbi([
 const padAbi = parseAbi([
   'function curves(address) view returns (address creator, address quote, uint128 realQuote, uint128 sold, uint128 gradAmt, uint128 virtualQuote, bool graduated, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address pair, address refPair)',
   'function VIRTUAL_TOKEN() view returns (uint256)',
+  'function agentOpenAt(address token) view returns (uint40)',
+  'function isAgent(address account) view returns (bool)',
 ])
 const erc20Abi = parseAbi(['function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'])
 const pairAbi = parseAbi(['function token0() view returns (address)', 'function getReserves() view returns (uint112, uint112, uint32)'])
@@ -67,8 +75,27 @@ const REPORTED_STATE = 3
 const CLOSED_STATE = 4
 
 export class SettleError extends Error {}
+/** Settled for good with no payout (exit 3, not a retry): the caller held no Agent ID when it posted after openAt. */
+export class NoPayoutError extends SettleError {}
 const fail = (msg) => {
   throw new SettleError(msg)
+}
+/**
+ * A call the contract reverted (a pad without agentOpenAt), never a node that failed: decided by the node's own JSON-RPC
+ * error code, found down the cause chain (viem names a -32603 internal error ContractFunctionRevertedError too). 3 is a
+ * revert with data; -32000 one without, when the node's own message says "execution reverted" (viem's wrappers above it
+ * also say so for "gas required exceeds allowance"). No code, or any other: not a revert.
+ */
+export const reverted = (e) => {
+  let code
+  let text = ''
+  for (let x = e, i = 0; x && i < 20; x = x.cause, i++) {
+    if (typeof x.code === 'number') {
+      code = x.code
+      text = String(x.details ?? x.message ?? '') // the deepest: the node's own error
+    }
+  }
+  return code === 3 || (code === -32000 && /^execution reverted\b/i.test(text.trim()))
 }
 const pos = (a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1)
 
@@ -332,7 +359,32 @@ export async function settle(client, { bond: bondAddr, id: idArg, chunk = 2000n 
     }),
   )
   const minQuote = quote === wbnb ? 2n * 10n ** 15n : 10n ** BigInt(await at(quote, erc20Abi, 'decimals'))
-  const followers = followBuys({ trades, txOf: (h) => txs.get(h), noteTx, noteBlock, followEndBlock, B, caller, creator: before.creator, token, minQuote })
+  // the agent window: openAt fixed at the token's create (a revert: a pad without windows, so none); at or after it, the
+  // caller at the post block and each follow buy's tx.from at its block must hold an Agent ID
+  const openAt = await client.readContract({ address: pad, abi: padAbi, functionName: 'agentOpenAt', args: [token] }).then(BigInt).catch((e) => {
+    if (reverted(e)) return 0n
+    fail(`agentOpenAt failed (${e.shortMessage ?? e.message}): the token's agent window must be known`)
+  })
+  const opened = async (blockNumber) => openAt > 0n && (await timeOf(blockNumber)) >= openAt
+  if ((await opened(postBlock)) && !(await at(pad, padAbi, 'isAgent', [caller], postBlock))) {
+    throw new NoPayoutError(`the caller ${caller} holds no Agent ID at the post block ${postBlock}, after the token's agent window opened: no follower is paid (spec SPEC-AGENT-WINDOW §6)`)
+  }
+  const nonAgent = new Map() // follow tx → { from, block }: a buy in an open block by a wallet without an Agent ID
+  const blockOf = new Map(trades.map((t) => [t.transactionHash, t.blockNumber]))
+  const agentAt = new Map() // `${from}:${block}` → the read, once per wallet and block
+  await Promise.all(
+    candidates.map(async (hash) => {
+      const block = blockOf.get(hash)
+      if (!(await opened(block))) return
+      const { from, input } = txs.get(hash)
+      if (readFollowRef(input) !== noteTx.toLowerCase()) return // not a follow of this note: no Agent ID question
+      const k = `${from.toLowerCase()}:${block}`
+      if (!agentAt.has(k)) agentAt.set(k, at(pad, padAbi, 'isAgent', [from], block))
+      if (!(await agentAt.get(k))) nonAgent.set(hash, { from, block })
+    }),
+  )
+  const counted = nonAgent.size ? trades.filter((t) => !nonAgent.has(t.transactionHash)) : trades
+  const followers = followBuys({ trades: counted, txOf: (h) => txs.get(h), noteTx, noteBlock, followEndBlock, B, caller, creator: before.creator, token, minQuote })
 
   // ---------------------------------------------------------------- §5.3.6–8: losses, payouts, tree
   // each follower's balance at F_i − 1 and B − 1, what it holds in vaults, and what left it by other ways than a curve
@@ -428,6 +480,9 @@ export async function settle(client, { bond: bondAddr, id: idArg, chunk = 2000n 
     priceWindow: { from: s(TB), to: s(windowEnd), lastBlock: s(E) },
     pRef: s(pRef),
     pool: s(pool),
+    agentOpenAt: s(openAt),
+    // follow-shaped buys left out: no Agent ID at their block after the token opened (whatever else they were)
+    nonAgentBuys: [...nonAgent].map(([tx, n]) => ({ tx, from: getAddress(n.from), block: s(n.block) })).sort((a, b) => (BigInt(a.block) < BigInt(b.block) ? -1 : BigInt(a.block) > BigInt(b.block) ? 1 : a.tx < b.tx ? -1 : 1)),
     sumLoss: s(alloc.sumLoss),
     proRata: alloc.capped,
     total: s(tree.total),
@@ -479,7 +534,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   } catch (e) {
     if (!(e instanceof SettleError)) throw e
     console.error(`settle: ${e.message}`)
-    process.exit(1)
+    process.exit(e instanceof NoPayoutError ? 3 : 1)
   }
   console.log(JSON.stringify(result.out, null, 2))
   if (args.check) {

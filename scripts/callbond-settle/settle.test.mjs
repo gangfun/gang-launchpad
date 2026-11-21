@@ -27,8 +27,8 @@ import {
   compareRoot,
   EMPTY_ROOT,
 } from './lib.mjs'
-import { settle, SettleError, bondAbi } from './settle.mjs'
-import { getAddress, encodeFunctionResult } from 'viem'
+import { settle, SettleError, NoPayoutError, bondAbi, reverted } from './settle.mjs'
+import { getAddress, encodeFunctionResult, getContractError, RpcRequestError } from 'viem'
 
 const tests = []
 const test = (name, fn) => tests.push([name, fn])
@@ -493,7 +493,13 @@ const tsOf = (n) => T0 + n / 2n
 const HASH = (n) => `0x${n.toString(16).padStart(64, '0')}`
 const NOTE_TX = HASH(0x9071en)
 
-function mockChain({ graduateAt = null, pump = false, dump = false, vaultFollows = false, oldVault = false } = {}) {
+/** What viem's readContract throws for a node's JSON-RPC error `code` (getContractError over an RpcRequestError). */
+const viemError = (code, message) =>
+  getContractError(new RpcRequestError({ body: {}, url: 'http://node', error: { code, message } }), { abi: [], functionName: 'f', args: [] })
+
+// openAt: the pad's agentOpenAt(token) (undefined: a pad without the agent window, the call reverts; 'down': the node
+// fails it); isAgent(account, block): the pad's isAgent at a block
+function mockChain({ graduateAt = null, pump = false, dump = false, vaultFollows = false, oldVault = false, openAt, isAgent = () => true, plainBuy = false } = {}) {
   const logs = []
   const txs = new Map()
   const snaps = [] // [block, state] after each block that changed something
@@ -613,6 +619,10 @@ function mockChain({ graduateAt = null, pump = false, dump = false, vaultFollows
   trade(tx(A(1), follow), A(1), true, ONE / 10n, 1000n * ONE) // the token's creator following: no follower
   step(18n)
   trade(tx(MF(4), follow), MF(4), true, 2n * ONE / 10n, 2000n * ONE) // F4: buys, vault-locks 200, sells 1000 later
+  if (plainBuy) {
+    step(19n)
+    trade(tx(MF(9)), MF(9), true, ONE / 100n, 100n * ONE) // a buy in the follow window that follows no note
+  }
   step(20n)
   trade(tx(M.caller), M.caller, false, ONE / 2n, 5000n * ONE) // the caller below hold …
   step(21n)
@@ -671,7 +681,7 @@ function mockChain({ graduateAt = null, pump = false, dump = false, vaultFollows
     return n >= block ? copy() : s0
   }
   let drop = () => false
-  const calls = { getLogs: 0 }
+  const calls = { getLogs: 0, isAgent: [] }
   const client = {
     getChainId: async () => 97,
     getBlock: async ({ blockNumber, blockTag }) => (blockTag ? { number: FINAL } : { timestamp: tsOf(blockNumber) }),
@@ -697,6 +707,14 @@ function mockChain({ graduateAt = null, pump = false, dump = false, vaultFollows
         case 'balanceOf': return s1.bal.get(getAddress(args[0])) ?? 0n
         case 'decimals': return 18
         case 'token0': return M.token
+        case 'agentOpenAt':
+          if (openAt === undefined) throw viemError(-32000, 'execution reverted')
+          if (openAt === 'down') throw viemError(-32603, 'internal error')
+          return Number(openAt)
+        case 'isAgent':
+          calls.isAgent.push([getAddress(args[0]), blockNumber])
+          if (isAgent === 'down') throw viemError(-32603, 'header not found')
+          return isAgent(getAddress(args[0]), blockNumber)
         case 'getReserves':
           if (!s1.reserves) throw new Error('no pair yet')
           return [s1.reserves[0], s1.reserves[1], 0]
@@ -750,6 +768,59 @@ test('mock chain: B, followers, H-1 losses end to end', async () => {
   assert.equal(compareRoot(tree, { root: '0x' + '00'.repeat(32), total: 0n }).ok, false, '--check with nothing posted')
   // the same run with another chunk size gives the same root
   assert.equal((await settle(client, { bond: M.bond, id: 1n, chunk: 37n })).out.root, out.root)
+})
+
+test('agent window: a pad without it, or a token without one, reads no isAgent and changes nothing', async () => {
+  const plain = mockChain()
+  const a = await settle(plain.client, { bond: M.bond, id: 1n, chunk: 100n })
+  assert.deepEqual([a.out.agentOpenAt, a.out.nonAgentBuys, plain.calls.isAgent.length], ['0', [], 0])
+  const none = mockChain({ openAt: 0, isAgent: () => false })
+  const b = await settle(none.client, { bond: M.bond, id: 1n, chunk: 100n })
+  assert.deepEqual([b.out.root, none.calls.isAgent.length], [a.out.root, 0], 'openAt 0: agent only for good')
+  const later = mockChain({ openAt: tsOf(10_000n), isAgent: () => false })
+  assert.equal((await settle(later.client, { bond: M.bond, id: 1n, chunk: 100n })).out.root, a.out.root, 'opens after every follow')
+  assert.equal(later.calls.isAgent.length, 0)
+})
+
+test('agent window: after openAt a follow buy counts only from an Agent ID holder at its block', async () => {
+  // opens at block 18 (tsOf(17) < openAt = tsOf(18)): F2's follow at 16 is before; F4's at 18 and F5's at 24 after
+  const noId = new Set([MF(2), MF(4)])
+  const c = mockChain({ openAt: tsOf(18n), isAgent: (a) => !noId.has(a) && a !== MF(9), plainBuy: true })
+  const { out } = await settle(c.client, { bond: M.bond, id: 1n, chunk: 100n })
+  assert.equal(out.agentOpenAt, String(tsOf(18n)))
+  assert.deepEqual(out.followers.map((f) => f.account).sort(), [MF(1), MF(2), MF(5)].sort(), 'F4 left out; F2 followed before openAt')
+  assert.deepEqual(out.nonAgentBuys.map((n) => [n.from, n.block]), [[MF(4), '18']])
+  assert.ok(!c.calls.isAgent.some(([a]) => a === MF(9)), 'a buy in the window that follows no note is not asked about')
+  assert.ok(c.calls.isAgent.every(([, b]) => b >= 18n), 'nothing read before openAt')
+  assert.ok(c.calls.isAgent.some(([a, b]) => a === MF(5) && b === 24n), 'read at the buy block')
+  assert.ok(!out.leaves.some((l) => l.account === MF(4)))
+  // an Agent ID held at the buy's block counts, whatever it holds now
+  const at18 = mockChain({ openAt: tsOf(18n), isAgent: (a, b) => a !== MF(4) || b === 18n })
+  const r = await settle(at18.client, { bond: M.bond, id: 1n, chunk: 100n })
+  assert.ok(r.out.followers.some((f) => f.account === MF(4)))
+  assert.deepEqual(r.out.nonAgentBuys, [])
+})
+
+test('agent window: only a node-reported revert is "no window"', () => {
+  assert.equal(reverted(viemError(3, 'execution reverted')), true, 'a revert with data')
+  assert.equal(reverted(viemError(-32000, 'execution reverted')), true, 'a revert without data')
+  assert.equal(reverted(viemError(-32603, 'internal error')), false, 'viem calls it ContractFunctionRevertedError too')
+  assert.equal(viemError(-32603, 'x').walk((x) => x.name === 'ContractFunctionRevertedError') != null, true, 'as the test assumes')
+  assert.equal(reverted(viemError(-32000, 'header not found')), false)
+  assert.equal(reverted(viemError(-32000, 'gas required exceeds allowance (0)')), false, 'a gas cap is a node limit')
+  assert.equal(reverted(new Error('execution reverted')), false, 'no code: not a revert')
+})
+
+test('agent window: a caller without an Agent ID at the post block pays no follower', async () => {
+  const c = mockChain({ openAt: tsOf(12n), isAgent: (a) => a !== M.caller })
+  await assert.rejects(settle(c.client, { bond: M.bond, id: 1n, chunk: 100n }), (e) => e instanceof NoPayoutError && /the caller .* holds no Agent ID at the post block 12, after the token's agent window opened/.test(e.message))
+  // an isAgent read that fails stops it (never taken as no Agent ID, nor as one)
+  await refuses(mockChain({ openAt: tsOf(12n), isAgent: 'down' }), 100n, /isAgent at block 12 failed [\s\S]* must keep old state/)
+  // posted before openAt: the caller was an Agent ID holder by construction
+  const d = mockChain({ openAt: tsOf(13n) + 1n, isAgent: (a) => a !== M.caller })
+  assert.ok((await settle(d.client, { bond: M.bond, id: 1n, chunk: 100n })).out.followers.length > 0)
+  // the window unread: nothing is computed
+  await refuses(mockChain({ openAt: 'down' }), 100n, /agentOpenAt failed [\s\S]* must be known/)
 })
 
 test('mock chain: P_ref from Sync after a graduation in the window', async () => {
