@@ -56,7 +56,7 @@ try {
   assert.ok(!TOOLS.some((t) => /wallet_/.test(t.name) || 'wallet' in (t.inputSchema.properties ?? {})))
   assert.ok(!JSON.stringify(capabilities()).includes('walletconnect') && !JSON.stringify(capabilities()).includes('wallet connect'))
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
-  assert.deepEqual(Object.keys(pkg.dependencies), ['viem'])
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['qrcode-generator', 'viem'])
   assert.equal(pkg.devDependencies, undefined)
   assert.equal(pkg.engines.node, '>=18')
   assert.ok(!readFileSync(join(ROOT, 'package-lock.json'), 'utf8').includes('walletconnect'))
