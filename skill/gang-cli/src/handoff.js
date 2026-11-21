@@ -210,6 +210,7 @@ function remember(rec) {
   } catch { /* the status then needs --since */ }
 }
 const RECORD_TTL_MS = 24 * 3600_000
+const OVERLAP = 10n
 const recall = (token, from) => { try { return JSON.parse(readFileSync(recPath(token, from), 'utf8')) } catch { return null } }
 
 // the indexed trader of each event: on 3.0 every entry (the pad, GangRouter) requires trader == tx.origin, so a
@@ -258,10 +259,12 @@ export async function handoffStatus({ token, from, since = null, balanceAtHandof
   let next = BigInt(start)
   for (;;) {
     const latest = await read.getBlockNumber()
-    // each round scans only the blocks after the last one: a long wait stays a few calls per round
+    // each round scans the new blocks plus the last OVERLAP again (the RPC fallback may answer getLogs from a node a
+    // few blocks behind the one that gave latest); trades seen twice count once
     if (latest >= next) {
       for (const t of await tradesSince(read, token, from, next, latest)) if (!trades.some((x) => x.txHash === t.txHash && x.side === t.side)) trades.push(t)
-      next = latest + 1n
+      const back = latest + 1n - OVERLAP
+      next = back > BigInt(start) ? back : BigInt(start)
     }
     const bal = await read.readContract({ address: token, abi: ERC20, functionName: 'balanceOf', args: [from] }).catch(() => null)
     const changed = bal != null && before != null && bal !== before

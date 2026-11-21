@@ -202,7 +202,24 @@ try {
   assert.equal(w.traded, true)
   assert.equal(polls, 3)
   const ranges = c.getLogs.filter(([name]) => name === 'Sell').map(([, a, b]) => [Number(a), Number(b)])
-  assert.deepEqual(ranges, [[1000, 1002], [1003, 1003], [1004, 1004], [1005, 1005]], 'no rescans')
+  assert.equal(ranges.length, 4)
+  for (let i = 1; i < ranges.length; i++) {
+    assert.ok(ranges[i][0] >= ranges[i - 1][1] - 9 && ranges[i][0] >= 1000, 'each round rescans at most the last 10 blocks')
+    assert.equal(ranges[i][1], ranges[i - 1][1] + 1)
+  }
+  // a log that only showed up a round late (a lagging node) is still found
+  c.logs = []
+  c.getLogs = []
+  polls = 0
+  let late = null
+  const lagging = h.handoffStatus({ read, token: TOKEN, from: ME, since: 1000n, timeoutS: 60, pollMs: 1, sleep: async () => {
+    polls += 1
+    c.block += 1n
+    // a trade mined two blocks back, only visible now
+    if (polls === 2) { late = c.block - 2n; c.logs.push({ eventName: 'Buy', blockNumber: late, transactionHash: '0xff', args: { token: TOKEN, buyer: ME, tokensOut: 1n } }) }
+  } })
+  const lw = await lagging
+  assert.deepEqual([lw.traded, lw.trades[0].txHash], [true, '0xff'])
   // the start and balance can come from the caller (--wait), not the record
   assert.equal((await h.handoffStatus({ read, token: TOKEN, from: ME, since: 1005n, balanceAtHandoff: '0' })).sinceBlock, 1005)
   // a balance change with no log found is said, not claimed as a trade
