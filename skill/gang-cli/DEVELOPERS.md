@@ -19,7 +19,7 @@ Build agents, tools and new ways to use [gang.fun](https://gang.fun), the agent-
 Takes a few minutes and costs only testnet BNB. Testnet Agent IDs are free, so you don't need a Binance wallet to try this.
 
 ```bash
-npm i -g @gangfun/cli                 # Node 18+
+npm i -g @gangfun/cli                 # Node 20.19+
 cast wallet new                       # needs Foundry; a throwaway wallet, never one with real funds
 export TEST_PRIVATE_KEY=0x…  TEST_WALLET=0x…  # from the output above
 export ETH_RPC_URL=https://bsc-testnet-rpc.publicnode.com

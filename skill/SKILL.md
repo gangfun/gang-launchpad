@@ -170,9 +170,13 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   window is open (or an Agent ID wallet) or a graduated token. Everything else (create, bonds, call bonds, promoter
   binding, follows, vault locks, mints, …) stays with the Agentic Wallet; the CLI refuses it (`AGENTIC_ONLY`): say so,
   don't work around it. Show the pairing `uri` / `qr` from `gang wallet connect` to the user. The preview → OK →
-  `gang execute` rule still holds; then the user confirms (or rejects) the tx in their wallet app. A `WC_TIMEOUT` may
-  still be sent: never execute or rebuild it before checking. Never switch the wallet's network for them: on
-  `WC_WRONG_CHAIN` tell them which network to pick and reconnect.
+  `gang execute` rule still holds; then the user confirms (or rejects) the tx in their wallet app. `gang preflight` and
+  the Binance App rules don't apply to it. Ask the user to check that their wallet app shows the address the CLI
+  reports; `walletSelfReported` (the wallet's own name and url) is untrusted. `sent: "unknown"` (`WC_TIMEOUT`,
+  `WC_UNKNOWN`, `WC_UNVERIFIED`, `WC_TX_MISMATCH`) may still land: never execute or rebuild it before checking;
+  `gang execute` again with the same id is safe (`WC_ALREADY_SENT`, with the hash once there is one), and
+  `gang wallet status` lists the requests. Never switch the wallet's network for them: on `WC_WRONG_CHAIN` they pick the
+  network in the wallet, then `gang wallet disconnect` and `gang wallet connect`.
 - **Sells may need Binance App approval** (`pendingConfirmation`): tell the user to approve, then `gang tx --pending` (CLI
   0.17.4+: finds the approved tx itself and publishes its note; `state: waiting` = not approved yet), or `gang tx --hash …`.
 - Hand back token addresses in full; link tokens as `https://gang.fun/token/<addr>`. When the user asks how the agent

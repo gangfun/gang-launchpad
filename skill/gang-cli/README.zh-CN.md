@@ -292,8 +292,11 @@ gang wallet disconnect
 - 能交易什么由链上规则决定：GangLaunchpad 3.0 内盘币在 agent window 开放之后（或者钱包有 Agent ID），以及毕业后经 GangRouter 在
   PancakeSwap 外盘交易的币。其余操作（发币、押金、喊单押金、推广绑定、跟单、金库锁仓、打新 / 铸币飞轮认购等）都需要 Agentic
   Wallet，会被拒绝（`AGENTIC_ONLY`）。
-- 会话必须在这笔交易的链上（否则 `WC_WRONG_CHAIN`）；CLI 不会替用户切换钱包网络。会话保存在 `~/.gang/wc`（目录 0700，文件
-  0600），最长 24 小时。
+- 会话必须在这笔交易的链上（否则 `WC_WRONG_CHAIN`：先在钱包里选好网络，再 `gang wallet disconnect`、`gang wallet connect`）；
+  CLI 不会替用户切换钱包网络。会话保存在 `~/.gang/wc`（目录 0700，文件 0600），最长 24 小时，到期后也会在 relay 上结束。
+- 只有和下一步交易完全对应的授权才会发出（同一个授权对象、同一个代币和数量，且不超过余额）。同一个 id 再执行一次不会重复发送
+  （返回 `WC_ALREADY_SENT` 和交易哈希）；`gang wallet status` 会列出最近的请求。`sent: "unknown"` 表示交易仍可能上链：重建交易前先确认。
+- 钱包的名称和网址（`walletSelfReported`）是钱包自己报的：请在钱包 App 里核对地址。配对 uri 只显示一次，不会保存。
 - 通过这种方式只会发送 `approve`、WBNB `deposit`、pad 的 `buy` / `sell`、GangRouter 的 `v3Buy*` / `pool*` 和代币倒计时模块的买入，
   且目标只能是 gang 的 pad、路由或该模块。
 

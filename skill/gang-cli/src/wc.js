@@ -17,7 +17,7 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { decodeFunctionData, formatUnits, isAddress, isHex, parseAbi, toFunctionSelector, toHex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, formatUnits, isAddress, isHex, parseAbi, parseUnits, toFunctionSelector, toHex } from 'viem'
 
 export const SESSION_TTL_MS = 24 * 3600_000
 export const REQUEST_TTL_MS = 10 * 60_000
@@ -32,6 +32,24 @@ const METADATA = {
   url: 'https://gang.fun',
   icons: ['https://gang.fun/favicon.ico'],
 }
+
+const withTimeout = (p, ms, onTimeout) => new Promise((resolve, reject) => {
+  const t = setTimeout(() => reject(onTimeout()), ms)
+  Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
+})
+
+/**
+ * Text from outside (a wallet's self-reported name and URL, token symbols): printable ASCII only, no control or
+ * direction-changing characters, at most `max` characters. It can still say anything: shown as data, never trusted.
+ */
+export const safeText = (v, max = 80) => String(v ?? '').replace(/[^\x20-\x7e]/g, '?').slice(0, max)
+const BIDI = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
+/** Control, C1 and bidi characters out of a string (newlines kept). */
+export const noControls = (v) => String(v ?? '').replace(BIDI, '?')
+/** Every string in a result: no control, C1 or bidi characters (what an agent or a terminal reads). */
+export const cleanStrings = (o) => (typeof o === 'string' ? noControls(o)
+  : Array.isArray(o) ? o.map(cleanStrings)
+    : o && typeof o === 'object' && Object.getPrototypeOf(o) === Object.prototype ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, cleanStrings(v)])) : o)
 
 export const dir = () => process.env.GANG_WC_DIR || join(homedir(), '.gang', 'wc')
 const file = (name) => join(dir(), name)
@@ -58,15 +76,20 @@ export async function projectId({ env = process.env, fetchImpl = globalThis.fetc
     return resolvedId
   }
   if (resolvedId) return resolvedId
-  let id = null
+  let id = null, why = 'network'
   // gang.fun's answer only over https (a plain-http GANG_API could hand out someone else's project)
   if (!/^https:\/\//i.test(api) && !/^http:\/\/(127\.0\.0\.1|localhost)[:/]/i.test(api)) throw new WcError(UNAVAILABLE, 'WC_NO_PROJECT_ID')
   try {
-    const r = await fetchImpl(`${api}/walletconnect`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(10_000) })
+    const r = await fetchImpl(`${api}/walletconnect`, { headers: { accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(10_000) })
+    why = r.ok ? 'answer' : r.status === 404 ? 'not served' : `HTTP ${r.status}`
     const got = r.ok ? (await r.json())?.projectId : null
     if (typeof got === 'string') id = got.trim().toLowerCase()
   } catch { /* unreachable: below */ }
-  if (!id || !PROJECT_ID_RE.test(id)) throw new WcError(UNAVAILABLE, 'WC_NO_PROJECT_ID')
+  if (!id || !PROJECT_ID_RE.test(id)) {
+    const detail = why === 'not served' ? 'gang.fun does not serve a WalletConnect project ID (yet)'
+      : why === 'network' ? 'gang.fun could not be reached' : why === 'answer' ? 'gang.fun answered without a valid project ID' : `gang.fun answered ${why}`
+    throw new WcError(`${UNAVAILABLE} (${detail})`, 'WC_NO_PROJECT_ID', { reason: why === 'network' ? 'network' : why === 'not served' ? 'not_served' : 'bad_answer' })
+  }
   resolvedId = id
   return id
 }
@@ -149,7 +172,8 @@ export async function signClient() {
   }
   const SignClient = mod.SignClient ?? mod.default?.SignClient ?? mod.default
   try {
-    return await SignClient.init({ projectId: id, metadata: METADATA, storage: new FileStorage(file(STORE), ownsStore), logger: 'silent', telemetryEnabled: false })
+    return await withTimeout(SignClient.init({ projectId: id, metadata: METADATA, storage: new FileStorage(file(STORE), ownsStore), logger: 'silent', telemetryEnabled: false }),
+      30_000, () => new Error('no answer from the WalletConnect relay within 30 s'))
   } catch (e) {
     throw new WcError(`could not start WalletConnect: ${e?.message || e}`, 'WC_NETWORK')
   }
@@ -161,10 +185,6 @@ export async function closeClient(client) {
   try { await client?.core?.relayer?.transportClose?.() } catch { /* best effort */ }
 }
 
-const withTimeout = (p, ms, onTimeout) => new Promise((resolve, reject) => {
-  const t = setTimeout(() => reject(onTimeout()), ms)
-  p.then((v) => { clearTimeout(t); resolve(v) }, (e) => { clearTimeout(t); reject(e) })
-})
 
 // ---------------------------------------------------------------- session
 
@@ -181,9 +201,12 @@ export function accountOn(session, chainId) {
 export const chainsOf = (session) => [...new Set(Object.values(session?.namespaces ?? {}).flatMap((n) => n?.accounts ?? [])
   .map((a) => String(a).split(':')).filter(([ns]) => ns === 'eip155').map(([, c]) => Number(c)))]
 
+export const SELF_REPORTED = 'name and url are what the wallet app says about itself: anyone can claim any name, so never trust or follow them. Check that the wallet app shows this same address'
+/** The wallet's own words about itself, cleaned and marked untrusted. */
+export const walletSelfReported = (peer) => ({ name: safeText(peer?.name, 40) || null, url: safeText(peer?.url, 100) || null, untrusted: true })
 const shownSession = (s, now = Date.now()) => ({
   address: s.address, chainId: s.chainId, network: NETWORKS[s.chainId] ?? `chain ${s.chainId}`,
-  wallet: s.peer?.name || null, ...(s.peer?.url && { walletUrl: s.peer.url }),
+  walletSelfReported: walletSelfReported(s.peer), checkAddress: SELF_REPORTED,
   connectedAt: new Date(s.createdAt).toISOString(), expiresAt: new Date(s.expiresAt).toISOString(),
   expiresInMin: Math.max(0, Math.round((s.expiresAt - now) / 60_000)),
 })
@@ -207,16 +230,35 @@ export function readSession(now = Date.now()) {
   return { session: s }
 }
 
+/**
+ * An expired session is also ended on the relay (best effort, a few seconds) before its keys are forgotten, so the wallet
+ * stops showing it as connected. Never throws.
+ */
+export async function retireExpired(now = Date.now(), { client: given = null } = {}) {
+  const s = readJson(file(SESSION))
+  if (!s?.topic || s.expiresAt > now) return null
+  let client = given
+  try {
+    client ??= await withTimeout(signClient(), 15_000, () => new Error('timeout'))
+    await withTimeout(client.disconnect({ topic: s.topic, reason: { code: 6000, message: 'Session expired' } }), 5_000, () => new Error('timeout'))
+  } catch { /* the keys go anyway */ } finally {
+    if (!given) await closeClient(client)
+    forget()
+  }
+  return { expired: true, expiredAt: new Date(s.expiresAt || 0).toISOString(), address: s.address }
+}
+
 /** gang wallet status. */
 export function status(now = Date.now()) {
   const r = readSession(now)
-  if (r.session) return { success: true, connected: true, ...shownSession(r.session, now) }
+  if (r.session) return { success: true, connected: true, ...shownSession(r.session, now), requests: listRequests(now) }
   const c = readJson(file(CONNECT))
   if (c?.state === 'pairing' && c.waitUntil > now && pidAlive(c.pid)) {
+    // the pairing uri is shown once, by gang wallet connect: it is kept nowhere, so it can't leak from here
     return {
-      success: true, connected: false, pending: true, uri: c.uri, chainId: c.chainId, network: NETWORKS[c.chainId],
+      success: true, connected: false, pending: true, chainId: c.chainId, network: NETWORKS[c.chainId],
       waitingUntil: new Date(c.waitUntil).toISOString(),
-      next: 'open the wallet app, scan the QR of this uri (or paste it), approve; then gang wallet status again',
+      next: 'the user scans the QR code gang wallet connect showed and approves in the wallet app; then gang wallet status again (lost it: gang wallet disconnect, then connect again)',
     }
   }
   if (c?.state === 'failed') {
@@ -251,7 +293,7 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
   }
   // a gang wallet connect --no-wait still waiting in the background: one pairing at a time
   if (pendingPairing(now())) {
-    throw new WcError('a connect is already waiting for the wallet (gang wallet status shows its uri): approve it there, or gang wallet disconnect to cancel it', 'WC_CONNECTED')
+    throw new WcError('a connect is already waiting for the wallet: approve it there, or gang wallet disconnect to cancel it', 'WC_CONNECTED')
   }
   if (!given) await projectId() // before anything is written
   // a fresh store: no keys of an older (expired / disconnected) session stay around
@@ -261,11 +303,12 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
     const chain = `eip155:${chainId}`
     let r
     try {
-      r = await client.connect({ optionalNamespaces: { eip155: { chains: [chain], methods: METHODS, events: EVENTS } } })
+      r = await withTimeout(client.connect({ optionalNamespaces: { eip155: { chains: [chain], methods: METHODS, events: EVENTS } } }),
+        30_000, () => new Error('no answer within 30 s'))
     } catch (e) { throw new WcError(`could not reach the WalletConnect relay: ${e?.message || e}`, 'WC_NETWORK') }
     if (!r?.uri) throw new WcError('WalletConnect gave no pairing URI', 'WC_ERROR')
     const t0 = now()
-    writeJson(file(CONNECT), { state: 'pairing', uri: r.uri, chainId, pid: process.pid, startedAt: t0, waitUntil: t0 + timeoutS * 1000 })
+    writeJson(file(CONNECT), { state: 'pairing', chainId, pid: process.pid, startedAt: t0, waitUntil: t0 + timeoutS * 1000 })
     await onUri(r.uri)
     let session
     try {
@@ -288,7 +331,7 @@ export async function connect({ chainId, timeoutS = CONNECT_TIMEOUT_S.def, onUri
     const t = now()
     const rec = {
       topic: session.topic, address, chainId,
-      peer: { name: String(session.peer?.metadata?.name ?? '').slice(0, 80), url: String(session.peer?.metadata?.url ?? '').slice(0, 200) },
+      peer: { name: safeText(session.peer?.metadata?.name, 40), url: safeText(session.peer?.metadata?.url, 100) },
       createdAt: t, expiresAt: Math.min(t + SESSION_TTL_MS, Number(session.expiry) > 0 ? Number(session.expiry) * 1000 : Infinity),
     }
     writeJson(file(SESSION), rec)
@@ -348,7 +391,29 @@ const ALLOWED_ABI = parseAbi([
 // the arg that is the trade's floor, per function
 const MIN_ARG = { buy: 'minTokensOut', sell: 'minQuoteOut', v3Buy: 'minTokensOut', v3BuyBNB: 'minTokensOut', poolBuyBNB: 'minTokensOut', poolBuy: 'minTokensOut', poolSell: 'minQuoteOut', poolSellForBNB: 'minBnbOut', buyWithQuote: 'minTokensOut' }
 
-/** A tx's call → { functionName, args: { name: value } }, or null when it is not one ALLOWED_ABI lists. */
+/**
+ * The bytes after a call's ABI encoding (hex, no 0x), split into the CLI's own tags in their order (notes.js):
+ * tool "gang"06 (17 bytes), ref "gang"05 (25), follow "gang"03 (37), note "gang"01 (37) or "gang"02 (41). Anything
+ * else, or a tag out of place, → null.
+ */
+export function parseSuffix(hex) {
+  let rest = String(hex ?? '').toLowerCase()
+  const tags = []
+  const take = (name, magic, len, body) => {
+    if (rest.startsWith(magic) && rest.length >= len && body.test(rest.slice(10, len))) {
+      tags.push(name)
+      rest = rest.slice(len)
+    }
+  }
+  take('tool', '67616e6706', 34, /^[0-9a-f]{24}$/)
+  take('ref', '67616e6705', 50, /^[0-9a-f]{40}$/)
+  take('follow', '67616e6703', 74, /^[0-9a-f]{64}$/)
+  if (rest.startsWith('67616e6702')) take('note', '67616e6702', 82, /^[0-9a-f]{72}$/)
+  else take('note', '67616e6701', 74, /^[0-9a-f]{64}$/)
+  return rest === '' ? tags : null
+}
+
+/** A tx's call → { functionName, args: { name: value }, tags }, or null when it is not one ALLOWED_ABI lists exactly. */
 export function decodeAllowed(data) {
   if (!isHex(data ?? '') || data.length < 10) return null
   let d
@@ -357,8 +422,13 @@ export function decodeAllowed(data) {
   const sel = data.slice(0, 10).toLowerCase()
   const item = ALLOWED_ABI.find((x) => x.type === 'function' && toFunctionSelector(x) === sel)
   if (!item) return null
+  // the call re-encoded must be the data's start; after it only the CLI's own tags may follow ([tool][ref][follow][note])
+  const head = encodeFunctionData({ abi: [item], functionName: item.name, args: d.args }).toLowerCase()
+  if (!data.toLowerCase().startsWith(head)) return null
+  const tags = parseSuffix(data.slice(head.length))
+  if (!tags) return null
   const args = Object.fromEntries(item.inputs.map((inp, i) => [inp.name, d.args[i]]))
-  return { functionName: d.functionName, args }
+  return { functionName: d.functionName, args, tags }
 }
 
 const big = (v) => (typeof v === 'bigint' ? v.toString() : v)
@@ -438,21 +508,22 @@ export function toRequest(o, session, { targets, now = Date.now(), id = `wc-${ra
   const shows = {
     network: NETWORKS[session.chainId], chainId: Number(tx.chainId), from: tx.from, to: tx.to, function: call.functionName,
     args: Object.fromEntries(Object.entries(call.args).map(([k, v]) => [k, big(v)])),
-    valueBnb: formatUnits(value, 18), step: o.step ?? null, token: o.token ?? null,
-    ...(isApprove && { approves: { token: tx.to, spender: call.args.spender, amount: o.approve ?? null, amountRaw: call.args.amount.toString(), exact: true } }),
+    valueBnb: formatUnits(value, 18), step: o.step != null ? safeText(o.step, 30) : null, token: isAddress(o.token ?? '') ? o.token : null,
+    // exact: set once the approve is bound to its trade (bindApprove); null until then
+    ...(isApprove && { approves: { token: tx.to, spender: call.args.spender, amount: o.approve != null ? safeText(o.approve, 40) : null, amountRaw: call.args.amount.toString(), exact: o.exact === true ? true : null } }),
     ...(call.functionName === 'deposit' && { wraps: { bnb: formatUnits(value, 18) } }),
     ...(!isApprove && call.functionName !== 'deposit' && {
       trade: {
         side: /sell/i.test(call.functionName) ? 'sell' : 'buy',
-        ...(o.spend != null && { spend: o.spend }), ...(o.amount != null && { amount: o.amount }), ...(o.quote && { quote: o.quote }),
-        ...(o.expectTokens != null && { expectTokens: o.expectTokens }), ...(o.expectOut != null && { expectOut: o.expectOut }),
-        ...(o.minTokensOut != null && { minTokensOut: o.minTokensOut }), ...(o.minOut != null && { minOut: o.minOut }),
+        ...(o.spend != null && { spend: safeText(o.spend, 40) }), ...(o.amount != null && { amount: safeText(o.amount, 40) }), ...(o.quote && { quote: safeText(o.quote, 40) }),
+        ...(o.expectTokens != null && { expectTokens: safeText(o.expectTokens, 40) }), ...(o.expectOut != null && { expectOut: safeText(o.expectOut, 40) }),
+        ...(o.minTokensOut != null && { minTokensOut: safeText(o.minTokensOut, 40) }), ...(o.minOut != null && { minOut: safeText(o.minOut, 40) }),
         ...(min && call.args[min] != null && { minOutRaw: call.args[min].toString() }),
       },
     }),
   }
   const tx_ = { chainId: Number(tx.chainId), from: tx.from, to: tx.to, data: tx.data, value: value.toString(), ...(tx.gas && { gas: String(tx.gas) }) }
-  const fields = Object.fromEntries(SHOWN_FIELDS.filter((k) => o[k] != null && typeof o[k] !== 'object').map((k) => [k, String(o[k])]))
+  const fields = Object.fromEntries(SHOWN_FIELDS.filter((k) => o[k] != null && typeof o[k] !== 'object').map((k) => [k, safeText(o[k], 80)]))
   return { id, rec: { requestId: id, tx: tx_, fields, shows, createdAt: now, expiresAt: now + REQUEST_TTL_MS, topic: session.topic }, shows }
 }
 
@@ -460,7 +531,7 @@ export function toRequest(o, session, { targets, now = Date.now(), id = `wc-${ra
 export function describe(shows) {
   const l = [`WalletConnect request on ${shows.network} (chain ${shows.chainId}), from ${shows.from}`, `  call: ${shows.function} on ${shows.to}`]
   if (shows.token) l.push(`  token: ${shows.token}`)
-  if (shows.approves) l.push(`  approve exactly ${shows.approves.amount ?? shows.approves.amountRaw} (raw ${shows.approves.amountRaw}) of ${shows.approves.token} to ${shows.approves.spender}`)
+  if (shows.approves) l.push(`  approve ${shows.approves.exact ? 'exactly ' : ''}${shows.approves.amount ?? shows.approves.amountRaw} (raw ${shows.approves.amountRaw}) of ${shows.approves.token} to ${shows.approves.spender}${shows.approves.exact ? ' (this trade\'s amount)' : ''}`)
   if (shows.wraps) l.push(`  wrap ${shows.wraps.bnb} BNB into WBNB`)
   if (shows.trade) {
     const t = shows.trade
@@ -471,7 +542,7 @@ export function describe(shows) {
   if (shows.valueBnb !== '0') l.push(`  BNB sent with it: ${shows.valueBnb}`)
   l.push('  confirm it in your wallet app (or reject it there)')
   // token symbols and the like come from the chain: no terminal control characters
-  return l.join('\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '?')
+  return noControls(l.join('\n'))
 }
 
 // ---------------------------------------------------------------- requests waiting for gang execute
@@ -539,7 +610,11 @@ export async function sendRequest(rec, session, { client: given = null, timeoutS
   try {
     let live
     try { live = client.session.get(session.topic) } catch { live = null }
-    if (!live) throw new WcError('the wallet ended this WalletConnect session: gang wallet connect again', 'WC_NO_SESSION')
+    if (!live) {
+      // ended on the wallet's side: forget it here too, so status and connect aren't stuck on a dead session
+      forget()
+      throw new WcError('the wallet ended this WalletConnect session: gang wallet connect again', 'WC_NO_SESSION')
+    }
     const acct = accountOn(live, tx.chainId)
     if (!acct || acct.toLowerCase() !== tx.from.toLowerCase()) {
       const got = chainsOf(live)
@@ -582,4 +657,230 @@ export async function qrText(uri) {
   try { mod = await import('qrcode-terminal') } catch { return null }
   const q = mod.default ?? mod
   return new Promise((resolve) => q.generate(uri, { small: true }, (s) => resolve(s)))
+}
+
+// ---------------------------------------------------------------- approves bound to their trade
+
+const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'])
+const CURVES = parseAbi(['function curves(address token) view returns (address creator, address quote, uint128 realQuote, uint128 sold, uint128 gradAmt, uint128 virtualQuote, bool graduated, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address pair, address refPair)'])
+const ZERO = '0x0000000000000000000000000000000000000000'
+
+/** A GangLaunchpad token's quote, read from the known pads (null when none has it). */
+async function quoteOf(read, targets, token) {
+  for (const pad of targets.pads ?? []) {
+    try {
+      const c = await read.readContract({ address: pad, abi: CURVES, functionName: 'curves', args: [token] })
+      if (c && !same(c[0], ZERO)) return c[1]
+    } catch { /* not this pad */ }
+  }
+  return null
+}
+const unitsOf = async (read, token, amount) => {
+  let d = 18
+  try { d = Number(await read.readContract({ address: token, abi: ERC20, functionName: 'decimals' })) } catch { /* 18 */ }
+  return parseUnits(String(amount), d)
+}
+
+/**
+ * An approve is exact only for the trade it sets up: the same spender as that trade's target, the trade's token or quote,
+ * and exactly its amount, and no more than the wallet holds. `next`: the trade tx that follows in the same build (pool
+ * trades), else the trade is the command's own --token / --amount (`intent`) on the curve or a countdown module.
+ * → { exact: true, token, amount } or throws WcError.
+ */
+export async function bindApprove({ tx, call, next = null, intent, read, targets, session, module = null }) {
+  const A = call.args.amount, S = call.args.spender, Q = tx.to
+  const refuse = (why) => { throw new WcError(`refused: this approve is not exactly the trade's (${why})`, 'WC_ERROR') }
+  if (!intent?.token || !isAddress(intent.token)) refuse('no trade token')
+  let want
+  if (next) {
+    const n = decodeAllowed(next.data)
+    if (!n) refuse('the step after it is not a buy or sell')
+    if (!same(S, next.to)) refuse('the spender is not the trade\'s target')
+    const fn = n.functionName
+    if (n.args.token && !same(n.args.token, intent.token)) refuse('the trade is on another token')
+    if (fn === 'poolBuy') want = { token: n.args.quote, amount: n.args.quoteIn }
+    else if (fn === 'poolSell' || fn === 'poolSellForBNB' || fn === 'sell') want = { token: intent.token, amount: n.args.amountIn ?? n.args.tokensIn }
+    else if (fn === 'v3Buy' || (fn === 'buy' && n.args.token)) want = { token: await quoteOf(read, targets, intent.token), amount: n.args.quoteIn }
+    else if (fn === 'buyWithQuote') want = { token: await quoteOf(read, targets, intent.token), amount: n.args.quoteIn }
+    else refuse(`${fn} takes no approve`)
+  } else {
+    const spenderOk = (targets.pads ?? []).some((x) => same(x, S)) || (isAddress(module ?? '') && same(S, module))
+    if (!spenderOk) refuse('the spender is not a gang pad or the token\'s countdown module')
+    if (intent.side === 'sell') {
+      const amount = intent.all
+        ? await read.readContract({ address: intent.token, abi: ERC20, functionName: 'balanceOf', args: [session.address] })
+        : await unitsOf(read, intent.token, intent.amount)
+      want = { token: intent.token, amount }
+    } else {
+      const q = await quoteOf(read, targets, intent.token)
+      if (!q) refuse('the token\'s quote could not be read')
+      want = { token: q, amount: await unitsOf(read, q, intent.amount) }
+    }
+  }
+  if (!want.token || !same(Q, want.token)) refuse(`it approves ${Q}, the trade spends ${want.token ?? 'an unknown token'}`)
+  if (A !== BigInt(want.amount)) refuse(`it approves ${A}, the trade spends ${want.amount}`)
+  const bal = await read.readContract({ address: Q, abi: ERC20, functionName: 'balanceOf', args: [session.address] })
+  if (bal < A) throw new WcError(`refused: the approve (${A}) is more than the wallet holds (${bal})`, 'NO_FUNDS')
+  return { exact: true, token: Q, amount: A }
+}
+
+/** A BNB wrap may wrap at most what the buy spends. */
+function checkWrap(tx, intent) {
+  if (intent?.side !== 'buy' || intent.amount == null) throw new WcError('refused: a wrap outside a buy', 'WC_ERROR')
+  if (BigInt(tx.value ?? 0) > parseUnits(String(intent.amount), 18)) throw new WcError('refused: the wrap is more than the buy spends', 'WC_ERROR')
+}
+
+// the context of a pool build that stays true for its first step; trade fields go under `then`
+const CONTEXT = ['success', 'chainId', 'kind', 'token', 'pair', 'venue', 'via', 'router', 'module', 'quote', 'symbol', 'agentWindow', 'rewards', 'ref', 'tool']
+const TRADE = ['step', 'function', 'spend', 'amount', 'payWith', 'receive', 'expectTokens', 'expectOut', 'minTokensOut', 'minOut', 'slippagePct']
+
+/**
+ * A built buy / sell step (--from <session address> --calldata) → the preview printed instead, with its request saved
+ * for gang execute. Pool builds list their approve and the trade in steps[]: only the first is a request; the command
+ * runs again for the next. Throws WcError when the step may not be sent this way.
+ */
+export async function buildPreview(o, session, { targets, read, intent, rerun, now = Date.now() }) {
+  const steps = Array.isArray(o.steps) && o.steps.length ? o.steps : null
+  const last = steps?.at(-1)
+  const base = steps
+    ? { ...Object.fromEntries(CONTEXT.filter((k) => o[k] != null).map((k) => [k, o[k]])), ...steps[0], token: o.token ?? intent.token }
+    : { ...o, token: o.token ?? intent.token }
+  const call = decodeAllowed(base.tx?.data)
+  let bound = null
+  if (call?.functionName === 'approve') {
+    bound = await bindApprove({ tx: base.tx, call, next: steps?.[1]?.tx ?? null, intent, read, targets, session, module: o.module ?? null })
+  }
+  if (call?.functionName === 'deposit') checkWrap(base.tx, intent)
+  const r = toRequest({ ...base, ...(bound && { exact: true }) }, session, { targets, now })
+  Object.assign(r.rec, {
+    intent, rerun, setup: steps ? steps.length > 1 : ['approve', 'approve-quote', 'wrap-bnb'].includes(base.step),
+    ...(steps?.[1]?.tx && { nextTx: steps[1].tx }),
+  })
+  saveRequest(r.rec)
+  const { tx: _t, steps: _s, doNotSend: _d, ...rest } = base
+  const shown = steps ? Object.fromEntries(Object.entries(rest).filter(([k]) => !TRADE.includes(k) || k === 'step')) : rest
+  const then = steps
+    ? { step: last.step, ...Object.fromEntries(TRADE.filter((k) => k !== 'step' && o[k] != null).map((k) => [k, o[k]])), ...(steps.length > 2 && { stepsLeft: steps.slice(1).map((x) => x.step) }) }
+    : null
+  return cleanStrings({
+    ...shown,
+    ...(rest.agentNote?.publish && { agentNote: { ...rest.agentNote, publish: 'gang execute publishes it once the tx lands' } }),
+    wallet: { via: 'walletconnect', address: session.address, chainId: session.chainId, network: NETWORKS[session.chainId], walletSelfReported: walletSelfReported(session.peer) },
+    requestId: r.id, expiresAt: new Date(r.rec.expiresAt).toISOString(), request: r.shows,
+    ...(then && { then }),
+    ...(r.rec.setup && { note: `setup step: once it lands, run the same command again (${rerun}) for the next step` }),
+    next: `gang execute --request-id ${r.id}: sends it to the connected wallet app for the user to confirm there (nothing moves before that); check the address it shows is ${session.address}`,
+  })
+}
+
+// ---------------------------------------------------------------- gang execute wc-…
+
+/** The fields where the landed tx differs from the request (from, to, input, value, chain), or null when it is the same call. */
+export function mismatchOf(want, got) {
+  const lc = (x) => String(x ?? '').toLowerCase()
+  const d = {}
+  if (lc(got.from) !== lc(want.from)) d.from = got.from
+  if (lc(got.to) !== lc(want.to)) d.to = got.to
+  if (lc(got.input) !== lc(want.data)) d.input = `${String(got.input).slice(0, 10)}… (${(String(got.input).length - 2) / 2} bytes)`
+  if (BigInt(got.value ?? 0) !== BigInt(want.value ?? 0)) d.value = String(got.value)
+  if (got.chainId != null && Number(got.chainId) !== Number(want.chainId)) d.chainId = Number(got.chainId)
+  return Object.keys(d).length ? d : null
+}
+
+/**
+ * Send the request `id` to the connected wallet and report what landed. deps: read (a viem public client of the
+ * request's chain), targets, moduleOk(module, token) (the countdown factory made it for this token), report(hash) (the
+ * receipt decoded, the note published), onShow(text) before asking the wallet, onHash(hash) once it answers, client (a
+ * sign client; tests). Never throws for a refusal: → the result to print.
+ */
+export async function executeRequest(id, session, { read, targets, timeoutS = SEND_TIMEOUT_S.def, moduleOk, report, onShow = () => {}, onHash = () => {}, client = null }) {
+  if (!client) await projectId() // gang.fun being down must not use up the request
+  const rec = claimRequest(id)
+  const notSent = (e, extra = {}) => {
+    markSent(id, { error: e.code || 'WC_ERROR' })
+    return { success: false, error: e.message, code: e.code || 'WC_ERROR', requestId: id, sent: false, ...(e.extra || {}), ...extra, next: `nothing was sent; build a fresh request: ${rec.rerun ?? 'the same gang buy / sell --wallet wc'}` }
+  }
+  let shows
+  try {
+    shows = recheck(rec, session, targets).shows
+    const call = decodeAllowed(rec.tx.data)
+    if (call.functionName === 'approve') {
+      await bindApprove({ tx: rec.tx, call, next: rec.nextTx ?? null, intent: rec.intent, read, targets, session, module: rec.fields?.module ?? null })
+      shows.approves.exact = true
+    }
+    if (call.functionName === 'deposit') checkWrap(rec.tx, rec.intent)
+    const m = moduleOf(rec)
+    if (m && !(await moduleOk(m, rec.fields?.token).catch(() => false))) {
+      throw new WcError(`the countdown module ${m} is not one gang's countdown factory made for this token (or it could not be read)`, 'WC_ERROR')
+    }
+  } catch (e) { return notSent(e instanceof WcError ? e : new WcError(`could not check the request: ${(e.shortMessage || e.message || '').split('\n')[0]}`, 'NETWORK')) }
+  // the tx can only land after this block: an older tx of the same call is not it (block numbers, not the local clock)
+  const sentAfter = await read.getBlockNumber().catch(() => null)
+  if (sentAfter == null) return notSent(new WcError('the RPC did not answer, so the receipt could not be checked', 'NETWORK'))
+  onShow(describe(shows))
+  markSent(id, { state: 'sending' })
+  let hash
+  try {
+    hash = await sendRequest(rec, session, { timeoutS, targets, client })
+  } catch (e) {
+    markSent(id, { error: e.code || 'WC_ERROR' })
+    const unknown = !!e.extra?.requested
+    const { requested: _r, ...extra } = e.extra || {}
+    return {
+      success: false, error: e.message, code: e.code || 'WC_ERROR', requestId: id, request: shows, ...extra, sent: unknown ? 'unknown' : false,
+      ...(unknown
+        ? { hint: 'the wallet may still send it: never execute or rebuild this trade before checking the wallet\'s activity (gang wallet status lists this request; gang status --token … shows the balance)' }
+        : { next: `nothing was sent; to try again build a fresh request: ${rec.rerun}` }),
+    }
+  }
+  onHash(hash)
+  markSent(id, { txHash: hash })
+  const chain = Number(rec.tx.chainId) === 97 ? 'BSC testnet' : 'BSC'
+  let rc, sent
+  try {
+    rc = await read.waitForTransactionReceipt({ hash, timeout: 120_000 })
+    sent = await read.getTransaction({ hash })
+  } catch (e) {
+    // no receipt is no proof: the hash is only the wallet's word until the chain shows this call
+    return {
+      success: false, code: 'WC_UNVERIFIED', sent: 'unknown', txHash: hash, requestId: id, request: shows, receipt: { error: noControls((e.shortMessage || e.message || '').split('\n')[0]) },
+      error: `the wallet answered with tx ${hash}, but it is not on ${chain} (yet), or the RPC did not answer: not counted as sent. Never rebuild this trade before checking the wallet's activity`,
+      next: `gang tx --hash ${hash}${chain === 'BSC testnet' ? ' --testnet' : ''} later`,
+    }
+  }
+  const diff = mismatchOf(rec.tx, sent) ?? (rc.blockNumber <= sentAfter ? { minedInBlock: Number(rc.blockNumber), requestedAfterBlock: Number(sentAfter) } : null)
+  if (diff) {
+    return {
+      success: false, code: 'WC_TX_MISMATCH', sent: 'unknown', txHash: hash, requestId: id, request: shows, mismatch: diff, status: rc.status,
+      error: 'the wallet answered with a tx that is not this request (another sender, target, call or value, or one mined before it was sent): it is not counted, and no note is published. Check the wallet\'s activity',
+    }
+  }
+  let rep
+  try { rep = await report(hash, rc) } catch (e) { rep = { reportError: noControls((e.shortMessage || e.message || '').split('\n')[0]) } }
+  const ok = rc.status === 'success'
+  return {
+    ...rep, success: ok, sent: true, txHash: hash, status: rc.status, requestId: id, request: shows,
+    ...(!ok && { error: 'the tx reverted on chain', code: 'REVERT' }),
+    next: ok && rec.setup ? `setup done: run the same command again for the next step: ${rec.rerun}` : ok ? 'done' : `nothing traded (gas was spent); check gang status, then build a fresh request: ${rec.rerun}`,
+  }
+}
+
+/** The last day's requests on this machine, newest first (gang wallet status): what is ready, sent (with its hash) or failed. */
+export function listRequests(now = Date.now()) {
+  let names = []
+  try { names = readdirSync(join(dir(), REQ_DIR)).filter((n) => /^wc-[0-9a-f]{24}\.json$/.test(n)) } catch { return [] }
+  const rows = []
+  for (const n of names) {
+    const rec = readJson(join(dir(), REQ_DIR, n))
+    if (!rec?.requestId) continue
+    const sent = readJson(sentPath(rec.requestId))
+    let claimed = false
+    try { statSync(sentPath(rec.requestId)); claimed = true } catch { /* not claimed */ }
+    const state = sent?.txHash ? 'sent' : sent?.error ? 'failed' : claimed ? 'sending' : rec.expiresAt > now ? 'ready' : 'expired'
+    rows.push({
+      requestId: rec.requestId, state, step: rec.shows?.step ?? null, function: rec.shows?.function ?? null, token: rec.shows?.token ?? null,
+      createdAt: new Date(rec.createdAt).toISOString(), ...(sent?.txHash && { txHash: sent.txHash }), ...(sent?.error && { error: sent.error }),
+    })
+  }
+  return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 10)
 }

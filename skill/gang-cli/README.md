@@ -317,8 +317,14 @@ gang wallet disconnect
   with an Agent ID), or a graduated token in its PancakeSwap pool through GangRouter. Everything else (create, bonds,
   call bonds, promoter binding, follows, vault locks, 打新 / 铸币飞轮 mints, …) needs the Agentic Wallet and is refused
   (`AGENTIC_ONLY`).
-- The session must be on the trade's chain (`WC_WRONG_CHAIN` otherwise); the CLI never switches the wallet's network.
-  It is kept in `~/.gang/wc` (directory 0700, files 0600) for 24 hours at most.
+- The session must be on the trade's chain (`WC_WRONG_CHAIN` otherwise: pick the network in the wallet, then
+  `gang wallet disconnect` and `gang wallet connect`); the CLI never switches the wallet's network. It is kept in
+  `~/.gang/wc` (directory 0700, files 0600) for 24 hours at most, then ended on the relay too.
+- An approve is only sent when it is exactly the next trade's (same spender, token and amount, within the balance).
+  `gang execute` again with the same id never sends twice (`WC_ALREADY_SENT`, with the hash); `gang wallet status`
+  lists the last requests. `sent: "unknown"` means it may still land: check before building the trade again.
+- The wallet's name and url (`walletSelfReported`) are its own claim: check the address in the wallet app. The pairing
+  uri is shown once and kept nowhere.
 - Only calls of `approve`, WBNB `deposit`, the pad's `buy` / `sell`, GangRouter's `v3Buy*` / `pool*` and a token's
   countdown module buy, to a gang pad, router or that module, are ever sent this way.
 

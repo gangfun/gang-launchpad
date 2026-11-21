@@ -19,7 +19,7 @@ English: [DEVELOPERS.md](DEVELOPERS.md)
 只要几分钟，只花测试币。测试网的 Agent ID 免费，不用币安钱包也能试。
 
 ```bash
-npm i -g @gangfun/cli                 # Node 18+
+npm i -g @gangfun/cli                 # Node 20.19+
 cast wallet new                       # 需要 Foundry；只用一次性钱包，不要用有真实资产的钱包
 export TEST_PRIVATE_KEY=0x…  TEST_WALLET=0x…  # 来自上面的输出
 export ETH_RPC_URL=https://bsc-testnet-rpc.publicnode.com

@@ -49,6 +49,12 @@ const ABI = parseAbi([
   'function postBond(address token, uint256 amount) returns (bool)',
 ])
 const call = (functionName, args) => encodeFunctionData({ abi: ABI, functionName, args })
+// the CLI's own tags (notes.js): tool "gang"06, ref "gang"05, follow "gang"03, note "gang"01 / "gang"02
+const TOOL_TAG = `67616e6706${Buffer.from('mytool', 'ascii').toString('hex').padEnd(24, '0')}`
+const REF_TAG = `67616e6705${'ab'.repeat(20)}`
+const FOLLOW_TAG = `67616e6703${'cd'.repeat(32)}`
+const NOTE_TAG = `67616e6701${'ef'.repeat(32)}`
+const NOTE2_TAG = `67616e670200000e10${'12'.repeat(32)}`
 const session = (chainId = 56, address = ME, over = {}) => ({ topic: 'topic-1', address, chainId, peer: { name: 'Test Wallet', url: 'https://wallet.example' }, createdAt: Date.now(), expiresAt: Date.now() + 3600_000, ...over })
 const wcSession = (chainIds = [56], address = ME) => ({
   topic: 'topic-1', expiry: Math.floor(Date.now() / 1000) + 7 * 86400, peer: { metadata: { name: 'Test Wallet', url: 'https://wallet.example' } },
@@ -137,7 +143,8 @@ try {
   assert.ok(new Date(s1.expiresAt).getTime() <= Date.now() + wc.SESSION_TTL_MS + 1000, 'a session lasts 24 h at most')
   assert.equal(mode(join(process.env.GANG_WC_DIR, 'session.json')), 0o600)
   assert.equal(wc.status().connected, true)
-  assert.equal(wc.status().wallet, 'Test Wallet')
+  assert.deepEqual(wc.status().walletSelfReported, { name: 'Test Wallet', url: 'https://wallet.example', untrusted: true })
+  assert.match(wc.status().checkAddress, /check that the wallet app shows this same address/i)
   await throwsCode(() => wc.connect({ chainId: 56, timeoutS: 5, client: connector([56]) }), 'WC_CONNECTED')
   wc.forget()
   await throwsCode(() => wc.connect({ chainId: 56, timeoutS: 5, client: connector([1]) }), 'WC_WRONG_CHAIN', /only on chain 1/)
@@ -169,14 +176,15 @@ try {
   const approveStep = { success: true, step: 'approve-quote', approve: '0.5', token: TOKEN, tx: { chainId: 56, from: ME, to: TOKEN, data: call('approve', [PAD, 5n * 10n ** 17n]), value: '0' } }
   const a = wc.toRequest(approveStep, S, { targets: TARGETS })
   assert.match(a.id, /^wc-[0-9a-f]{24}$/)
-  assert.deepEqual(a.shows.approves, { token: TOKEN, spender: PAD, amount: '0.5', amountRaw: '500000000000000000', exact: true })
+  assert.deepEqual(a.shows.approves, { token: TOKEN, spender: PAD, amount: '0.5', amountRaw: '500000000000000000', exact: null }, 'exact only once bound to its trade')
   assert.equal(a.rec.expiresAt - a.rec.createdAt, wc.REQUEST_TTL_MS)
-  const buyStep = { success: true, step: 'buy', token: TOKEN, spend: '0.5', quote: 'USDT', expectTokens: '1000', minTokensOut: '990', tx: { chainId: 56, from: ME, to: PAD, data: `${call('buy', [TOKEN, 5n * 10n ** 17n, 990n * 10n ** 18n])}deadbeef`, value: '0' } }
+  const buyStep = { success: true, step: 'buy', token: TOKEN, spend: '0.5', quote: 'USDT', expectTokens: '1000', minTokensOut: '990', tx: { chainId: 56, from: ME, to: PAD, data: `${call('buy', [TOKEN, 5n * 10n ** 17n, 990n * 10n ** 18n])}${TOOL_TAG}${NOTE_TAG}`, value: '0' } }
   const b = wc.toRequest(buyStep, S, { targets: TARGETS })
   assert.deepEqual(b.shows.trade, { side: 'buy', spend: '0.5', quote: 'USDT', expectTokens: '1000', minTokensOut: '990', minOutRaw: '990000000000000000000' })
   assert.equal(b.shows.token, TOKEN)
   assert.match(wc.describe(b.shows), /minimum out: 990 \(raw 990000000000000000000\)/)
-  assert.match(wc.describe(a.shows), /approve exactly 0\.5/)
+  assert.match(wc.describe(a.shows), /approve 0\.5 /, "not yet bound: not called exact")
+  assert.match(wc.describe({ ...a.shows, approves: { ...a.shows.approves, exact: true } }), /approve exactly 0\.5/)
   const sellStep = { success: true, step: 'pool-sell', token: TOKEN, amount: '100', minOut: '0.1', tx: { chainId: 56, from: ME, to: ROUTER, data: call('poolSell', [TOKEN, WBNB, 100n, 1n, 9n]), value: '0' } }
   assert.equal(wc.toRequest(sellStep, S, { targets: TARGETS }).shows.trade.side, 'sell')
   const bnbBuy = { success: true, step: 'buy', tx: { chainId: 56, from: ME, to: ROUTER, data: call('v3BuyBNB', [TOKEN, 1n, 9n]), value: '1000' } }
@@ -185,6 +193,13 @@ try {
   assert.equal(wc.toRequest(cd, S, { targets: TARGETS }).shows.function, 'buy')
   const wrap = { success: true, step: 'wrap-bnb', tx: { chainId: 56, from: ME, to: WBNB, data: call('deposit', []), value: '7' } }
   assert.deepEqual(wc.toRequest(wrap, S, { targets: TARGETS }).shows.wraps, { bnb: '0.000000000000000007' })
+  // after the call only the CLI's own tags, in their order
+  assert.deepEqual(wc.parseSuffix(''), [])
+  assert.deepEqual(wc.parseSuffix(TOOL_TAG + REF_TAG + FOLLOW_TAG + NOTE_TAG), ['tool', 'ref', 'follow', 'note'])
+  assert.deepEqual(wc.parseSuffix(REF_TAG + NOTE2_TAG), ['ref', 'note'])
+  for (const bad of ['deadbeef', NOTE_TAG + TOOL_TAG, `${NOTE_TAG}00`, REF_TAG.slice(0, 40), `67616e6799${'00'.repeat(20)}`]) assert.equal(wc.parseSuffix(bad), null, bad)
+  assert.equal(wc.decodeAllowed(`${call('buy', [TOKEN, 1n, 1n])}deadbeef`), null, 'unknown trailing bytes refused')
+  assert.deepEqual(wc.decodeAllowed(`${call('buy', [TOKEN, 1n, 1n])}${REF_TAG}${NOTE_TAG}`).tags, ['ref', 'note'])
   // refused: unlimited and zero approvals
   await throwsCode(() => wc.toRequest({ ...approveStep, tx: { ...approveStep.tx, data: call('approve', [PAD, 2n ** 256n - 1n]) } }, S, { targets: TARGETS }), 'WC_ERROR', /unlimited/)
   await throwsCode(() => wc.toRequest({ ...approveStep, tx: { ...approveStep.tx, data: call('approve', [PAD, 0n]) } }, S, { targets: TARGETS }), 'WC_ERROR')
@@ -260,12 +275,152 @@ try {
   assert.equal(wc.moduleOf(wc.toRequest(cd, S, { targets: TARGETS }).rec), MODULE)
   assert.equal(wc.moduleOf(b.rec), null)
 
+  // --- previews: an approve is bound to its trade (spender, token, exact amount, balance); pool builds keep the trade under then
+  const QUOTE = '0x5555555555555555555555555555555555555555'
+  const chain = { balances: {}, quote: { [TOKEN.toLowerCase()]: QUOTE }, block: 100n, receipt: null, tx: null }
+  const bal = (token, who, v) => { chain.balances[`${token.toLowerCase()}:${who.toLowerCase()}`] = v }
+  const read = {
+    readContract: async ({ address, functionName, args }) => {
+      if (functionName === 'curves') {
+        const q = chain.quote[String(args[0]).toLowerCase()]
+        if (!q || address.toLowerCase() !== PAD.toLowerCase()) throw new Error('no curve')
+        return [OTHER, q, 0n, 0n, 0n, 0n, false, 0, 0, 0, '0x0000000000000000000000000000000000000000', '0x0000000000000000000000000000000000000000']
+      }
+      if (functionName === 'decimals') return 18
+      if (functionName === 'balanceOf') return chain.balances[`${address.toLowerCase()}:${String(args[0]).toLowerCase()}`] ?? 0n
+      throw new Error(`unexpected ${functionName}`)
+    },
+    getBlockNumber: async () => chain.block,
+    waitForTransactionReceipt: async () => { if (!chain.receipt) throw new Error('timed out'); return chain.receipt },
+    getTransaction: async () => chain.tx,
+  }
+  const half = 5n * 10n ** 17n
+  const buyIntent = { side: 'buy', token: TOKEN, amount: '0.5', all: false }
+  const curveApprove = { success: true, step: 'approve-quote', approve: '0.5', spender: PAD, tx: { chainId: 56, from: ME, to: QUOTE, data: call('approve', [PAD, half]), value: '0' } }
+  const P = (o, intent = buyIntent) => wc.buildPreview(o, S, { targets: TARGETS, read, intent, rerun: 'gang buy --token T --amount 0.5 --wallet wc' })
+  await throwsCode(() => P(curveApprove), 'NO_FUNDS', /more than the wallet holds/)
+  bal(QUOTE, ME, half)
+  const pv = await P(curveApprove)
+  assert.equal(pv.request.approves.exact, true)
+  assert.equal(pv.token, TOKEN, 'the traded token, not the quote')
+  assert.match(pv.note, /setup step/)
+  assert.match(pv.next, new RegExp(`check the address it shows is ${ME}`))
+  assert.equal(pv.wallet.walletSelfReported.untrusted, true)
+  // not exactly the trade's: another amount, another token, another spender (the router itself, a stranger)
+  await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, data: call('approve', [PAD, half - 1n]) } }), 'WC_ERROR', /not exactly the trade/)
+  await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, data: call('approve', [PAD, 2n ** 255n - 1n]) } }), 'WC_ERROR', /not exactly the trade/)
+  await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, to: WBNB } }), 'WC_ERROR', /not exactly the trade/)
+  await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, data: call('approve', [ROUTER, half]) } }), 'WC_ERROR', /spender/)
+  await throwsCode(() => P({ ...curveApprove, tx: { ...curveApprove.tx, to: ROUTER, data: call('approve', [ROUTER, half]) } }), 'WC_ERROR')
+  // a sell approves the traded token itself, exactly --amount (or the whole balance with --all)
+  bal(TOKEN, ME, 7n * 10n ** 18n)
+  const sellApprove = { success: true, step: 'approve', token: TOKEN, tx: { chainId: 56, from: ME, to: TOKEN, data: call('approve', [PAD, 7n * 10n ** 18n]), value: '0' } }
+  assert.equal((await P(sellApprove, { side: 'sell', token: TOKEN, amount: null, all: true })).request.approves.exact, true)
+  await throwsCode(() => P(sellApprove, { side: 'sell', token: TOKEN, amount: '1', all: false }), 'WC_ERROR', /not exactly/)
+  // a pool build: steps[] = approve + trade; the approve must match the trade that follows; the preview keeps the trade under then
+  const poolBuyTx = { chainId: 56, from: ME, to: ROUTER, data: encodeFunctionData({ abi: parseAbi(['function poolBuy(address token, address quote, uint256 quoteIn, uint256 minTokensOut, uint256 deadline) returns (uint256)']), functionName: 'poolBuy', args: [TOKEN, QUOTE, half, 9n, 99n] }), value: '0' }
+  const pool = {
+    success: true, chainId: 56, token: TOKEN, kind: 'v3', venue: 'pancakeswap', via: 'router', function: 'poolBuy', spend: '0.5', expectTokens: '1000', minTokensOut: '990',
+    step: 'approve-quote', steps: [{ step: 'approve-quote', approve: '0.5', token: QUOTE, spender: ROUTER, tx: { chainId: 56, from: ME, to: QUOTE, data: call('approve', [ROUTER, half]), value: '0' } }, { step: 'pool-buy', function: 'poolBuy', tx: poolBuyTx }],
+    tx: { chainId: 56, from: ME, to: QUOTE, data: call('approve', [ROUTER, half]), value: '0' },
+  }
+  const pp = await P(pool)
+  assert.equal(pp.token, TOKEN)
+  assert.equal(pp.success, true)
+  assert.equal(pp.function, undefined, 'no stale trade fields on the approve')
+  assert.equal(pp.expectTokens, undefined)
+  assert.deepEqual(pp.then, { step: 'pool-buy', function: 'poolBuy', spend: '0.5', expectTokens: '1000', minTokensOut: '990' })
+  assert.equal(pp.request.approves.exact, true)
+  assert.match(pp.note, /for the next step/)
+  await throwsCode(() => P({ ...pool, steps: [{ ...pool.steps[0], tx: { ...pool.steps[0].tx, data: call('approve', [ROUTER, half + 1n]) } }, pool.steps[1]] }), 'WC_ERROR', /not exactly/)
+  await throwsCode(() => P({ ...pool, steps: [pool.steps[0], { ...pool.steps[1], tx: { ...poolBuyTx, to: PAD } }] }), 'WC_ERROR', /spender/)
+  // a wrap: at most what the buy spends
+  await throwsCode(() => P({ ...wrap, tx: { ...wrap.tx, value: String(half + 1n) } }), 'WC_ERROR', /more than the buy spends/)
+  await throwsCode(() => P(wrap, { side: 'sell', token: TOKEN, amount: '1' }), 'WC_ERROR')
+  // strangers' strings: no control or direction characters in what an agent or terminal reads
+  assert.equal(wc.safeText('Mal‮icious\u0007 wallet'), 'Mal?icious? wallet')
+  assert.equal(wc.cleanStrings({ a: ['x⁦y'], b: 1 }).a[0], 'x?y')
+
+  // --- gang execute (mocked chain + wallet): verified, mismatched, older, unverified, module checked, setup next
+  const exec = async (preview, { answer = () => HASH, moduleOk = async () => true } = {}) => {
+    return wc.executeRequest(preview.requestId, S, { read, targets: TARGETS, client: sender([56], answer), moduleOk, report: async () => ({ events: [] }), timeoutS: 60 })
+  }
+  const shown = []
+  chain.receipt = { status: 'success', blockNumber: 101n, logs: [] }
+  chain.tx = { from: ME, to: QUOTE, input: curveApprove.tx.data, value: 0n, chainId: 56 }
+  let res = await wc.executeRequest((await P(curveApprove)).requestId, S, {
+    read, targets: TARGETS, client: sender(), moduleOk: async () => true, report: async () => ({ events: [] }), timeoutS: 60, onShow: (t) => shown.push(t),
+  })
+  assert.equal(res.success, true, res.error)
+  assert.equal(res.sent, true)
+  assert.match(res.next, /setup done: run the same command again/)
+  assert.match(shown[0], /approve exactly/)
+  // the same id again: refused, with the hash
+  await throwsCode(() => wc.executeRequest(res.requestId, S, { read, targets: TARGETS, client: sender(), moduleOk: async () => true, report: async () => ({}) }), 'WC_ALREADY_SENT')
+  assert.equal(wc.listRequests().find((x) => x.requestId === res.requestId).txHash, HASH)
+  // another tx behind the hash
+  chain.tx = { from: OTHER, to: QUOTE, input: curveApprove.tx.data, value: 0n }
+  res = await exec(await P(curveApprove))
+  assert.deepEqual([res.code, res.sent, res.mismatch.from], ['WC_TX_MISMATCH', 'unknown', OTHER])
+  // the same call, mined in or before the block it was sent after
+  chain.tx = { from: ME, to: QUOTE, input: curveApprove.tx.data, value: 0n }
+  chain.receipt = { status: 'success', blockNumber: 100n, logs: [] }
+  res = await exec(await P(curveApprove))
+  assert.equal(res.code, 'WC_TX_MISMATCH')
+  assert.equal(res.mismatch.requestedAfterBlock, 100)
+  // no receipt: not counted
+  chain.receipt = null
+  res = await exec(await P(curveApprove))
+  assert.deepEqual([res.success, res.code, res.sent], [false, 'WC_UNVERIFIED', 'unknown'])
+  // rejected in the wallet: nothing sent, and it says how to try again
+  res = await exec(await P(curveApprove), { answer: () => { throw Object.assign(new Error('User rejected.'), { code: 5000 }) } })
+  assert.deepEqual([res.code, res.sent], ['WC_REJECTED', false])
+  assert.match(res.next, /build a fresh request/)
+  // the balance went down after the preview: refused at execute, nothing reaches the wallet
+  const before = requests.length
+  const later = await P(curveApprove)
+  bal(QUOTE, ME, 1n)
+  res = await exec(later)
+  assert.deepEqual([res.code, res.sent], ['NO_FUNDS', false])
+  assert.equal(requests.length, before)
+  bal(QUOTE, ME, half)
+  // a countdown module the factory did not make for this token: refused before the wallet
+  const cdBuy = await P(cd)
+  res = await exec(cdBuy, { moduleOk: async () => false })
+  assert.deepEqual([res.code, res.sent], ['WC_ERROR', false])
+  assert.match(res.error, /countdown factory/)
+  assert.equal(requests.length, before)
+  // the wallet ended the session: forgotten here, so status and connect aren't stuck
+  writeSession(session(56))
+  const gone = await P(curveApprove)
+  res = await wc.executeRequest(gone.requestId, S, { read, targets: TARGETS, client: { session: { get: () => null }, request: () => HASH }, moduleOk: async () => true, report: async () => ({}) })
+  assert.equal(res.code, 'WC_NO_SESSION')
+  assert.equal(wc.status().connected, false)
+  // an expired session is ended on the relay too (best effort), then forgotten
+  writeSession(session(56, ME, { expiresAt: Date.now() - 1 }))
+  let told = null
+  const ret = await wc.retireExpired(Date.now(), { client: { disconnect: async (p) => { told = p } } })
+  assert.equal(ret.expired, true)
+  assert.equal(told.topic, 'topic-1')
+  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR).filter((n) => n !== 'requests'), [])
+  assert.equal(await wc.retireExpired(), null)
+  // no project ID: "not served (404)" told apart from "unreachable"
+  const pm = await fresh()
+  const e404 = await throwsCode(() => pm.projectId({ env: {}, fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }), api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID', /does not serve/)
+  assert.equal(e404.extra.reason, 'not_served')
+  const eNet = await throwsCode(() => pm.projectId({ env: {}, fetchImpl: async () => { throw new Error('ECONNREFUSED') }, api: 'https://x.test/api' }), 'WC_NO_PROJECT_ID', /could not be reached/)
+  assert.equal(eNet.extra.reason, 'network')
+  let redirect = null
+  await pm.projectId({ env: {}, fetchImpl: async (u, o) => { redirect = o.redirect; return { ok: true, json: async () => ({ projectId: FAKE_ID }) } }, api: 'https://x.test/api' })
+  assert.equal(redirect, 'error', 'no redirects')
+  wc.forget()
+
   // --- CLI: --wallet wc on anything but buy / sell is refused before any read
   wc.forget()
   for (const argv of [
     ['create', '--name', 'T', '--symbol', 'T'], ['bond', 'post', '--token', TOKEN], ['call-bond', 'post', '--token', TOKEN],
     ['promote', 'buy', '--token', TOKEN, '--promoter', OTHER, '--amount', '1'], ['follow', `0x${'1'.repeat(64)}`, '--amount', '1'],
-    ['mint', '--token', TOKEN, '--shares', '1'], ['withdraw', '--token', TOKEN, '--all'], ['v3', 'buy', '--token', TOKEN, '--amount', '1'],
+    ['mint', '--token', TOKEN, '--shares', '1'], ['withdraw', '--token', TOKEN, '--all'], ['v3', 'create', '--name', 'T'],
     ['fly', 'mint', '--token', TOKEN], ['claim', '--token', TOKEN], ['weekly', 'apply'], ['execute', '--request-id', 'x'],
     ['floor', 'redeem', '--token', TOKEN], ['base', 'release', '--token', TOKEN], ['campaign', 'join'],
   ]) {
@@ -273,6 +428,11 @@ try {
     assert.equal(r.status, 1, argv.join(' '))
     assert.equal(r.out.code, 'AGENTIC_ONLY', `${argv.join(' ')}: ${r.out.error}`)
     assert.match(r.out.error, /Binance Agentic Wallet/)
+  }
+  for (const argv of [['v3', 'buy', '--token', TOKEN, '--amount', '1'], ['fair', 'sell', '--token', TOKEN, '--all']]) {
+    const x = await run([...argv, '--wallet', 'wc'])
+    assert.equal(x.out.code, 'USAGE')
+    assert.match(x.out.error, new RegExp(`goes with gang ${argv[1]}`))
   }
   let r = await run(['buy', '--token', TOKEN, '--amount', '1', '--wallet', 'metamask'])
   assert.equal(r.out.code, 'USAGE')
@@ -301,7 +461,11 @@ try {
   r = await run(['sell', '--token', TOKEN, '--all', '--wallet', 'wc'])
   assert.equal(r.out.code, 'WC_WRONG_CHAIN')
   writeSession(session(56, ME, { expiresAt: Date.now() - 1 }))
-  r = await run(['sell', '--token', TOKEN, '--all', '--wallet', 'wc'])
+  // offline: no project ID to reach the relay with, so the best-effort relay disconnect is skipped and the keys just go
+  const t0 = Date.now()
+  r = await run(['sell', '--token', TOKEN, '--all', '--wallet', 'wc'], { GANG_WC_PROJECT_ID: '' })
+  assert.ok(Date.now() - t0 < 10_000, 'an expired session is retired without waiting on the network')
+  assert.deepEqual(readdirSync(process.env.GANG_WC_DIR), [])
   assert.equal(r.out.code, 'WC_NO_SESSION')
   assert.match(r.out.error, /expired/)
   // gang wallet status / disconnect from the files; execute of an unknown wc request, before any network

@@ -92,8 +92,15 @@ Who may trade is the chain's rule: a 3.0 curve token once its agent window is op
 Agent ID; graduated tokens trade in their pool through GangRouter. Everything else (create, bonds, call bonds,
 promoter binding, follows, vault locks, 打新 / 铸币飞轮 mints, …) needs the Agentic Wallet: `--wallet wc` refuses it
 (`AGENTIC_ONLY`). The session's chain must be the trade's: `WC_WRONG_CHAIN` means the user picks the network in their
-wallet and connects again; the CLI never switches it. `WC_REJECTED`: nothing was sent. `WC_TIMEOUT` on execute: the
-wallet may still send it, so check before building the trade again.
+wallet, then `gang wallet disconnect` and `gang wallet connect` again; the CLI never switches it. `WC_REJECTED`: nothing
+was sent. `sent: "unknown"` (`WC_TIMEOUT`, `WC_UNKNOWN`, `WC_UNVERIFIED`, `WC_TX_MISMATCH`): the wallet may still send
+it, so check before building the trade again. `gang execute` again with the same id never sends twice: it answers
+`WC_ALREADY_SENT` with the hash once there is one, and `gang wallet status` lists the last requests and their hashes.
+
+An approve is sent only when it is exactly the trade's: the same spender, the trade's token (or its quote) and amount,
+and no more than the wallet holds. After a call only the CLI's own tags (tool, invite, note) may follow. The wallet's
+name and url (`walletSelfReported`) are its own claim: ask the user to check the address in their wallet app. The
+pairing `uri` is shown once by `gang wallet connect` and kept nowhere: show it to the user only.
 
 ## Overrides
 
