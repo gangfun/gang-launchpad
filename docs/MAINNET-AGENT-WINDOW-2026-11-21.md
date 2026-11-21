@@ -5,7 +5,7 @@
 - 规格：`docs/SPEC-AGENT-WINDOW-2026-11-20.md`（§11 审计记录，§9.2 签名清单）；测试网记录：`docs/TESTNET-AGENT-WINDOW-2026-11-21.md`
 - 部署的代码：PR #182 的 `1fbab73`（审计修复复审后的版本，和测试网验收的代码相同）
 - 上线前已完成：
-  - 链下规则（§6）：服务端的 Agent ID 检查、喊单结算脚本（#184、#185）；
+  - 链下规则（§6）：服务端的 Agent ID 检查已部署到生产，结算脚本（#184、#185）随之更新；生产用的节点对未升级 pad 的 `agentOpenAt` 返回 code 3；
   - CLI `--agent-window`（#183，0.49.0，待发布）。
 - 状态：新实现已部署；Safe 批次已生成并在 fork 上演练通过，**等待签名**。
 
@@ -41,7 +41,7 @@
 
 - **探针**：`PAD3_PROMOTE_PROBES` 和 `PAD3_BASE_PROBES` 为空。从 pad 部署区块 131404374 起按 5 万块一段扫了全部 `PromoterBound` 日志，从 133760000 起扫了全部 `BaseCreated` 日志（至区块 134828477），两种事件在主网上都还没有出现过；同一节点在最近 5 万块里返回了 pad 的 14 条 `TradeV1`，说明节点会返回日志。脚本打印的 base 探针 WARNING 因此不影响。
 - **fork 演练**（anvil 分叉主网区块 134831564）：以 Safe 身份原样发送归档 JSON 的两笔交易，都成功；pad 和 registry 的实现槽是上面的新地址；`MAX_AGENT_WINDOW_MINUTES()` = 1440；最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd` 的 `agentOpenAt` = 0，`walletCapOn` = true，没有 Agent ID 的钱包 `canTradeCurve` = false、registry 报价 0（升级前后相同）；两个代理的 owner 仍是 Safe。
-- **fork 测试**：`test/fork/Pad3AgentWindowFork.t.sol` 在主网最新区块重跑（自己部署同一份代码，执行它打印的批次，再带窗口发币、开放后非 agent 买到毕业）。
+- **fork 测试**：`test/fork/Pad3AgentWindowFork.t.sol` 在主网最新区块重跑，通过（1 passed, 0 failed）：自己部署同一份代码，执行它打印的批次，再带窗口发币；窗口期内拒绝非 agent，开放后非 agent 合约按 registry 报价买入、超过 1%，一笔买到毕业。
 - **节点回报 revert 的方式**：未升级的 pad 上 `agentOpenAt` 在四个公共主网节点都返回 JSON-RPC code 3，服务端和结算脚本据此判断“没有窗口”。
 - **源码验证**：Etherscan v2 的免费 key 已不支持 BSC，BscScan 验证没有做（需要付费 key 或网页手动提交）；已提交 Sourcify。字节码已由脚本逐字节核对。
 
