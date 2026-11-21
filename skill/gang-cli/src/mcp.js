@@ -76,6 +76,7 @@ const REF = { type: 'string', description: 'Who invited this wallet (0x address 
 // sent anyway is turned into a string before the check (coerce)
 const AMOUNT = { type: 'string', pattern: '^[0-9]+(\\.[0-9]+)?$', description: 'A plain decimal, e.g. "0.05"' }
 const TESTNET = { type: 'boolean', description: 'BSC testnet GangLaunchpad (tokens have no value)' }
+const WALLET = { type: 'string', enum: ['wc'], description: 'wc: build it for the wallet app connected with gang_wallet_connect (WalletConnect); gang_execute then asks the user to confirm it there. Left out: the Agentic Wallet' }
 const NOTE = {
   note: { type: 'string', description: 'Public, permanent reason for the trade (1-280 chars, no links). Mainnet curve trades only' },
   conf: { type: 'integer', minimum: 0, maximum: 100, description: 'How sure, 0-100; counts toward calibration' },
@@ -163,29 +164,38 @@ export const TOOLS = [
       useQuote: { type: 'boolean', description: 'Pool buy of a WBNB-quoted token: pay WBNB' },
       payBnb: { type: 'boolean', description: 'Pool buy of a token quoted in another token: pay BNB (BNB -> quote -> token)' },
       cdUncounted: { type: 'boolean', description: 'Pool buy of a token with a countdown reward: buy through its module even if the buy would not count (only when the user wants that)' },
-      testnet: TESTNET,
+      wallet: WALLET, testnet: TESTNET,
     },
     (a) => ['buy', '--token', a.token, '--amount', String(a.amount), ...flag('slippage', a.slippage), ...flag('follow', a.follow),
       ...noteFlags(a), ...flag('ref', a.ref), ...flag('promoter', a.promoter), ...bool('no-promoter', a.noPromoter), ...bool('use-wbnb', a.useWbnb), ...bool('use-quote', a.useQuote), ...bool('pay-bnb', a.payBnb), ...bool('cd-uncounted', a.cdUncounted),
-      ...bool('testnet', a.testnet)], PREVIEW, ['token', 'amount']),
+      ...flag('wallet', a.wallet), ...bool('testnet', a.testnet)], PREVIEW, ['token', 'amount']),
   tool('gang_sell', 'Preview a sell',
     'Build a sell preview: amount (tokens) or all. Nothing is sent before gang_execute. breakBond / breakCallBond / confirmOut only with the user\'s explicit yes after the warning in a refused preview; settleFirst settles an expired bond before the sell (asks first, settles an hour later).',
     {
       token: ADDR, amount: AMOUNT, all: { type: 'boolean' }, slippage: { type: 'number', minimum: 0, maximum: 50 }, toBnb: { type: 'boolean' },
-      ...NOTE, breakBond: { type: 'boolean' }, breakCallBond: { type: 'boolean' }, confirmOut: { type: 'boolean' }, settleFirst: { type: 'boolean' }, testnet: TESTNET,
+      ...NOTE, breakBond: { type: 'boolean' }, breakCallBond: { type: 'boolean' }, confirmOut: { type: 'boolean' }, settleFirst: { type: 'boolean' }, wallet: WALLET, testnet: TESTNET,
     },
     (a) => ['sell', '--token', a.token, ...(a.all ? ['--all'] : flag('amount', a.amount)), ...flag('slippage', a.slippage),
       ...bool('to-bnb', a.toBnb), ...noteFlags(a), ...bool('break-bond', a.breakBond), ...bool('break-call-bond', a.breakCallBond), ...bool('confirm-out', a.confirmOut),
-      ...bool('settle-first', a.settleFirst), ...bool('testnet', a.testnet)], PREVIEW, ['token']),
+      ...bool('settle-first', a.settleFirst), ...flag('wallet', a.wallet), ...bool('testnet', a.testnet)], PREVIEW, ['token']),
   tool('gang_follow', 'Preview a follow',
     "Build a buy of the token another agent's note is about, marked on-chain as following it. Show the note, its author's record and until when it counts; nothing is sent before gang_execute. On a token with a promoter share, the follow binds the note's author as this wallet's promoter for good (followPromoter in the result): say so before the user confirms; noPromoter keeps it a plain follow.",
     { noteTx: HASH, amount: AMOUNT, slippage: { type: 'number', minimum: 0, maximum: 50 }, ...NOTE, ref: REF, useWbnb: { type: 'boolean', description: 'Pay WBNB instead of BNB' }, noPromoter: { type: 'boolean', description: "Don't bind the note's author as promoter" } },
     (a) => ['follow', a.noteTx, '--amount', String(a.amount), ...flag('slippage', a.slippage), ...noteFlags(a), ...flag('ref', a.ref), ...bool('use-wbnb', a.useWbnb), ...bool('no-promoter', a.noPromoter)],
     PREVIEW, ['noteTx', 'amount']),
   tool('gang_execute', 'Send a previewed transaction',
-    'Broadcast a preview by its requestId. Only after the user said yes to that exact preview (or explicitly skipped confirmation). Publishes its note. If this call times out or is cancelled it still runs: never retry it; check gang_status / the wallet history first.',
+    'Broadcast a preview by its requestId. Only after the user said yes to that exact preview (or explicitly skipped confirmation). Publishes its note. If this call times out or is cancelled it still runs: never retry it; check gang_status / the wallet history first. A wc-… requestId (wallet: "wc") goes to the connected wallet app, where the user confirms or rejects it (this call waits up to 5 min for them).',
     { requestId: { type: 'string', minLength: 1 } }, (a) => ['execute', '--request-id', a.requestId],
     { readOnlyHint: false, destructiveHint: true, openWorldHint: true }, ['requestId']),
+  tool('gang_wallet_connect', 'Connect a wallet app',
+    'Pair the user\'s own wallet app (MetaMask, OKX, Trust, …) over WalletConnect, for gang_buy / gang_sell with wallet: "wc" only (everything else stays with the Agentic Wallet). Returns uri and qr (the uri as a text QR code) at once: show them to the user to scan and approve in the wallet, then call gang_wallet_status until connected: true. One wallet at a time, kept 24 h at most.',
+    { testnet: { type: 'boolean', description: 'BSC testnet (chain 97) instead of BSC (56)' }, timeout: { type: 'integer', minimum: 30, maximum: 1800, description: 'Seconds to wait for the approval (default 300)' } },
+    (a) => ['wallet', 'connect', '--no-wait', ...flag('timeout', a.timeout), ...bool('testnet', a.testnet)],
+    { readOnlyHint: false, destructiveHint: false, openWorldHint: true }),
+  tool('gang_wallet_status', 'Connected wallet', 'The WalletConnect wallet app connected here: address, chainId, wallet, expiresAt; or pending with its uri, or not connected.',
+    {}, () => ['wallet', 'status'], READ),
+  tool('gang_wallet_disconnect', 'Disconnect the wallet app', 'End the WalletConnect session and delete its keys here.',
+    {}, () => ['wallet', 'disconnect'], { readOnlyHint: false, destructiveHint: false, openWorldHint: true }),
   // not a read: it publishes the tx's queued note to gang.fun, so a cancel lets it finish like the writes
   tool('gang_tx', 'Decode a transaction',
     'Wait for a receipt and decode Gang events; publishes the tx\'s queued note. pending: true instead of a hash = the trades that waited for Binance App approval (gang_execute pendingConfirmation): finds each one\'s tx once the user approved it.',
@@ -201,6 +211,7 @@ const NOT_VIA_CLI = {
   execute: 'use the gang_execute tool, not gang_cli', watch: 'use the gang_watch tool, not gang_cli',
   help: 'use the gang_help tool, not gang_cli', '--help': 'use the gang_help tool, not gang_cli', '-h': 'use the gang_help tool, not gang_cli',
   mcp: 'gang mcp is this server: call its tools',
+  wallet: 'use gang_wallet_connect / gang_wallet_status / gang_wallet_disconnect, not gang_cli',
 }
 
 // what a failed pattern says, by pattern
@@ -255,6 +266,9 @@ export function invalid(t, a) {
   if (t.name === 'gang_tx' && a.pending && (a.hash || a.testnet)) return 'pending finds the tx itself: leave out hash and testnet'
   if (t.name === 'gang_sell' && !a.all && a.amount == null) return 'amount or all is required'
   if (t.name === 'gang_sell' && a.all && a.amount != null) return 'amount or all, not both'
+  if (a.wallet === 'wc' && ['follow', 'promoter', 'breakBond', 'breakCallBond', 'settleFirst', 'confirmOut'].some((k) => a[k] != null && a[k] !== false)) {
+    return 'wallet "wc" only buys and sells: follows, promoter binding, bonds and holder-reward exits stay with the Agentic Wallet (leave wallet out)'
+  }
   return null
 }
 

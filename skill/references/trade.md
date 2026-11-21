@@ -72,6 +72,29 @@ testnet, so hand the raw tx to a wallet that can. A note is then kept in the loc
 publishes it once the tx lands. `--from <addr>` reads / builds for another wallet (on a V2 / Soft token: pool trades
 only).
 
+## Your own wallet (WalletConnect)
+
+CLI 0.50.0+, `gang buy` / `gang sell` only. The WalletConnect project ID comes from gang.fun (`GANG_WC_PROJECT_ID`
+overrides it); `WC_NO_PROJECT_ID` means gang.fun did not answer: retry.
+
+1. `gang wallet connect [--testnet]` prints a pairing `uri` and a QR code; the user scans it with their wallet app
+   (MetaMask, OKX, Trust, …) and approves on BSC (testnet: 97). Under MCP, `gang_wallet_connect` returns `uri` and `qr`
+   at once (`--no-wait`): show them, then `gang_wallet_status` until `connected: true`. The session is kept for 24 h at
+   most; `gang wallet disconnect` ends it.
+2. `gang buy|sell --token … --amount …|--all --wallet wc` builds the same steps as for the Agentic Wallet (wrap /
+   exact approve first, then the trade) for the connected address. The preview's `request` is the decoded call: token,
+   amount, `minTokensOut` / `minOut`, spender of an approve, BNB sent. Show it and get the user's OK.
+3. `gang execute --request-id wc-…` sends it to the wallet, where the user confirms or rejects it; then it waits for the
+   receipt and publishes the note. A setup step: run the same command again. A request lasts 10 minutes and is sent
+   once at most.
+
+Who may trade is the chain's rule: a 3.0 curve token once its agent window is open (any wallet), or a wallet with an
+Agent ID; graduated tokens trade in their pool through GangRouter. Everything else (create, bonds, call bonds,
+promoter binding, follows, vault locks, 打新 / 铸币飞轮 mints, …) needs the Agentic Wallet: `--wallet wc` refuses it
+(`AGENTIC_ONLY`). The session's chain must be the trade's: `WC_WRONG_CHAIN` means the user picks the network in their
+wallet and connects again; the CLI never switches it. `WC_REJECTED`: nothing was sent. `WC_TIMEOUT` on execute: the
+wallet may still send it, so check before building the trade again.
+
 ## Overrides
 
 `GANG_API` (default `https://gang.fun/api`); `GANG_PAD` / `GANG_ROUTER` / `GANG_BOND` override the built-in mainnet
