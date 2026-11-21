@@ -127,6 +127,13 @@ Factories: BSC mainnet `0xa1e3117a59104de7D97667cF22f9AB886a5f2957`, BSC testnet
 | `DEV_MODE_OFF`, `TRADE_ALL_TOKENS_OFF` | A wallet setting (from `gang preflight`) |
 | `NETWORK` | An RPC or the API can't be reached: retry a read later |
 | `NO_FUNDS` (0.41.0+) | The wallet can't pay for this trade: `fund` says how to top it up; nothing was sent |
+| `AGENTIC_ONLY` (0.50.0+) | `--wallet wc` on something only the Agentic Wallet does (anything but buy / sell, a follow, a promoter, a bond flag, a 打新 / 铸币飞轮 token, a V2 curve): leave `--wallet wc` out |
+| `WC_NO_SESSION` / `WC_CONNECTED` | No WalletConnect session (or it expired after 24 h): `gang wallet connect`. / One is connected already: `gang wallet disconnect` first |
+| `WC_WRONG_CHAIN` / `WC_WRONG_WALLET` | The session is on another chain or address than the trade: the user picks the network in the wallet and connects again (never switched for them) |
+| `WC_REJECTED` | The user rejected it in the wallet: nothing was sent |
+| `WC_TIMEOUT` | No answer from the wallet in time: it may still send it, so never execute or rebuild it before checking |
+| `WC_EXPIRED` / `WC_ALREADY_SENT` / `WC_NO_REQUEST` | The wc-… request is older than 10 min / was handed to the wallet once already / is not on this machine: build a fresh one |
+| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | `GANG_WC_PROJECT_ID` is not set / the relay can't be reached / another WalletConnect error |
 | `REVERT` | The simulation or the chain refused it |
 | A contract error name (such as `NotAgent`) | That contract error |
 | A lower-case word (such as `not_found`) | A specific refusal: `error` explains it |

@@ -124,6 +124,13 @@ deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的�
 | `DEV_MODE_OFF`、`TRADE_ALL_TOKENS_OFF` | 钱包设置问题（来自 `gang preflight`） |
 | `NETWORK` | RPC 或 API 连不上，读操作可以稍后重试 |
 | `NO_FUNDS`（0.41.0+） | 钱包余额不够这笔交易：`fund` 写了怎么充值；什么都没发出 |
+| `AGENTIC_ONLY`（0.50.0+） | `--wallet wc` 用在了只有 Agentic Wallet 能做的事上（买卖以外的命令、跟单、推广人、押金相关参数、打新 / 铸币飞轮代币、V2 内盘）：去掉 `--wallet wc` |
+| `WC_NO_SESSION` / `WC_CONNECTED` | 没有 WalletConnect 会话（或已超过 24 小时过期）：`gang wallet connect`。/ 已经连着一个：先 `gang wallet disconnect` |
+| `WC_WRONG_CHAIN` / `WC_WRONG_WALLET` | 会话的链或地址和这笔交易不一致：请用户在钱包里选好网络后重新连接（CLI 不会替用户切换） |
+| `WC_REJECTED` | 用户在钱包里拒绝了：什么都没发出 |
+| `WC_TIMEOUT` | 钱包没有及时回应：它仍可能发出这笔交易，确认之前不要重新执行或重建 |
+| `WC_EXPIRED` / `WC_ALREADY_SENT` / `WC_NO_REQUEST` | wc-… 请求已超过 10 分钟 / 已经交给钱包一次 / 不在这台机器上：重新生成一个 |
+| `WC_NO_PROJECT_ID` / `WC_NETWORK` / `WC_ERROR` | 没设置 `GANG_WC_PROJECT_ID` / 连不上 relay / 其他 WalletConnect 错误 |
 | `REVERT` | 模拟执行或链上拒绝了这笔交易 |
 | 合约错误名（如 `NotAgent`） | 对应的合约错误 |
 | 小写单词（如 `not_found`） | 具体的拒绝原因，见 `error` |
