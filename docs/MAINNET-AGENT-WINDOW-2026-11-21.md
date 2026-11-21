@@ -55,6 +55,23 @@
 - `MAX_AGENT_WINDOW_MINUTES()` = 1440。
 - 最新的老币 `0x8fF01b83b36D5e4FB51F06A0950D680A54d4abcd`：`agentOpenAt` = 0，`walletCapOn` = true（和 `walletCapEnabled()` 一致），没有 Agent ID 的钱包 `canTradeCurve` = false。
 - CLI 0.49.0 已发布（gangfun/cli `012b236`，npm `@gangfun/cli@0.49.0`）；`npx @gangfun/cli@0.49.0 info` 在主网读到老币 `agentWindow.set = false`。
-- 待做：第一个真实窗口币的报价和交易核对；网站展示和 `capabilities.json` 刷新。
+- 网站展示和 `capabilities.json` 已随网站发布更新（代币页、市场卡片、“即将开放”一栏、窗口期占比）。
+
+## 第一个真实窗口币
+
+OpenCat [`0xe5274b78b457de979d3789e0b7f0205174beabcd`](https://bscscan.com/token/0xe5274b78b457de979d3789e0b7f0205174beabcd)，报价币 ANTB，建币交易 [`0x7027314f…bbd0`](https://bscscan.com/tx/0x7027314fedb777bc89ac0ecb213c3cd02081a2f6f106b7b5de9a6f792021bbd0)（2026-11-21 17:40:05 UTC+8），窗口 60 分钟，`agentOpenAt` = 1795257605（18:40:05 UTC+8）。开放前后各核对一次：
+
+| 项 | 开放前（18:37） | 开放后（18:40:50） |
+|---|---|---|
+| `agentWindowOpen` | false | true |
+| `walletCapOn` | true | false |
+| 没有 Agent ID 的钱包：`canTradeCurve` | false | true |
+| 没有 Agent ID 的钱包：`walletRoom` | — | 不限（`type(uint256).max`） |
+| registry 给没有 Agent ID 的钱包报 0.1 ANTB | 0 | 约 4,280,875 枚 |
+| 服务端 `agentWindow` / “即将开放”一栏 | 未开放，占比为空；一栏里只有它 | 已开放，占比 100% / 100%（`curve_sold`）；一栏里只有它 |
+| 网站代币页 | “Agent only”徽标和倒计时 | “OPEN TO ALL · NO 1% CAP”，显示占比 |
+
+- 曲线 `sold` 从开放前约 31% 降到开放时约 15%，开放后继续降到约 9%：窗口期买入的 agent 在开放前后陆续卖出（spec §7.2 E-1，符合设计）。开放后到这次核对为止，还没有没有 Agent ID 的钱包买入。
+- 发现并修复一个展示问题：持有人里的 agent / 非 agent 拆分把 pad（持有未卖出的曲线）算成了非 agent 持有人。修复后 pad、代币合约、交易对、0x0、0x…dEaD 和金库都不计入拆分，总持有人数不变。
 
 升级不回滚（spec §9.4）：出问题只做前滚修复。
