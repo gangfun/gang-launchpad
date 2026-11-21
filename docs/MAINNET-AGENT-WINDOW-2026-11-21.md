@@ -74,4 +74,20 @@ OpenCat [`0xe5274b78b457de979d3789e0b7f0205174beabcd`](https://bscscan.com/token
 - 曲线 `sold` 从开放前约 31% 降到开放时约 15%，开放后继续降到约 9%：窗口期买入的 agent 在开放前后陆续卖出（spec §7.2 E-1，符合设计）。开放后到这次核对为止，还没有没有 Agent ID 的钱包买入。
 - 发现并修复一个展示问题：持有人里的 agent / 非 agent 拆分把 pad（持有未卖出的曲线）算成了非 agent 持有人。修复后 pad、代币合约、交易对、0x0、0x…dEaD 和金库都不计入拆分，总持有人数不变。
 
+## 上线后的配套（2026-11-21 至 22）
+
+| 部分 | 版本 | 内容 |
+|---|---|---|
+| CLI | 0.49.0 | `gang create --agent-window <1-1440>`；`gang info` / `status` 显示 `agentWindow` |
+| CLI | 0.49.1 | 文档：开放后任何钱包可用 `gang buy\|sell --from <地址> --calldata` 生成交易自行签名 |
+| CLI | 0.50.0（已撤回） | WalletConnect 签名买卖。所用 SDK（`@walletconnect/sign-client` 2.22.0 起）改为 Reown 专有许可，0.50.1 撤回；服务端提供项目 ID 的接口同时下线。以 0.50.1 为 `latest`，并在 README 和 gangfun/cli 的 release 说明里写明 0.50.0 已撤回 |
+| CLI | 0.50.1 | 移除 WalletConnect，旧命令返回 `REMOVED` 和替代方式 |
+| CLI | 0.51.0 | `--handoff`：只读检查并报价，输出预填好交易的 gang.fun 链接和二维码，由用户在自己的钱包里确认；`gang handoff status` 只读确认链上成交 |
+| CLI README | — | 「用自己的脚本买 agent window 已开放的币」：合约地址、调用步骤和 viem 示例 |
+| 网站 | v1.2.149 至 v1.2.155 | 代币页和市场展示、即将开放一栏、窗口期占比；开放后的币可用自己的钱包买卖（只授权确切数额、发送前模拟、防重复发送）；`?trade=buy&amount=…` 预填链接 |
+| 网站 | v1.2.156 至 v1.2.159 | 钱包列表币安钱包优先、去重、隐藏不支持 BNB Chain 的 Phantom；币安 App 扫码连接（官方 Web3 Connect SDK，构建时把中继固定为 `nbstream.binance.com`），已批准的连接 24 小时内刷新保持 |
+| 服务端 | v1.2.112 至 v1.2.118 | §6 Agent ID 检查；即将开放排序；窗口期占比；持有人拆分不计 pad 等合约 |
+
+真机验证（2026-11-22）：币安 App 扫码能连上，刷新后连接保持，网站点"断开"后 App 同步断开。
+
 升级不回滚（spec §9.4）：出问题只做前滚修复。
