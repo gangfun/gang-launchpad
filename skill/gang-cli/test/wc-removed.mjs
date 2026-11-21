@@ -43,8 +43,10 @@ try {
   }
   // the leftover state is ignored, not deleted
   assert.equal(readFileSync(join(HOME, '.gang', 'wc', 'session.json'), 'utf8'), '{"topic":"x"}')
-  // a normal execute id is not caught by it
+  // a normal execute id is not caught by it, nor promote status's own --wallet <address>, nor a note that says --wallet
   assert.notEqual(run('execute', '--request-id', 'abc').out.code, 'REMOVED')
+  assert.notEqual(run('promote', 'status', '--token', T, '--wallet', '0x0000000000000000000000000000000000000002').out.code, 'REMOVED')
+  assert.notEqual(run('buy', '--token', T, '--amount', '1', '--note', '--wallet', '--from', T, '--calldata').out.code, 'REMOVED')
   // the help says so, and the --from --calldata path is still there
   const help = spawnSync(process.execPath, [CLI, '--help'], { env, encoding: 'utf8' }).stdout
   assert.match(help, /WalletConnect signing \(gang wallet, --wallet wc\) was removed in 0\.50\.1/)

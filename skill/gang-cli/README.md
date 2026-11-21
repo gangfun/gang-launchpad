@@ -415,4 +415,4 @@ The tag is public and anyone can write any id, so it counts usage and proves not
 0.50.1 removes 0.50.0's WalletConnect signing (`gang wallet`, `--wallet wc`) for licensing reasons. To trade from your own
 wallet, use the token's page on gang.fun, or build the txs with `--from <address> --calldata`. `~/.gang/wc` can be deleted.
 
-`0.34.0` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`
+`0.50.1` · repo [gangfun/cli](https://github.com/gangfun/cli) · published to [npm](https://www.npmjs.com/package/@gangfun/cli) on push to `main`

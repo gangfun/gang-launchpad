@@ -376,4 +376,4 @@ Claude Code：`claude mcp add gang -- gang mcp`。同一台机器上 `baw` 要�
 0.50.1 出于许可原因移除了 0.50.0 的 WalletConnect 签名（`gang wallet`、`--wallet wc`）。要用自己的钱包交易，请在 gang.fun 的代币页面操作，
 或用 `--from <地址> --calldata` 生成交易。`~/.gang/wc` 可以删掉。
 
-`0.34.0` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)
+`0.50.1` · [gangfun/cli](https://github.com/gangfun/cli) · push 到 `main` 自动发布到 [npm](https://www.npmjs.com/package/@gangfun/cli)

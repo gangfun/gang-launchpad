@@ -1636,7 +1636,8 @@ async function pendingReport() {
 // 0.50.0's WalletConnect signing, removed in 0.50.1 (licensing): every way into it says so instead of failing oddly
 const WC_REMOVED = 'WalletConnect was removed in 0.50.1; trade from your own wallet on gang.fun\'s token page, or build the tx with --from <address> --calldata'
 const WC_LEFTOVER = 'files 0.50.0 kept in ~/.gang/wc are no longer used: you can delete that folder'
-const wcRemoved = () => cmd === 'wallet' || args.some((a) => a === '--wallet' || a.startsWith('--wallet='))
+// only 0.50.0's own spellings: --wallet <address> stays gang promote status's flag
+const wcRemoved = () => cmd === 'wallet' || args.some((a, i) => (a === '--wallet' && String(args[i + 1]).toLowerCase() === 'wc') || a.toLowerCase() === '--wallet=wc')
   || (cmd === 'execute' && /^wc-/.test(String(opt('request-id') ?? '')))
 
 async function main() {
