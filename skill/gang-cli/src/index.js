@@ -674,7 +674,7 @@ OPENING BASE (GangLaunchpad 3.0, base-v1, 0.40.0+; open on BSC mainnet and testn
                                          ones send what has vested to the creator (never to the caller). --testnet,
                                          --calldata, --from as elsewhere
 
-AGENT WINDOW (GangLaunchpad 3.0, 0.49.0+; on the BSC testnet; mainnet once its pad is upgraded: the pad says whether it is open):
+AGENT WINDOW (GangLaunchpad 3.0, 0.49.0+; the pad says whether it is open):
   gang create … --agent-window <1-1440>  the curve token opens to every wallet this many minutes after its create block
                                          (openAt). Until then only Agent ID holders trade it on the curve, each under the
                                          1% wallet cap; from openAt on any wallet does, contracts and aggregators included,

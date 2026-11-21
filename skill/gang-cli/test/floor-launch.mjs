@@ -42,6 +42,7 @@ const { decodeLogs, firstByModuleType } = await import('../src/chain.js')
 const { LP_EVENT_ABIS } = await import('../src/lp.js')
 const { PROMOTE_EVENT_ABIS } = await import('../src/promote.js')
 const { FLOOR_EVENT_ABIS } = await import('../src/floor.js')
+const { AGENT_WINDOW_ABI } = await import('../src/agentwindow.js')
 
 const lc = (a) => String(a).toLowerCase()
 const t = (n) => getAddress(`0x${n.toString(16).padStart(40, '0')}`)
@@ -68,7 +69,7 @@ const allTokens = []
 const world = { moduleOfFails: false, padSays: null, bond: null, treasury: 0n, poolQuote: false, receipt: null, mt: null, codeHook: null, taxCheck: null, listedLie: null, trace: null, owner: null, moduleOfRaw: null, otherAdmin: null }
 let hashes = []
 
-const ABI = [...V3_EVENT_ABIS[0], ...CREATOR_FEE_ABI, ...GRAD_TARGET_ABI, ...VANITY_ABI, ...FLOOR_ABI, ...FLOOR_FACTORY_ABI, ...BOND_ABI, ...CALL_BOND_ABI,
+const ABI = [...V3_EVENT_ABIS[0], ...AGENT_WINDOW_ABI, ...CREATOR_FEE_ABI, ...GRAD_TARGET_ABI, ...VANITY_ABI, ...FLOOR_ABI, ...FLOOR_FACTORY_ABI, ...BOND_ABI, ...CALL_BOND_ABI,
   ...parseAbi([
     'function symbol() view returns (string)', 'function decimals() view returns (uint8)', 'function totalSupply() view returns (uint256)',
     'function balanceOf(address) view returns (uint256)', 'function allowance(address,address) view returns (uint256)',
@@ -134,6 +135,11 @@ function answer(b) {
     }
     case 'taxConfigOf': { const c = tokens.get(lc(args[0])); if (!c) return REVERT; result = [300, 300, c.dividendBps ?? 0, c.recipient]; break }
     case 'createWithSalt': result = world.padSays ?? predicted(args[0], hashes.at(-1).hash); break
+    // the agent window (3.0): the create it wraps is createWithSalt here; openAt per token as a test sets it
+    case 'createWithAgentWindow': { const { args: inner } = decodeFunctionData({ abi: VANITY_ABI, data: args[1] }); result = world.padSays ?? predicted(inner[0], hashes.at(-1).hash); break }
+    case 'MIN_AGENT_WINDOW_MINUTES': result = 1; break
+    case 'MAX_AGENT_WINDOW_MINUTES': result = 1440; break
+    case 'agentOpenAt': result = world.openAt?.get(lc(args[0])) ?? 0; break
     case 'checkTaxConfigFor': case 'checkTaxConfig': if (world.taxCheck) return world.taxCheck(f.name); result = [true, '']; break
     case 'isListed': { const a = lc(args[0]); result = world.listedLie ? world.listedLie(a) : listed.has(a) || modules.has(a); break }
     case 'owner': result = world.owner ?? ADMIN; break
@@ -321,6 +327,24 @@ try {
   assert.deepEqual([again.success, again.step], [true, 'create'])
   assert.equal(decodeFunctionData({ abi: VANITY_ABI, data: again.tx.data }).args[0], p1.floor.salt)
   assert.match(again.warning, /built this create before and its token is not on chain yet.*executing this one too can only revert/, 'said: an agent re-running until done must not send it twice')
+  // ... with the agent window it was built with: a create built without one is not built again with one, and back
+  assert.equal(plan().agentWindow, 0)
+  await refused(() => launch({ 'agent-window': '30' }), /this launch built its create with no agent window: run it again with no --agent-window, or add --restart/)
+  const noWindow = readFileSync(planFile(), 'utf8')
+  writeFileSync(planFile(), JSON.stringify({ ...JSON.parse(noWindow), agentWindow: 30 }))
+  await refused(() => launch(), /built its create with a 30-minute agent window: run it again with --agent-window 30/)
+  await refused(() => launch({ 'agent-window': '60' }), /built its create with a 30-minute agent window/)
+  const windowed = await launch({ 'agent-window': '30' })
+  assert.deepEqual([windowed.success, windowed.step], [true, 'create'], JSON.stringify(windowed).slice(0, 300))
+  const wrapped = decodeFunctionData({ abi: AGENT_WINDOW_ABI, data: windowed.tx.data })
+  assert.deepEqual([wrapped.functionName, wrapped.args[0]], ['createWithAgentWindow', 30])
+  assert.equal(decodeFunctionData({ abi: VANITY_ABI, data: wrapped.args[1] }).args[0], p1.floor.salt, 'the same salt inside the window')
+  assert.equal(plan().agentWindow, 30)
+  // a plan from before 0.49.0 (no agentWindow): not checked, the create is built as this run asks
+  const { agentWindow: _aw, ...older } = JSON.parse(noWindow)
+  writeFileSync(planFile(), JSON.stringify(older))
+  assert.equal((await launch({ 'agent-window': '30' })).step, 'create', 'an older plan is not refused')
+  writeFileSync(planFile(), noWindow)
   // another token of this wallet with the same symbol lands meanwhile: it is not this launch's token
   const STRAY = lc(t(0x57a1))
   tokens.set(STRAY, { creator: ME, symbol: 'FLR', recipient: MODULE, balances: new Map() })
@@ -342,6 +366,18 @@ try {
   assert.equal(lc(plan().token), TOKEN)
   // changed terms after the create are still refused
   await refused(() => launch({ 'redeem-fee': '0' }), /not what --redeem-fee/)
+  // the agent window too, on the pad's word: this token has none
+  await refused(() => launch({ 'agent-window': '30' }), /this launch's token has no agent window, fixed at its create: run it again without changing it, or add --restart/)
+  world.openAt = new Map([[TOKEN, 1_800_001_800]])
+  writeFileSync(planFile(), JSON.stringify({ ...plan(), agentWindow: 30 }))
+  await refused(() => launch({ 'agent-window': '45' }), /this launch's token has a 30-minute agent window, fixed at its create/)
+  assert.equal((await launch({ 'agent-window': '30' })).step, 'bind', 'the same window goes on')
+  assert.equal((await launch()).step, 'bind', 'left out: the token goes on as created')
+  // an older plan (no agentWindow) on a token with a window: the pad says it has one, the minutes are not known
+  const { agentWindow: _w, ...olderPlan } = plan()
+  writeFileSync(planFile(), JSON.stringify(olderPlan))
+  assert.equal((await launch({ 'agent-window': '45' })).step, 'bind', 'an older plan: any window is taken')
+  world.openAt = null
   modules.get(MODULE).token = getAddress(TOKEN)
   const done = await launch()
   assert.deepEqual([done.success, done.launch.stage, lc(done.token)], [true, 'done', TOKEN])

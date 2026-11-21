@@ -622,8 +622,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (aw) {
       const support = await agentWindowSupport(ctx)
       if (support.unread) fail('could not check the pad for the agent window (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
-      // the testnet hint only where the testnet's same pad has it (not a 2.0 金库版 pad --vault moved to)
-      if (!support.open) fail(`${support.why}: drop --agent-window${testnet || ctx.gen !== PAD3_GEN ? '' : ' (it is on the BSC testnet: --testnet)'}`, { pad: ctx.pad })
+      if (!support.open) fail(`${support.why}: drop --agent-window`, { pad: ctx.pad })
       if (aw.minutes < support.min || aw.minutes > support.max) fail(`--agent-window must be ${support.min}–${support.max} minutes on this pad`, { got: aw.minutes })
     }
     // with --countdown-reward, the pad knows the module (the carry's and the sweep's destination) only once gang opened
