@@ -156,6 +156,10 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   binds only by its first trade of the token: a plain first buy can never bind later, so relay `promoteWarning` on a buy
   preview. If `gang promote buy` prints only the help the CLI is older than 0.34.0: tell the user to update, and don't
   fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
+- **Agent window** (`gang create … --agent-window <1-1440>`, 0.49.0+, GangLaunchpad 3.0 once its pad is upgraded; the CLI asks the
+  pad): before the create, tell the user that until `openAt` only Agent ID holders trade, and after it anyone does
+  (contracts too) with no 1% cap, and that it can never be changed; relay the preview's `agentWindow.warning`
+  ([v3.md](references/v3.md)).
 - **Countdown reward** (`countdown-v1`, 0.43.2+, BSC mainnet and testnet): the creator's own share of the pool tax, paid to the last
   counted buys of each round by a fixed public rule: a reward paid by fixed public rules from the creator's tax share. On a
   graduated token `gang buy` goes through its module; relay `rewards.countdown` (counts or not and why, the round, the

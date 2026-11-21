@@ -16,6 +16,7 @@ import { COMBO_ABI, COMBO_FACTORY_ABI, comboFactoryAddress, comboLine, comboNotD
 import { FLOOR_ABI, FLOOR_FACTORY_ABI, FLOOR_NOTE, floorFactoryAddress, floorLine, floorNotDeployed, floorOf, floorShown, OTHER_ASSETS_NOTE as FLOOR_OTHER_ASSETS_NOTE, parseFloorSpec, PERMANENT_NOTE as FLOOR_PERMANENT_NOTE, simulateFloor, treasuryShare } from './floor.js'
 import { mineToken } from './vanity.js'
 import { gradLaunchCheck, parseGradReward } from './gradreward.js'
+import { agentWindowSupport, parseAgentWindow } from './agentwindow.js'
 import { CD_ALONE, CD_FLAGS, COUNTDOWN_ABI, COUNTDOWN_FACTORY_ABI, countdownConfig, countdownCreateView, countdownFactoryAddress, countdownNotLive, countdownRaw, countdownShown, formatCountdown, parseCountdownSpec, sameConfig, simulateCountdown } from './countdown.js'
 import { CAPPED_ABI, CAPPED_FACTORY_ABI, cappedFactoryAddress, cappedLine, cappedNotDeployed, cappedOf, cappedParts, capUnits, capVolume, COVERAGE_NOTE, OTHER_ASSETS_NOTE, parseCappedSpec, PERMANENT_NOTE as CAPPED_PERMANENT_NOTE, quoteUnits, simulateCapped, splitPcts } from './capped.js'
 
@@ -476,6 +477,15 @@ export async function runLaunch(kind, { io, runV3, runFair, runBond, padNotes })
     const tiers = await gradTiersOf({ chainId: net.chainId, pad: net.pad, read })
     if (!tiers) fail(`--grad: GangLaunchpad ${net.gen ?? net.pad} has no graduation target to pick: leave --grad out`)
     if (!tiers.includes(Number(opt('grad')))) fail(`--grad must be one of ${tiers.join(' / ')} (BNB raised)`, { got: opt('grad') ?? null })
+  }
+  // --agent-window (3.0): the pad must serve it before a module is cloned (gas, and the metadata fixed for good)
+  if (kind === 'v3' && flag('agent-window')) {
+    const aw = parseAgentWindow(opt('agent-window'))
+    if (aw.error) fail(aw.error, { got: aw.got })
+    const support = await agentWindowSupport({ gen: net.gen, chainId: net.chainId, pad: net.pad, read })
+    if (support.unread) fail('could not check the pad for the agent window (RPC error)', { pad: net.pad, detail: support.unread, retry: 'same command again' })
+    if (!support.open) fail(`${support.why}: drop --agent-window${testnet ? '' : ' (it is on the BSC testnet: --testnet)'}`, { pad: net.pad })
+    if (aw.minutes < support.min || aw.minutes > support.max) fail(`--agent-window must be ${support.min}–${support.max} minutes on this pad`, { got: aw.minutes })
   }
   const key = [net.chainId, net.pad, me.toLowerCase(), kind, name, symbol].join('|')
   const cloneStep = { buyback: 'buyback-splitter', split: 'split-module', lp: 'lp-splitter', combo: 'combo-module', capped: 'capped-module', floor: 'floor-module', countdown: 'countdown-module', promote: 'promote-module' }[mod]
