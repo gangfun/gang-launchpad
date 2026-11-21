@@ -26,6 +26,7 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
   if (url.pathname === '/stream') {
     seen.push({ path: req.url, lastId: req.headers['last-event-id'] || null })
+    if (mode === 'bad_events') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end('{"error":"bad_events"}') }
     if (mode === 'none') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"unknown route"}') }
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     return script(res, req.headers['last-event-id'] || null)
@@ -183,6 +184,10 @@ async function run(opts, n, ms = 8000) {
       v3(12, { agentWindow: { openAt: t - 60, open: true }, createdAt: t - 600 }),
       v3(15, { agentWindow: { openAt: polls === 1 ? t + 30 : t - 1, open: polls > 1 }, createdAt: t - 300 }),
     ]
+    // 16: its row only carries the window from the second poll, opened an hour ago: nothing stale. 17: openAt passed on
+    // this clock but the server still says closed (a fast local clock): no window_opened yet
+    rows.push(v3(16, polls > 1 ? { agentWindow: { openAt: t - 3600, open: true }, createdAt: t - 7200 } : {}))
+    rows.push(v3(17, { agentWindow: { openAt: t - 5, open: false }, createdAt: t - 200 }))
     if (polls > 1) {
       rows.push(v3(13, { agentWindow: { openAt: t + 3600, open: false }, createdAt: t }))
       rows.push(v3(14, { agentWindow: { openAt: t + 300, open: false }, createdAt: t - 1500 }))
@@ -197,6 +202,15 @@ async function run(opts, n, ms = 8000) {
   const plain = await run({ poll: true, intervalSec: 0.2 }, 10, 1200)
   assert.ok(plain.filter((l) => !l.meta).every((e) => !e.event.startsWith('window_')))
   pollItems = null
+}
+
+// a server whose stream doesn't know window events (400 bad_events): says so, then polls
+{
+  mode = 'bad_events'
+  const lines = await run({ events: new Set(['window_opened']) }, 1, 1500)
+  assert.ok(lines.some((l) => l.meta && l.event === 'error' && /no window events/.test(l.error)))
+  assert.equal(lines.find((l) => l.event === 'watching').transport, 'poll')
+  mode = 'stream'
 }
 
 // an older server (no /stream): polls, as before

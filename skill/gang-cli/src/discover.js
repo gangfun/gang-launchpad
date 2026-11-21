@@ -71,7 +71,8 @@ const TRADES = { v2: '/stocks/tokens', soft: '/tokens', v3: '/v3/tokens', fair: 
  * `quoteUsdOf(quoteAddress)` prices a list row's quote (from the V2 / Soft rows), null when unknown.
  */
 const windowOf = (openAt, open) => ({
-  openAt: new Date(openAt * 1000).toISOString(), openAtUnix: openAt, open: !!open || openAt <= now(),
+  // the server's open flag when it sends one (a fast local clock must not say open before the chain does)
+  openAt: new Date(openAt * 1000).toISOString(), openAtUnix: openAt, open: typeof open === 'boolean' ? open : openAt <= now(),
 })
 
 function gangRow(r, quoteUsdOf) {
@@ -356,7 +357,12 @@ export async function streamMarket({ track = 'all', minPct = 50, events = null, 
       if (!sse) {
         await r.body?.cancel().catch(() => {})
         // no stream route (an older server, 404) or not for us (400, 429 too many streams, 503 warming): poll instead
-        if (!started) return 'unavailable'
+        if (!started) {
+          if (r.status === 400 && asked.some((e) => WINDOW_EVENTS.includes(e))) {
+            emit({ event: 'error', error: 'this gang.fun server has no window events on its stream yet: polling (window events from the token lists)' }, { meta: true })
+          }
+          return 'unavailable'
+        }
         if (r.status === 404 || r.status === 400 || r.ok) return 'poll'
         throw new Error(`gang API ${r.status} on /stream`)
       }
@@ -418,21 +424,23 @@ export async function streamMarket({ track = 'all', minPct = 50, events = null, 
 /** A window event line: the token, when it opens (opensInSec 0 once open), what to run and its page. */
 const windowEvent = (event, t) => ({
   event, ...brief(t), openAt: t.agentWindow.openAt, openAtUnix: t.agentWindow.openAtUnix,
-  opensInSec: Math.max(0, t.agentWindow.openAtUnix - now()), next: hint(t), link: `https://gang.fun/token/${t.address}`,
+  opensInSec: t.agentWindow.open ? 0 : Math.max(0, t.agentWindow.openAtUnix - now()), next: hint(t), link: `https://gang.fun/token/${t.address}`,
 })
 /** Poll mode's window events for one token: created (new with a window), opening (10 min before, 15+ min windows), opened. */
-const windowChanges = (prev, t, sent) => {
+const windowChanges = (prev, t, sent, intervalSec) => {
   const w = t.agentWindow
   if (!w || t.graduated) return []
   const out = []
   const key = (e) => `${e}:${t.address.toLowerCase()}`
   const once = (e) => { if (!sent.has(key(e))) { sent.add(key(e)); out.push(windowEvent(e, t)) } }
-  // a token first seen with its window already open says only window_opened (and only if it opened since the last poll)
-  if (!prev && !w.open) once('window_created')
+  // first seen with a window (a new token, or one whose row only now carries it): created if still closed; if already
+  // open, window_opened only when it opened about since the last poll, never a stale one
+  const had = prev?.agentWindow
+  if (!had && !w.open) once('window_created')
   const left = w.openAtUnix - now()
   const len = t.createdAt ? w.openAtUnix - num(t.createdAt) : Infinity
   if (!w.open && left <= WINDOW_SOON_SEC && len >= WINDOW_SOON_MIN_SEC) once('window_opening')
-  if (w.open && (prev ? !prev.agentWindow?.open : true) && (prev || !t.createdAt || now() - w.openAtUnix < 120)) once('window_opened')
+  if (w.open && !had?.open && (had || now() - w.openAtUnix < intervalSec + 60)) once('window_opened')
   return out
 }
 
@@ -537,7 +545,7 @@ export async function watch({ token, intervalSec = 10, minPct = 50, track = 'all
         else if (!t.graduated && prev.progressPct < minPct && t.progressPct >= minPct) {
           out.push({ event: 'near_grad', ...brief(t), next: hint(t) })
         }
-        if (windows) out.push(...windowChanges(prev, t, windowSent))
+        if (windows) out.push(...windowChanges(prev, t, windowSent, intervalSec))
         for (const ev of out) {
           if (want(ev.event)) emit(ev)
           if (shouldStop()) return
