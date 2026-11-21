@@ -72,6 +72,20 @@ testnet, so hand the raw tx to a wallet that can. A note is then kept in the loc
 publishes it once the tx lands. `--from <addr>` reads / builds for another wallet (on a V2 / Soft token: pool trades
 only).
 
+## Hand off to the user's wallet
+
+CLI 0.51.0+. For a user without an Agentic Wallet, on a GangLaunchpad 3.0 curve token whose agent window is open:
+`gang buy --token <t> --amount <quote> [--from <their wallet>] --handoff` (sells: `--amount <tokens>` or `--all`).
+The CLI checks the token is open to that wallet (and its balance, with `--from`), quotes the trade (expected and minimum
+out at the page's 3% default slippage), and prints a prefilled link
+`https://gang.fun/token/<t>?trade=buy|sell&amount=<n>|all[&from=<wallet>]` with its QR code. The user opens it in the
+Binance app (Web3 Wallet → Discover / DApp browser → paste the link) or any wallet app's browser, connects, and confirms
+each step there. Nothing is signed or sent by the CLI. The amount of a buy is in the token's quote, of a sell in the
+token. Agent-only tokens need the Agentic Wallet; graduated tokens trade on any DEX (`HANDOFF_NOT_SERVED`).
+
+Afterwards `gang handoff status --token <t> --from <wallet> [--timeout 10m]` reads the chain for that wallet's trade
+since the handoff (`traded: true` only when it is there); report the trade only then.
+
 CLI 0.50.0 could also send buys and sells to a wallet app over WalletConnect; 0.50.1 removed that for licensing reasons
 (`gang wallet …` and `--wallet wc` now answer code `REMOVED`). For a user's own wallet, build the txs with
 `--from <address> --calldata`, or point them to the token's page on gang.fun.

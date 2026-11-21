@@ -89,6 +89,7 @@ text for X. Offer it to the user once; never post it yourself.
 | One token / my position | `gang info --token <addr>` · `gang status --token <addr>` | [trade.md](references/trade.md) |
 | Everything I hold, how it's doing | `gang portfolio [--from <addr>]` | [trade.md](references/trade.md) |
 | Buy / sell | `gang buy --token <addr> --amount <quote>` · `gang sell --token <addr> (--amount <tokens> \| --all)` → `gang execute` | [trade.md](references/trade.md) |
+| Hand a trade to the user's own wallet (no Agentic Wallet; open agent-window tokens) | `gang buy\|sell … --handoff [--from <their wallet>]` → show the link / QR → `gang handoff status --token … --from …` | [trade.md](references/trade.md#hand-off-to-the-users-wallet) |
 | Trade a graduated / launched token | the same `gang buy` / `gang sell` (PancakeSwap pool) | [pool.md](references/pool.md) |
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |
 | Launch in one command (create + dev buy + bond + buy-back, split, auto-liquidity, or several at once) | V3: `gang create … --dev-buy <quote> [--bond …] [--buyback <pct>] [--split self:<pct>,<addr>:<pct>,…] [--lp <pct>]` (two or three of these = one combined recipient, fixed for good; or `--tax-cap <amount> [--tax-cap-share <pct>] [--after-cap buyback:<pct>,lp:<pct>]` = a capped recipient) · 打新: `gang create --fair … --shares <n> --bond …`; re-run until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond---buyback---split---lp) |
@@ -156,6 +157,11 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   binds only by its first trade of the token: a plain first buy can never bind later, so relay `promoteWarning` on a buy
   preview. If `gang promote buy` prints only the help the CLI is older than 0.34.0: tell the user to update, and don't
   fall back to `gang buy`, where an older CLI drops `--promoter` ([v3.md](references/v3.md)).
+- **Handoff to the user's own wallet** (`gang buy|sell … --handoff [--from <their wallet>]`, 0.51.0+): only for an open
+  agent-window curve token. It prints a prefilled gang.fun link and a QR: show both, with the steps (Binance app → Web3
+  Wallet → Discover → paste the link, or any wallet app's browser). Nothing is signed by it: the user connects and
+  confirms on the page. Never say the trade happened until `gang handoff status --token … --from …` shows
+  `traded: true`. No `--note` (the page sends none).
 - **No WalletConnect**: CLI 0.50.1 removed 0.50.0's `gang wallet` / `--wallet wc` (licensing; code `REMOVED`). For a
   user's own wallet, build the txs with `--from <address> --calldata`, or send them to the token's page on gang.fun.
 - **Agent window** (`gang create … --agent-window <1-1440>`, 0.49.0+, GangLaunchpad 3.0 where its pad serves it; the CLI asks

@@ -71,9 +71,10 @@ assert.equal((await rpc('nope')).error.code, -32601)
 
 const { tools } = (await rpc('tools/list')).result
 const names = tools.map((t) => t.name)
-assert.equal(tools.length, 18)
+assert.equal(tools.length, 19)
 for (const n of ['gang_help', 'gang_preflight', 'gang_trending', 'gang_hot', 'gang_new', 'gang_near_grad', 'gang_info', 'gang_status', 'gang_portfolio', 'gang_notes', 'gang_agents',
-  'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
+  'gang_watch', 'gang_buy', 'gang_sell', 'gang_follow', 'gang_execute', 'gang_handoff_status', 'gang_tx', 'gang_cli']) assert.ok(names.includes(n), n)
+assert.equal(tools.find((t) => t.name === 'gang_handoff_status').annotations.readOnlyHint, true)
 assert.ok(tools.every((t) => t.inputSchema.type === 'object' && !('args' in t)))
 assert.equal(tools.find((t) => t.name === 'gang_execute').annotations.destructiveHint, true)
 assert.equal(tools.find((t) => t.name === 'gang_hot').annotations.readOnlyHint, true)
@@ -105,6 +106,15 @@ assert.deepEqual(unions, [])
   assert.deepEqual(args('gang_status', { token: addr(1), from: addr(2), slippage: 2, testnet: true }),
     ['status', '--token', addr(1), '--from', addr(2), '--slippage', '2', '--testnet'])
   assert.deepEqual(args('gang_portfolio', {}), ['portfolio'])
+  // handoff: a link for the user's own wallet; its status is a read
+  assert.deepEqual(args('gang_buy', { token: addr(1), amount: '1', handoff: true, from: addr(2) }).slice(5), ['--handoff', '--from', addr(2)])
+  assert.deepEqual(args('gang_sell', { token: addr(1), all: true, handoff: true }), ['sell', '--token', addr(1), '--all', '--handoff'])
+  assert.deepEqual(args('gang_handoff_status', { token: addr(1), from: addr(2), since: 5, timeout: '5m' }), ['handoff', 'status', '--token', addr(1), '--from', addr(2), '--since', '5', '--timeout', '5m'])
+  assert.match(invalid(buy, { token: addr(1), amount: '1', handoff: true, note: 'x' }), /note can't go with handoff/)
+  assert.match(invalid(buy, { token: addr(1), amount: '1', handoff: true, promoter: addr(3) }), /promoter can't go with handoff/)
+  assert.match(invalid(buy, { token: addr(1), amount: '1', from: addr(2) }), /from goes with handoff/)
+  assert.match(invalid(TOOLS.find((t) => t.name === 'gang_handoff_status'), { token: addr(1), from: addr(2), timeout: '2h' }), /at most 30m/)
+  assert.match(invalid(TOOLS.find((t) => t.name === 'gang_handoff_status'), { token: addr(1) }), /from is required/)
   assert.deepEqual(args('gang_portfolio', { from: addr(2) }), ['portfolio', '--from', addr(2)])
   assert.deepEqual(args('gang_follow', { noteTx: `0x${'a'.repeat(64)}`, amount: '0.1', useWbnb: true }),
     ['follow', `0x${'a'.repeat(64)}`, '--amount', '0.1', '--use-wbnb'])
