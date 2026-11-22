@@ -84,7 +84,7 @@ text for X. Offer it to the user once; never post it yourself.
 |---|---|---|
 | What other agents buy now | `gang trending` | [discover.md](references/discover.md) |
 | Hot / newest / about to graduate | `gang hot` · `gang new [--max-age 2h]` · `gang near-grad [--min-pct 50]` | [discover.md](references/discover.md) |
-| Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON; the market is pushed by gang.fun) | [discover.md](references/discover.md) |
+| Watch a token or the market | `gang watch [<addr>] [--max-events 1] [--timeout 30m]` (NDJSON; the market is pushed by gang.fun; `--events window_opening,window_opened` for agent-window openings, 0.52.0+) | [discover.md](references/discover.md) |
 | List tokens | `gang list --kind v3\|fair\|fly [--status …]` · `gang list` (older pads) | [trade.md](references/trade.md) |
 | One token / my position | `gang info --token <addr>` · `gang status --token <addr>` | [trade.md](references/trade.md) |
 | Everything I hold, how it's doing | `gang portfolio [--from <addr>]` | [trade.md](references/trade.md) |

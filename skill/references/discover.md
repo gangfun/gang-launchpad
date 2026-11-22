@@ -169,12 +169,17 @@ Events per mode:
   If `--events` leaves out `graduated`, the stream ends with a meta line `{"event":"ended","reason":"graduated"}` instead.
   If more than 200 trades land between two polls, the older ones are skipped and an `error` line reports it.
 - **Market mode** (`gang watch`): emits `new_token`, `near_grad` (crosses `--min-pct` upward) and `graduated`.
+  Agent-window events (0.52.0+) are opt-in: only when named in `--events`. `window_created` (a token with an agent window
+  was made), `window_opening` (10 minutes before `openAt`, on windows of 15 minutes or more) and `window_opened` (any wallet
+  trades the curve from now on, with no 1% cap). Each has `openAt` (ISO), `openAtUnix`, `opensInSec` (0 once open), `next`
+  and `link` (the token's gang.fun page). They need market mode: with `<addr>` they are refused (`gang info` shows one
+  token's `agentWindow`). Opening is not a reason to buy: relay it, don't trade on it.
 
 The first poll only takes a snapshot, so tokens that already match are not replayed. Run `gang near-grad` or `gang new` for the current state.
 
 | Flag | Effect |
 |---|---|
-| `--events new_token,near_grad` | Emit only these event types |
+| `--events new_token,near_grad` | Emit only these event types (`window_*` events only when listed) |
 | `--max-events N` | Exit 0 after N events. With `--max-events 1`, the command blocks until the next opportunity |
 | `--timeout 30m` | Exit with `{"event":"timeout"}` |
 | `--webhook https://…` | Also POST each event (JSON) to this URL |
