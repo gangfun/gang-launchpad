@@ -89,6 +89,9 @@ OpenCat [`0xe5274b78b457de979d3789e0b7f0205174beabcd`](https://bscscan.com/token
 | CLI | 0.51.1 | 真机测试确认币安 App 的扫一扫打不开普通网页链接：`--handoff` 改为提示在币安 App 的发现页粘贴链接，二维码只用于手机相机或能识别链接的钱包；npm 说明页带上脚本购买的说明 |
 | 网站 | v1.2.160 至 v1.2.161 | `capabilities.json` 更新到 CLI 0.51.0，`llms.txt` 和指南加上普通钱包的买法；币安面板去掉打不开的页面链接二维码，电脑上以扫码连接为主 |
 | 服务端 | v1.2.112 至 v1.2.118 | §6 Agent ID 检查；即将开放排序；窗口期占比；持有人拆分不计 pad 等合约 |
+| 服务端 | v1.2.119 | 开放提醒（Telegram）：创建时、开放前 10 分钟（窗口 15 分钟及以上）、开放时，每个创建者每天最多 3 个币；`/stream` 新增 `window_created` / `window_opening` / `window_opened`，只推给点名要的客户端；后台「Agent 窗口」指标 |
+| CLI | 0.52.0 | `gang watch --events window_created,window_opening,window_opened`（市场模式，需点名）；V3 行带 `agentWindow` |
+| 网站 | v1.2.162 至 v1.2.163 | 计价为 ERC-20 的已开放币可「用 BNB 买」：先在 PancakeSwap（V3 优先）换成计价币，再在曲线买入，价格影响超过 10% 不换，换币前重新检查曲线；`capabilities.json` 更新到 CLI 0.52.0 |
 
 真机验证（2026-11-22）：币安 App 扫码能连上，刷新后连接保持，网站点"断开"后 App 同步断开。
 
