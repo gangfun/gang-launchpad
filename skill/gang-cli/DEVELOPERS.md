@@ -127,9 +127,16 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
   `virtualReserve()`. Price from them with a 1% fee on the input (9900 / 10000). `realQuoteReserve()` is what can be paid out.
 - The quote side's `balanceOf(pair)` differs from its reserve by design (virtual reserve added, unclaimed fee left out). Measure quote input as
   `balanceOf(pair) - quoteBalanceBase()`, or trade through GangSwapRouter (V2 router ABI, native BNB swaps).
-- Addresses: `pad.gangSwapMigrator()` (0 = not open) → `factory()` and `boost()`; `factory.fees()`. The router is named by
-  nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI requires the code
-  itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must be `GANGSWAP_ROUTER_CODE_HASH` and the
+- Versions: `pad.gangSwapMigrator()` is only the GangSwapMigrator NEW tokens get (0 = creation closed; it can change).
+  A token keeps the one of its create forever: `pad.gangSwapMigratorOf(token)` (0 = not a GangSwap token), also in
+  `GangSwapCreated(address indexed token, address indexed migrator)`. Each version has its own factory, boost, fees and
+  router; never read an existing token's contracts from `gangSwapMigrator()`.
+- Creating: `createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)` names the version expected, the pad's
+  current `gangSwapMigrator()`, or reverts `GangSwapVersionChanged(current)`; also inside `createWithSalt` and
+  `createWithAgentWindow`.
+- Addresses: `pad.gangSwapMigratorOf(token)` → `factory()` and `boost()`; `factory.fees()`. The router is named by
+  nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI keeps a list
+  of versions, takes the router whose `factory()` is the token's own factory, and requires the code itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must be a known build's (`GANGSWAP_ROUTER_CODE_HASH`) and the
   operands in the build's order (`src/gangswap.js` says how both are recomputed from the sources).
 - `gang creator-fee --claim --calldata` prints both claims in `steps` when both parts are due: the pad's
   `claimCreatorFee(token, to)` and `GangSwapFees.claim(token, to)`.

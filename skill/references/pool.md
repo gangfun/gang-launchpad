@@ -52,7 +52,10 @@ pool trade of it: a PancakeSwap pool of such a token was made by someone else.
   (`poolFeePct`), no token tax. Approvals are for this trade's amount, to that router.
 - `minTokensOut` / `minOut` come from the pair's **effective** reserves; only its **real** BNB (`liquidity.realBnb`) can be
   paid out. Relay `warning` when a trade is large against it, and `priceImpactPct`.
-- **The router's code is checked before any step.** `… is not this network's GangSwapRouter (…)` or `no GangSwapRouter
+- **Versions:** a token stays on the GangSwap version (`gangSwap.migrator`) of its create forever, with its own router, even
+  when new tokens get a later version or creation is closed; `gang buy` / `gang sell` use that version's router only.
+- **The router is checked before any step** (its version and its code). `… is not this token's GangSwapRouter (…)`, `this CLI
+  version knows no GangSwapRouter of this token's GangSwap version` or `no GangSwapRouter
   address …`: nothing is built. Tell the user to update the CLI; never name a router for them or trade it elsewhere.
 - No `--note` / `--follow` / `--promoter`, as on any pool trade.
 

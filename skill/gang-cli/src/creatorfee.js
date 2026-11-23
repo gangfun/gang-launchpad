@@ -1,7 +1,7 @@
 import { createPublicClient, encodeFunctionData, formatUnits, hexToString, isAddress, parseAbi, zeroAddress } from 'viem'
 import { revertOf as revertIn, step, units } from './steps.js'
 import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, GANGSWAP_KIND, NOT_ON_MAINNET, PAD3_GEN, padNets, rpcTransport } from './gangpad.js'
-import { feesRevertOf, GANGSWAP_FEES_ABI, gangSwapFeeOf, gangSwapFeeView, gangSwapRouterAddress, gangSwapSet } from './gangswap.js'
+import { feesRevertOf, GANGSWAP_FEES_ABI, gangSwapFeeOf, gangSwapFeeView, gangSwapRouterAddresses, gangSwapSet } from './gangswap.js'
 import { walletFor } from './fair.js'
 import { promoteTermsOf } from './promote.js'
 import { floorVerified } from './floor.js'
@@ -305,8 +305,8 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   if (same(to, ctx.pad)) fail('--to cannot be the pad itself: the fee would stay where it is (the pad refuses it)')
   if (gs) {
     // never into a GangSwap contract or the token: nothing could take it out of there
-    const set = await gangSwapSet(ctx).catch((e) => fail(`could not read GangSwap's contracts: ${e.message}`, { token, retry: 'same command again' }))
-    const no = [token, pair, ctx.wbnb, ctx.router, gangSwapRouterAddress(testnet), ...Object.values(set)].find((a) => same(a, to))
+    const set = await gangSwapSet(ctx, token).catch((e) => fail(`could not read GangSwap's contracts: ${e.message}`, { token, retry: 'same command again' }))
+    const no = [token, pair, ctx.wbnb, ctx.router, ...gangSwapRouterAddresses(testnet), ...Object.values(set)].find((a) => same(a, to))
     if (no) fail('--to cannot be the token, its pair, WBNB, a GangSwap contract or a router: the fee could not be taken out of there', { got: to })
   }
   const args = [token, to]

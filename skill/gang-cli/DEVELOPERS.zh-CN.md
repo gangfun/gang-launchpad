@@ -121,7 +121,9 @@ deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的�
 
 - 交易对是 V2 接口，但 `getReserves()`（和 `Sync`）报的是有效储备：计价币一侧含固定的 `virtualReserve()`。按它算价，手续费 1%，按输入收（9900 / 10000）。真正能付出的看 `realQuoteReserve()`。
 - 计价币一侧 `balanceOf(pair)` 和储备不相等是设计如此（加了虚拟储备，扣了未领的手续费）。输入要按 `balanceOf(pair) - quoteBalanceBase()` 量，或者直接用 GangSwapRouter（V2 router 的 ABI，支持原生 BNB）。
-- 地址：`pad.gangSwapMigrator()`（0 = 未开放）→ `factory()` 和 `boost()`；`factory.fees()`。链上没有地方指向 router，合约自己说的 `factory()`、`WETH()` 也证明不了什么。CLI 核对的是代码本身：把代码里 factory / WBNB 的 PUSH32 换成零之后，keccak256 必须等于 `GANGSWAP_ROUTER_CODE_HASH`，并且这些位置的先后顺序和编译结果一致（怎么从源码重算见 `src/gangswap.js`）。
+- 版本：`pad.gangSwapMigrator()` 只是新币会用的 GangSwapMigrator（0 = 不开放创建，会变）。每个币永远用创建时的那个：`pad.gangSwapMigratorOf(token)`（0 = 不是 GangSwap 币），`GangSwapCreated(address indexed token, address indexed migrator)` 里也有。每个版本各有自己的 factory、回购、手续费合约和 router；已有的币不要从 `gangSwapMigrator()` 找合约。
+- 创建：`createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)` 要写明预期的版本，必须等于 pad 当前的 `gangSwapMigrator()`，否则回滚 `GangSwapVersionChanged(current)`；套在 `createWithSalt`、`createWithAgentWindow` 里也一样。
+- 地址：`pad.gangSwapMigratorOf(token)` → `factory()` 和 `boost()`；`factory.fees()`。链上没有地方指向 router，合约自己说的 `factory()`、`WETH()` 也证明不了什么。CLI 维护一个版本列表，选 `factory()` 等于这个币自己的 factory 的 router，再核对代码本身：把代码里 factory / WBNB 的 PUSH32 换成零之后，keccak256 必须是已知的编译结果（`GANGSWAP_ROUTER_CODE_HASH`），并且这些位置的先后顺序和编译结果一致（怎么从源码重算见 `src/gangswap.js`）。
 - 两部分都有可领时，`gang creator-fee --claim --calldata` 在 `steps` 里给出两笔：pad 的 `claimCreatorFee(token, to)` 和 `GangSwapFees.claim(token, to)`。
 
 ### 失败代码

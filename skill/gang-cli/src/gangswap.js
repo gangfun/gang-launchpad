@@ -18,17 +18,19 @@ import { AGENT_WINDOW_ABI } from './agentwindow.js'
  * It trades through GangSwapRouter only. Never GangRouter's pool* functions nor the PancakeSwap router: anyone can make
  * a PancakeSwap pool of the token, and those would fill against it.
  *
- * Addresses: the pad names its GangSwapMigrator, which names the factory and the boost; the factory names the fees
- * contract. The router is named by nothing on chain: it is pinned per network below (or GANG_SWAP_ROUTER /
- * GANG_TESTNET_SWAP_ROUTER, for development) and identified by its code before every trade (checkRouter), whichever way it
- * was given: what it says about itself (factory(), WETH()) proves nothing on its own.
+ * GangSwap has versions, as PancakeSwap does: each is its own GangSwapMigrator with its own factory, boost, fees and router.
+ * The pad's gangSwapMigrator() is only the version NEW tokens get (the owner's to change, 0 = closed); a token keeps the
+ * one of its create forever, gangSwapMigratorOf(token). Everything about an existing token starts from the latter.
+ *
+ * Addresses: the token's migrator names the factory and the boost; the factory names the fees contract. The router is
+ * named by nothing on chain: the versions are pinned per network below (or GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER
+ * names one, for development), the one whose factory() is the token's own is used, and it is identified by its code before
+ * every trade (checkRouter): what it says about itself (factory(), WETH()) proves nothing on its own.
  */
 
-/** GangSwapRouter per network: none deployed yet (2026-11-23). */
-export const GANGSWAP_ROUTERS = { mainnet: null, testnet: null }
 const ROUTER_ENV = { mainnet: 'GANG_SWAP_ROUTER', testnet: 'GANG_TESTNET_SWAP_ROUTER' }
 /**
- * The one GangSwapRouter build this CLI trades through: keccak256 of its runtime code with both immutables zero, as the
+ * The one GangSwapRouter build this CLI knows: keccak256 of its runtime code with both immutables zero, as the
  * compiler's artifact has it (deployedBytecode), and which immutable each PUSH32 operand is, in code order (F = factory,
  * W = WETH). The order matters: zeroing alone would take a router with the two swapped at some operands.
  * Recompute after any change to gangswap/ (the code's own metadata hash is part of it, so build with the committed
@@ -39,18 +41,30 @@ const ROUTER_ENV = { mainnet: 'GANG_SWAP_ROUTER', testnet: 'GANG_TESTNET_SWAP_RO
  */
 export const GANGSWAP_ROUTER_CODE_HASH = '0x07886a19fc51c00596b5f1a703c66903ee86222faf200b6a86adfbee9e4f005d'
 export const GANGSWAP_ROUTER_SITES = 'WWFFWFFWFFWWWWFWWFFWWWWFFFWFWWFFFFF'
+const BUILD = { codeHash: GANGSWAP_ROUTER_CODE_HASH, sites: GANGSWAP_ROUTER_SITES }
+/**
+ * The GangSwap versions this CLI trades on, per network: { router, codeHash, sites } each (the router's address and its
+ * build). None deployed yet (2026-11-23). A new version is another entry; the older ones stay for their tokens.
+ */
+export const GANGSWAP_VERSIONS = { mainnet: [], testnet: [] }
 const netOf = (ctx) => (Number(ctx.chainId) === 56 ? 'mainnet' : 'testnet')
-/** The GangSwapRouter of `testnet` / mainnet: the env's, else the pinned one; null when there is none. */
-export const gangSwapRouterAddress = (testnet) => {
+/** Every router build this CLI knows: what a router named by the env must be one of. */
+const knownBuilds = () => [BUILD, ...GANGSWAP_VERSIONS.mainnet, ...GANGSWAP_VERSIONS.testnet]
+/** The routers a token of this network may trade on: { router, builds }, the env's alone when it names one. */
+const candidates = (net) => (process.env[ROUTER_ENV[net]] ? [{ router: process.env[ROUTER_ENV[net]], builds: knownBuilds() }]
+  : GANGSWAP_VERSIONS[net].map((v) => ({ router: v.router, builds: [v] })))
+/** Every GangSwapRouter address this run knows on `testnet` / mainnet (the env's too), whatever its version. */
+export const gangSwapRouterAddresses = (testnet) => {
   const net = testnet ? 'testnet' : 'mainnet'
-  return process.env[ROUTER_ENV[net]] || GANGSWAP_ROUTERS[net]
+  return [...candidates(net).map((c) => c.router), ...GANGSWAP_VERSIONS[net].map((v) => v.router)]
 }
 
 export const GANGSWAP_PAD_ABI = parseAbi([
   'function gangSwapMigrator() view returns (address)',
-  'function createGangSwap(string name, string symbol, string logoURI, string metaURI, uint256 gradBnb) returns (address token)',
-  'error GangSwapNotOpen()', 'error GangSwapMigratorAlreadySet()', 'error WrongGangSwapMigrator()',
-  'event GangSwapCreated(address indexed token)',
+  'function gangSwapMigratorOf(address token) view returns (address)',
+  'function createGangSwap(string name, string symbol, string logoURI, string metaURI, uint256 gradBnb, address migrator) returns (address token)',
+  'error GangSwapNotOpen()', 'error GangSwapVersionChanged(address current)', 'error WrongGangSwapMigrator()',
+  'event GangSwapCreated(address indexed token, address indexed migrator)',
   'event GangSwapMigratorSet(address indexed migrator)',
 ])
 const KIND_ABI = parseAbi(['function kindOf(address token) view returns (uint8)'])
@@ -92,6 +106,7 @@ const ERC20_ABI = parseAbi(['function balanceOf(address) view returns (uint256)'
 export const GANGSWAP_EVENT_ABIS = [GANGSWAP_PAD_ABI, MIGRATOR_ABI, BOOST_ABI, GANGSWAP_FEES_ABI, PAIR_ABI]
 export const HINTS = {
   GangSwapNotOpen: 'GangSwap is not open on this network yet: leave --venue out (PancakeSwap)',
+  GangSwapVersionChanged: 'the pad gives new tokens another GangSwap version now (reason: its migrator) than the one this create names, so nothing was created: re-run the create to see the new version and confirm it',
 }
 
 /** The pair's fee on the input, as GangSwapRouter computes with it: 1%. */
@@ -119,14 +134,18 @@ const rpcError = (what, e) => new PoolError(`RPC error while ${what}: ${short(e)
 // ---------------------------------------------------------------- create
 
 /**
- * Whether ctx's pad creates GangSwap tokens: { open: true, migrator } | { open: false, why } | { unread }. A pad without
- * gangSwapMigrator() (not upgraded), or with it 0, is not open; anything else that fails is the RPC.
+ * Whether ctx's pad creates GangSwap tokens: { open: true, migrator } (the version a new token gets now) | { open: false,
+ * why } | { unread }. A pad without gangSwapMigrator(), with it 0, or that keeps no version per token (no
+ * gangSwapMigratorOf: its tokens could not be traded here) is not open; anything else that fails is the RPC.
  */
 export async function gangSwapSupport(ctx) {
   const why = 'GangSwap is not open on this network yet'
   if (ctx.gen !== PAD3_GEN) return { open: false, why }
   let migrator
-  try { migrator = await ctx.read(ctx.pad, GANGSWAP_PAD_ABI, 'gangSwapMigrator') } catch (e) {
+  try {
+    migrator = await ctx.read(ctx.pad, GANGSWAP_PAD_ABI, 'gangSwapMigrator')
+    if (!isZero(migrator)) await ctx.read(ctx.pad, GANGSWAP_PAD_ABI, 'gangSwapMigratorOf', [zeroAddress])
+  } catch (e) {
     if (missingRead(e)) return { open: false, why }
     return { unread: short(e) }
   }
@@ -134,8 +153,10 @@ export async function gangSwapSupport(ctx) {
 }
 
 /** What the create preview says about --venue gangswap. */
-export const gangSwapCreateView = () => ({
+export const gangSwapCreateView = (migrator) => ({
   name: 'gangswap',
+  version: migrator,
+  versionNote: `the GangSwap version is fixed at this create, for good: GangSwapMigrator ${migrator}. The create names it: if the pad gives new tokens another version before the tx lands, the tx reverts (GangSwapVersionChanged) and nothing is created. A later version never changes this token's pool, fees or router`,
   permanent: 'PERMANENT: the venue is fixed at this create, for good; nobody can move the token to PancakeSwap later',
   trading: `${VENUE_LINE}: only GangSwapRouter (gang buy / gang sell) and tools that support GangSwap trade it, and sites such as DexScreener may not list it. A PancakeSwap pool of this token would be someone else's`,
   buyBack: 'at graduation the part of the raise no trade could ever reach is replaced by an equal virtual reserve (the price curve stays the same), and that quote is used for a scheduled buy-back and burn: about 40 steps over about 5 minutes',
@@ -164,7 +185,7 @@ export async function createInput(ctx, receipt, events) {
 }
 
 /**
- * A landed create, checked: `events` as gang tx decodes them (event, contract, token), `input` the tx's calldata and
+ * A landed create, checked: `events` as gang tx decodes them (event, contract, token, migrator), `input` the tx's calldata and
  * `sender` its from (null when unread). { gangSwap: … } to add to the result, or {} when the tx has nothing to do with a GangSwap create.
  */
 export async function gangSwapCreateCheck(ctx, { status, events, input, sender = null }) {
@@ -176,19 +197,24 @@ export async function gangSwapCreateCheck(ctx, { status, events, input, sender =
     return { gangSwap: { verified: false, error: 'this tx asked for a GangSwap token, but no GangSwapCreated event of the pad is in its receipt: do not treat its token as one (gang info reads its kind)' } }
   }
   // one tx can make several (a contract or a batch): each is checked, and says whose it is
-  const rows = await Promise.all(made.map(async ({ token, contract }) => {
-    let kind, creator
+  const rows = await Promise.all(made.map(async ({ token, contract, migrator }) => {
+    let kind, creator, own
     try {
-      const [k, c] = await Promise.all([ctx.read(contract, KIND_ABI, 'kindOf', [token]), ctx.read(contract, CREATOR_ABI, 'curves', [token])])
+      const [k, c, m] = await Promise.all([ctx.read(contract, KIND_ABI, 'kindOf', [token]), ctx.read(contract, CREATOR_ABI, 'curves', [token]),
+        ctx.read(contract, GANGSWAP_PAD_ABI, 'gangSwapMigratorOf', [token]).catch((e) => { if (missingRead(e)) return null; throw e })])
       kind = Number(k)
       creator = c[0]
+      own = m
     } catch (e) {
-      return { token, verified: null, error: `could not read the token's kind and creator (RPC error: ${short(e)})`, retry: 'same command again' }
+      return { token, migrator, verified: null, error: `could not read the token's kind, creator and GangSwap version (RPC error: ${short(e)})`, retry: 'same command again' }
     }
     const other = !!sender && !same(sender, creator) && { creatorIsSender: false, warning: 'this token\'s creator is not the wallet that sent the tx' }
-    return kind === GANGSWAP_KIND
-      ? { token, creator, kind: 'gangswap', kindOf: kind, verified: true, ...other, note: `the pad's GangSwapCreated event and kindOf agree: this token ${VENUE_LINE}, for good` }
-      : { token, creator, kindOf: kind, verified: false, ...other, error: 'the pad emitted GangSwapCreated but kindOf is not 4: do not trade it as a GangSwap token' }
+    const row = { token, creator, kindOf: kind, migrator, ...other }
+    if (kind !== GANGSWAP_KIND) return { ...row, verified: false, error: 'the pad emitted GangSwapCreated but kindOf is not 4: do not trade it as a GangSwap token' }
+    if (isZero(own) || !same(own, migrator)) {
+      return { ...row, gangSwapMigratorOf: own, verified: false, error: own === null ? 'the pad does not say which GangSwap version the token has (no gangSwapMigratorOf): not supported by this CLI' : 'the token\'s GangSwap version on the pad (gangSwapMigratorOf) is not the one in its GangSwapCreated event: do not trade it as a GangSwap token' }
+    }
+    return { ...row, kind: 'gangswap', verified: true, note: `the pad's GangSwapCreated event, kindOf and gangSwapMigratorOf agree: this token ${VENUE_LINE}, on this version (migrator), for good` }
   }))
   if (rows.length === 1) return { gangSwap: rows[0] }
   return { gangSwap: { verified: rows.some((x) => x.verified === false) ? false : rows.some((x) => x.verified === null) ? null : true, tokens: rows } }
@@ -196,33 +222,42 @@ export async function gangSwapCreateCheck(ctx, { status, events, input, sender =
 
 // ---------------------------------------------------------------- addresses and state
 
-/**
- * The GangSwap set of ctx's pad, from the chain: { migrator, factory, boost, fees }, read once per ctx and pad. Throws a
- * PoolError.
- */
-export async function gangSwapSet(ctx) {
-  const key = String(ctx.pad).toLowerCase()
-  if (ctx._gangSwap?.key !== key) {
-    const p = (async () => {
-      const ask = async (what, at, abi, fn) => {
-        let a
-        try { a = await ctx.read(at, abi, fn) } catch (e) {
-          if (!isRevert(e)) throw rpcError(`reading ${what}`, e)
-          throw new PoolError(`${what} is not readable (${fn}()): not GangSwap's contracts`, { pad: ctx.pad })
-        }
-        if (isZero(a)) throw new PoolError(`${what} is not set (${fn}() is 0)`, { pad: ctx.pad })
-        return a
-      }
-      const migrator = await ask('the pad\'s GangSwap migrator', ctx.pad, GANGSWAP_PAD_ABI, 'gangSwapMigrator')
-      const [factory, boost] = await Promise.all([
-        ask('the GangSwap factory', migrator, MIGRATOR_ABI, 'factory'), ask('the GangSwap boost', migrator, MIGRATOR_ABI, 'boost'),
-      ])
-      return { migrator, factory, boost, fees: await ask('the GangSwap fees contract', factory, FACTORY_ABI, 'fees') }
-    })()
-    ctx._gangSwap = { key, p }
-    p.catch(() => { if (ctx._gangSwap?.p === p) delete ctx._gangSwap })
+/** `make()` once per ctx and `key` (a failed one is asked again). The keys carry the pad, so a ctx moved to another is safe. */
+function cached(ctx, key, make) {
+  ctx._gangSwap ??= new Map()
+  const k = `${String(ctx.pad).toLowerCase()}:${key.toLowerCase()}`
+  let p = ctx._gangSwap.get(k)
+  if (!p) {
+    p = make()
+    ctx._gangSwap.set(k, p)
+    p.catch(() => { if (ctx._gangSwap.get(k) === p) ctx._gangSwap.delete(k) })
   }
-  return ctx._gangSwap.p
+  return p
+}
+
+/** An address one of GangSwap's contracts names, or a PoolError (0, unreadable, RPC). */
+async function askAddress(ctx, what, at, abi, fn, args = []) {
+  let a
+  try { a = await ctx.read(at, abi, fn, args) } catch (e) {
+    if (!isRevert(e)) throw rpcError(`reading ${what}`, e)
+    throw new PoolError(`${what} is not readable (${fn}): not supported by this CLI`, { pad: ctx.pad, hint: UPDATE_CLI })
+  }
+  if (isZero(a)) throw new PoolError(`${what} is not set (${fn} is 0)`, { pad: ctx.pad })
+  return a
+}
+
+/** The GangSwapMigrator (version) `token` got at its create, for good. 0 is an error: never the version new tokens get. */
+export const gangSwapMigratorOf = (ctx, token) => cached(ctx, `of:${token}`, () => askAddress(ctx, 'this token\'s GangSwap version', ctx.pad, GANGSWAP_PAD_ABI, 'gangSwapMigratorOf', [token]))
+
+/** The contracts of `token`'s own GangSwap version, from the chain: { migrator, factory, boost, fees }. Throws a PoolError. */
+export async function gangSwapSet(ctx, token) {
+  const migrator = await gangSwapMigratorOf(ctx, token)
+  return cached(ctx, `set:${migrator}`, async () => {
+    const [factory, boost] = await Promise.all([
+      askAddress(ctx, 'the GangSwap factory', migrator, MIGRATOR_ABI, 'factory'), askAddress(ctx, 'the GangSwap boost', migrator, MIGRATOR_ABI, 'boost'),
+    ])
+    return { migrator, factory, boost, fees: await askAddress(ctx, 'the GangSwap fees contract', factory, FACTORY_ABI, 'fees') }
+  })
 }
 
 /** Byte-aligned occurrences of PUSH32 <hash> (0x7f + 32 bytes) in runtime code. Pure. */
@@ -250,54 +285,80 @@ export function maskedRouter(code, factory, weth) {
   return { hash: keccak256(`0x${out}`), sites }
 }
 
-/**
- * The GangSwapRouter for a trade of `token` in `pair`, or a PoolError. Checked whatever named it (the pinned address or
- * the env): its factory() is the migrator's factory, its WETH() this chain's WBNB, its bytecode has the factory's pair init
- * code hash exactly once, the code IS the GangSwapRouter build with that factory and WBNB (GANGSWAP_ROUTER_CODE_HASH,
- * GANGSWAP_ROUTER_SITES), and the factory's pair of the token is the one the pad recorded. Read once per ctx; the pair per token.
- */
-export async function checkRouter(ctx, token, pair) {
-  const net = netOf(ctx)
-  const router = gangSwapRouterAddress(net === 'testnet')
-  if (!router) {
-    throw new PoolError('no GangSwapRouter address for this network in this CLI version: this token trades on GangSwap only, and no other router is used for it', {
-      hint: UPDATE_CLI,
-    })
+/** One view of a contract; null when it has none (a revert), a PoolError on an RPC failure. */
+async function viewOf(ctx, at, abi, fn, what) {
+  try { return await ctx.read(at, abi, fn) } catch (e) {
+    if (!isRevert(e)) throw rpcError(`reading ${what}`, e)
+    return null
   }
-  const bad = (why) => new PoolError(`the router address ${router} is not this network's GangSwapRouter (${why}): nothing is built`, {
+}
+const factoryOf = (ctx, router) => cached(ctx, `factory:${router}`, () => viewOf(ctx, router, GANGSWAP_ROUTER_ABI, 'factory', 'the GangSwap router'))
+
+/**
+ * The candidate routers whose factory() is `factory`. `all` false: a single candidate comes back as it is (verifyRouter reads
+ * its factory() anyway and says what is wrong with it).
+ */
+async function routersFor(ctx, factory, all = true) {
+  const list = candidates(netOf(ctx))
+  if (!all && list.length < 2) return list
+  let unread
+  const seen = await Promise.all(list.map((c) => (isAddress(c.router) ? factoryOf(ctx, c.router).catch((e) => { unread = e; return null }) : null)))
+  const fits = list.filter((_, i) => seen[i] && same(seen[i], factory))
+  // a version's router that could not be read may be the one: never "this CLI knows none"
+  if (!fits.length && unread) throw unread
+  return fits
+}
+
+/** Every check of one candidate against the token's factory, once per ctx; a PoolError when it is not the router. */
+const verifyRouter = (ctx, set, { router, builds }) => cached(ctx, `router:${set.factory}:${router}`, async () => {
+  const net = netOf(ctx)
+  const bad = (why) => new PoolError(`the router address ${router} is not this token's GangSwapRouter (${why}): nothing is built`, {
     router, hint: process.env[ROUTER_ENV[net]] ? `unset ${ROUTER_ENV[net]} (a development setting), then ${UPDATE_CLI}` : UPDATE_CLI,
   })
   if (!isAddress(router)) throw bad('not a 0x address')
-  const set = await gangSwapSet(ctx)
-  const key = `${String(ctx.pad).toLowerCase()}:${router.toLowerCase()}`
-  if (ctx._gangSwapRouter?.key !== key) {
-    const p = (async () => {
-      let code
-      try { code = await ctx.client.getCode({ address: router }) } catch (e) { throw rpcError('reading the GangSwap router', e) }
-      if (!code || code === '0x') throw bad(`no contract at it on chain ${ctx.chainId}`)
-      const view = async (at, abi, fn, what) => {
-        try { return await ctx.read(at, abi, fn) } catch (e) {
-          if (!isRevert(e)) throw rpcError(`reading ${what}`, e)
-          return null
-        }
-      }
-      const [factory, weth, hash] = await Promise.all([
-        view(router, GANGSWAP_ROUTER_ABI, 'factory', 'the GangSwap router'), view(router, GANGSWAP_ROUTER_ABI, 'WETH', 'the GangSwap router'),
-        view(set.factory, FACTORY_ABI, 'INIT_CODE_PAIR_HASH', 'the GangSwap factory'),
-      ])
-      if (!factory || !same(factory, set.factory)) throw bad(`its factory() is ${factory ?? 'not readable'}, the pad's GangSwap factory is ${set.factory}`)
-      if (!weth || !same(weth, ctx.wbnb)) throw bad(`its WETH() is ${weth ?? 'not readable'}, not this chain's WBNB`)
-      if (!hash) throw bad('the GangSwap factory gave no INIT_CODE_PAIR_HASH()')
-      const n = countInitHash(code, hash)
-      if (n !== 1) throw bad(`its code has the factory's pair init code hash ${n} times, not once`)
-      const m = maskedRouter(code, set.factory, ctx.wbnb)
-      if (m.hash !== GANGSWAP_ROUTER_CODE_HASH) throw bad('its code is not the GangSwapRouter build this CLI knows')
-      if (m.sites !== GANGSWAP_ROUTER_SITES) throw bad('its factory and WBNB are not where the GangSwapRouter build has them')
-    })()
-    ctx._gangSwapRouter = { key, p }
-    p.catch(() => { if (ctx._gangSwapRouter?.p === p) delete ctx._gangSwapRouter })
+  let code
+  try { code = await ctx.client.getCode({ address: router }) } catch (e) { throw rpcError('reading the GangSwap router', e) }
+  if (!code || code === '0x') throw bad(`no contract at it on chain ${ctx.chainId}`)
+  const [factory, weth, hash] = await Promise.all([
+    factoryOf(ctx, router), viewOf(ctx, router, GANGSWAP_ROUTER_ABI, 'WETH', 'the GangSwap router'),
+    viewOf(ctx, set.factory, FACTORY_ABI, 'INIT_CODE_PAIR_HASH', 'the GangSwap factory'),
+  ])
+  if (!factory || !same(factory, set.factory)) throw bad(`its factory() is ${factory ?? 'not readable'}, this token's GangSwap factory is ${set.factory}: another version's router, or none`)
+  if (!weth || !same(weth, ctx.wbnb)) throw bad(`its WETH() is ${weth ?? 'not readable'}, not this chain's WBNB`)
+  if (!hash) throw bad('the GangSwap factory gave no INIT_CODE_PAIR_HASH()')
+  const n = countInitHash(code, hash)
+  if (n !== 1) throw bad(`its code has the factory's pair init code hash ${n} times, not once`)
+  const m = maskedRouter(code, set.factory, ctx.wbnb)
+  const build = builds.filter((b) => b.codeHash === m.hash)
+  if (!build.length) throw bad('its code is not a GangSwapRouter build this CLI knows')
+  if (!build.some((b) => b.sites === m.sites)) throw bad('its factory and WBNB are not where the GangSwapRouter build has them')
+  return router
+})
+
+/**
+ * The GangSwapRouter for a trade of `token` in `pair`, or a PoolError: the known version (or the env's router) whose
+ * factory() is the token's own factory, whose WETH() is this chain's WBNB, whose bytecode has that factory's pair init
+ * code hash exactly once and IS a known GangSwapRouter build with that factory and WBNB; and the factory's pair of the
+ * token is the one the pad recorded. A router of another version is never used.
+ */
+export async function checkRouter(ctx, token, pair) {
+  const net = netOf(ctx)
+  if (!candidates(net).length) {
+    throw new PoolError('no GangSwapRouter address for this network in this CLI version: this token trades on GangSwap only, and no other router is used for it', { hint: UPDATE_CLI })
   }
-  await ctx._gangSwapRouter.p
+  const set = await gangSwapSet(ctx, token)
+  const fits = await routersFor(ctx, set.factory, false)
+  if (!fits.length) {
+    throw new PoolError(`this CLI version knows no GangSwapRouter of this token's GangSwap version (GangSwapMigrator ${set.migrator}): nothing is built, and no other version's router is used for it`, { migrator: set.migrator, hint: UPDATE_CLI })
+  }
+  let router, failed
+  for (const c of fits) {
+    try { router = await verifyRouter(ctx, set, c); break } catch (e) {
+      if (!(e instanceof PoolError)) throw e
+      failed ??= e
+    }
+  }
+  if (!router) throw failed
   let listed
   try { listed = await ctx.read(set.factory, FACTORY_ABI, 'getPair', [token, ctx.wbnb]) } catch (e) {
     if (!isRevert(e)) throw rpcError('reading the GangSwap factory', e)
@@ -344,9 +405,12 @@ const shownLiquidity = (s) => ({
 /** gang info / status: the pool, the scheduled buy-back and the warning. `c`: curveOf's. Never throws. */
 export async function gangSwapView(ctx, token, c) {
   const base = { warning: PANCAKE_WARNING }
-  if (!c.graduated) return { graduatesTo: 'GangSwap', note: `on its curve; ${VENUE_LINE} (fixed at create): 1% pool fee, 70% of it on buys to the creator`, ...base }
+  if (!c.graduated) {
+    const version = await gangSwapMigratorOf(ctx, token).then((migrator) => ({ migrator }), (e) => ({ error: `could not read the token's GangSwap version (${e.message})`, retry: 'same command again' }))
+    return { graduatesTo: 'GangSwap', ...version, note: `on its curve; ${VENUE_LINE}, on this version (migrator), fixed at create: 1% pool fee, 70% of it on buys to the creator`, ...base }
+  }
   try {
-    const set = await gangSwapSet(ctx)
+    const set = await gangSwapSet(ctx, token)
     const [s, b] = await Promise.all([
       pairState(ctx, token, c.pair),
       ctx.read(set.boost, BOOST_ABI, 'boosts', [token]).catch((e) => { throw rpcError('reading the scheduled buy-back', e) }),
@@ -358,11 +422,11 @@ export async function gangSwapView(ctx, token, c) {
     const next = cap < perStep ? cap : perStep
     const net = netOf(ctx)
     const fromEnv = process.env[ROUTER_ENV[net]] || null
-    const router = GANGSWAP_ROUTERS[net]
+    const router = fromEnv ? null : (await routersFor(ctx, set.factory))[0]?.router
     return {
-      pair: c.pair, factory: set.factory, fees: set.fees, router: fromEnv ? null : router ?? null,
+      pair: c.pair, migrator: set.migrator, factory: set.factory, fees: set.fees, router: router ?? null,
       ...(fromEnv && { routerFromEnv: fromEnv, routerVerified: false, routerNote: `${ROUTER_ENV[net]} names this router; it is not verified here (gang buy / gang sell check its code before they build anything)` }),
-      ...(!fromEnv && !router && { routerNote: `no GangSwapRouter in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
+      ...(!fromEnv && !router && { routerNote: `no GangSwapRouter of this token's GangSwap version in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
       poolFeePct: Number(FEE_BPS) / 100,
       liquidity: { ...shownLiquidity(s), note: 'prices follow the effective reserves (real + virtual); only the real BNB can be paid out' },
       buyBack: isZero(bPair) ? { error: 'the boost has no record of this token' } : {
@@ -391,7 +455,7 @@ export async function gangSwapSellQuote(ctx, token, pair, amount) {
 
 /** The creator's part of the pool fee: { fees, sharePct, collected, uncollected, claimable } raw; throws a PoolError. */
 export async function gangSwapFeeOf(ctx, token, pair) {
-  const { fees } = await gangSwapSet(ctx)
+  const { fees } = await gangSwapSet(ctx, token)
   try {
     const [bps, collected, accrued] = await Promise.all([
       ctx.read(fees, GANGSWAP_FEES_ABI, 'CREATOR_BPS'), ctx.read(fees, GANGSWAP_FEES_ABI, 'creatorFeeOf', [token]), ctx.read(pair, PAIR_ABI, 'feeAccrued'),

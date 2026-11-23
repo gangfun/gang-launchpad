@@ -520,12 +520,14 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const badVenue = venueRefusal({ opt, flag, testnet })
     if (badVenue) fail(badVenue.error, 'got' in badVenue ? { got: badVenue.got } : {})
     const gsCreate = parseVenue(opt, flag).venue === 'gangswap'
+    let gsMigrator = null
     if (gsCreate) {
       if (launchFloor || launchPoolModule) fail('--venue gangswap goes on a plain create only: no chained launch')
       // asked of the pad before any wallet step or upload
       const support = await gangSwapSupport(ctx)
       if (support.unread) fail('could not check the pad for GangSwap (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
       if (!support.open) fail(support.why, { pad: ctx.pad, hint: 'leave --venue out: the token then graduates into PancakeSwap' })
+      gsMigrator = support.migrator
     }
     // no --buy-tax / --sell-tax (or both 0): an untaxed token (tax all 0, no dividend, no recipient; the pad never hooks it)
     if (flag('buy-tax') !== flag('sell-tax')) {
@@ -754,7 +756,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     // default when --grad is left out)
     const fn = gsCreate ? 'createGangSwap' : base ? 'createWithBase' : gr ? 'createWithGradReward' : vault ? 'createWithVault' : promote ? 'createWithPromote' : grad !== null ? 'createWithGradTarget' : 'create'
     const argsOf = (logoURI, metaURI) => (gsCreate
-      ? [name, symbol, logoURI, metaURI, parseUnits(String(targetBnb), 18)]
+      ? [name, symbol, logoURI, metaURI, parseUnits(String(targetBnb), 18), gsMigrator]
       : base
       ? [name, symbol, logoURI, metaURI, tax, parseUnits(String(targetBnb), 18), { baseBps: base.baseBps, vestDays: base.vestDays }]
       : [name, symbol, logoURI, metaURI, quote, refPool, tax,
@@ -848,7 +850,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }),
       ...(base && { base: baseView }),
       ...(grView && { gradReward: grView }),
-      ...(gsCreate && { venue: gangSwapCreateView() }),
+      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator) }),
       ...(aw && { agentWindow: windowCreateView(aw.minutes, { gradReward: !!gr, vault: !!vault, promote: !!promote }) }),
       ...(vault && {
         padGen: ctx.gen, pad: ctx.pad, vault,

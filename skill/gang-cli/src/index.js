@@ -721,15 +721,17 @@ GANGSWAP (GangLaunchpad 3.0, 0.53.0+; the pad says whether it is open):
                                          GangSwap, not PancakeSwap, and sites such as DexScreener may not list it. At graduation
                                          the part of the raise no trade could ever reach is replaced by an equal virtual reserve
                                          (same price curve) and used for a scheduled buy-back and burn, about 40 steps over
-                                         about 5 minutes. 1% pool fee; on buys the creator gets 70% of it (gang creator-fee).
+                                         about 5 minutes. The GangSwap version (its migrator) is fixed at the create too: the
+                                         one the preview shows, or the tx reverts. 1% pool fee; on buys the creator gets 70% of it (gang creator-fee).
                                          WBNB quote, untaxed, alone: no tax, dividend, recipient, --quote / --ref-pool,
                                          --promote, --base, --vault, modules, rewards, bond, launch in one command, --fair / --fly.
-                                         gang tx --hash then checks the token really is a GangSwap one
+                                         gang tx --hash then checks the token really is a GangSwap one, and on which version
   gang buy / gang sell                   after graduation: GangSwapRouter only (BNB by default, --use-quote pays WBNB; a sell
                                          pays WBNB, --to-bnb BNB), never GangRouter or PancakeSwap: a PancakeSwap pool of such a
                                          token is someone else's. Prices follow the pool's effective reserves; only its real
                                          BNB can be paid out, and a trade large against it is warned about. The router's code
-                                         must be the GangSwapRouter build this CLI knows, or nothing is built. gang info / status: gangSwap
+                                         must be a GangSwapRouter build this CLI knows and the router of the token's own
+                                         version, or nothing is built. gang info / status: gangSwap
 
 GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; open on BSC mainnet and testnet; the pad says whether it is open):
   gang create … --grad-reward <seed> [--gr-min-buy <amount>] [--gr-entries <1-20>] [--gr-last <0-50>] [--gr-refund-days <30-180>]
@@ -1019,7 +1021,7 @@ for BNB buys / mints and every pool trade). Built in: GangLaunchpad 3.0 (where n
 mainnet and the testnet. A token is always served by its own generation's pad, router, GangBond and module factories; these
 variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
 GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER (development only: another deployment of the GangSwapRouter build; its code is
-checked before every trade, as the built-in one's; none is built in yet),
+checked before every trade, as a built-in one's, and it serves its own version's tokens only; none is built in yet),
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
 GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2; default: the built-in mainnet / testnet V2); new 铸币飞轮 tokens go to the built-in
 GangLaunchpad 3.0. --guard / --twap-window (3.0 and V2): the guard is off by default (post-launch minting does not pause

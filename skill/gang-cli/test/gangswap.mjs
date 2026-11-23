@@ -17,7 +17,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { decodeFunctionData, keccak256, encodeAbiParameters, encodeEventTopics, encodeFunctionData, encodeFunctionResult, getAddress, maxUint256, parseAbi, parseUnits, toEventSelector, toFunctionSelector, zeroAddress } from 'viem'
+import { decodeFunctionData, decodeFunctionResult, encodeErrorResult, keccak256, encodeAbiParameters, encodeEventTopics, encodeFunctionData, encodeFunctionResult, getAddress, maxUint256, parseAbi, parseUnits, toEventSelector, toFunctionSelector, zeroAddress } from 'viem'
 
 process.env.GANG_TELEMETRY = '0'
 process.env.GANG_UPDATE_CHECK = '0'
@@ -62,19 +62,21 @@ const ZERO_SITE = `7f${'0'.repeat(64)}`
 /** The code as deployed: each zero PUSH32 of the artifact filled in order with the word at(letter, index). */
 const deployed = (at = (c) => (c === 'F' ? FACTORY : WBNB)) => { let i = 0; return ARTIFACT.replaceAll(ZERO_SITE, () => push(at(G.GANGSWAP_ROUTER_SITES[i], i++))) }
 const NOW = 2_000_000_000
+// a second GangSwap version: its own set, a token of it
+const GS2 = lc(t(0x9b5)), MIGRATOR2 = lc(t(0x326)), FACTORY2 = lc(t(0xfad)), BOOST2 = lc(t(0xb006)), FEES2 = lc(t(0xfef)), ROUTER2 = lc(t(0x5b9)), PAIR2 = lc(t(0xda2))
 
 // ---------------------------------------------------------------- pure
 assert.equal(GANGSWAP_KIND, 4)
 assert.deepEqual(['v3', 'gangswap', 'fair', 'fly', 'none', null].map(isCurveKind), [true, true, false, false, false, false])
 // the contract's signatures (feat/gangswap: IGangSwapPad, IGangSwap, GangSwapFees, GangSwapBoost, GangSwapRouter)
 for (const [abi, fn, sig] of [
-  [G.GANGSWAP_PAD_ABI, 'createGangSwap', 'createGangSwap(string,string,string,string,uint256)'], [G.GANGSWAP_PAD_ABI, 'gangSwapMigrator', 'gangSwapMigrator()'],
+  [G.GANGSWAP_PAD_ABI, 'createGangSwap', 'createGangSwap(string,string,string,string,uint256,address)'], [G.GANGSWAP_PAD_ABI, 'gangSwapMigrator', 'gangSwapMigrator()'], [G.GANGSWAP_PAD_ABI, 'gangSwapMigratorOf', 'gangSwapMigratorOf(address)'],
   [G.GANGSWAP_FEES_ABI, 'claim', 'claim(address,address)'],
   [G.GANGSWAP_ROUTER_ABI, 'swapExactETHForTokens', 'swapExactETHForTokens(uint256,address[],address,uint256)'],
   [G.GANGSWAP_ROUTER_ABI, 'swapExactTokensForETH', 'swapExactTokensForETH(uint256,uint256,address[],address,uint256)'],
   [G.GANGSWAP_ROUTER_ABI, 'swapExactTokensForTokens', 'swapExactTokensForTokens(uint256,uint256,address[],address,uint256)'],
 ]) assert.equal(toFunctionSelector(abi.find((x) => x.name === fn)), toFunctionSelector(`function ${sig}`), fn)
-assert.equal(toEventSelector(G.GANGSWAP_PAD_ABI.find((x) => x.name === 'GangSwapCreated')), toEventSelector('GangSwapCreated(address)'))
+assert.equal(toEventSelector(G.GANGSWAP_PAD_ABI.find((x) => x.name === 'GangSwapCreated')), toEventSelector('GangSwapCreated(address,address)'))
 // GangSwapRouter.getAmountOut: 9900 / 10000, rounded down
 assert.equal(G.amountOut(E18, 6n * E18, 200n * E18), (E18 * 9900n * 200n * E18) / (6n * E18 * 10000n + E18 * 9900n))
 assert.equal(G.amountOut(1n, 10n ** 30n, 1n), 0n)
@@ -85,6 +87,7 @@ assert.equal(G.countInitHash(codeOf(1, `0x${'ab'.repeat(32)}`), HASH), 0)
 assert.equal(G.countInitHash(`0x6${`7f${HASH.slice(2)}`}0`, HASH), 0, 'not byte-aligned: not a PUSH32')
 assert.equal(G.countInitHash(`0x60${HASH.slice(2)}`, HASH), 0, 'the hash without PUSH32')
 
+const deployed2 = () => deployed((c) => (c === 'F' ? FACTORY2 : WBNB))
 // ---- the router's identity
 assert.equal(keccak256(ARTIFACT), G.GANGSWAP_ROUTER_CODE_HASH)
 assert.equal(ARTIFACT.split(ZERO_SITE).length - 1, G.GANGSWAP_ROUTER_SITES.length)
@@ -150,7 +153,7 @@ for (const f of ['README.md', 'README.zh-CN.md', 'DEVELOPERS.md', 'DEVELOPERS.zh
 
 // ---------------------------------------------------------------- the fake node
 const fresh = () => ({
-  kinds: { [GS]: 4, [K1]: 1, [K2]: 2, [K3]: 3 }, vanity: true, migrator: MIGRATOR, hasGetter: true, down: new Set(),
+  kinds: { [GS]: 4, [GS2]: 4, [K1]: 1, [K2]: 2, [K3]: 3 }, vanity: true, migrator: MIGRATOR, hasGetter: true, migratorOf: { [GS]: MIGRATOR, [GS2]: MIGRATOR2 }, downAt: new Set(), count: 2n, router2Code: null, hasOf: true, down: new Set(),
   graduated: false, pair: PAIR, quoteIs0: false, rq: 6n * E18, rt: 200_000_000n * E18, virtual: 12n * E18 / 10n, real: 48n * E18 / 10n, feeAccrued: 1_000_000_007n, collected: 0n,
   boost: [PAIR, 1_999_999_990n, false, 12n * E18 / 10n, 9n * E18 / 10n],
   routerCode: deployed(), routerFactory: FACTORY, routerWeth: WBNB, listedPair: PAIR, hash: HASH,
@@ -187,10 +190,21 @@ const call = ({ to, data, from, value }) => {
     const result = args[0].map((c) => { inMulti = true; const r = call({ to: c.target, data: c.callData, from }); inMulti = false; return { success: !r.error, returnData: r.result ?? '0x' } })
     return { result: encodeFunctionResult({ abi: MULTI, functionName: 'aggregate3', result }) }
   }
-  if (world.down.has(f.name)) return rpcDown
+  if (world.down.has(f.name) || world.downAt.has(at)) return rpcDown
   const ok = (result) => ({ result: encodeFunctionResult({ abi: [f], functionName: f.name, result }) })
+  if (at === MIGRATOR2) return { factory: () => ok(FACTORY2), boost: () => ok(BOOST2) }[f.name]?.() ?? revert
+  if (at === FACTORY2) return { fees: () => ok(FEES2), getPair: () => ok(lc(args[0]) === GS2 ? PAIR2 : zeroAddress), INIT_CODE_PAIR_HASH: () => ok(HASH) }[f.name]?.() ?? revert
+  if (at === BOOST2) return f.name === 'boosts' ? ok([lc(args[0]) === GS2 ? PAIR2 : zeroAddress, 0n, false, 2n * E18, E18]) : revert
+  if (at === FEES2) return { CREATOR_BPS: () => ok(7000n), creatorFeeOf: () => ok(22n), claim: () => ok(22n) }[f.name]?.() ?? revert
+  if (at === PAIR2) return { token0: () => ok(GS2), getReserves: () => ok([100_000_000n * E18, 9n * E18, 0]), virtualReserve: () => ok(E18), realQuoteReserve: () => ok(8n * E18), feeAccrued: () => ok(0n) }[f.name]?.() ?? revert
+  if (at === ROUTER2) {
+    if (f.name === 'factory') return ok(FACTORY2)
+    if (f.name === 'WETH') return ok(WBNB)
+    if (f.name === 'swapExactETHForTokens') return ok([BigInt(value), G.amountOut(BigInt(value), 9n * E18, 100_000_000n * E18)])
+    return f.name.startsWith('swap') ? ok([args[0], lc(args[2][0]) === WBNB ? G.amountOut(args[0], 9n * E18, 100_000_000n * E18) : G.amountOut(args[0], 100_000_000n * E18, 9n * E18)]) : revert
+  }
   if (at === MIGRATOR) return { factory: () => ok(FACTORY), boost: () => ok(BOOST) }[f.name]?.() ?? revert
-  if (at === FACTORY) return { fees: () => ok(FEES), getPair: () => ok(world.listedPair), INIT_CODE_PAIR_HASH: () => ok(world.hash) }[f.name]?.() ?? revert
+  if (at === FACTORY) return { fees: () => ok(FEES), getPair: () => ok(lc(args[0]) === GS2 ? zeroAddress : world.listedPair), INIT_CODE_PAIR_HASH: () => ok(world.hash) }[f.name]?.() ?? revert
   if (at === BOOST) return f.name === 'boosts' ? ok(world.boost) : revert
   if (at === FEES) {
     if (f.name === 'claim') return lc(from) === lc(world.creator) ? ok(world.collected + (world.feeAccrued * 7000n) / 10000n) : err('NotCreator()')
@@ -216,7 +230,7 @@ const call = ({ to, data, from, value }) => {
     return revert
   }
   if (at === WBNB) return { balanceOf: () => ok(world.wbnb), allowance: () => ok(world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
-  if (at === GS || at === K1) return { balanceOf: () => ok(world.tokenBal), allowance: () => ok(world.tokenAllow), symbol: () => ok('GSW'), decimals: () => ok(18), launchpad: () => ok(PAD) }[f.name]?.() ?? revert
+  if (at === GS || at === GS2 || at === K1) return { balanceOf: () => ok(world.tokenBal), allowance: () => ok(world.tokenAllow), symbol: () => ok('GSW'), decimals: () => ok(18), launchpad: () => ok(PAD) }[f.name]?.() ?? revert
   if (at === lc(HANDLER) && f.name === 'owedOf') return ok(0n)
   if (f.name === 'kindOf' && world.kindDown && inMulti) return revert
   if (f.name === 'kindOf') return ok(at === PAD ? world.kinds[lc(args[0])] ?? 0 : 0)
@@ -227,8 +241,8 @@ const call = ({ to, data, from, value }) => {
   if (f.name === 'activeBondOf') return ok(0n)
   if (at === GANG_ROUTER) return f.name === 'v3BuyBNB' ? ok(1_000_000n * E18) : revert
   if (f.name === 'tokenInitCodeHash') return ok(`0x${'ab'.repeat(32)}`)
-  if (f.name === 'tokenCount') return ok(at === PAD ? 2n : 0n)
-  if (f.name === 'allTokens') return ok(args[0] === 0n ? GS : K1)
+  if (f.name === 'tokenCount') return ok(at === PAD ? world.count : 0n)
+  if (f.name === 'allTokens') return ok([GS, K1, GS2][Number(args[0])])
   if (f.name === 'CREATOR_FEE_SHARE_BPS') return ok(7000n)
   if (f.name === 'curves' && at !== PAD) return ok([zeroAddress, zeroAddress, 0n, 0n, 0n, 0n, false, 0, 0, 0, zeroAddress, zeroAddress])
   if (at !== PAD) return revert
@@ -239,11 +253,21 @@ const call = ({ to, data, from, value }) => {
     if (g?.name === 'createWithSalt') return inner(decodeFunctionData({ abi: [g], data: d }).args[1])
     return g?.name
   }
+  // the pad's rule: the named version is the current one (world.nowMigrator: the owner switched after the read)
+  const changed = (d) => {
+    const g = functions.get(d.slice(0, 10))
+    if (g?.name === 'createWithSalt') return changed(decodeFunctionData({ abi: [g], data: d }).args[1])
+    if (g?.name !== 'createGangSwap') return null
+    const current = world.nowMigrator ?? world.migrator
+    if (lc(decodeFunctionData({ abi: [g], data: d }).args[5]) === current) return null
+    return { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: G.GANGSWAP_PAD_ABI, errorName: 'GangSwapVersionChanged', args: [current] }) } }
+  }
   switch (f.name) {
     case 'gangSwapMigrator': return world.hasGetter ? ok(world.migrator) : revert
-    case 'createGangSwap': world.sent.push(f.name); return world.vanity ? err('VanityContextRequired()') : world.migrator === zeroAddress ? err('GangSwapNotOpen()') : ok(t(0x2abcd))
-    case 'createWithSalt': inner(data); return ok(t(0x1abcd))
-    case 'createWithAgentWindow': world.sent.push(`window:${args[0]}`); inner(args[1]); return ok(t(0x3abcd))
+    case 'gangSwapMigratorOf': return world.hasOf ? ok(world.migratorOf[lc(args[0])] ?? zeroAddress) : revert
+    case 'createGangSwap': world.sent.push(f.name); if (changed(data)) return changed(data); return world.vanity ? err('VanityContextRequired()') : world.migrator === zeroAddress ? err('GangSwapNotOpen()') : ok(t(0x2abcd))
+    case 'createWithSalt': inner(data); return changed(data) ?? ok(t(0x1abcd))
+    case 'createWithAgentWindow': world.sent.push(`window:${args[0]}`); inner(args[1]); return changed(args[1]) ?? ok(t(0x3abcd))
     case 'create': case 'createWithGradTarget': world.sent.push(f.name); return ok(t(0x4abcd))
     case 'vanityDeployer': return ok(world.vanity ? VAN : zeroAddress)
     case 'MIN_AGENT_WINDOW_MINUTES': return ok(1)
@@ -259,7 +283,7 @@ const call = ({ to, data, from, value }) => {
     case 'curves': {
       const kind = world.kinds[lc(args[0])]
       return ok(kind === 1 || kind === 4
-        ? [world.creator, WBNB, world.graduated ? 0n : E18, 50_000_000n * E18, 6n * E18, 2n * E18, world.graduated, 0, 0, 0, world.graduated ? world.pair : zeroAddress, zeroAddress]
+        ? [world.creator, WBNB, world.graduated ? 0n : E18, 50_000_000n * E18, 6n * E18, 2n * E18, world.graduated, 0, 0, 0, world.graduated ? (lc(args[0]) === GS2 ? PAIR2 : world.pair) : zeroAddress, zeroAddress]
         : [zeroAddress, zeroAddress, 0n, 0n, 0n, 0n, false, 0, 0, 0, zeroAddress, zeroAddress])
     }
     case 'graduationRemaining': return ok(world.graduated ? 0n : 5n * E18)
@@ -287,7 +311,7 @@ const answer = (b) => {
   const p = b.params ?? []
   switch (b.method) {
     case 'eth_chainId': return { result: '0x61' }
-    case 'eth_getCode': world.code.push(lc(p[0])); return world.down.has('getCode') ? rpcDown : { result: lc(p[0]) === ROUTER ? world.routerCode : '0x' }
+    case 'eth_getCode': world.code.push(lc(p[0])); return world.down.has('getCode') ? rpcDown : { result: lc(p[0]) === ROUTER ? world.routerCode : lc(p[0]) === ROUTER2 ? world.router2Code ?? deployed2() : '0x' }
     case 'eth_blockNumber': return { result: '0x100' }
     case 'eth_getBalance': return { result: `0x${world.native.toString(16)}` }
     case 'eth_estimateGas': world.calls.push([lc(p[0].to), 'estimateGas']); return { result: `0x${world.gas.toString(16)}` }
@@ -371,12 +395,12 @@ try {
 
   // not open: the migrator 0, or a pad without the getter; an RPC failure is said apart. All before a wallet step (no baw,
   // no --from), a read of the wallet or an upload
-  for (const [set, re] of [[{ migrator: zeroAddress }, /^GangSwap is not open on this network yet$/], [{ hasGetter: false }, /^GangSwap is not open on this network yet$/], [{ down: new Set(['gangSwapMigrator']) }, /could not check the pad for GangSwap \(RPC error\)/]]) {
+  for (const [set, re] of [[{ migrator: zeroAddress }, /^GangSwap is not open on this network yet$/], [{ hasGetter: false }, /^GangSwap is not open on this network yet$/], [{ hasOf: false }, /^GangSwap is not open on this network yet$/], [{ down: new Set(['gangSwapMigrator']) }, /could not check the pad for GangSwap \(RPC error\)/], [{ down: new Set(['gangSwapMigratorOf']) }, /could not check the pad for GangSwap \(RPC error\)/]]) {
     world = { ...fresh(), ...set }
     const r = await cli(['create', '--venue', 'gangswap', '--name', 'G', '--symbol', 'GSW', '--testnet', '--calldata'])
     assert.equal(r.success, false)
     assert.match(r.error, re)
-    assert.deepEqual([world.sent, [...new Set(world.calls.map((c) => c[1]))]], [[], ['gangSwapMigrator']])
+    assert.deepEqual([world.sent, [...new Set(world.calls.map((c) => c[1]))].filter((x) => !/^gangSwapMigrator(Of)?$/.test(x))], [[], []])
   }
   // an older generation as the create target: not open, nothing asked
   world = fresh()
@@ -393,13 +417,15 @@ try {
   assert.equal(r.success, true, JSON.stringify(r))
   let d = decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data })
   assert.equal(d.functionName, 'createWithSalt')
-  assert.deepEqual(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: d.args[1] }), { functionName: 'createGangSwap', args: ['G', 'GSW', 'ipfs://logo', 'ipfs://meta', 6n * E18] })
+  assert.deepEqual(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: d.args[1] }), { functionName: 'createGangSwap', args: ['G', 'GSW', 'ipfs://logo', 'ipfs://meta', 6n * E18, getAddress(MIGRATOR)] })
   assert.deepEqual([lc(r.tx.to), r.tx.value, r.addressSuffix], [PAD, '0', 'abcd'])
   assert.deepEqual(world.sent, ['createWithSalt', 'createGangSwap'], 'the dry run went through the same calls')
   assert.deepEqual([r.buyTaxPct, r.sellTaxPct, r.recipient, r.graduationTargetBnb, r.quote], [0, 0, null, 6, 'WBNB'])
   // the preview's words
   const said = JSON.stringify(r)
   assert.match(r.venue.permanent, /PERMANENT.*for good/)
+  assert.equal(lc(r.venue.version), MIGRATOR)
+  assert.match(r.venue.versionNote, new RegExp(`version is fixed at this create, for good.*${MIGRATOR}.*the tx reverts \\(GangSwapVersionChanged\\)`, 'i'))
   assert.match(r.venue.trading, /trades on GangSwap after graduation, not PancakeSwap.*DexScreener may not list it/)
   assert.match(r.venue.buyBack, /no trade could ever reach.*scheduled buy-back and burn: about 40 steps over about 5 minutes/)
   assert.match(r.venue.fee, /1% fee.*on buys.*creator gets 70%.*on sells.*creator gets nothing/)
@@ -416,12 +442,25 @@ try {
   d = decodeFunctionData({ abi: AGENT_WINDOW_ABI, data: r.tx.data })
   assert.deepEqual([d.functionName, d.args[0]], ['createWithAgentWindow', 30])
   assert.equal(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: d.args[1] }).args[1] }).functionName, 'createGangSwap')
+  assert.equal(lc(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: d.args[1] }).args[1] }).args[5]), MIGRATOR)
   assert.deepEqual(world.sent, ['window:30', 'createWithSalt', 'createGangSwap'])
   assert.equal(r.agentWindow.minutes, 30)
+  // the version named is the pad's current one, whichever it is
+  world = { ...fresh(), migrator: MIGRATOR2 }
+  r = await create()
+  assert.deepEqual([lc(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data }).args[1] }).args[5]), lc(r.venue.version)], [MIGRATOR2, MIGRATOR2])
+  // the owner switched after it was read: every form reverts, with the new version and what to do; no tx, no upload
+  for (const [o, f] of [[{}, {}], [{}, { 'agent-window': '30' }], [{ vanity: false }, {}], [{ vanity: false }, { 'agent-window': '30' }]]) {
+    world = { ...fresh(), ...o, nowMigrator: MIGRATOR2 }
+    r = await create(f)
+    assert.deepEqual([r.success, r.reverted, r.error, lc(r.reason), r.tx, world.uploads], [false, true, 'GangSwapVersionChanged', MIGRATOR2, undefined, undefined], JSON.stringify(r))
+    assert.match(r.hint, /re-run the create to see the new version/)
+  }
+  assert.equal(toFunctionSelector('function GangSwapVersionChanged(address)'), encodeErrorResult({ abi: G.GANGSWAP_PAD_ABI, errorName: 'GangSwapVersionChanged', args: [PAD] }).slice(0, 10))
   // abcd off: direct
   world = { ...fresh(), vanity: false }
   r = await create({ grad: '15' })
-  assert.deepEqual(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: r.tx.data }).args, ['G', 'GSW', 'ipfs://logo', 'ipfs://meta', 15n * E18])
+  assert.deepEqual(decodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, data: r.tx.data }).args, ['G', 'GSW', 'ipfs://logo', 'ipfs://meta', 15n * E18, getAddress(MIGRATOR)])
   assert.equal(r.tokenIfNext, t(0x2abcd))
   // it closed between the check and the dry run: the pad's own error, in words
   // (an agent id is still needed)
@@ -441,11 +480,11 @@ try {
   }
 
   // ---------------------------------------------------------------- the created tx, checked
-  const gsCreate = encodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, functionName: 'createGangSwap', args: ['G', 'GSW', '', '', 6n * E18] })
+  const gsCreate = encodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, functionName: 'createGangSwap', args: ['G', 'GSW', '', '', 6n * E18, MIGRATOR] })
   const salted = encodeFunctionData({ abi: VANITY_ABI, functionName: 'createWithSalt', args: [HASH, gsCreate] })
   const windowed = encodeFunctionData({ abi: AGENT_WINDOW_ABI, functionName: 'createWithAgentWindow', args: [5, salted] })
-  const made = { address: PAD, topics: encodeEventTopics({ abi: G.GANGSWAP_PAD_ABI, eventName: 'GangSwapCreated', args: { token: GS } }), data: '0x' }
-  const tctx = { chainId: '97', read: async (_a, _b, fn, args) => { if (world.down.has(fn)) throw new Error('rpc'); return fn === 'curves' ? [world.creators[lc(args[0])] ?? ME] : world.kinds[lc(args[0])] ?? 0 } }
+  const made = { address: PAD, topics: encodeEventTopics({ abi: G.GANGSWAP_PAD_ABI, eventName: 'GangSwapCreated', args: { token: GS, migrator: MIGRATOR } }), data: '0x' }
+  const tctx = { chainId: '97', read: async (_a, _b, fn, args) => { if (world.down.has(fn)) throw new Error('rpc'); if (fn === 'gangSwapMigratorOf') return world.migratorOf[lc(args[0])] ?? zeroAddress; return fn === 'curves' ? [world.creators[lc(args[0])] ?? ME] : world.kinds[lc(args[0])] ?? 0 } }
   const check = (logs, input, status = 'success', sender = null) => G.gangSwapCreateCheck(tctx, { status, events: decodeLogs(logs, V3_EVENT_ABIS), input, sender })
   world = fresh()
   for (const input of [gsCreate, salted, windowed, `${windowed}67616e6701020304`, null]) {
@@ -469,14 +508,38 @@ try {
   assert.match(g1.warning, /creator is not the wallet that sent the tx/)
   // several in one tx: every one is checked
   {
-    const GS2 = lc(t(0x9a6))
-    const made2 = { ...made, topics: encodeEventTopics({ abi: G.GANGSWAP_PAD_ABI, eventName: 'GangSwapCreated', args: { token: GS2 } }) }
-    world.kinds[GS2] = 4; world.creators[GS2] = OTHER
+    const GSB = lc(t(0x9a6))
+    const made2 = { ...made, topics: encodeEventTopics({ abi: G.GANGSWAP_PAD_ABI, eventName: 'GangSwapCreated', args: { token: GSB, migrator: MIGRATOR } }) }
+    world.migratorOf[GSB] = MIGRATOR
+    world.kinds[GSB] = 4; world.creators[GSB] = OTHER
     let m = (await check([made, made2], salted, 'success', ME)).gangSwap
-    assert.deepEqual([m.verified, m.tokens.map((x) => [lc(x.token), x.verified, lc(x.creator), x.creatorIsSender])], [true, [[GS, true, lc(ME), undefined], [GS2, true, lc(OTHER), false]]])
-    world.kinds[GS2] = 1
+    assert.deepEqual([m.verified, m.tokens.map((x) => [lc(x.token), x.verified, lc(x.creator), x.creatorIsSender])], [true, [[GS, true, lc(ME), undefined], [GSB, true, lc(OTHER), false]]])
+    world.kinds[GSB] = 1
     m = (await check([made, made2], salted, 'success', ME)).gangSwap
     assert.deepEqual([m.verified, m.tokens.map((x) => x.verified)], [false, [true, false]])
+  }
+  // the version: the event's migrator is the token's own, or it is not verified
+  world = fresh()
+  assert.equal(lc((await check([made], salted)).gangSwap.migrator), MIGRATOR)
+  for (const m of [zeroAddress, lc(t(0x317))]) {
+    world.migratorOf[GS] = m
+    const x = (await check([made], salted)).gangSwap
+    assert.deepEqual([x.verified, x.kind, lc(x.migrator)], [false, undefined, MIGRATOR])
+    assert.match(x.error, /gangSwapMigratorOf\) is not the one in its GangSwapCreated event/)
+  }
+  world = fresh(); world.down.add('gangSwapMigratorOf')
+  assert.equal((await check([made], salted)).gangSwap.verified, null)
+  // a pad without gangSwapMigratorOf: said, not verified; the old one-argument event is not a GangSwapCreated at all
+  world = fresh()
+  {
+    const missing = Object.assign(new Error('x'), { walk: (fn) => [{ name: 'ContractFunctionZeroDataError' }].find(fn) })
+    const x = (await G.gangSwapCreateCheck({ ...tctx, read: async (a, b, fn, args) => { if (fn === 'gangSwapMigratorOf') throw missing; return tctx.read(a, b, fn, args) } }, { status: 'success', events: decodeLogs([made], V3_EVENT_ABIS), input: salted })).gangSwap
+    assert.deepEqual([x.verified, /no gangSwapMigratorOf/.test(x.error)], [false, true])
+    const old = { ...made, topics: [toEventSelector('GangSwapCreated(address)'), made.topics[1]] }
+    assert.deepEqual(decodeLogs([old], V3_EVENT_ABIS), [])
+    assert.deepEqual(decodeLogs([{ ...made, topics: made.topics.slice(0, 2) }], V3_EVENT_ABIS), [])
+    assert.match((await check([old], salted)).gangSwap.error, /no GangSwapCreated event/)
+    assert.deepEqual(await check([old], null), {})
   }
   // asked for one, no event: said; another contract's event of that name does not count
   for (const input of [gsCreate, salted, windowed, `${salted}67616e67`]) assert.equal((await check([], input)).gangSwap.verified, false)
@@ -739,9 +802,9 @@ try {
     const BAD = [
       [{ routerCode: '0x' }, /no contract at it/], [{ routerFactory: lc(t(0xbad)) }, /its factory\(\) is/], [{ routerFactory: null }, /factory\(\) is not readable/], [{ routerWeth: lc(t(0xbad)) }, /its WETH\(\)/],
       [{ routerCode: codeOf(0) }, /hash 0 times/], [{ routerCode: codeOf(2) }, /hash 2 times/],
-      ...Object.values(FORGED).map((routerCode) => [{ routerCode }, /not this network's GangSwapRouter/]), [{ routerCode: codeOf(1) }, /not the GangSwapRouter build/], [{ routerCode: FORGED['one operand swapped'] }, /not where the GangSwapRouter build has them/], [{ hash: `0x${'ee'.repeat(32)}` }, /hash 0 times/],
+      ...Object.values(FORGED).map((routerCode) => [{ routerCode }, /not this token's GangSwapRouter/]), [{ routerCode: codeOf(1) }, /not a GangSwapRouter build/], [{ routerCode: FORGED['one operand swapped'] }, /not where the GangSwapRouter build has them/], [{ hash: `0x${'ee'.repeat(32)}` }, /hash 0 times/],
       [{ listedPair: lc(t(0xbad)) }, /is not the pair the pad recorded/], [{ listedPair: zeroAddress }, /is not the pair the pad recorded/],
-      [{ migrator: zeroAddress }, /is not set/], [{ hasGetter: false }, /not readable/],
+      [{ migratorOf: {} }, /GangSwap version is not set \(gangSwapMigratorOf is 0\)/], [{ hasOf: false }, /GangSwap version is not readable.*not supported/], [{ down: new Set(['gangSwapMigratorOf']) }, /RPC error while reading this token's GangSwap version/],
       [{ down: new Set(['factory']) }, /RPC error/], [{ down: new Set(['getPair']) }, /RPC error/], [{ down: new Set(['getCode']) }, /RPC error/], [{ down: new Set(['realQuoteReserve']) }, /RPC error/], [{ down: new Set(['INIT_CODE_PAIR_HASH']) }, /RPC error/],
     ]
     for (const [set, re] of BAD) {
@@ -761,27 +824,28 @@ try {
     // the caches are per pad and per router: another one is read again
     {
       grad()
-      const c = { chainId: '97', pad: PAD, wbnb: WBNB, client: { getCode: async () => { seen.push('code'); return world.routerCode } }, read: async (a, _b, fn) => { seen.push(`${fn}@${lc(a)}`); return { gangSwapMigrator: MIGRATOR, factory: lc(a) === ROUTER ? FACTORY : FACTORY, boost: BOOST, fees: FEES, WETH: WBNB, INIT_CODE_PAIR_HASH: HASH, getPair: PAIR }[fn] } }
+      const c = { chainId: '97', pad: PAD, wbnb: WBNB, client: { getCode: async () => { seen.push('code'); return world.routerCode } }, read: async (a, _b, fn) => { seen.push(`${fn}@${lc(a)}`); return { gangSwapMigratorOf: MIGRATOR, factory: lc(a) === ROUTER ? FACTORY : FACTORY, boost: BOOST, fees: FEES, WETH: WBNB, INIT_CODE_PAIR_HASH: HASH, getPair: PAIR }[fn] } }
       const seen = []
       await G.checkRouter(c, GS, PAIR); await G.checkRouter(c, GS, PAIR)
-      assert.deepEqual([seen.filter((x) => x === 'code').length, seen.filter((x) => x.startsWith('gangSwapMigrator')).length], [1, 1])
+      assert.deepEqual([seen.filter((x) => x === 'code').length, seen.filter((x) => x.startsWith('gangSwapMigratorOf')).length], [1, 1])
       process.env.GANG_TESTNET_SWAP_ROUTER = lc(t(0x5aa))
       world.routerCode = codeOf(1)
-      await assert.rejects(G.checkRouter(c, GS, PAIR), /not this network's GangSwapRouter/, 'another router is never vouched for by the first')
+      await assert.rejects(G.checkRouter(c, GS, PAIR), /not this token's GangSwapRouter/, 'another router is never vouched for by the first')
       process.env.GANG_TESTNET_SWAP_ROUTER = ROUTER
       world.routerCode = deployed()
       c.pad = lc(t(0xaad))
       await G.checkRouter(c, GS, PAIR)
-      assert.ok(seen.includes(`gangSwapMigrator@${lc(t(0xaad))}`), 'another pad names its own migrator')
+      assert.ok(seen.includes(`gangSwapMigratorOf@${lc(t(0xaad))}`), 'another pad names its own migrator')
       // a failed read is not kept
       const c2 = { ...c, _gangSwap: undefined, _gangSwapRouter: undefined, read: async () => { throw new Error('down') } }
-      await assert.rejects(G.gangSwapSet(c2), /RPC error/)
+      await assert.rejects(G.gangSwapSet(c2, GS), /RPC error/)
       c2.read = c.read
-      assert.equal((await G.gangSwapSet(c2)).fees, FEES)
+      assert.equal((await G.gangSwapSet(c2, GS)).fees, FEES)
     }
     grad({ tokenAllow: maxUint256 })
     await run('sell', { all: true })
-    for (const fn of ['gangSwapMigrator', 'INIT_CODE_PAIR_HASH', 'WETH', 'getPair']) assert.equal(world.calls.filter((c) => c[1] === fn).length, 1, fn)
+    assert.ok(!world.calls.some((c) => c[1] === 'gangSwapMigrator'), 'the version new tokens get is never asked for an existing one')
+    for (const fn of ['gangSwapMigratorOf', 'INIT_CODE_PAIR_HASH', 'WETH', 'getPair']) assert.equal(world.calls.filter((c) => c[1] === fn).length, 1, fn)
 
     // --- follow / promoter / cd-uncounted / notes after graduation
     grad()
@@ -836,7 +900,7 @@ try {
     process.env.GANG_TESTNET_SWAP_ROUTER = bad
     r = await run('buy', { amount: '0.1' })
     assert.equal(r.success, false, bad)
-    assert.match(r.error, /is not this network's GangSwapRouter/)
+    assert.match(r.error, /is not this token's GangSwapRouter/)
     assert.equal(r.tx, undefined)
     if (bad === 'nope') assert.match(r.error, /not a 0x address/)
     assert.match(r.hint, /^unset GANG_TESTNET_SWAP_ROUTER \(a development setting\), then update the CLI/)
@@ -846,16 +910,16 @@ try {
   grad()
   assert.match((await run('buy', { amount: '0.1' })).error, /no GangSwapRouter address/)
   delete process.env.GANG_SWAP_ROUTER
-  assert.deepEqual([G.gangSwapRouterAddress(true), G.gangSwapRouterAddress(false)], [null, null])
+  assert.deepEqual([G.gangSwapRouterAddresses(true), G.gangSwapRouterAddresses(false)], [[], []])
   {
-    G.GANGSWAP_ROUTERS.testnet = ROUTER
+    G.GANGSWAP_VERSIONS.testnet.push({ router: ROUTER, codeHash: G.GANGSWAP_ROUTER_CODE_HASH, sites: G.GANGSWAP_ROUTER_SITES })
     grad()
     assert.equal((await run('buy', { amount: '0.1' })).success, true, 'a pinned address works the same')
     grad({ routerCode: codeOf(0) })
     r = await run('buy', { amount: '0.1' })
     assert.equal(r.success, false, 'and is verified the same')
     assert.match(r.hint, /^update the CLI/)
-    G.GANGSWAP_ROUTERS.testnet = null
+    G.GANGSWAP_VERSIONS.testnet.length = 0
   }
   // through the CLI end to end: --from / --calldata
   grad()
@@ -945,6 +1009,160 @@ esac
     assert.match(m.error, /--vault can't go with --venue gangswap/)
     child.stdin.end()
     child.kill()
+  }
+
+  // ---------------------------------------------------------------- versions
+  {
+    const V1 = { router: ROUTER, codeHash: G.GANGSWAP_ROUTER_CODE_HASH, sites: G.GANGSWAP_ROUTER_SITES }, V2 = { ...V1, router: ROUTER2 }
+    const L = G.GANGSWAP_VERSIONS.testnet
+    const set = (...v) => { L.length = 0; L.push(...v) }
+    const toOf = async (token, side = 'buy') => { const x = await run(side, { token, ...(side === 'buy' ? { amount: '0.1' } : { amount: '1000' }) }); return x.success ? lc((x.steps?.at(-1) ?? x).tx.to) : x }
+    // both at once: each token on its own router, whatever new tokens get now (v1, v2, or nothing: creation closed)
+    for (const order of [[V1, V2], [V2, V1]]) {
+      for (const migrator of [MIGRATOR, MIGRATOR2, zeroAddress]) {
+        for (const side of ['buy', 'sell']) {
+          set(...order)
+          grad({ migrator })
+          assert.equal(await toOf(GS, side), ROUTER, `${side} v1, current ${migrator}`)
+          grad({ migrator })
+          assert.equal(await toOf(GS2, side), ROUTER2, `${side} v2, current ${migrator}`)
+          assert.ok(!world.calls.some(([at, fn]) => fn === 'gangSwapMigrator' || at === ROUTER && fn.startsWith('swap')), 'v2 never asks the current version nor swaps on v1')
+          neverPancake('versions')
+        }
+      }
+    }
+    // the quote and approval are the token's own pair and router
+    grad()
+    r = await run('sell', { token: GS2, amount: '1000' })
+    assert.deepEqual([lc(r.pair), lc(r.router), lc(decodeFunctionData({ abi: ERC20, data: r.steps[0].tx.data }).args[0]), parseUnits(r.expectOut, 18)], [PAIR2, ROUTER2, ROUTER2, G.amountOut(1000n * E18, 100_000_000n * E18, 9n * E18)])
+    // only one version known: the other's token is refused, both ways, with no tx
+    for (const [known, token] of [[V1, GS2], [V2, GS]]) {
+      set(known)
+      for (const side of ['buy', 'sell']) {
+        grad()
+        const x = await run(side, { token, amount: '1' })
+        assert.deepEqual([x.success, x.tx, x.steps], [false, undefined, undefined])
+        assert.match(x.error, /another version's router/)
+        assert.match(x.hint, /^update the CLI/)
+      }
+    }
+    // several known, none of the token's version
+    set(V1, { ...V1, router: lc(t(0x5c9)) })
+    grad()
+    let x = await run('buy', { token: GS2, amount: '1' })
+    assert.match(x.error, /knows no GangSwapRouter of this token's GangSwap version/)
+    assert.match(x.hint, /^update the CLI/)
+    assert.equal(lc(x.migrator), MIGRATOR2)
+    assert.ok(!world.calls.some(([, fn]) => fn.startsWith('swap')))
+    // the env names one router: the wrong version's is refused both ways; its own is checked as any
+    set(V1, V2)
+    for (const [router, token, good] of [[ROUTER, GS, true], [ROUTER2, GS2, true], [ROUTER2, GS, false], [ROUTER, GS2, false]]) {
+      process.env.GANG_TESTNET_SWAP_ROUTER = router
+      grad()
+      x = await run('buy', { token, amount: '0.1' })
+      assert.equal(x.success, good, `${router} for ${token}`)
+      if (!good) assert.match(x.error, /another version's router/)
+    }
+    process.env.GANG_TESTNET_SWAP_ROUTER = ROUTER2
+    grad({ router2Code: codeOf(1) })
+    assert.match((await run('buy', { token: GS2, amount: '0.1' })).error, /not a GangSwapRouter build/)
+    delete process.env.GANG_TESTNET_SWAP_ROUTER
+    // one version's router unreadable: the other's tokens trade on; its own is an RPC error, never "none known"
+    grad({ downAt: new Set([ROUTER2]) })
+    assert.equal(await toOf(GS), ROUTER)
+    grad({ downAt: new Set([ROUTER2]) })
+    assert.match((await toOf(GS2)).error, /RPC error while reading the GangSwap router/)
+    // a later build: only under its own entry (or the env), never accepted at the earlier version's
+    const code2 = `${deployed2()}00`
+    const B2 = { router: ROUTER2, codeHash: G.maskedRouter(code2, FACTORY2, WBNB).hash, sites: G.GANGSWAP_ROUTER_SITES }
+    set(V1, B2)
+    grad({ router2Code: code2 })
+    assert.equal(await toOf(GS2), ROUTER2)
+    grad({ router2Code: code2, routerCode: `${deployed()}00` })
+    assert.match((await toOf(GS)).error, /not a GangSwapRouter build/)
+    grad()
+    assert.match((await toOf(GS2)).error, /not a GangSwapRouter build/, 'the earlier build at the later entry')
+    process.env.GANG_TESTNET_SWAP_ROUTER = ROUTER2
+    grad({ router2Code: code2 })
+    assert.equal(await toOf(GS2), ROUTER2, 'the env: any known build')
+    delete process.env.GANG_TESTNET_SWAP_ROUTER
+    // hash and order of one entry, never mixed across entries
+    set({ ...V1, sites: 'F'.repeat(35) }, V2)
+    grad()
+    assert.match((await toOf(GS)).error, /not where the GangSwapRouter build has them/)
+    // two entries of one version: the one that passes
+    set({ ...V1, codeHash: HASH }, V1)
+    grad()
+    assert.equal(await toOf(GS), ROUTER, 'the first fails its own check, the second passes')
+    // one ctx, both tokens: nothing of one is used for the other
+    set(V1, V2)
+    {
+      const c = { chainId: '97', pad: PAD, wbnb: WBNB, client: { getCode: async ({ address }) => (lc(address) === ROUTER ? deployed() : deployed2()) }, read: async (a, abi, fn, args = []) => { const f = abi.find((y) => y.name === fn); const q = call({ to: a, data: encodeFunctionData({ abi: [f], functionName: fn, args }), from: ME }); if (q.error) throw new Error('rpc'); return decodeFunctionResult({ abi: [f], functionName: fn, data: q.result }) } }
+      grad()
+      assert.deepEqual([lc(await G.checkRouter(c, GS, PAIR)), lc(await G.checkRouter(c, GS2, PAIR2)), lc(await G.checkRouter(c, GS, PAIR))], [ROUTER, ROUTER2, ROUTER])
+      assert.deepEqual([lc((await G.gangSwapSet(c, GS)).fees), lc((await G.gangSwapSet(c, GS2)).fees)], [FEES, FEES2])
+      const third = lc(t(0x9c5))
+      world.migratorOf[third] = MIGRATOR
+      world.calls = []
+      assert.equal(lc((await G.gangSwapSet(c, third)).fees), FEES)
+      assert.deepEqual(world.calls.map((y) => y[1]), ['gangSwapMigratorOf'], 'the version of a third token, its set already read')
+      await assert.rejects(G.checkRouter(c, GS2, PAIR), /is not the pair the pad recorded/)
+      // with one version known, its router vouched for by the first token is still not the second's
+      set(V1)
+      assert.equal(lc(await G.checkRouter(c, GS, PAIR)), ROUTER)
+      await assert.rejects(G.checkRouter(c, GS2, PAIR2), /another version's router/)
+      set(V1, V2)
+    }
+    // one known version costs no factory read twice, and no other router's
+    set(V1)
+    grad()
+    await run('buy', { amount: '0.1' })
+    for (const fn of ['gangSwapMigratorOf', 'WETH', 'INIT_CODE_PAIR_HASH', 'getPair']) assert.equal(world.calls.filter((y) => y[1] === fn).length, 1, fn)
+    assert.equal(world.calls.filter(([at, fn]) => at === ROUTER && fn === 'factory').length, 1)
+    // info / status: each its own pool, boost, fees and router; the version shown on the curve too
+    set(V1, V2)
+    for (const [token, m, pr, rt, fe, total] of [[GS, MIGRATOR, PAIR, ROUTER, FEES, '1.2'], [GS2, MIGRATOR2, PAIR2, ROUTER2, FEES2, '2']]) {
+      for (const sub of ['info', 'status']) {
+        grad({ migrator: zeroAddress })
+        const y = await run(sub, { token })
+        assert.deepEqual([lc(y.gangSwap.migrator), lc(y.gangSwap.pair), lc(y.gangSwap.router), lc(y.gangSwap.fees), y.gangSwap.buyBack.totalBnb, lc(y.creatorFee.pool.contract)], [m, pr, rt, fe, total, fe], `${sub} ${token}`)
+      }
+      world = { ...fresh(), migrator: zeroAddress }
+      assert.equal(lc((await run('info', { token })).gangSwap.migrator), m)
+    }
+    set(V1)
+    grad()
+    const y = await run('info', { token: GS2 })
+    assert.deepEqual([y.success, y.gangSwap.router, /no GangSwapRouter of this token's GangSwap version/.test(y.gangSwap.routerNote)], [true, null, true])
+    // the curve: trading needs no version read, and a token with none says so instead of taking the current one
+    world = { ...fresh(), migratorOf: {} }
+    assert.match((await run('info')).gangSwap.error, /GangSwap version is not set/)
+    for (const [w2, re] of [[{ migratorOf: {} }, /is not set/], [{ hasOf: false }, /not supported/], [{ down: new Set(['gangSwapMigratorOf']) }, /RPC error/]]) {
+      grad(w2)
+      const z = await run('info')
+      assert.match(z.gangSwap.error, re)
+      assert.match(z.creatorFee.pool.error, re)
+      assert.ok(!world.calls.some(([, fn]) => fn === 'gangSwapMigrator'))
+    }
+    assert.deepEqual(G.gangSwapRouterAddresses(true).map(lc), [ROUTER, ROUTER])
+    set(V1, V2)
+    process.env.GANG_TESTNET_SWAP_ROUTER = lc(t(0x5aa))
+    assert.deepEqual(G.gangSwapRouterAddresses(true).map(lc), [lc(t(0x5aa)), ROUTER, ROUTER2])
+    delete process.env.GANG_TESTNET_SWAP_ROUTER
+    set()
+    // creator fee: each version's own GangSwapFees, with creation closed
+    const f2 = (args, extra) => cli(['creator-fee', ...args, '--testnet', '--calldata', '--from', ME], extra)
+    for (const [token, fe] of [[GS, FEES], [GS2, FEES2]]) {
+      grad({ migrator: zeroAddress })
+      let z = await f2(['--token', token, '--claim', '--part', 'pool'])
+      assert.deepEqual([z.success, lc(z.tx?.to)], [true, fe], JSON.stringify(z))
+      assert.ok(!world.calls.some(([, fn]) => fn === 'gangSwapMigrator'))
+    }
+    for (const to of [FEES2, BOOST2, FACTORY2, MIGRATOR2, PAIR2]) { grad(); assert.match((await f2(['--token', GS2, '--claim', '--to', to])).error, /could not be taken out/, to) }
+    grad({ count: 3n, migrator: zeroAddress })
+    const list = await cli(['creator-fee', '--from', ME, '--testnet'])
+    assert.deepEqual(list.tokens.filter((z) => z.gangSwapPool).map((z) => [lc(z.token), lc(z.gangSwapPool.contract), parseUnits(z.gangSwapPool.claimable, 18)]), [[GS2, FEES2, 22n], [GS, FEES, (1_000_000_007n * 7000n) / 10000n]], JSON.stringify(list))
+    assert.equal(parseUnits(list.totals[0].gangSwapPool, 18), 22n + (1_000_000_007n * 7000n) / 10000n)
   }
 
   // ---------------------------------------------------------------- creator-fee
