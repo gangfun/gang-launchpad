@@ -139,7 +139,8 @@ library CurveLogic3 {
         _requireAgent(c, msg.sender);
         token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, address(0), 0, 0, false);
         _writeCurve(curves[token], token, d.wbnb, gradBnb, 0, 0, 0, address(0));
-        Pad3GangSwapStore.layout().isGangSwap[token] = true;
+        Pad3GangSwapStore.Layout storage g = Pad3GangSwapStore.layout();
+        g.tokenMigrator[token] = g.migrator;
 
         emit IGangLaunchpad.Created(token, msg.sender, name, symbol, logoURI, d.wbnb, address(0), gradBnb);
         emit IGangLaunchpad.TaxConfigured(token, 0, 0, 0, address(0));

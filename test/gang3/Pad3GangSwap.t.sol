@@ -136,13 +136,17 @@ contract Pad3GangSwapTest is GangFixture {
         assertEq(Pad3GangSwapStore.KIND, KIND_GS);
     }
 
-    /// @dev migrator at SLOT, isGangSwap at SLOT+1.
+    /// @dev migrator at SLOT, tokenMigrator at SLOT+1.
     function test_layoutPinned() public {
         _open();
         address t = _createGS(creator, 9 ether);
         bytes32 s = Pad3GangSwapStore.SLOT;
         assertEq(address(uint160(uint256(vm.load(address(pad), s)))), address(gsMigrator));
-        assertEq(uint256(vm.load(address(pad), keccak256(abi.encode(t, uint256(s) + 1)))), 1);
+        assertEq(
+            address(uint160(uint256(vm.load(address(pad), keccak256(abi.encode(t, uint256(s) + 1)))))),
+            address(gsMigrator)
+        );
+        assertEq(m.gangSwapMigratorOf(t), address(gsMigrator));
         address c = _createCurve(creator);
         assertEq(uint256(vm.load(address(pad), keccak256(abi.encode(c, uint256(s) + 1)))), 0);
     }
@@ -160,8 +164,6 @@ contract Pad3GangSwapTest is GangFixture {
 
         (IGSMigrator unlisted,,,) = _deployGangSwap(false);
         vm.startPrank(owner);
-        vm.expectRevert(IGangLaunchpad.ZeroAddress.selector);
-        m.setGangSwapMigrator(address(0));
         vm.expectRevert(IGangSwapPad.WrongGangSwapMigrator.selector);
         m.setGangSwapMigrator(address(unlisted)); // does not list this pad
         vm.expectRevert(IGangSwapPad.WrongGangSwapMigrator.selector);
@@ -183,20 +185,54 @@ contract Pad3GangSwapTest is GangFixture {
         assertEq(m.gangSwapMigrator(), address(gsMigrator));
 
         vm.stopPrank();
-        // one-shot, even for another valid migrator
-        unlisted.addLaunchpad(address(pad));
-        vm.prank(owner);
-        vm.expectRevert(IGangSwapPad.GangSwapMigratorAlreadySet.selector);
-        m.setGangSwapMigrator(address(unlisted));
         // Config.migrator untouched
         assertEq(address(p.migrator()), address(migrator));
+    }
+
+    /// @dev A new version serves new tokens only: one created before keeps its migrator, before and after graduation.
+    function test_newVersion_onlyNewTokens() public {
+        _open();
+        address t1 = _createGS(creator, 6 ether);
+        (IGSMigrator v2,,, IGSFactory factory2) = _deployGangSwap(true);
+        vm.prank(creator);
+        vm.expectRevert();
+        m.setGangSwapMigrator(address(v2));
+        vm.prank(owner);
+        m.setGangSwapMigrator(address(v2));
+        vm.expectEmit(false, true, false, false, address(pad));
+        emit IGangSwapPad.GangSwapCreated(address(0), address(v2));
+        address t2 = _createGS(creator, 6 ether);
+        assertEq(m.gangSwapMigrator(), address(v2));
+        assertEq(m.gangSwapMigratorOf(t1), address(gsMigrator));
+        assertEq(m.gangSwapMigratorOf(t2), address(v2));
+
+        // closed: no new token, the old ones still trade and graduate through their own version
+        vm.prank(owner);
+        m.setGangSwapMigrator(address(0));
+        vm.prank(creator);
+        vm.expectRevert(IGangSwapPad.GangSwapNotOpen.selector);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether);
+        _graduate(t1);
+        _graduate(t2);
+        (uint8 s1,, address p1,,) = _info(t1);
+        (uint8 s2,, address p2,,) = _info(t2);
+        assertEq(s1, 4);
+        assertEq(s2, 4);
+        assertEq(gsFactory.getPair(t1, address(wbnb)), p1);
+        assertEq(factory2.getPair(t2, address(wbnb)), p2);
+        assertEq(factory2.getPair(t1, address(wbnb)), address(0));
+        assertEq(gsMigrator.padOf(p1), address(pad));
+        assertEq(v2.padOf(p2), address(pad));
+        assertEq(m.gangSwapMigratorOf(t1), address(gsMigrator));
+        // a kind-1 token has none
+        assertEq(m.gangSwapMigratorOf(_createCurve(creator)), address(0));
     }
 
     // ---------------------------------------------------------------- create
     function _lastGangSwapCreated(address t) internal returns (bool found) {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics.length == 2 && logs[i].topics[0] == IGangSwapPad.GangSwapCreated.selector) {
+            if (logs[i].topics.length == 3 && logs[i].topics[0] == IGangSwapPad.GangSwapCreated.selector) {
                 found = found || address(uint160(uint256(logs[i].topics[1]))) == t;
             }
         }

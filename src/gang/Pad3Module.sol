@@ -596,15 +596,14 @@ contract Pad3Module is
     /// @inheritdoc IGangSwapPad
     function setGangSwapMigrator(address migrator_) external onlyOwner {
         Pad3GangSwapStore.Layout storage g = Pad3GangSwapStore.layout();
-        if (g.migrator != address(0)) revert GangSwapMigratorAlreadySet();
-        if (migrator_ == address(0)) revert ZeroAddress();
-        // one-shot, as `setMigrator`: a migrator that does not list this pad, takes another quote, or whose factory /
-        // boost / fees do not point back at it (`wired`, review 4 #1) would make every GangSwap graduation revert
-        // forever. The Pancake SharedMigrator has no `quote()` and an EOA returns nothing: refused too.
+        // new tokens only: each token keeps the migrator of its create. 0 closes createGangSwap. A migrator that does
+        // not list this pad, takes another quote, or whose factory / boost / fees do not point back at it (`wired`,
+        // review 4 #1) would make every graduation of the tokens created under it revert. The Pancake SharedMigrator has no `quote()` and an EOA returns nothing: refused too.
         if (
-            _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.launchpads, (address(this)))) != 1
-                || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.quote, ())) != uint160(wbnb)
-                || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.wired, ())) != 1
+            migrator_ != address(0)
+                && (_gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.launchpads, (address(this)))) != 1
+                    || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.quote, ())) != uint160(wbnb)
+                    || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.wired, ())) != 1)
         ) revert WrongGangSwapMigrator();
         g.migrator = migrator_;
         emit GangSwapMigratorSet(migrator_);
@@ -623,6 +622,11 @@ contract Pad3Module is
     }
 
     /// @inheritdoc IGangSwapPad
+    function gangSwapMigratorOf(address token) external view returns (address) {
+        return Pad3GangSwapStore.migratorOf(token);
+    }
+
+    /// @inheritdoc IGangSwapPad
     /// @dev No module entry nests this (each calls `_createCurve`, kind 1), so nothing binds a kind-4 token.
     function createGangSwap(
         string calldata name,
@@ -631,12 +635,13 @@ contract Pad3Module is
         string calldata metaURI,
         uint256 gradBnb
     ) external nonReentrant returns (address token) {
-        if (Pad3GangSwapStore.layout().migrator == address(0)) revert GangSwapNotOpen();
+        address migrator_ = Pad3GangSwapStore.layout().migrator;
+        if (migrator_ == address(0)) revert GangSwapNotOpen();
         token = CurveLogic.createGangSwap(
             _config, curves, Pad3VanityStore.creationDeps(_deps()), name, symbol, logoURI, metaURI, gradBnb
         );
         _recordCurve(token, logoURI, gradBnb, KIND_GANGSWAP);
-        emit GangSwapCreated(token);
+        emit GangSwapCreated(token, migrator_);
     }
 
     // ---------------------------------------------------------------- promoter share
