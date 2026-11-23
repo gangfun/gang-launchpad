@@ -1,5 +1,7 @@
 # 测试网 · GangGateway V2（铸币飞轮）
 
+> **2026-11-23：代码已移除。** 网关源码回到主网在跑的第一版，只加 GangSwap 曲线币（类型 4）。铸币飞轮的交易逻辑、`GatewayFlywheelTestnetAcceptance.s.sol` 和 `GatewayFlywheelMainnetFork.t.sol` 只在 git 历史里（`72c2b58`）；`GangGatewayFlywheel.t.sol` 改为只测 GangLaunchpad 3.0 自带的入口。以下内容作为记录保留。
+
 - 链：BSC 测试网（chainId 97），2026-11-02
 - 代码：网关 V2（AUDIT-BRIEF §26），审计 → 修复 → 独立复审之后的版本；规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`「铸币飞轮」一节。
 - 两件事：

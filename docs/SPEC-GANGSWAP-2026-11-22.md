@@ -86,7 +86,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 | `tryBuy` / `trySell` | 返回全 0；`tryBuy` 里还有 `kind == KIND_CURVE && agentGateEnabled` 的条件 | 和类型 1 一样 |
 | `buyTokenAMAP` / `_entrySell`（aggregator 入口） | 回滚 `NotCurveToken` | 曲线阶段和类型 1 一样 |
 | `buyWithPromoter` | 回滚 `NotCurveToken` | 第一期保持回滚 |
-| `GangGateway.getTokenInfo` / `_curve` | 返回全 0 / 回滚 | 不改：pad3 自带聚合器入口，gateway 对类型 4 保持关闭（另行评估） |
+| `GangGateway.getTokenInfo` / `_curve` | 返回全 0 / 回滚 | 可选升级：认类型 4（独立的 PR，48 小时时间锁）；不升级时保持关闭。pad3 自带聚合器入口 |
 | `GangPadRegistry._curve` | `live = false` | 升级 registry（代理） |
 | pad 的 NatSpec | 只写了状态 0–3 | 加上状态 4 的说明 |
 | CLI（`skill/gang-cli/src/gangpad.js` 的 `KINDS`） | 类型 4 映射成 null，已发布的 CLI 会报「RPC error, retry」，容易误导 | 加上类型 4；`creatorfee` 流程要同时覆盖 `GangSwapFees.claim`。`bond.js`、`callbond.js` 已经拒绝类型 4，正确 |
@@ -231,7 +231,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 | 9 个税收模块 | 绑定时都检查 `kindOf != KIND_CURVE`，回滚 |
 | GangRouter | 曲线阶段的 `buyFor` / `sellFor` 照常可用。毕业后的 `pool*` 走 Pancake router，**会去成交别人在 Pancake 上建的第三方池子**（复审 N3：它不检查是哪个 pair），也就是 H2 的情况。**已实现**：GangRouter 的四个 `pool*` 在代币或中间那一跳是类型 4 时回滚（`GangSwapToken`），升级是可选的（48 小时时间锁），不是上线前提。**只对 3.0 的 router 有效**：其他 pad 的 router 查的是自己的 pad，不认识类型 4，拦不住；web 和 CLI 也不对类型 4 调用 `pool*`，改走 GangSwapRouter |
 | GangPadRegistry、aggregator 入口 | 见 §4 的表；registry 是代理，要升级 |
-| GangGateway（线上） | 不认识类型 4：状态 0、报价 0、交易回滚，不会错误路由。它是旧入口，不在上线步骤里 |
+| GangGateway（线上） | 不认识类型 4：状态 0、报价 0、交易回滚，不会错误路由。它是旧入口，升级是可选的，不是上线前提 |
 | 现有的类型 1 币 | 不受影响。实现时要有回归测试 |
 | **第三方池子** | 毕业后代币是普通 ERC-20，任何人都可以拿自己的币去 Pancake 建一个薄池子，LP 不锁。这样的池子可能先被 DexScreener 和 GoPlus 收录（GoPlus 会标「LP 未锁」），把买单引过去；建池的人可以和 GangSwap 套利，或者撤走 LP。合约挡不住这件事，只能通过展示和对外说明处理：我们的 web 和 CLI 只显示 GangSwap 的池子；对行情网站的收录申请里写明 GangSwap 才是官方池子 |
 
@@ -276,7 +276,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 ## 13. 部署与上线
 
 1. `forge clean` 之后，用 `gangswap/script/DeployGangSwap.s.sol` 部署：按 nonce 预先算出迁移合约、回购、手续费、factory 四个地址，依次部署，再部署 router。脚本里的检查只在发交易之前的模拟里执行，看不到广播中途失败或 nonce 错位。**广播之后必须对链上地址再跑一次 `check(migrator, router)`**，它直接读链上合约：owner、计价币、`wired()`、手续费合约的 bucket、router 的指向，以及 router 字节码里的 init code hash。然后在 BscScan 和 Sourcify 上验证。
-2. 升级 GangPadRegistry（可以和第 3 步同一批）。GangRouter 3.0 的升级（48 小时时间锁）是可选的，不是打开创建的前提；GangGateway 不升级。
+2. 升级 GangPadRegistry（可以和第 3 步同一批）。GangRouter 3.0 的升级（48 小时时间锁）是可选的，不是打开创建的前提；GangGateway 的升级也一样（源码已回到主网那版加类型 4）。
 3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。
 4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
 5. 上线 server（索引、keeper）→ web → CLI。

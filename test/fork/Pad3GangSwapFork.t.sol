@@ -76,7 +76,7 @@ interface IGsRouter {
 ///         refuses it), graduation, the boost, GangSwapRouter, the fees into the real bucket, and everyone selling
 ///         back; a kind-1 token created BEFORE the upgrade still graduates to the real Pancake V2 pair and still trades
 ///         through the live gateway; the live GangBond refuses the GangSwap token. Last, the optional GangRouter upgrade
-///         through its timelock, whose pool entries refuse it. Agent IDs are mocked per address on this fork only. No
+///         through its timelock, whose pool entries refuse it, and the optional GangGateway one. Agent IDs are mocked per address on this fork only. No
 ///         broadcast.
 /// @dev BSC_RPC_URL required (skipped if absent; an archive node with BSC_FORK_BLOCK: the run is long). Build the fork
 ///      first (`forge build --root gangswap`). Link the live PoolCheck:
@@ -187,6 +187,56 @@ contract Pad3GangSwapForkTest is Test {
         router3.poolBuyBNB{value: 0.01 ether}(M.USDT, t, 0, block.timestamp);
         assertGt(router3.poolBuyBNB{value: 0.01 ether}(old, M.WBNB, 0, block.timestamp), 0);
         vm.stopPrank();
+        _gatewayUpgrade(t, creator);
+    }
+
+    /// @dev The optional GangGateway upgrade through its timelock: every registered pad's newest token reads the same
+    ///      before and after (but a graduated GangSwap token: status 4), kind 4 trades, 铸币飞轮 stays closed.
+    function _gatewayUpgrade(address t, address creator) internal {
+        bytes memory before = _gatewayViews(t);
+        _timelocked(M.GANG_GATEWAY, address(new GangGateway()));
+        assertEq(_gatewayViews(t), before, "every other token reads the same");
+        assertEq(gw.owner(), M.OWNER_SAFE);
+        assertEq(address(gw.registry()), M.PAD_REGISTRY);
+        (,, address pair,,) = p.getTokenInfo(t);
+        (uint8 s,, address gp, uint256 fee,) = gw.getTokenInfo(t);
+        assertEq(s, 4);
+        assertEq(gp, pair);
+        assertEq(fee, 100);
+
+        address t2 = _saltCreate(
+            creator, "Swap2", abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap2", "GSF", "", "meta", uint256(G)))
+        );
+        address a = _actor();
+        (,, uint256 est,,,,,) = gw.tryBuy(t2, a, 0, 0.02 ether);
+        vm.startPrank(a, a);
+        (uint256 out,) = gw.buyTokenAMAP{value: 0.02 ether}(t2, a, 0.02 ether, 0);
+        assertEq(out, est);
+        assertGt(out, 0);
+        IERC20(t2).approve(address(gw), out);
+        gw.sellToken(0, t2, a, out, 0, 0, address(0));
+        vm.stopPrank();
+        assertEq(IERC20(t2).balanceOf(a), 0);
+    }
+
+    function _gatewayViews(address skip) internal view returns (bytes memory st) {
+        address[] memory pads = reg.pads();
+        for (uint256 i; i < pads.length; i++) {
+            (bool ok, bytes memory ret) = pads[i].staticcall(abi.encodeWithSignature("tokenCount()"));
+            if (!ok || ret.length != 32) continue;
+            uint256 n = abi.decode(ret, (uint256));
+            for (uint256 k; k < 5 && k < n; k++) {
+                (ok, ret) = pads[i].staticcall(abi.encodeWithSignature("allTokens(uint256)", n - 1 - k));
+                if (!ok) continue;
+                address x = abi.decode(ret, (address));
+                if (x == skip) continue;
+                (bool o1, bytes memory r1) = address(gw).staticcall(abi.encodeCall(gw.getTokenInfo, (x)));
+                (bool o2, bytes memory r2) =
+                    address(gw).staticcall(abi.encodeCall(gw.tryBuy, (x, address(0), 0, 0.01 ether)));
+                (bool o3, bytes memory r3) = address(gw).staticcall(abi.encodeCall(gw.trySell, (x, 1 ether)));
+                st = abi.encode(st, x, o1, r1, o2, r2, o3, r3);
+            }
+        }
     }
 
     // ---------------------------------------------------------------- the rollout (§13)

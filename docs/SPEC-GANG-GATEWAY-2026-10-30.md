@@ -33,6 +33,8 @@
 
 ## 铸币飞轮（V2，2026-11-02）
 
+> **2026-11-23：代码已移除。** 网关源码回到主网在跑的第一版，只加 GangSwap 曲线币（类型 4）。铸币飞轮的交易逻辑、`GatewayFlywheelTestnetAcceptance.s.sol` 和 `GatewayFlywheelMainnetFork.t.sol` 只在 git 历史里（`72c2b58`）；`GangGatewayFlywheel.t.sol` 改为只测 GangLaunchpad 3.0 自带的入口。以下内容作为记录保留。
+
 网关 V2 的设计（**没有上线主网**，见开头）：同一个地址，经 48 小时时间锁升级，也能交易铸币飞轮 V1、V2 两个 pad 的币（registry kind 3），接口不变：
 
 | 阶段 | 买（`buyTokenAMAP`） | 卖（`sellToken`） |

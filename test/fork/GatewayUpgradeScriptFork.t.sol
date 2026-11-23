@@ -63,7 +63,7 @@ contract GatewayUpgradeScriptForkTest is Test {
         vm.prank(M.OWNER_SAFE);
         tl.execute(stack.proxyAdmin, 0, call, bytes32(0), bytes32(0));
 
-        // step 3: self-check, listings printed for the Safe (the flywheel pads)
+        // step 3: self-check, listings printed for the Safe
         new UpgradeGangGateway().run();
 
         // another upgrade after it (back to V1): the done operation is refused, not re-proposed

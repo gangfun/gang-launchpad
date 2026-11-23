@@ -13,9 +13,8 @@ import {GangGateway} from "../src/router/GangGateway.sol";
 import {GangRouterDeployLib as R} from "./GangRouterDeployLib.sol";
 import {GangGatewayDeployLib as G} from "./GangGatewayDeployLib.sol";
 
-/// @title UpgradeGangGateway — move the GangGateway proxy to this build (V2: 铸币飞轮 support, AUDIT-BRIEF §26)
-/// @notice Mainnet's V2 upgrade was cancelled on 2026-11-04, so mainnet stays on the first version. The proxy, its
-///         users' approvals and its storage stay; only the implementation changes, through the 48 h
+/// @title UpgradeGangGateway — move the GangGateway proxy to this build (mainnet's first version + GangSwap, kind 4)
+/// @notice The proxy, its users' approvals and its storage stay; only the implementation changes, through the 48 h
 ///         timelock (GangGatewayDeployLib: timelock.schedule → wait minDelay → timelock.execute of
 ///         ProxyAdmin.upgradeAndCall(proxy, newImpl, "")). Three runs:
 ///         1. deploy: the new implementation (or GATEWAY_IMPL, already deployed), checked to be this build and locked;
@@ -146,11 +145,13 @@ contract UpgradeGangGateway is Script {
         }
     }
 
-    /// @dev Lists the gateway on every registered pad that does not list it yet: sent when the deploy wallet owns the
+    /// @dev Lists the gateway on every registered pad (but mainnet's 铸币飞轮 V1 / V2) that does not list it yet: sent when the deploy wallet owns the
     ///      pad, else printed for the pad's owner.
     function _listOnPads(GangGateway gw, address deployer, uint256 pk) internal {
         address[] memory pads = gw.registry().pads();
         for (uint256 i; i < pads.length; i++) {
+            // this gateway does not trade 铸币飞轮: it needs no router rights on those pads
+            if (pads[i] == M.FLYWHEEL_PAD_V1 || pads[i] == M.FLYWHEEL_PAD_V2) continue;
             IGangPad p = IGangPad(pads[i]);
             if (p.routers(address(gw))) {
                 console.log("listed on pad", pads[i]);
