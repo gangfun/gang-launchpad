@@ -210,6 +210,10 @@ contract Pad3GangSwapTest is GangFixture {
         vm.prank(creator);
         vm.expectRevert(abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(v2)));
         m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
+        // 0 is no wildcard
+        vm.prank(creator);
+        vm.expectRevert(abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(v2)));
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(0));
         // v1's token graduates through v1 while v2 is the current version
         _graduate(t1);
         (,, address p1,,) = _info(t1);
@@ -340,6 +344,12 @@ contract Pad3GangSwapTest is GangFixture {
         vm.prank(creator);
         vm.expectRevert();
         m.createWithSalt{value: 1 ether}(salt, data);
+        // a stale version comes back as is
+        bytes memory stale =
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(0xdead)));
+        vm.prank(creator);
+        vm.expectRevert(abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(gsMigrator)));
+        m.createWithSalt(salt, stale);
         vm.prank(creator);
         address t = m.createWithSalt(salt, data);
         assertEq(uint16(uint160(t)), 0xabcd);
@@ -354,6 +364,12 @@ contract Pad3GangSwapTest is GangFixture {
         _open();
         bytes memory data =
             abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator)));
+        // a stale version comes back as is
+        bytes memory stale =
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(0xdead)));
+        vm.prank(creator);
+        vm.expectRevert(abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(gsMigrator)));
+        IGangAgentWindow(address(pad)).createWithAgentWindow(30, stale);
         vm.prank(creator);
         address t = IGangAgentWindow(address(pad)).createWithAgentWindow(30, data);
         assertEq(p.kindOf(t), KIND_GS);
