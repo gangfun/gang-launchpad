@@ -208,7 +208,9 @@ contract Pad3GangSwapForkTest is Test {
         assertEq(fee, 100);
 
         address t2 = _saltCreate(
-            creator, "Swap2", abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap2", "GSF", "", "meta", uint256(G)))
+            creator,
+            "Swap2",
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap2", "GSF", "", "meta", uint256(G), address(mig)))
         );
         address a = _actor();
         (,, uint256 est,,,,,) = gw.tryBuy(t2, a, 0, 0.02 ether);
