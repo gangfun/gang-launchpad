@@ -28,6 +28,13 @@ export function openDb(path) {
       checked_ts INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS handles_checked ON handles(checked_ts);
+    CREATE TABLE IF NOT EXISTS curve_buyers (
+      address TEXT PRIMARY KEY,
+      is_agent INTEGER NOT NULL DEFAULT 0,
+      checked_ts INTEGER NOT NULL DEFAULT 0,
+      first_buy_ts INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS curve_buyers_agent ON curve_buyers(is_agent);
   `)
   // Repair: older indexer zeroed real_bnb on Graduated → UI showed 0/20
   try {
