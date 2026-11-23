@@ -7,7 +7,7 @@ import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, genFields, GRAD_TARGET_
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, followPromoter, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
-import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapCreateView, gangSwapFeeView, gangSwapSellQuote, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
+import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
 import { parseVenue, venueRefusal } from './venue.js'
 import { decodeLogs } from './chain.js'
 import { bondGuard } from './bond.js'
@@ -520,7 +520,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const badVenue = venueRefusal({ opt, flag, testnet })
     if (badVenue) fail(badVenue.error, 'got' in badVenue ? { got: badVenue.got } : {})
     const gsCreate = parseVenue(opt, flag).venue === 'gangswap'
-    let gsMigrator = null
+    let gsMigrator = null, gsRouterWarning = null
     if (gsCreate) {
       if (launchFloor || launchPoolModule) fail('--venue gangswap goes on a plain create only: no chained launch')
       // asked of the pad before any wallet step or upload
@@ -528,6 +528,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       if (support.unread) fail('could not check the pad for GangSwap (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
       if (!support.open) fail(support.why, { pad: ctx.pad, hint: 'leave --venue out: the token then graduates into PancakeSwap' })
       gsMigrator = support.migrator
+      gsRouterWarning = await gangSwapRouterWarning(ctx, gsMigrator)
     }
     // no --buy-tax / --sell-tax (or both 0): an untaxed token (tax all 0, no dividend, no recipient; the pad never hooks it)
     if (flag('buy-tax') !== flag('sell-tax')) {
@@ -850,7 +851,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }),
       ...(base && { base: baseView }),
       ...(grView && { gradReward: grView }),
-      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator) }),
+      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator, gsRouterWarning), ...(gsRouterWarning && { warning: gsRouterWarning }) }),
       ...(aw && { agentWindow: windowCreateView(aw.minutes, { gradReward: !!gr, vault: !!vault, promote: !!promote }) }),
       ...(vault && {
         padGen: ctx.gen, pad: ctx.pad, vault,
@@ -1156,7 +1157,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }
     }
     const gsEvents = decodeLogs(r.logs, [GANGSWAP_PAD_ABI])
-    const gsCheck = await gangSwapCreateCheck(ctx, { status: r.status, events: gsEvents, sender: r.from, input: await createInput(ctx, r, gsEvents) })
+    const gsCheck = await gangSwapCreateCheck(ctx, { status: r.status, events: gsEvents, sender: r.from, ...(await createInput(ctx, r, gsEvents)) })
     return out({ success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber), events, ...gsCheck, explorer: `${ctx.explorer}/tx/${hash}` })
   }
 

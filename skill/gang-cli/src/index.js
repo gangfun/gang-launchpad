@@ -40,7 +40,7 @@ import { runFly, flyCtx, isFlyToken, FLY_EVENT_ABIS, FLY_CREATE_FLAGS } from './
 import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, REDEEM_FEE_ALONE, runLaunch, TAX_CAP_ALONE } from './launch.js'
 import { poolPayBnb, poolTrade, refShown } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
-import { isCurveKind, MERGED_ERRORS_ABI, genOf, padNets } from './gangpad.js'
+import { isCurveKind, MERGED_ERRORS_ABI, genOf, PAD3_GEN, padNets } from './gangpad.js'
 import { createInput, gangSwapCreateCheck } from './gangswap.js'
 import { venueRefusal } from './venue.js'
 import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
@@ -1681,16 +1681,21 @@ async function refuseFly(what) {
   if (await isFlyToken(flyCtx(flag('testnet')), token)) fail(`铸币飞轮 (Mint Flywheel) tokens take no ${what} (phase 1)`, { token, kind: 'fly' })
 }
 
+/** Whether a mainnet tx went to a 3.0 pad, from its receipt (its own data unread); false when that can't be read either. */
+const wentToPad3 = (hash) => client.getTransactionReceipt({ hash })
+  .then((r) => padNets('v3').mainnet.gens.some((g) => g.gen === PAD3_GEN && g.pad.toLowerCase() === String(r.to).toLowerCase()), () => false)
+
 /** A mainnet tx decoded, its queued note published (or its state refreshed), its follow ref and token links. */
 async function txReport(hash) {
   const t = await decodeTx(hash, GANG_EVENT_ABIS, SHARED_SPLIT)
   // the input may carry a follow ref and a note commitment: a committed note is sent here if it's still in the
   // local queue (e.g. after PENDING_CONFIRMATION), or its state reported / refreshed if already sent
   const queued = hasQueued()
-  let note, input = null, sender = null
+  let note, input = null, sender = null, inputUnread = false
   try {
     ({ input, from: sender } = await client.getTransaction({ hash }))
   } catch (e) {
+    inputUnread = true
     if (queued) note = { published: false, error: `could not read tx input: ${e.message.split('\n')[0]}` }
   }
   const committed = input && queued ? hashesIn(input) : []
@@ -1706,7 +1711,7 @@ async function txReport(hash) {
   // post text for X: the note once it's public, else a token this tx created
   const created = t.status === 'success' ? t.events.find((e) => e.event === 'Created' && ADDR_RE.test(e.token ?? ''))?.token : null
   const share = note?.published ? await shareFor({ note: hash }) : created ? await shareFor({ token: created, event: 'create' }) : null
-  const gsCheck = await gangSwapCreateCheck({ chainId: CONFIG.chainId, read: v2PoolCtx().read }, { status: t.status, events: t.events, input, sender })
+  const gsCheck = await gangSwapCreateCheck({ chainId: CONFIG.chainId, read: v2PoolCtx().read }, { status: t.status, events: t.events, input, sender, inputUnread: inputUnread && await wentToPad3(hash) })
   return {
     success: true, ...t, ...gsCheck, ...(note && { note }), ...(followed && { follow: { noteTx: followed, link: noteLink(followed) } }),
     ...(links && { links }), ...(invitedBy && { invitedBy }), ...(share && { share }),
@@ -2274,7 +2279,7 @@ async function main() {
         const events = decodeLogs(r.logs, GANG_EVENT_ABIS, await firstByModuleType(ctx.client, r.logs, SHARED_SPLIT.topic, SHARED_SPLIT.byType))
         return out({
           success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber),
-          events, ...(await gangSwapCreateCheck(ctx, { status: r.status, events, sender: r.from, input: await createInput(ctx, r, events) })), explorer: `${ctx.explorer}/tx/${hash}`,
+          events, ...(await gangSwapCreateCheck(ctx, { status: r.status, events, sender: r.from, ...(await createInput(ctx, r, events)) })), explorer: `${ctx.explorer}/tx/${hash}`,
         })
       }
       return out(await txReport(hash))

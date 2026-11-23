@@ -74,7 +74,7 @@ const MIGRATOR_ABI = parseAbi([
   'event GangSwapMigrated(address indexed token, address indexed pair, address indexed pad, uint256 tokenAmount, uint256 seed, uint256 virtualReserve, uint256 lp)',
 ])
 const FACTORY_ABI = parseAbi([
-  'function fees() view returns (address)', 'function getPair(address, address) view returns (address)',
+  'function fees() view returns (address)', 'function migrator() view returns (address)', 'function getPair(address, address) view returns (address)',
   'function INIT_CODE_PAIR_HASH() view returns (bytes32)',
 ])
 const PAIR_ABI = parseAbi([
@@ -129,7 +129,7 @@ const isZero = (a) => !a || same(a, zeroAddress)
 /** The contract answered with a revert (or had no such function), as opposed to the RPC failing (-32603 included). */
 const isRevert = (e) => !e?.walk?.((x) => x?.code === -32603)
   && !!e?.walk?.((x) => ['ContractFunctionRevertedError', 'ContractFunctionZeroDataError', 'AbiDecodingZeroDataError', 'ExecutionRevertedError'].includes(x?.name) || x?.code === 3)
-const rpcError = (what, e) => new PoolError(`RPC error while ${what}: ${short(e)}`, { hint: 're-run; set GANG_RPC_URL / GANG_TESTNET_RPC_URL if the RPC keeps failing' })
+const rpcError = (what, e) => Object.assign(new PoolError(`RPC error while ${what}: ${short(e)}`, { hint: 're-run; set GANG_RPC_URL / GANG_TESTNET_RPC_URL if the RPC keeps failing' }), { rpc: true })
 
 // ---------------------------------------------------------------- create
 
@@ -153,8 +153,9 @@ export async function gangSwapSupport(ctx) {
 }
 
 /** What the create preview says about --venue gangswap. */
-export const gangSwapCreateView = (migrator) => ({
+export const gangSwapCreateView = (migrator, routerWarning = null) => ({
   name: 'gangswap',
+  ...(routerWarning && { routerWarning }),
   version: migrator,
   versionNote: `the GangSwap version is fixed at this create, for good: GangSwapMigrator ${migrator}. The create names it: if the pad gives new tokens another version before the tx lands, the tx reverts (GangSwapVersionChanged) and nothing is created. A later version never changes this token's pool, fees or router`,
   permanent: 'PERMANENT: the venue is fixed at this create, for good; nobody can move the token to PancakeSwap later',
@@ -177,22 +178,23 @@ export function asksGangSwap(input) {
   return false
 }
 
-/** The calldata of a landed tx that went to a 3.0 pad and made no GangSwap token, for gangSwapCreateCheck; else null. */
+/** { input } of a landed tx that went to a 3.0 pad and made no GangSwap token, for gangSwapCreateCheck (inputUnread when it could not be read); { input: null } for any other. */
 export async function createInput(ctx, receipt, events) {
   const pads = gangGens(netOf(ctx) === 'testnet').filter((g) => g.gen === PAD3_GEN).map((g) => g.pad)
-  if (receipt.status !== 'success' || events.some((e) => e.event === 'GangSwapCreated') || !pads.some((p) => same(p, receipt.to))) return null
-  return ctx.client.getTransaction({ hash: receipt.transactionHash }).then((t) => t.input).catch(() => null)
+  if (receipt.status !== 'success' || events.some((e) => e.event === 'GangSwapCreated') || !pads.some((p) => same(p, receipt.to))) return { input: null }
+  return ctx.client.getTransaction({ hash: receipt.transactionHash }).then((t) => ({ input: t.input }), () => ({ input: null, inputUnread: true }))
 }
 
 /**
  * A landed create, checked: `events` as gang tx decodes them (event, contract, token, migrator), `input` the tx's calldata and
  * `sender` its from (null when unread). { gangSwap: … } to add to the result, or {} when the tx has nothing to do with a GangSwap create.
  */
-export async function gangSwapCreateCheck(ctx, { status, events, input, sender = null }) {
+export async function gangSwapCreateCheck(ctx, { status, events, input, inputUnread = false, sender = null }) {
   // only a GangLaunchpad 3.0 pad's own event counts
   const pads = gangGens(netOf(ctx) === 'testnet').filter((g) => g.gen === PAD3_GEN).map((g) => g.pad)
   const made = (events ?? []).filter((e) => e.event === 'GangSwapCreated' && pads.some((p) => same(p, e.contract)))
   if (!made.length) {
+    if (status === 'success' && inputUnread) return { gangSwapUnread: 'the tx\'s input could not be read, so whether it was a GangSwap create is not checked' }
     if (status !== 'success' || !pads.length || !asksGangSwap(input)) return {}
     return { gangSwap: { verified: false, error: 'this tx asked for a GangSwap token, but no GangSwapCreated event of the pad is in its receipt: do not treat its token as one (gang info reads its kind)' } }
   }
@@ -336,6 +338,51 @@ const verifyRouter = (ctx, set, { router, builds }) => cached(ctx, `router:${set
 })
 
 /**
+ * For a create: what to say when no GangSwapRouter this run knows serves `migrator`'s version (checked as for a trade),
+ * or when that could not be read; null when one does. Never refuses.
+ */
+export async function gangSwapRouterWarning(ctx, migrator) {
+  const none = `this CLI version has no GangSwapRouter for this GangSwap version, so it could not trade the token after graduation: ${UPDATE_CLI} before creating, or check that another tool trades it`
+  try {
+    const factory = await askAddress(ctx, 'the GangSwap factory', migrator, MIGRATOR_ABI, 'factory')
+    let unread = null
+    for (const c of await routersFor(ctx, factory)) {
+      try { await verifyRouter(ctx, { factory }, c); return null } catch (e) {
+        if (!(e instanceof PoolError)) throw e
+        if (e.rpc) unread ??= e
+      }
+    }
+    if (unread) throw unread
+    return none
+  } catch (e) {
+    return `could not read whether this CLI version has a GangSwapRouter for this GangSwap version (${short(e)}): run it again before creating`
+  }
+}
+
+/**
+ * The factory, fees, migrator and boost reachable from every router this run knows on `testnet` / mainnet (best effort):
+ * { addresses, unread } where unread names the routers some of whose contracts could not be read.
+ */
+export async function gangSwapKnownContracts(ctx, testnet) {
+  const addresses = [], unread = []
+  for (const router of new Set(gangSwapRouterAddresses(testnet).map((a) => a.toLowerCase()))) {
+    try {
+      if (!isAddress(router)) throw new Error('not an address')
+      const factory = await askAddress(ctx, 'the GangSwap factory', router, GANGSWAP_ROUTER_ABI, 'factory')
+      addresses.push(factory)
+      const [fees, migrator] = await Promise.allSettled(['fees', 'migrator'].map((f) => askAddress(ctx, 'a GangSwap contract', factory, FACTORY_ABI, f)))
+      if (fees.status === 'fulfilled') addresses.push(fees.value)
+      if (migrator.status === 'fulfilled') {
+        addresses.push(migrator.value)
+        addresses.push(await askAddress(ctx, 'the GangSwap boost', migrator.value, MIGRATOR_ABI, 'boost'))
+      }
+      if (fees.status !== 'fulfilled' || migrator.status !== 'fulfilled') unread.push(router)
+    } catch { unread.push(router) }
+  }
+  return { addresses, unread }
+}
+
+/**
  * The GangSwapRouter for a trade of `token` in `pair`, or a PoolError: the known version (or the env's router) whose
  * factory() is the token's own factory, whose WETH() is this chain's WBNB, whose bytecode has that factory's pair init
  * code hash exactly once and IS a known GangSwapRouter build with that factory and WBNB; and the factory's pair of the
@@ -422,11 +469,14 @@ export async function gangSwapView(ctx, token, c) {
     const next = cap < perStep ? cap : perStep
     const net = netOf(ctx)
     const fromEnv = process.env[ROUTER_ENV[net]] || null
-    const router = fromEnv ? null : (await routersFor(ctx, set.factory))[0]?.router
+    // the router is beside the point here: one that can't be read leaves the rest as it is
+    let routerUnread = null
+    const router = fromEnv ? null : (await routersFor(ctx, set.factory).catch((e) => { routerUnread = e.message; return [] }))[0]?.router
     return {
       pair: c.pair, migrator: set.migrator, factory: set.factory, fees: set.fees, router: router ?? null,
       ...(fromEnv && { routerFromEnv: fromEnv, routerVerified: false, routerNote: `${ROUTER_ENV[net]} names this router; it is not verified here (gang buy / gang sell check its code before they build anything)` }),
-      ...(!fromEnv && !router && { routerNote: `no GangSwapRouter of this token's GangSwap version in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
+      ...(routerUnread && { routerUnread }),
+      ...(!fromEnv && !router && !routerUnread && { routerNote: `no GangSwapRouter of this token's GangSwap version in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
       poolFeePct: Number(FEE_BPS) / 100,
       liquidity: { ...shownLiquidity(s), note: 'prices follow the effective reserves (real + virtual); only the real BNB can be paid out' },
       buyBack: isZero(bPair) ? { error: 'the boost has no record of this token' } : {

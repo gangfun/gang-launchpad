@@ -1,7 +1,7 @@
 import { createPublicClient, encodeFunctionData, formatUnits, hexToString, isAddress, parseAbi, zeroAddress } from 'viem'
 import { revertOf as revertIn, step, units } from './steps.js'
 import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, GANGSWAP_KIND, NOT_ON_MAINNET, PAD3_GEN, padNets, rpcTransport } from './gangpad.js'
-import { feesRevertOf, GANGSWAP_FEES_ABI, gangSwapFeeOf, gangSwapFeeView, gangSwapRouterAddresses, gangSwapSet } from './gangswap.js'
+import { feesRevertOf, GANGSWAP_FEES_ABI, gangSwapFeeOf, gangSwapFeeView, gangSwapKnownContracts, gangSwapRouterAddresses, gangSwapSet } from './gangswap.js'
 import { walletFor } from './fair.js'
 import { promoteTermsOf } from './promote.js'
 import { floorVerified } from './floor.js'
@@ -303,10 +303,14 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   if (!isAddress(to ?? '')) fail('--to must be a 0x address (checksummed or all lowercase)', { got: to ?? null })
   if (to === zeroAddress) fail('--to cannot be the zero address')
   if (same(to, ctx.pad)) fail('--to cannot be the pad itself: the fee would stay where it is (the pad refuses it)')
+  let toUnchecked = {}
   if (gs) {
     // never into a GangSwap contract or the token: nothing could take it out of there
     const set = await gangSwapSet(ctx, token).catch((e) => fail(`could not read GangSwap's contracts: ${e.message}`, { token, retry: 'same command again' }))
-    const no = [token, pair, ctx.wbnb, ctx.router, ...gangSwapRouterAddresses(testnet), ...Object.values(set)].find((a) => same(a, to))
+    // another wallet: every known version's contracts too, as far as they can be read
+    const known = same(to, me) ? { addresses: [], unread: [] } : await gangSwapKnownContracts(ctx, testnet)
+    if (known.unread.length) toUnchecked = { toUnchecked: `--to was not checked against every GangSwap contract: those of ${known.unread.join(', ')} could not be read` }
+    const no = [token, pair, ctx.wbnb, ctx.router, ...gangSwapRouterAddresses(testnet), ...Object.values(set), ...known.addresses].find((a) => same(a, to))
     if (no) fail('--to cannot be the token, its pair, WBNB, a GangSwap contract or a router: the fee could not be taken out of there', { got: to })
   }
   const args = [token, to]
@@ -353,7 +357,7 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
     return step(ctx, { from: me, to: f.fees, data: encodeFunctionData({ abi: GANGSWAP_FEES_ABI, functionName: 'claim', args }) }, {
       step: 'claim-gangswap-fee', part: 'pool', chainId, token, symbol, kind, padGen: view.padGen, contract: f.fees, amount: formatUnits(f.claimable, 18), quote: 'WBNB',
       to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${warning ? `${warning}. ` : ''}${payOut}` : ''}` }),
-      ...(warning && { warning }), ...others,
+      ...(warning && { warning }), ...toUnchecked, ...others,
       note: `collects what the pair still holds, then claims the creator's ${f.sharePct}% of the GangSwap fee on buys, in WBNB; it keeps growing with later buys`,
     }, rawOnly, summarize)
   }
@@ -361,7 +365,7 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const curve = step(ctx, { from: me, to: ctx.pad, data }, {
     step: 'claim-creator-fee', ...(gs && { part: 'curve', kind }), chainId, token, symbol, padGen: view.padGen, amount: view.creatorFee.claimable,
     to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${warning ? `${warning}. ` : ''}${payOut}` : ''}` }),
-    ...(warning && { warning }),
+    ...(warning && { warning }), ...toUnchecked,
     ...(poolDue && !rawOnly && { alsoClaimable: { part: 'pool', amount: pool.claimable, quote: 'WBNB', then: `gang creator-fee --token ${token}${net} --claim --part pool${flag('to') ? ` --to ${to}` : ''}` } }),
     ...(gs && pool.error && part !== 'curve' && { poolError: pool.error }),
     note: 'claims all of it; the fee keeps growing with later curve trades and can be claimed again',
