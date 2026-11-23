@@ -1,0 +1,18 @@
+# GangSwap: a fork of PancakeSwap V2 (docs/SPEC-GANGSWAP-2026-11-22.md). Its own project because the fork keeps the
+# upstream compilers (=0.5.16 pair/factory, =0.6.6 router) while the main project pins 0.8.28.
+# Build: forge build --root gangswap   Test: forge test --root gangswap
+[profile.default]
+src = "src"
+test = "test"
+out = "out"
+libs = ["../lib"]
+auto_detect_solc = true
+optimizer = true
+optimizer_runs = 200
+# The router hard-codes the pair's init code hash, and solc 0.5.16 always appends a bzzr1 metadata hash (paths and
+# remappings included). Build only from this folder with the committed remappings.txt; the deploy script must assert
+# the router's pairFor against factory.INIT_CODE_PAIR_HASH() (review M1). test_routerInitCodeHashMatchesFactory too.
+fs_permissions = [{ access = "read", path = "./" }]
+
+[fuzz]
+runs = 1000
