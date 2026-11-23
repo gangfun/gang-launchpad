@@ -633,12 +633,14 @@ contract Pad3Module is
         string calldata symbol,
         string calldata logoURI,
         string calldata metaURI,
-        uint256 gradBnb
+        uint256 gradBnb,
+        address migrator_
     ) external nonReentrant returns (address token) {
-        address migrator_ = Pad3GangSwapStore.layout().migrator;
-        if (migrator_ == address(0)) revert GangSwapNotOpen();
+        address current = Pad3GangSwapStore.layout().migrator;
+        if (current == address(0)) revert GangSwapNotOpen();
+        if (migrator_ != current) revert GangSwapVersionChanged(current);
         token = CurveLogic.createGangSwap(
-            _config, curves, Pad3VanityStore.creationDeps(_deps()), name, symbol, logoURI, metaURI, gradBnb
+            _config, curves, Pad3VanityStore.creationDeps(_deps()), name, symbol, logoURI, metaURI, gradBnb, migrator_
         );
         _recordCurve(token, logoURI, gradBnb, KIND_GANGSWAP);
         emit GangSwapCreated(token, migrator_);

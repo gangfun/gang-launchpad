@@ -20,7 +20,8 @@ interface IGSFactoryX {
 contract Pad3GangSwapEntriesTest is Pad3GangSwapTest {
     function _windowGS() internal returns (address t) {
         _open();
-        bytes memory data = abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 6 ether));
+        bytes memory data =
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 6 ether, m.gangSwapMigrator()));
         vm.prank(creator);
         t = IGangAgentWindow(address(pad)).createWithAgentWindow(1, data);
         vm.warp(block.timestamp + 2 minutes);

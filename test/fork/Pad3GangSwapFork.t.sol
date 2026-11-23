@@ -130,9 +130,10 @@ contract Pad3GangSwapForkTest is Test {
         assertEq(_record(old), oldRecord, "the live token's record is unchanged");
 
         // closed until the last batch
+        bytes memory closedData = _gsData();
         vm.prank(oldCreator, oldCreator);
         vm.expectRevert(IGangSwapPad.GangSwapNotOpen.selector);
-        m.createWithSalt(bytes32(0), _gsData());
+        m.createWithSalt(bytes32(0), closedData);
 
         _deployGangSwap();
         vm.record();
@@ -420,8 +421,9 @@ contract Pad3GangSwapForkTest is Test {
 
     function _noTax() internal pure returns (IGangLaunchpad.TaxConfig memory) {}
 
-    function _gsData() internal pure returns (bytes memory) {
-        return abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSF", "", "meta", uint256(G)));
+    function _gsData() internal view returns (bytes memory) {
+        return
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSF", "", "meta", uint256(G), m.gangSwapMigrator()));
     }
 
     function _saltCreate(address creator, string memory name, bytes memory data) internal returns (address t) {

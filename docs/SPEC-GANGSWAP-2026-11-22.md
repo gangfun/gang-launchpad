@@ -73,7 +73,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ## 4. 创建与曲线阶段
 
-- 在 `Pad3Module` 里新增创建入口 `createGangSwap(name, symbol, logoURI, metaURI, gradBnb)`：
+- 在 `Pad3Module` 里新增创建入口 `createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)`（`migrator` 是创建人看到的版本，和 pad 当前的不一致就回滚 `GangSwapVersionChanged`）：
   - 计价币固定为 WBNB；税为 0；`gradBnb` 是现有的 6 / 9 / 12 / 15 档之一；
   - 写入 `kindOf[token] = 4`，其余和 `_createCurve` 一样（曲线参数、版本、logo、Agent 窗口）；
   - 加进 `createWithSalt` 的白名单（`Pad3Module.sol` 约 288–308 行，abcd 路径），也加进 `Pad3GradModule._isCurveCreate`（Agent 窗口，Q4）。
@@ -96,7 +96,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ## 5. 毕业
 
-`CurveLogic3._graduate` 现在拿不到类型号。最省的做法是在新的命名空间存储里给每个 GS 币记一个标记，由库直接读，这样不用改 `buy` 的签名（复审 N8）。对类型 4 走另一个迁移合约，其余步骤不变：
+`CurveLogic3._graduate` 现在拿不到类型号。最省的做法是在新的命名空间存储里给每个 GS 币记下它的迁移合约，由库直接读，这样不用改 `buy` 的签名（复审 N8）。对类型 4 走另一个迁移合约，其余步骤不变：
 
 1. `cv.graduated = true`；`tokenAmount = TOTAL_SUPPLY − cv.sold`；`quoteAmount = cv.realQuote`；`cv.realQuote = 0`。
 2. `token.unlock(gangSwapMigrator)`，然后把代币和 WBNB 转给 `gangSwapMigrator`。无税，所以不调用 `setPair`。
@@ -281,6 +281,8 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
 5. 上线 server（索引、keeper）→ web → CLI。
 6. **最后单独一个批次 `setGangSwapMigrator`**：设完 `createGangSwap` 就打开了；以后换新版也用它，老币不受影响。
+   - **换新版的清单**：部署新的一套并对链上跑 `check`、核对源码；新迁移合约 `addLaunchpad(pad3)`；bucket `setOperator(新手续费合约, true)`，**旧的不能撤**；keeper、索引、web、CLI 加上新版的地址（每个版本有自己的 factory、router、回购和手续费合约，要同时跟着所有版本）；最后 `setGangSwapMigrator`。
+   - 每个版本都必须保持 V2 pair 接口、1% 手续费和虚拟储备的含义：`getTokenInfo` 对状态 4 固定报 100。
 7. 每一步都走「审计 → 修复 → 复审 → 测试网」；主网要用户明确同意。
 
 ## 14. 已定事项
@@ -352,11 +354,11 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
   - 部署脚本是 `gangswap/script/DeployGangSwap.s.sol`（§13 第 1 步）。
 - **pad 一侧**在主项目里：
   - 新增 `Pad3GangSwapStore`（ERC-7201，`gang.pad3.gangswap`）和 `IGangSwapPad`；
-  - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator`；
+  - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator` / `gangSwapMigratorOf`；
   - `CurveLogic3.createGangSwap`，以及 `_graduate` 里的分流；
   - GangLaunchpad3、GangPadRegistry 认类型 4，毕业后报状态 4；
   - GangRouter 的 `pool*` 拒绝类型 4；
-  - 新增事件 `GangSwapCreated(token)`，索引方据此区分类型 4。
+  - 新增事件 `GangSwapCreated(token, migrator)`，索引方据此区分类型 4。
 
 ### 17.2 实现评审
 

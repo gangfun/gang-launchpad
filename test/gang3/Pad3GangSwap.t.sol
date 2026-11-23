@@ -112,8 +112,9 @@ contract Pad3GangSwapTest is GangFixture {
     }
 
     function _createGS(address who, uint256 gradBnb) internal returns (address t) {
+        address gs = m.gangSwapMigrator();
         vm.prank(who);
-        t = m.createGangSwap("Swap", "GSW", "logo", "meta", gradBnb);
+        t = m.createGangSwap("Swap", "GSW", "logo", "meta", gradBnb, gs);
     }
 
     function _createCurve(address who) internal returns (address t) {
@@ -156,7 +157,7 @@ contract Pad3GangSwapTest is GangFixture {
         // closed until set
         vm.prank(creator);
         vm.expectRevert(IGangSwapPad.GangSwapNotOpen.selector);
-        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
 
         vm.prank(creator);
         vm.expectRevert();
@@ -205,16 +206,23 @@ contract Pad3GangSwapTest is GangFixture {
         assertEq(m.gangSwapMigrator(), address(v2));
         assertEq(m.gangSwapMigratorOf(t1), address(gsMigrator));
         assertEq(m.gangSwapMigratorOf(t2), address(v2));
+        // the version a creator saw is the one it gets, or nothing
+        vm.prank(creator);
+        vm.expectRevert(abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(v2)));
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
+        // v1's token graduates through v1 while v2 is the current version
+        _graduate(t1);
+        (,, address p1,,) = _info(t1);
+        assertEq(gsFactory.getPair(t1, address(wbnb)), p1);
 
         // closed: no new token, the old ones still trade and graduate through their own version
         vm.prank(owner);
         m.setGangSwapMigrator(address(0));
         vm.prank(creator);
         vm.expectRevert(IGangSwapPad.GangSwapNotOpen.selector);
-        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether);
-        _graduate(t1);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
         _graduate(t2);
-        (uint8 s1,, address p1,,) = _info(t1);
+        (uint8 s1,,,,) = _info(t1);
         (uint8 s2,, address p2,,) = _info(t2);
         assertEq(s1, 4);
         assertEq(s2, 4);
@@ -291,14 +299,14 @@ contract Pad3GangSwapTest is GangFixture {
         _open();
         vm.prank(creator);
         vm.expectRevert(IGangLaunchpad.BadGradTarget.selector);
-        m.createGangSwap("Swap", "GSW", "logo", "meta", 10 ether);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 10 ether, address(gsMigrator));
         address stranger = makeAddr("stranger");
         vm.prank(stranger);
         vm.expectRevert(IGangLaunchpad.NotAgent.selector);
-        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
     }
 
-    /// @dev The same create as a kind-1 untaxed WBNB token: same curve record and events but the kind and the flag.
+    /// @dev The same create as a kind-1 untaxed WBNB token: same curve record and events but the kind and the migrator.
     function test_create_matchesKind1Record() public {
         _open();
         address a = _createGS(creator, 9 ether);
@@ -326,7 +334,8 @@ contract Pad3GangSwapTest is GangFixture {
                 break;
             }
         }
-        bytes memory data = abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether));
+        bytes memory data =
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator)));
         // a value with this non-payable entry reverts the whole call
         vm.prank(creator);
         vm.expectRevert();
@@ -338,12 +347,13 @@ contract Pad3GangSwapTest is GangFixture {
         // not outside createWithSalt once vanity is on
         vm.prank(creator);
         vm.expectRevert(Pad3Module.VanityContextRequired.selector);
-        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether);
+        m.createGangSwap("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator));
     }
 
     function test_createWithAgentWindow() public {
         _open();
-        bytes memory data = abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether));
+        bytes memory data =
+            abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator)));
         vm.prank(creator);
         address t = IGangAgentWindow(address(pad)).createWithAgentWindow(30, data);
         assertEq(p.kindOf(t), KIND_GS);
