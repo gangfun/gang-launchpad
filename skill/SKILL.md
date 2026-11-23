@@ -29,7 +29,8 @@ ID**. Each wallet may hold at most **1% of a token's supply** from the curve; cu
 Before graduation a token **can't be transferred**, only bought and sold on the curve.
 
 **Every new token launches on GangLaunchpad** (BSC mainnet; `--testnet` = BSC testnet, whose tokens have no value), as one of two kinds:
-- **V3**: a bonding curve that graduates into PancakeSwap V2 (LP burned) once its target is raised in its quote: on 1.0
+- **V3**: a bonding curve that graduates into PancakeSwap V2 (LP burned; a GangSwap pair instead if it was created with
+  `--venue gangswap`) once its target is raised in its quote: on 1.0
   always 15 BNB; on 2.0 and 3.0 the creator picks 6 / 9 / 12 / 15 BNB with `--grad` (default 9). Untaxed unless created with a
   buy / sell tax, which applies only in the pool ([v3.md](references/v3.md)).
 - **打新 (fair mint)**: shares at one fixed price; the sale launches its pool when it fills ([fair.md](references/fair.md)).
@@ -90,11 +91,11 @@ text for X. Offer it to the user once; never post it yourself.
 | Everything I hold, how it's doing | `gang portfolio [--from <addr>]` | [trade.md](references/trade.md) |
 | Buy / sell | `gang buy --token <addr> --amount <quote>` · `gang sell --token <addr> (--amount <tokens> \| --all)` → `gang execute` | [trade.md](references/trade.md) |
 | Hand a trade to the user's own wallet (no Agentic Wallet; open agent-window tokens) | `gang buy\|sell … --handoff [--from <their wallet>]` → show the link / QR → `gang handoff status --token … --from …` | [trade.md](references/trade.md#hand-off-to-the-users-wallet) |
-| Trade a graduated / launched token | the same `gang buy` / `gang sell` (PancakeSwap pool) | [pool.md](references/pool.md) |
+| Trade a graduated / launched token | the same `gang buy` / `gang sell` (PancakeSwap pool; a `gangswap` token: its GangSwap pool) | [pool.md](references/pool.md) |
 | Create a token | `gang create --name … --symbol … [--logo <file>] […]` → `gang execute` | [create.md](references/create.md) |
 | Launch in one command (create + dev buy + bond + buy-back, split, auto-liquidity, or several at once) | V3: `gang create … --dev-buy <quote> [--bond …] [--buyback <pct>] [--split self:<pct>,<addr>:<pct>,…] [--lp <pct>]` (two or three of these = one combined recipient, fixed for good; or `--tax-cap <amount> [--tax-cap-share <pct>] [--after-cap buyback:<pct>,lp:<pct>]` = a capped recipient) · 打新: `gang create --fair … --shares <n> --bond …`; re-run until `launch.stage: done` | [create.md](references/create.md#launch-in-one-command---dev-buy---bond---buyback---split---lp) |
 | Tax token: tax, recipient, dividend, claim, buy-back, split, auto-liquidity, combined | `gang create --buy-tax … --sell-tax …` · `gang claim` · `gang release` · `gang buyback …` · `gang split …` · `gang lp …` · `gang combo …` · `gang capped …` | [v3.md](references/v3.md) |
-| Creator fee (GangLaunchpad 2.0 / 3.0) | `gang creator-fee` · `gang creator-fee --token <addr> --claim [--to <addr>]` | [v3.md](references/v3.md#creator-fee-ganglaunchpad-20) |
+| Creator fee (GangLaunchpad 2.0 / 3.0) | `gang creator-fee` · `gang creator-fee --token <addr> --claim [--to <addr>] [--part curve|pool]` | [v3.md](references/v3.md#creator-fee-ganglaunchpad-20) |
 | 打新 fair mint | `gang create --fair …` · `gang mint` / `gang withdraw` before it fills | [fair.md](references/fair.md) |
 | 铸币飞轮 (Mint Flywheel), invites | `gang create --fly [--preset j] …` · `gang mint [--ref <inviter>]` · `gang withdraw` · `gang fly open-early\|launch\|invite` | [fly.md](references/fly.md) |
 | Creator bond (押金承诺) | `gang bond post\|topup\|raise-hold\|extend\|status\|start\|report\|settle\|refund\|burn` | [bond.md](references/bond.md) |
@@ -169,6 +170,11 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   the pad): before the create, tell the user that until `openAt` only Agent ID holders trade, and after it anyone does
   (contracts too) with no 1% cap, and that it can never be changed; relay the preview's `agentWindow.warning`
   ([v3.md](references/v3.md)).
+- **GangSwap** (`gang create … --venue gangswap`, 0.53.0+, GangLaunchpad 3.0 where its pad serves it): only when the user
+  asked for it; before the create relay every line of the preview's `venue` (permanent; trades on GangSwap after
+  graduation, not PancakeSwap; sites such as DexScreener may not list it). A token whose `kind` is `gangswap` trades with
+  `gang buy` / `gang sell` only once graduated: never send the user to a PancakeSwap pool of it or any other router, and
+  approve nothing to one ([v3.md](references/v3.md#gangswap-cli-0530), [pool.md](references/pool.md#gangswap-pools)).
 - **Countdown reward** (`countdown-v1`, 0.43.2+, BSC mainnet and testnet): the creator's own share of the pool tax, paid to the last
   counted buys of each round by a fixed public rule: a reward paid by fixed public rules from the creator's tax share. On a
   graduated token `gang buy` goes through its module; relay `rewards.countdown` (counts or not and why, the round, the

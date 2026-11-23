@@ -42,6 +42,20 @@ gang sell --token <addr> (--amount <tokens> | --all) [--slippage 1] [--to-bnb] [
   `minTokensOut` or `amount` / `receive` / `expectOut` / `minOut`, `slippagePct`, `deadline`. Read the amounts, the tax
   and the minimum to the user before they confirm.
 
+## GangSwap pools
+
+A graduated `gangswap` token (`kind`, `venue: gangswap`) trades on its GangSwap pair through GangSwapRouter only; the rest of
+this page (GangRouter, PancakeSwap, taxes) is not about it. Never build, suggest or approve a PancakeSwap or GangRouter
+pool trade of it: a PancakeSwap pool of such a token was made by someone else.
+
+- The same `gang buy` / `gang sell`: a buy pays BNB (`--use-quote` WBNB), a sell pays WBNB (`--to-bnb` BNB). 1% pool fee
+  (`poolFeePct`), no token tax. Approvals are for this trade's amount, to that router.
+- `minTokensOut` / `minOut` come from the pair's **effective** reserves; only its **real** BNB (`liquidity.realBnb`) can be
+  paid out. Relay `warning` when a trade is large against it, and `priceImpactPct`.
+- **The router's code is checked before any step.** `… is not this network's GangSwapRouter (…)` or `no GangSwapRouter
+  address …`: nothing is built. Tell the user to update the CLI; never name a router for them or trade it elsewhere.
+- No `--note` / `--follow` / `--promoter`, as on any pool trade.
+
 ## How the pool tax is paid (GangLaunchpad tokens)
 
 The tax is collected in the token and sold for the quote in small chunks: right before a taxed sell into the pool (at

@@ -17,7 +17,9 @@ Every token row has the same fields. If the list reached the page cap (2000 toke
 | `website`, `twitter` | The creator's own links, unchecked: say so when you pass them on |
 | `next` | The follow-up preview: `gang buy` (V3, and any graduated token in its pool), `gang mint` (打新), `gang quote` (V2 / Soft curve) |
 
-Graduated tokens are left out by default, because they trade on PancakeSwap and not on the curve.
+Graduated tokens are left out by default, because they trade in a pool (PancakeSwap, or GangSwap for a `gangswap` token) and
+not on the curve. A row may carry `venue: gangswap`; without it a row can still be one, since the list comes from gang.fun:
+`gang info` reads the kind on chain, and `gang buy` / `gang sell` always do.
 
 ## `gang trending`
 
