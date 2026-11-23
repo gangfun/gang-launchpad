@@ -7,7 +7,7 @@
 
 ## 1. 一句话
 
-创建代币时可以选择「毕业到 GangSwap」。毕业时，曲线募到的钱里有一部分任何交易都拿不到，GangSwap 在毕业那一刻把它取出来，在原位换成一笔等额的**虚拟储备**，池子的价格曲线保持不变。取出来的这部分用来回购代币并销毁（§7）。池子可以一直卖到真实 BNB 接近 0，不会像 four、flap 那样留下卖不出的底池。
+创建代币时可以选择「毕业到 GangSwap」。毕业时，曲线募到的钱里有一部分任何交易都拿不到，GangSwap 在毕业那一刻把它取出来，在原位换成一笔等额的**虚拟储备**，池子的价格曲线保持不变。取出来的这部分用来回购代币并销毁（§7）。这样池子里不会留下一笔永远没人用得到的计价币。
 
 ## 2. 为什么这样做
 
@@ -50,7 +50,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ### 2.5 要说清楚的事
 
-- **卖干净不会让卖家多拿钱。** dev 和持币人得到的好处，是那 0.2 G 拿来回购销毁：给价格托底，流通量也变少。
+- **价格曲线不变，卖家不会因此多拿钱。** dev 和持币人得到的好处，是那 0.2 G 拿来回购销毁：给价格托底，流通量也变少。
 - **代价是毕业后不在 Pancake 上。** 现在 3.0 的曲线币在 DexScreener（`pairs: null`）和 GeckoTerminal（404）上都查不到。GangSwap 的币毕业后要等这些网站收录 GangSwap（§11）才能被看到。在那之前，只有 gang.fun、CLI、agent，以及专门接入了 GangSwap 的渠道能交易。毕业后任何人都可以拿自己的币去 Pancake 建一个第三方池子，它可能比 GangSwap 先被行情网站收录（§9）。
 - **creator 的外盘手续费收入大约只有内盘的一半。** 手续费按输入的那种币收：买入收 BNB，分给 creator 和平台；卖出收代币，直接销毁（D5）。
 - 创建时选了就不能改。
@@ -214,7 +214,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 
 评审写了整数模型，跑了 3,000 条随机序列（买、卖、回购、捐 WBNB、`sync`、`skim`，最后全部卖出），I1、I2、I6 都没有违反。用 `getAmountIn`（9900）对 K 检查跑了 20,000 次 exact-out 报价，没有一次失败。
 
-- **I1 真实储备不为负，并且卖到最后能卖空。** 设毕业时的有效 k₀ = G × T_pool。因为 V 向下取整，k₀ ≥ V × TOTAL_SUPPLY。只要 k 不变小（I2），而且池子里的代币数 X 不超过总量，有效计价储备就 `≥ k₀ / TOTAL_SUPPLY ≥ V`，所以真实储备 `= 有效 − V ≥ 0`。当所有代币都回到池子、而且没有任何代币被销毁时，真实储备等于 0 加取整误差。
+- **I1 真实储备不为负；所有代币回到池子时，真实储备接近 0。** 设毕业时的有效 k₀ = G × T_pool。因为 V 向下取整，k₀ ≥ V × TOTAL_SUPPLY。只要 k 不变小（I2），而且池子里的代币数 X 不超过总量，有效计价储备就 `≥ k₀ / TOTAL_SUPPLY ≥ V`，所以真实储备 `= 有效 − V ≥ 0`。当所有代币都回到池子、而且没有任何代币被销毁时，真实储备等于 0 加取整误差。
   - **注意（评审）**：如果有人要求的输出落在「真实储备」和「有效储备」之间，转账本身可能成功（会从 `feeAccrued` 里付出去），最后是 K 检查让整笔回滚。所以池子的安全**依赖 K 检查**，不依赖转账失败。
 - **I2 k 只增不减。** K 检查和 V2 相同（输入扣掉 1% 之后的乘积 ≥ 原来的 k）。手续费向下取整后拿走，余额正好就是 K 检查里用的那个数，所以 k 只在取整时变大。
 - **I3 一个代币只有一个 GangSwap 池子，而且是毕业时建的。** 只有迁移合约能建 pair，只有 pad 能调用迁移合约，而 pad 只在毕业时调用。
@@ -250,7 +250,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 
 - **CLI**：`gang create --venue gangswap`；GS 币毕业后的 buy / sell / quote 改走 GangSwapRouter；`gang info` 显示「GangSwap，不在 Pancake 上」、真实流动性，以及回购余额（`left`）。
 - **server / 索引**：索引 `GangSwapMigrated`、`Swap`、`Sync`、`FeeTaken`、`BoostStep`；价格用有效储备算，流动性用真实储备算；回购 keeper（§7.2）。
-- **web**：币种标签；创建说明和代币页都要提示「毕业到 GangSwap：能卖干净，毕业后约 5 分钟内定时回购销毁；不在 Pancake 上，DexScreener 等网站可能看不到；只认 GangSwap 的池子」。
+- **web**：币种标签；创建说明和代币页都要提示「毕业到 GangSwap：毕业后约 5 分钟内定时回购销毁；不在 Pancake 上，DexScreener 等网站可能看不到；只认 GangSwap 的池子」。
 - **对外对接（上线前要做的商务工作）**：
   - DexScreener、GeckoTerminal：按 V2 分叉提交收录（factory 地址、init code hash、手续费 1%），附上 §6.5 的说明，特别是「流动性看 `realQuoteReserve()`」。
   - KyberSwap、OpenOcean、OKX DEX、Binance Wallet、GMGN：提交接入，附上 §6.5 的说明。

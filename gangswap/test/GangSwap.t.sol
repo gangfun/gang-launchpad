@@ -337,7 +337,7 @@ contract GangSwapTest is Test {
         assertEq(holder.balance - before, expected);
     }
 
-    // ---------------------------------------------------------------- sell-clean
+    // ---------------------------------------------------------------- full sell-back: no stranded real quote
     function test_sellEverything_noBoost_leavesNoRealQuote() public {
         _sell(holder, token.balanceOf(holder));
         // all outside tokens back (less the 1% burned): real quote ~0. Burned fee tokens never return, so a sliver stays.
