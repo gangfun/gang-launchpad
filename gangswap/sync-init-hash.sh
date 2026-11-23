@@ -4,11 +4,11 @@
 # the pair, then rebuild; test_routerInitCodeHashMatchesFactory and the deploy script both check the result.
 set -euo pipefail
 cd "$(dirname "$0")"
-forge build >/dev/null 2>&1
+forge build >/dev/null
 bytecode=$(python3 -I -c "import json;print(json.load(open('out/GangSwapPair.sol/GangSwapPair.json'))['bytecode']['object'])")
 hash=$(cast keccak "$bytecode")
 hash=${hash#0x}
 sed -i.bak -E "s/hex'[0-9a-f]{64}' \/\/ init code hash/hex'${hash}' \/\/ init code hash/" src/GangSwapRouter.sol
 rm -f src/GangSwapRouter.sol.bak
-forge build >/dev/null 2>&1
+forge build >/dev/null
 echo "GangSwapRouter init code hash: 0x${hash}"

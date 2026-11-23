@@ -103,10 +103,10 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 3. `gangSwapMigrator.migrate(token, WBNB, tokenAmount, quoteAmount)`：
    1. 只有名单里的 pad 能调用；参数检查照 `SharedMigrator`。
    2. `V = quoteAmount × tokenAmount / TOTAL_SUPPLY`（向下取整）；`seed = quoteAmount − V`。
-   3. `pair = factory.createPair(token, WBNB, V)`。factory 只接受迁移合约调用，所以这个 pair 别人不可能先建（§6.2）。
+   3. `pair = factory.createPair(token, WBNB, WBNB, V)`。factory 只接受迁移合约调用，所以这个 pair 别人不可能先建（§6.2）。
    4. 把 `tokenAmount` 枚代币和 `seed` 的 WBNB 转进 pair，再 `pair.mint(0xdead)`。`mint` 按 `_balances()` 计算（§6.1 P2）；如果毕业前有人往这个可预测的地址转过 WBNB，也会算进初始储备，起始价因此略高于曲线终点。这是捐款人自己的损失，I1 仍然成立（评审 L7）。
    5. 把 `V` 的 WBNB 转给 `GangSwapBoost`，调用 `boost.register(token, pair, V)`；同时记下 `padOf[pair] = msg.sender`（手续费合约按它找 creator，§6.4）。
-   6. 发 `GangSwapMigrated(token, pair, tokenAmount, seed, V, lp)`。
+   6. 发 `GangSwapMigrated(token, pair, pad, tokenAmount, seed, V, lp)`。
 4. `cv.pair = pair`；发 `Graduated` 事件。
 
 迁移合约的地址放进一个新的命名空间存储（照 `Pad3BaseStore` 的做法），**不能放进 `Config`**：`Config` 由几个 pad 共用，每个模块都会重新声明它。
@@ -117,7 +117,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ## 6. GangSwap 合约（fork Pancake V2）
 
-基准源码：BSC 主网 PancakeFactory `0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73`（内含 `PancakePair`，`pragma solidity =0.5.16`）和 PancakeRouter `0x10ED43C718714eb63d5aA57B78B54704E256024E`（`=0.6.6`），取自 Sourcify 的已验证源码。原文件放在 `gangswap/upstream/`（只把换行符归一成 LF），改动后的文件放在 `gangswap/src/`；`gangswap/check-diff.sh` 列出全部改动。
+基准源码：BSC 主网 PancakeFactory `0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73`（内含 `PancakePair`，`pragma solidity =0.5.16`）和 PancakeRouter `0x10ED43C718714eb63d5aA57B78B54704E256024E`（`=0.6.6`），取自 Sourcify 的已验证源码。原文件放在 `gangswap/upstream/`（只把换行符归一成 LF），改动后的文件放在 `gangswap/src/`；`gangswap/check-diff.sh` 列出全部改动（供人工核对，不会自动拦截）。
 
 **许可证**：Pancake V2 fork 自 Uniswap V2（GPL-3.0）。fork 出来的文件保留 GPL-3.0，和仓库里其他 MIT 文件分开标注。
 
@@ -139,7 +139,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ### 6.2 `GangSwapFactory`（改自 `PancakeFactory`）
 
-- `createPair(token, quote, V)` 只允许 `migrator`（构造时写死）调用。没有 `feeTo` 和 `feeToSetter`。
+- `createPair(tokenA, tokenB, quote, V)` 只允许 `migrator`（构造时写死）调用。没有 `feeTo` 和 `feeToSetter`。
 - `getPair`、`allPairs`、`allPairsLength`、`INIT_CODE_PAIR_HASH` 和 `PairCreated` 事件保持原样。
 - 因为只有迁移合约能建 pair，而迁移合约只在毕业时被 pad 调用，所以一个代币在 GangSwap 上**只可能有一个池子，而且一定是毕业时建的**。
 
@@ -229,14 +229,14 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 | GangBond（主网，不可升级） | `_padView` 对类型 1 / 2 以外一律回滚 `UnknownToken`，`post` 会调它。这正是我们要的：它的买回销毁按 Pancake V2 的 0.25% 手续费算，在 GangSwap 的 1% 下过不了 K 检查 |
 | GangCallBond | `_checkToken` 要求类型 1，缴纳时回滚 |
 | 9 个税收模块 | 绑定时都检查 `kindOf != KIND_CURVE`，回滚 |
-| GangRouter | 曲线阶段的 `buyFor` / `sellFor` 照常可用。毕业后的 `pool*` 走 Pancake router，**会去成交别人在 Pancake 上建的第三方池子**（复审 N3：它不检查是哪个 pair），也就是 H2 的情况。**已实现**：GangRouter 的四个 `pool*` 在代币或中间那一跳是类型 4 时回滚（`GangSwapToken`），上线要走 48 小时时间锁；web 和 CLI 也不对类型 4 调用 `pool*`，改走 GangSwapRouter |
+| GangRouter | 曲线阶段的 `buyFor` / `sellFor` 照常可用。毕业后的 `pool*` 走 Pancake router，**会去成交别人在 Pancake 上建的第三方池子**（复审 N3：它不检查是哪个 pair），也就是 H2 的情况。**已实现**：GangRouter 的四个 `pool*` 在代币或中间那一跳是类型 4 时回滚（`GangSwapToken`），上线要走 48 小时时间锁。**只对 3.0 的 router 有效**：其他 pad 的 router 查的是自己的 pad，不认识类型 4，拦不住；web 和 CLI 也不对类型 4 调用 `pool*`，改走 GangSwapRouter |
 | GangGateway、GangPadRegistry、aggregator 入口 | 见 §4 的表；gateway 和 registry 都是代理，要升级 |
 | 现有的类型 1 币 | 不受影响。实现时要有回归测试 |
 | **第三方池子** | 毕业后代币是普通 ERC-20，任何人都可以拿自己的币去 Pancake 建一个薄池子，LP 不锁。这样的池子可能先被 DexScreener 和 GoPlus 收录（GoPlus 会标「LP 未锁」），把买单引过去；建池的人可以和 GangSwap 套利，或者撤走 LP。合约挡不住这件事，只能通过展示和对外说明处理：我们的 web 和 CLI 只显示 GangSwap 的池子；对行情网站的收录申请里写明 GangSwap 才是官方池子 |
 
 ## 10. 安全检查清单
 
-1. fork 出来的文件和 upstream 的 diff 只包含 §6.1 / §6.2 / §6.3 列出的改动，用测试守住。
+1. fork 出来的文件和 upstream 的 diff 只包含 §6.1 / §6.2 / §6.3 列出的改动。`check-diff.sh` 打印出来由人核对，目前没有自动拦截。
 2. `_balances()` 在每一个读余额的地方都用对了：`mint`、`swap`、`skim`、`sync`，以及 `swap` 里的 `INSUFFICIENT_LIQUIDITY` 检查。
 3. 输出落在真实储备和有效储备之间时，K 检查必须让整笔回滚（§8 I1 的注意）。
 4. 有人往 pair 里直接捐 WBNB 或代币，然后 `sync`：只会改变价格，不能让任何人获利；`skim` 不能转走 `feeAccrued`。
@@ -274,15 +274,13 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 
 ## 13. 部署与上线
 
-1. 用 `gangswap/script/DeployGangSwap.s.sol` 部署：按部署地址的 nonce 预先算出迁移合约、回购、手续费、factory 四个地址，依次部署，再部署 router。脚本在结束前检查：每个地址都和预测的一致，`wired()` 为真，router 指向 factory 和 WBNB，router 里的 init code hash 等于 `factory.INIT_CODE_PAIR_HASH()`。任何一项不对就整体失败。部署之后在 BscScan 和 Sourcify 上验证。
-2. Safe 批次：
-   - 迁移合约 `addLaunchpad(pad3)`（要求 `wired()`）；
-   - 升级 pad3 实现。CurveLogic3 是外部链接库，新增了外部函数，所以要先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule；
-   - `setGangSwapMigrator`（新的命名空间存储，只能设一次；会检查迁移合约列了这个 pad、计价币是 WBNB、`wired()` 为真）；
-   - 升级 GangGateway 和 GangPadRegistry；
-   - bucket `setOperator(GangSwapFees, true)`。
-3. 上线顺序：server（索引、keeper）→ web → CLI → 最后才打开 `createGangSwap`（可以和底仓金库一样，分成「先升级、后打开」两个批次）。
-4. 每一步都走「审计 → 修复 → 复审 → 测试网」；主网要用户明确同意。
+1. `forge clean` 之后，用 `gangswap/script/DeployGangSwap.s.sol` 部署：按 nonce 预先算出迁移合约、回购、手续费、factory 四个地址，依次部署，再部署 router。脚本里的检查只在发交易之前的模拟里执行，看不到广播中途失败或 nonce 错位。**广播之后必须对链上地址再跑一次 `check(migrator, router)`**，它直接读链上合约：owner、计价币、`wired()`、手续费合约的 bucket、router 的指向，以及 router 字节码里的 init code hash。然后在 BscScan 和 Sourcify 上验证。
+2. 升级 GangRouter 3.0（48 小时时间锁）、GangGateway、GangPadRegistry。这一步先于打开创建。
+3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。
+4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
+5. 上线 server（索引、keeper）→ web → CLI。
+6. **最后单独一个批次 `setGangSwapMigrator`**：它只能设一次，设完 `createGangSwap` 就打开了。
+7. 每一步都走「审计 → 修复 → 复审 → 测试网」；主网要用户明确同意。
 
 ## 14. 已定事项
 
@@ -362,7 +360,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 ### 17.2 实现评审
 
 - **核心合约**（一轮）：没有严重、高危问题。
-  - M1：router 写死的 init code hash 会因构建环境不同而变。处理：hash 只在仓库自带的配置下生成，由 `sync-init-hash.sh` 同步，测试和部署脚本都核对。
+  - M1：router 写死的 init code hash 会因构建环境不同而变。处理：hash 只在仓库自带的配置下生成，由 `sync-init-hash.sh` 同步；测试核对，部署脚本的 `check` 核对链上 router 的字节码。
   - M2：四个合约互相指向的地址没人检查。处理：加了 `wired()`，`addLaunchpad` 和 `setGangSwapMigrator` 都要求它为真。
   - 测试缺口（K 检查、多跳、另一种代币排序、很小的 V、毕业前捐款）都已补上。
 - **pad 集成**（一轮）：没有严重、高危、中危问题，现有币的行为不变，存储布局不变。三个低危都已修：
@@ -371,7 +369,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
   - 新增 `GangSwapCreated` 事件。
 
   评审补的入口测试已经并入 `test/gang3/Pad3GangSwapEntries.t.sol`。
-- **自查**后的优化（这些改动，连同上面两轮评审之后的修复和部署脚本，都还没有独立复审）：
+- **自查**后的优化：
   - 带税的类型 1 币毕业时不再读 GangSwap 存储；
   - `setGangSwapMigrator` 的三项检查合成一个辅助函数；
   - router 的中间跳是 WBNB 时不再调 `kindOf`；
@@ -382,7 +380,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 
 ### 17.3 测试
 
-- `gangswap/`：136 / 136 通过（含部署脚本测试；几个套件继承同一组用例，所以其中有重复）。
+- `gangswap/`：140 / 140 通过（含部署脚本测试；几个套件继承同一组用例，所以其中有重复）。
 - 主项目：最后一次全量运行是 2,420 通过、1 失败、197 跳过（fork 和需要 RPC 的测试，没跑）。失败的是下面这个布局测试，完全重编之后只重跑了布局套件，没有再跑一次全量。
   - 一次增量编译后，布局测试 `test_layout_flyModuleMirrorsPad` 报过失败：它比对的类型字符串带编译时的节点编号，而 pad 和 Pad3FlyModule 不是同一次编译出来的。`forge build --force` 之后通过（6 / 6）。所以上线前的检查要从干净构建开始跑。
 

@@ -13,13 +13,13 @@ interface IGangSwapPad {
 
     /// @notice `setGangSwapMigrator` ran already (one-shot).
     error GangSwapMigratorAlreadySet();
-    /// @notice The migrator does not list this pad, or does not take WBNB.
+    /// @notice The migrator does not list this pad, does not take WBNB, or is not `wired()`.
     error WrongGangSwapMigrator();
     /// @notice `createGangSwap` before the GangSwap migrator is set.
     error GangSwapNotOpen();
 
     /// @notice One-shot (owner): the GangSwapMigrator every GangSwap curve token graduates through, for good. It must
-    ///         list this pad (a migrator that does not would make every such graduation revert) and take WBNB.
+    ///         list this pad (a migrator that does not would make every such graduation revert), take WBNB and be `wired()`.
     function setGangSwapMigrator(address migrator) external;
 
     /// @notice The GangSwapMigrator (address(0) = `createGangSwap` closed).

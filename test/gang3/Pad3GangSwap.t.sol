@@ -169,9 +169,13 @@ contract Pad3GangSwapTest is GangFixture {
         vm.expectRevert(IGangSwapPad.WrongGangSwapMigrator.selector);
         m.setGangSwapMigrator(makeAddr("eoa"));
         // answers launchpads(pad) and quote() but its factory / boost / fees are not its own (review 4 #1)
-        StrayMigrator stray = new StrayMigrator(address(wbnb));
+        address stray = address(new StrayMigrator(address(wbnb), false));
         vm.expectRevert(IGangSwapPad.WrongGangSwapMigrator.selector);
-        m.setGangSwapMigrator(address(stray));
+        m.setGangSwapMigrator(stray);
+        // everything right but the quote
+        stray = address(new StrayMigrator(makeAddr("otherQuote"), true));
+        vm.expectRevert(IGangSwapPad.WrongGangSwapMigrator.selector);
+        m.setGangSwapMigrator(stray);
 
         vm.expectEmit(address(pad));
         emit IGangSwapPad.GangSwapMigratorSet(address(gsMigrator));
@@ -522,6 +526,10 @@ contract Pad3GangSwapTest is GangFixture {
         router.poolBuyBNB{value: 0.1 ether}(other, t, 0, block.timestamp);
         vm.expectRevert(GangRouter.GangSwapToken.selector);
         router.poolSellForBNB(other, t, 1 ether, 0, block.timestamp);
+        vm.expectRevert(GangRouter.GangSwapToken.selector);
+        router.poolBuy(other, t, 1 ether, 0, block.timestamp);
+        vm.expectRevert(GangRouter.GangSwapToken.selector);
+        router.poolSell(other, t, 1 ether, 0, block.timestamp);
         vm.stopPrank();
     }
 
@@ -578,17 +586,14 @@ contract Pad3GangSwapTest is GangFixture {
 /// @dev Answers the two getters setGangSwapMigrator used to rely on, but is not wired to a GangSwap factory.
 contract StrayMigrator {
     address public quote;
+    bool public wired;
 
-    constructor(address q) {
-        quote = q;
+    constructor(address q, bool w) {
+        (quote, wired) = (q, w);
     }
 
     function launchpads(address) external pure returns (bool) {
         return true;
-    }
-
-    function wired() external pure returns (bool) {
-        return false;
     }
 }
 

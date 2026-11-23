@@ -12,15 +12,19 @@ interface IRouterView {
     function WETH() external view returns (address);
 }
 
+interface IBucketView {
+    function operators(address account) external view returns (bool);
+    function accruedQuote(address quote) external view returns (uint256);
+}
+
 /// @notice Deploys the GangSwap set (spec docs/SPEC-GANGSWAP-2026-11-22.md §13 step 1): migrator, boost, fees and
 ///         factory point at each other, so their addresses are predicted from the deployer's nonce; then the router.
-///         Refuses to finish unless (review M1 / M2):
-///         - every predicted address is where the contract landed,
-///         - `migrator.wired()` (factory, boost and fees all point back),
-///         - the router's hard-coded pair init code hash equals `factory.INIT_CODE_PAIR_HASH()` (else every router call
-///           would hit an empty address; run `sync-init-hash.sh` after any pair edit).
-///         Pads are NOT listed here: `addLaunchpad` and the pad's `setGangSwapMigrator` go through the Safe (§13 step 2).
-/// @dev    forge script script/DeployGangSwap.s.sol --root gangswap --rpc-url <rpc> --account <keystore> --broadcast
+///         `run` checks the set with `check` in the simulation, BEFORE anything is sent: it cannot see a partial or
+///         reordered broadcast. After the broadcast run `check(migrator, router)` against the chain; only that proves
+///         what was deployed. Pads are NOT listed here: that and `setGangSwapMigrator` go through the Safe (§13).
+/// @dev    From gangswap/, after `forge clean`:
+///           forge script script/DeployGangSwap.s.sol --rpc-url <rpc> --account <keystore> --broadcast
+///           forge script script/DeployGangSwap.s.sol --rpc-url <rpc> --sig "check(address,address)" <migrator> <router>
 ///         Env: GANGSWAP_OWNER (migrator owner: the Safe), WBNB, FEE_BUCKET (SharedPlatformFeeBucket). No keys in env.
 contract DeployGangSwap is Script {
     function run() external returns (address migrator, address boost, address fees, address factory, address router) {
@@ -45,9 +49,7 @@ contract DeployGangSwap is Script {
         vm.stopBroadcast();
 
         require(migrator == mAddr && boost == bAddr && fees == fAddr && factory == facAddr, "address prediction");
-        require(GangSwapMigrator(migrator).wired(), "not wired");
-        require(IRouterView(router).factory() == factory && IRouterView(router).WETH() == wbnb, "router wiring");
-        require(routerInitHash() == IGangSwapFactory(factory).INIT_CODE_PAIR_HASH(), "router init code hash");
+        check(migrator, router);
 
         console.log("GangSwapMigrator", migrator);
         console.log("GangSwapBoost   ", boost);
@@ -56,33 +58,34 @@ contract DeployGangSwap is Script {
         console.log("GangSwapRouter  ", router);
     }
 
-    /// @notice The `hex'...' // init code hash` constant compiled into GangSwapRouter (read from its source).
-    function routerInitHash() public view returns (bytes32 h) {
-        bytes memory src = bytes(vm.readFile(string.concat(vm.projectRoot(), "/src/GangSwapRouter.sol")));
-        bytes memory marker = bytes("' // init code hash");
-        uint256 at = _find(src, marker);
-        require(at >= 64 && src[at - 65] == "'", "init hash constant not found");
-        h = vm.parseBytes32(string.concat("0x", string(_slice(src, at - 64, 64))));
+    /// @notice Read-only checks of a deployed set against the env, from the contracts themselves (no source or artifact).
+    function check(address migrator, address router) public view {
+        GangSwapMigrator m = GangSwapMigrator(migrator);
+        IGangSwapFactory factory = m.factory();
+        address wbnb = vm.envAddress("WBNB");
+        require(m.owner() == vm.envAddress("GANGSWAP_OWNER") && m.quote() == wbnb, "migrator owner / quote");
+        require(m.wired(), "not wired");
+
+        GangSwapFees fees = GangSwapFees(factory.fees());
+        address bucket = address(fees.bucket());
+        require(bucket == vm.envAddress("FEE_BUCKET"), "fee bucket");
+        // a fee bucket answers these; WBNB, a Safe or an EOA does not (its own getters revert here)
+        IBucketView(bucket).operators(address(fees));
+        IBucketView(bucket).accruedQuote(wbnb);
+
+        require(
+            IRouterView(router).factory() == address(factory) && IRouterView(router).WETH() == wbnb, "router wiring"
+        );
+        // pairFor's constant in the router's own code: PUSH32 <hash>, exactly once
+        bytes memory needle = abi.encodePacked(hex"7f", factory.INIT_CODE_PAIR_HASH());
+        require(_count(router.code, needle) == 1, "router init code hash");
     }
 
-    function _find(bytes memory hay, bytes memory needle) private pure returns (uint256) {
+    function _count(bytes memory hay, bytes memory needle) private pure returns (uint256 n) {
         for (uint256 i; i + needle.length <= hay.length; i++) {
-            bool ok = true;
-            for (uint256 j; j < needle.length; j++) {
-                if (hay[i + j] != needle[j]) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok) return i;
-        }
-        revert("marker not found");
-    }
-
-    function _slice(bytes memory b, uint256 from, uint256 len) private pure returns (bytes memory out) {
-        out = new bytes(len);
-        for (uint256 i; i < len; i++) {
-            out[i] = b[from + i];
+            uint256 j;
+            while (j < needle.length && hay[i + j] == needle[j]) j++;
+            if (j == needle.length) n++;
         }
     }
 }

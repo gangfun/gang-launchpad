@@ -177,7 +177,8 @@ contract GangRouter is Initializable, ReentrancyGuard {
         _;
     }
 
-    /// @dev Pool entries: never a GangSwap curve token of the pad (GangSwapToken), as the token or as the middle hop
+    /// @dev Pool entries: never a GangSwap curve token of THIS router's pad (GangSwapToken; a router of another pad does
+    ///      not know it), as the token or as the middle hop
     ///      (`quote`; review 4 #2), so no route ends in a third-party Pancake pair of a GangSwap token.
     modifier notGangSwap(address token, address quote) {
         if (pad.kindOf(token) == KIND_GANGSWAP || (quote != wbnb && pad.kindOf(quote) == KIND_GANGSWAP)) {

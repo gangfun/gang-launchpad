@@ -188,6 +188,21 @@ contract GangSwapTest is Test {
         stray.addLaunchpad(address(pad));
     }
 
+    /// @dev Each `wired()` condition alone makes it false.
+    function test_wiredChecksEveryPointer() public {
+        address[6] memory at =
+            [address(factory), address(boost), address(boost), address(fees), address(fees), address(fees)];
+        string[6] memory sig = ["migrator()", "migrator()", "quote()", "factory()", "migrator()", "quote()"];
+        for (uint256 i; i < 6; i++) {
+            vm.mockCall(at[i], abi.encodeWithSignature(sig[i]), abi.encode(address(1)));
+            assertFalse(migrator.wired(), sig[i]);
+            vm.expectRevert(GangSwapMigrator.NotWired.selector);
+            migrator.addLaunchpad(address(2));
+            vm.clearMockedCalls();
+            assertTrue(migrator.wired());
+        }
+    }
+
     function test_migratorErrorPaths() public {
         vm.startPrank(address(pad));
         vm.expectRevert(GangSwapMigrator.BadQuote.selector);
