@@ -20,6 +20,7 @@ import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangSwapPad} from "../../src/gang/interfaces/IGangSwapPad.sol";
 import {GangGateway} from "../../src/router/GangGateway.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
+import {OpenGangSwap} from "../../script/OpenGangSwap.s.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
 import {DeployGang} from "../../script/DeployGang.s.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
@@ -67,6 +68,11 @@ interface IGsRouter {
     function swapExactTokensForETH(uint256, uint256, address[] calldata, address, uint256)
         external
         returns (uint256[] memory);
+}
+
+/// @dev The set is deployed in the test: no deploy transactions on chain to compare.
+contract OpenGangSwapForkHarness is OpenGangSwap {
+    function _checkCreation(uint256, address, bytes memory) internal override {}
 }
 
 /// @notice GangSwap on a mainnet fork (docs/SPEC-GANGSWAP-2026-11-22.md §12, §13), in the rollout's order, with the
@@ -287,11 +293,19 @@ contract Pad3GangSwapForkTest is Test {
         address fac = deployCode("gangswap/out/GangSwapPair.sol/GangSwapFactory.json", abi.encode(mA, fA));
         gsRouter = IGsRouter(deployCode("gangswap/out/GangSwapRouter.sol/GangSwapRouter.json", abi.encode(fac, M.WBNB)));
         assertTrue(mig.wired());
+        // the opening script on the live pad: both steps checked and rehearsed, nothing sent
+        OpenGangSwap o = new OpenGangSwapForkHarness();
+        vm.expectRevert(abi.encodeWithSelector(OpenGangSwap.Check.selector, "the list step is not on chain yet"));
+        o.runWith(PAD3, address(mig), address(gsRouter), true, false, 0);
+        o.runWith(PAD3, address(mig), address(gsRouter), false, false, 0);
+        assertEq(m.gangSwapMigrator(), address(0));
         vm.prank(M.OWNER_SAFE);
         mig.addLaunchpad(PAD3);
         address bucketOwner = bucket.owner();
         vm.prank(bucketOwner);
         bucket.setOperator(address(fees), true);
+        o.runWith(PAD3, address(mig), address(gsRouter), true, false, 0);
+        assertEq(m.gangSwapMigrator(), address(0));
     }
 
     // ---------------------------------------------------------------- the token
