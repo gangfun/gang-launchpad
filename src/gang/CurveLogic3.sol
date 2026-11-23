@@ -15,6 +15,7 @@ import {PadCommon} from "./PadCommon.sol";
 import {Pad3PromoteStore} from "./Pad3PromoteStore.sol";
 import {Pad3GradStore} from "./Pad3GradStore.sol";
 import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
+import {Pad3GangSwapStore} from "./Pad3GangSwapStore.sol";
 
 /// @title CurveLogic3 — GangLaunchpad 3.0's bonding-curve path: CurveLogic (2.0) with the entries 3.0's own
 ///        aggregator interface needs, the curve's math and rules unchanged
@@ -38,6 +39,9 @@ import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
 ///         8. the agent window (docs/SPEC-AGENT-WINDOW-2026-11-20.md): from a token's `openAt` on, the Agent gate lets
 ///            every wallet trade it (`canTrade`) and the 1% wallet cap is off (`walletCapOn`); a token without a
 ///            window trades exactly as before.
+///         9. GangSwap curve tokens (docs/SPEC-GANGSWAP-2026-11-22.md §4, §5): `createGangSwap` makes a WBNB, untaxed
+///            curve exactly as `create` does and flags it (Pad3GangSwapStore); its graduation migrates through the
+///            GangSwap migrator instead of `Config.migrator`. Every other step, and every other token, is unchanged.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
 library CurveLogic3 {
@@ -109,10 +113,36 @@ library CurveLogic3 {
             token = _createTaxed(d, name, symbol, metaURI, quote, tax);
         }
 
-        _writeCurve(curves[token], token, quote, lockedGrad, tax, refUsed);
+        _writeCurve(curves[token], token, quote, lockedGrad, tax.buyTaxBps, tax.sellTaxBps, tax.dividendBps, refUsed);
 
         emit IGangLaunchpad.Created(token, msg.sender, name, symbol, logoURI, quote, refUsed, lockedGrad);
         emit IGangLaunchpad.TaxConfigured(token, tax.buyTaxBps, tax.sellTaxBps, tax.dividendBps, tax.recipient);
+        emit IGangLaunchpad.GradTargetSet(token, gradBnb);
+    }
+
+    /// @dev A GangSwap curve token (spec §4): `create(name, symbol, logoURI, metaURI, WBNB, no reference pool, no tax,
+    ///      gradBnb)` step for step (WBNB: the graduation amount is `gradBnb` itself, inside the quote bounds for every
+    ///      tier), then the flag its graduation reads (Pad3GangSwapStore). The caller (Pad3Module) checked the GangSwap
+    ///      migrator is set and writes `kindOf` 4.
+    function createGangSwap(
+        IGangLaunchpad.Config storage c,
+        mapping(address => IGangLaunchpad.Curve) storage curves,
+        IGangLaunchpad.Deps memory d,
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        uint256 gradBnb
+    ) external returns (address token) {
+        if (c.migrator == address(0)) revert IGangLaunchpad.MigratorNotSet();
+        if (!isGradTier(gradBnb)) revert IGangLaunchpad.BadGradTarget();
+        _requireAgent(c, msg.sender);
+        token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, address(0), 0, 0, false);
+        _writeCurve(curves[token], token, d.wbnb, gradBnb, 0, 0, 0, address(0));
+        Pad3GangSwapStore.layout().isGangSwap[token] = true;
+
+        emit IGangLaunchpad.Created(token, msg.sender, name, symbol, logoURI, d.wbnb, address(0), gradBnb);
+        emit IGangLaunchpad.TaxConfigured(token, 0, 0, 0, address(0));
         emit IGangLaunchpad.GradTargetSet(token, gradBnb);
     }
 
@@ -179,7 +209,9 @@ library CurveLogic3 {
         address token,
         address quote,
         uint256 lockedGrad,
-        IGangLaunchpad.TaxConfig calldata tax,
+        uint16 buyTaxBps,
+        uint16 sellTaxBps,
+        uint16 dividendBps,
         address refPair
     ) private {
         uint256 vq = lockedGrad / 3;
@@ -188,9 +220,9 @@ library CurveLogic3 {
         cv.quote = quote;
         cv.gradAmt = lockedGrad.toUint128();
         cv.virtualQuote = vq.toUint128();
-        cv.buyTaxBps = tax.buyTaxBps;
-        cv.sellTaxBps = tax.sellTaxBps;
-        cv.dividendBps = tax.dividendBps;
+        cv.buyTaxBps = buyTaxBps;
+        cv.sellTaxBps = sellTaxBps;
+        cv.dividendBps = dividendBps;
         cv.refPair = refPair;
         emit IGangLaunchpad.VirtualQuoteLocked(token, vq);
     }
@@ -552,8 +584,12 @@ library CurveLogic3 {
         address quote = cv.quote;
         cv.realQuote = 0;
 
+        // a GangSwap curve token (kindOf 4, always untaxed: never setPair) into its GangSwap pair (spec §5); any other:
         // taxed: unlock, migrate, then setPair (tax and share syncing start); untaxed: never setPair (Untaxed)
-        cv.pair = PadCommon.migrate(c, token, quote, tokenAmount, quoteAmount, cv.buyTaxBps > 0);
+        // GangSwap curve tokens are always untaxed: a taxed token skips the store read
+        address gs = cv.buyTaxBps == 0 && cv.sellTaxBps == 0 ? Pad3GangSwapStore.migratorOf(token) : address(0);
+        if (gs != address(0)) cv.pair = PadCommon.migrateVia(gs, token, quote, tokenAmount, quoteAmount, false);
+        else cv.pair = PadCommon.migrate(c, token, quote, tokenAmount, quoteAmount, cv.buyTaxBps > 0);
         emit IGangLaunchpad.Graduated(token, cv.pair, quote, tokenAmount, quoteAmount);
         // 冲毕业奖励: book the pool, send the carry (never reverts on the module's account)
         Pad3GradStore.onGraduate(token, quote);

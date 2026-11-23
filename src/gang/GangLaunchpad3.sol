@@ -28,6 +28,7 @@ import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {Pad3VanityStore} from "./Pad3VanityStore.sol";
 import {Pad3AgentWindowStore} from "./Pad3AgentWindowStore.sol";
 import {IGangAgentWindow} from "./interfaces/IGangAgentWindow.sol";
+import {Pad3GangSwapStore} from "./Pad3GangSwapStore.sol";
 
 /// @title GangLaunchpad 3.0 — the upgradeable Gang pad: one permanent address for both launch kinds
 /// @notice GangLaunchpad 2.0 (bonding curve V3 with the creator's 70% of the 1% fee and graduation tiers, and 打新)
@@ -44,6 +45,10 @@ import {IGangAgentWindow} from "./interfaces/IGangAgentWindow.sol";
 ///           (GangToken → handler).
 ///         - 打新 (kindOf 2): 10,000 equal shares at one fixed price both ways; the last share launches the pair; each
 ///           sale snapshots its rules (cap, gate, fees, hold line) at create.
+///         - 铸币飞轮 (kindOf 3): Pad3FlyModule's.
+///         - GangSwap curve (kindOf 4, docs/SPEC-GANGSWAP-2026-11-22.md): kind 1's curve (WBNB, untaxed, no modules;
+///           Pad3Module.createGangSwap) graduating into a GangSwap pair instead of Pancake V2. Every curve path here
+///           takes it as kind 1 (`_isCurve`); after graduation `getTokenInfo` reports STATUS_GANGSWAP.
 /// @dev Upgrades: the ProxyAdmin (created by the proxy) is owned by the platform Safe, no timelock
 ///      (SPEC-GANG-LAUNCHPAD-3 §1, §6). The seven dependencies are implementation immutables (as 2.0, same gas per
 ///      trade): a new implementation is deployed with the same seven (script/UpgradeGangLaunchpad3.s.sol compares
@@ -123,6 +128,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     uint8 internal constant KIND_FAIR = FairLogic.KIND;
     /// @dev 3.0's own 铸币飞轮 tokens: served by Pad3FlyModule (through Pad3Module), V2's rules and selectors
     uint8 internal constant KIND_FLY = 3;
+    /// @dev GangSwap curve tokens (Pad3GangSwapStore): kind 1's curve, graduating into GangSwap
+    uint8 internal constant KIND_GANGSWAP = Pad3GangSwapStore.KIND;
 
     // ---------------------------------------------------------------- aggregator entry constants (GangGateway's)
     /// @notice Highest router fee a seller can be charged on `sellToken` (four.meme's cap): 5%.
@@ -130,6 +137,8 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     uint8 internal constant STATUS_CURVE = 1;
     uint8 internal constant STATUS_POOL = 2;
     uint8 internal constant STATUS_MINTING = 3;
+    /// @dev A graduated GangSwap curve token: trades on its GangSwap pair (1% fee, virtual reserve), NOT Pancake V2
+    uint8 internal constant STATUS_GANGSWAP = 4;
 
     // ---------------------------------------------------------------- immutables
     QuoteRegistry public immutable quoteRegistry;
@@ -682,8 +691,10 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
 
     /// @notice GangGateway's getTokenInfo: status 0 = not a Gang token; 1 = traded here (on its curve, a 铸币飞轮 sale
     ///         before launch, or a gated 打新 sale still minting); 2 = graduated / launched (`pair`); 3 = an ungated
-    ///         打新 sale still minting (not traded here). The quote as address(0) for WBNB (native BNB in and out
-    ///         here). `protocolFeeBps`: 100 on a curve (打新 / 铸币飞轮: the mint fee, charged on buys only);
+    ///         打新 sale still minting (not traded here); 4 = a GangSwap curve token after graduation: `pair` is its
+    ///         GangSwap pair (Pancake V2 interface, 1% fee on the input, a virtual quote reserve; not a Pancake pair:
+    ///         never route it through Pancake), `protocolFeeBps` 100 (that pair's fee). The quote as address(0) for
+    ///         WBNB (native BNB in and out here). `protocolFeeBps`: 100 on a curve (打新 / 铸币飞轮: the mint fee, charged on buys only);
     ///         `graduationLeft`: quote the curve still needs (打新 / 铸币飞轮: the price of the shares left, before the
     ///         mint fee; it grows again when minters withdraw).
     function getTokenInfo(address token)
@@ -693,10 +704,13 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         returns (uint8 status, address quote, address pair, uint256 protocolFeeBps, uint256 graduationLeft)
     {
         uint8 kind = kindOf[token];
-        if (kind == KIND_CURVE) {
+        if (_isCurve(kind)) {
             Curve storage cv = curves[token];
             quote = _external(cv.quote);
-            if (cv.graduated) return (STATUS_POOL, quote, cv.pair, 0, 0);
+            if (cv.graduated) {
+                if (kind == KIND_GANGSWAP) return (STATUS_GANGSWAP, quote, cv.pair, PROTOCOL_FEE_BPS, 0);
+                return (STATUS_POOL, quote, cv.pair, 0, 0);
+            }
             return (STATUS_CURVE, quote, address(0), PROTOCOL_FEE_BPS, uint256(cv.gradAmt) - cv.realQuote);
         }
         if (kind == KIND_FAIR) {
@@ -741,7 +755,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
             // as GangGateway on a pad with the gate off (A-2): no buy quote, no buy (sells still work)
             // a vault-bound token's own vault never buys it (`_checkCurveTrader`): no quote either
             if (
-                kind == KIND_CURVE && _config.agentGateEnabled
+                _isCurve(kind) && _config.agentGateEnabled
                     && (trader == address(0) || trader != Pad3VaultStore.layout().vaultOf[token])
             ) {
                 (estimatedAmount, estimatedCost, estimatedFee,) =
@@ -776,7 +790,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         uint8 kind = kindOf[token];
         if (kind != 0) {
             (, quote,,,) = getTokenInfo(token);
-            if (kind == KIND_CURVE) (funds, fee) = CurveLogic.quoteSell(curves, token, amount);
+            if (_isCurve(kind)) (funds, fee) = CurveLogic.quoteSell(curves, token, amount);
             else if (kind == KIND_FAIR) (funds, fee) = FairLogic.entrySellQuote(_sales, token, amount);
         } else {
             (quote, funds, fee) = LegacyRoute.trySell(padRegistry, token, amount);
@@ -800,7 +814,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     {
         if (to != tx.origin) revert TraderNotOrigin();
         uint8 kind = kindOf[token];
-        if (kind == KIND_CURVE) {
+        if (_isCurve(kind)) {
             Curve storage cv = curves[token];
             if (cv.graduated) revert NotCurveToken();
             // the same rule as `buyFor` (A-2) and as GangGateway on any pad: the entry buys only with the gate on
@@ -927,7 +941,7 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
         returns (IERC20 quote, uint256 funds, uint256 base, bool forwarded)
     {
         uint8 kind = kindOf[token];
-        if (kind == KIND_CURVE) {
+        if (_isCurve(kind)) {
             Curve storage cv = curves[token];
             if (cv.graduated) revert NotCurveToken();
             _checkCurveTrader(token, from);
@@ -1049,6 +1063,11 @@ contract GangLaunchpad3 is IGangLaunchpad, IGangLaunchpad3, IGangPadView, Initia
     ///      booked by Pad3Module; 0 for a token without a vault).
     function _lockedOf(address token, address user) internal view returns (uint256) {
         return Pad3VaultStore.layout().lockedOf[token][user];
+    }
+
+    /// @dev A curve of this pad: kind 1, or a GangSwap curve token (kind 4: the same curve, another graduation).
+    function _isCurve(uint8 kind) internal pure returns (bool) {
+        return kind == KIND_CURVE || kind == KIND_GANGSWAP;
     }
 
     /// @dev Both kinds: the kind is written once, here, and never changes.

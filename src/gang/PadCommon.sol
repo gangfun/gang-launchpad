@@ -135,7 +135,19 @@ library PadCommon {
         uint256 quoteAmount,
         bool withPair
     ) internal returns (address pair) {
-        address migrator = c.migrator;
+        pair = migrateVia(c.migrator, token, quote, tokenAmount, quoteAmount, withPair);
+    }
+
+    /// @dev `migrate` through `migrator` (the pad's `Config.migrator`, or a GangSwap curve token's GangSwapMigrator,
+    ///      Pad3GangSwapStore): the same steps, the same IMigratorV2 call.
+    function migrateVia(
+        address migrator,
+        address token,
+        address quote,
+        uint256 tokenAmount,
+        uint256 quoteAmount,
+        bool withPair
+    ) internal returns (address pair) {
         IGangPadToken(token).unlock(migrator);
         IERC20(token).safeTransfer(migrator, tokenAmount);
         IERC20(quote).safeTransfer(migrator, quoteAmount);

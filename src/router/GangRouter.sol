@@ -26,6 +26,7 @@ interface IGangPadEntry {
             address pair,
             address refPair
         );
+    function kindOf(address token) external view returns (uint8);
     function buyFor(address trader, address token, uint256 quoteIn, uint256 minTokensOut)
         external
         returns (uint256 tokensOut);
@@ -121,6 +122,9 @@ contract GangRouter is Initializable, ReentrancyGuard {
     /// @dev Reserved for appended state in later versions (see the layout above).
     uint256[47] private __gap;
 
+    /// @dev The pad's `kindOf` of a GangSwap curve token (GangLaunchpad 3.0, Pad3GangSwapStore.KIND).
+    uint8 internal constant KIND_GANGSWAP = 4;
+
     error Expired();
     error NotDeployed();
     error UnknownToken();
@@ -132,6 +136,9 @@ contract GangRouter is Initializable, ReentrancyGuard {
     error ZeroAmount();
     /// @notice A pool entry's output (as received) is below the caller's minimum.
     error TooLittleReceived(uint256 received, uint256 minimum);
+    /// @notice A GangSwap curve token (the pad's kind 4): it graduates into GangSwap, never Pancake V2, so a Pancake pair
+    ///         of it is someone else's (docs/SPEC-GANGSWAP-2026-11-22.md §9, review N3). Trade it on GangSwapRouter.
+    error GangSwapToken();
 
     /// @dev The implementation itself can never be initialized: only a proxy's storage holds a pad.
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -167,6 +174,15 @@ contract GangRouter is Initializable, ReentrancyGuard {
 
     modifier before(uint256 deadline) {
         if (block.timestamp > deadline) revert Expired();
+        _;
+    }
+
+    /// @dev Pool entries: never a GangSwap curve token of the pad (GangSwapToken), as the token or as the middle hop
+    ///      (`quote`; review 4 #2), so no route ends in a third-party Pancake pair of a GangSwap token.
+    modifier notGangSwap(address token, address quote) {
+        if (pad.kindOf(token) == KIND_GANGSWAP || (quote != wbnb && pad.kindOf(quote) == KIND_GANGSWAP)) {
+            revert GangSwapToken();
+        }
         _;
     }
 
@@ -251,6 +267,7 @@ contract GangRouter is Initializable, ReentrancyGuard {
         payable
         nonReentrant
         before(deadline)
+        notGangSwap(token, quote)
         returns (uint256 tokensOut)
     {
         if (msg.value == 0) revert ZeroAmount();
@@ -269,6 +286,7 @@ contract GangRouter is Initializable, ReentrancyGuard {
         external
         nonReentrant
         before(deadline)
+        notGangSwap(token, quote)
         returns (uint256 tokensOut)
     {
         uint256 base = IERC20(quote).balanceOf(address(this));
@@ -285,6 +303,7 @@ contract GangRouter is Initializable, ReentrancyGuard {
         external
         nonReentrant
         before(deadline)
+        notGangSwap(token, quote)
         returns (uint256 quoteOut)
     {
         uint256 base = IERC20(token).balanceOf(address(this));
@@ -301,6 +320,7 @@ contract GangRouter is Initializable, ReentrancyGuard {
         external
         nonReentrant
         before(deadline)
+        notGangSwap(token, quote)
         returns (uint256 bnbOut)
     {
         address w = wbnb;
