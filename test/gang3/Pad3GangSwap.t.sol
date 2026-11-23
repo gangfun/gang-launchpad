@@ -553,28 +553,18 @@ contract Pad3GangSwapTest is GangFixture {
         assertGt(out, 0);
         assertEq(out, est);
 
-        (uint8 s,,, uint256 fee, uint256 left) = gw.getTokenInfo(t);
-        assertEq(s, STATUS_CURVE);
-        assertEq(fee, 100);
-        assertEq(left, 9 ether);
+        // GangGateway does not know kind 4: no info, no quote, no trade (it stays off the rollout)
+        (uint8 s,,,,) = gw.getTokenInfo(t);
+        assertEq(s, 0);
         (,, uint256 gwEst,,,,,) = gw.tryBuy(t, w, 0, 0.5 ether);
-        assertEq(gwEst, est);
+        assertEq(gwEst, 0);
         vm.prank(w, w);
-        (uint256 got,) = gw.buyTokenAMAP{value: 0.5 ether}(t, w, 0.5 ether, 0);
-        assertEq(got, est);
-        (,, uint256 sellFunds,) = gw.trySell(t, got / 2);
-        assertGt(sellFunds, 0);
-        vm.startPrank(w, w);
-        IERC20(t).approve(address(gw), got / 2);
-        gw.sellToken(0, t, w, got / 2, 0, 0, address(0));
-        vm.stopPrank();
+        vm.expectRevert();
+        gw.buyTokenAMAP{value: 0.5 ether}(t, w, 0.5 ether, 0);
 
         _graduate(t);
-        (uint8 s2,, address pr2, uint256 fee2, uint256 left2) = gw.getTokenInfo(t);
-        assertEq(s2, STATUS_GANGSWAP);
-        assertEq(pr2, _curvePair(t));
-        assertEq(fee2, 100);
-        assertEq(left2, 0);
+        (s,,,,) = gw.getTokenInfo(t);
+        assertEq(s, 0);
         (out,,,) = padRegistry3.previewBuy(t, w, 0.5 ether);
         assertEq(out, 0);
         vm.prank(w, w);

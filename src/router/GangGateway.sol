@@ -158,9 +158,6 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
     uint8 internal constant KIND_CURVE = 1;
     uint8 internal constant KIND_FAIR = 2;
     uint8 internal constant KIND_FLY = 3;
-    /// @dev GangLaunchpad 3.0's GangSwap curve token: kind 1's curve, graduating into a GangSwap pair
-    ///      (docs/SPEC-GANGSWAP-2026-11-22.md)
-    uint8 internal constant KIND_GANGSWAP = 4;
     /// @dev FlywheelLogic.LAUNCH_GRACE (V1 = V2): a filled sale that has not launched this long after its launch time
     ///      takes sell-backs again.
     uint256 internal constant FLY_LAUNCH_GRACE = 7 days;
@@ -168,7 +165,6 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
     uint8 internal constant STATUS_CURVE = 1;
     uint8 internal constant STATUS_POOL = 2;
     uint8 internal constant STATUS_MINTING = 3;
-    uint8 internal constant STATUS_GANGSWAP = 4;
 
     /// @notice Where a token's pad is looked up. Set once by `initialize`.
     IGangPadRegistry public registry;
@@ -240,15 +236,11 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
         returns (uint8 status, address quote, address pair, uint256 protocolFeeBps, uint256 graduationLeft)
     {
         (address pad, uint8 kind) = registry.lookup(token);
-        if (kind == KIND_CURVE || kind == KIND_GANGSWAP) {
+        if (kind == KIND_CURVE) {
             (, address q, uint128 realQuote,, uint128 gradAmt,, bool graduated,,,, address p,) =
                 IGangGatewayPad(pad).curves(token);
             quote = _external(q);
-            if (graduated) {
-                // a GangSwap pair (1% fee), not Pancake V2: its own status so no one routes it through Pancake
-                if (kind == KIND_GANGSWAP) return (STATUS_GANGSWAP, quote, p, PROTOCOL_FEE_BPS, 0);
-                return (STATUS_POOL, quote, p, 0, 0);
-            }
+            if (graduated) return (STATUS_POOL, quote, p, 0, 0);
             return (STATUS_CURVE, quote, address(0), PROTOCOL_FEE_BPS, gradAmt - realQuote);
         }
         if (kind == KIND_FAIR) {
@@ -416,7 +408,7 @@ contract GangGateway is IGangGateway, Initializable, ReentrancyGuard {
     ///      a look-alike, a 打新 token, graduated).
     function _curve(address token) internal view returns (IGangGatewayPad pad, IERC20 quote) {
         (address p, uint8 kind) = registry.lookup(token);
-        if (kind != KIND_CURVE && kind != KIND_GANGSWAP) revert NotCurveToken();
+        if (kind != KIND_CURVE) revert NotCurveToken();
         pad = IGangGatewayPad(p);
         (, address q,,,,, bool graduated,,,,,) = pad.curves(token);
         if (graduated) revert NotCurveToken();

@@ -60,16 +60,13 @@ interface IGangGateway {
     /// @notice Where `token` trades now, by its pad's state (the pad GangPadRegistry trusts for it).
     /// @return status 0 = not a Gang token; 1 = on its curve, or a 铸币飞轮 sale before launch; 2 = graduated /
     ///         launched (trade on the PancakeSwap V2 `pair`; a 铸币飞轮 token with post-launch minting can also be
-    ///         bought here: tryBuy); 3 = a 打新 sale still minting (not tradable here); 4 = a GangSwap curve token after
-    ///         graduation (trade it on its GangSwap `pair`: Pancake V2's interface, but a 1% fee on the input and a
-    ///         virtual quote reserve; not a Pancake pair, docs/SPEC-GANGSWAP-2026-11-22.md D11). Status 1 says where the token is,
+    ///         bought here: tryBuy); 3 = a 打新 sale still minting (not tradable here). Status 1 says where the token is,
     ///         not that this gateway can trade it now (its pad may not list the gateway, or have its gate off; a filled
     ///         铸币飞轮 sale waits for launch): a non-zero tryBuy / trySell does
     /// @return quote address(0) for WBNB (this gateway takes and pays native BNB), else the quote ERC-20
-    /// @return pair the PancakeSwap V2 pair once status == 2, the GangSwap pair once status == 4, else address(0)
+    /// @return pair the PancakeSwap V2 pair once status == 2, else address(0)
     /// @return protocolFeeBps status 1: the pad's fee on every curve trade (100 = 1%); 铸币飞轮: the mint fee, on top of
-    ///         a mint's price (a sell-back pays the sale's exit fee instead: trySell); status 4: 100 (the GangSwap
-    ///         pair's fee). Else 0
+    ///         a mint's price (a sell-back pays the sale's exit fee instead: trySell). Else 0
     /// @return graduationLeft status 1: quote the curve still needs to graduate, net of the 1% fee (paying it takes
     ///         about graduationLeft * 10000 / 9900); 铸币飞轮: the price of the shares left before the sale fills, before
     ///         the mint fee. Else 0

@@ -86,9 +86,9 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 | `tryBuy` / `trySell` | 返回全 0；`tryBuy` 里还有 `kind == KIND_CURVE && agentGateEnabled` 的条件 | 和类型 1 一样 |
 | `buyTokenAMAP` / `_entrySell`（aggregator 入口） | 回滚 `NotCurveToken` | 曲线阶段和类型 1 一样 |
 | `buyWithPromoter` | 回滚 `NotCurveToken` | 第一期保持回滚 |
-| `GangGateway.getTokenInfo` / `_curve` | 返回全 0 / 回滚 | 升级 gateway（代理） |
+| `GangGateway.getTokenInfo` / `_curve` | 返回全 0 / 回滚 | 不改：pad3 自带聚合器入口，gateway 对类型 4 保持关闭（另行评估） |
 | `GangPadRegistry._curve` | `live = false` | 升级 registry（代理） |
-| `IGangGateway` 和 pad 的 NatSpec | 只写了状态 0–3 | 加上状态 4 的说明 |
+| pad 的 NatSpec | 只写了状态 0–3 | 加上状态 4 的说明 |
 | CLI（`skill/gang-cli/src/gangpad.js` 的 `KINDS`） | 类型 4 映射成 null，已发布的 CLI 会报「RPC error, retry」，容易误导 | 加上类型 4；`creatorfee` 流程要同时覆盖 `GangSwapFees.claim`。`bond.js`、`callbond.js` 已经拒绝类型 4，正确 |
 
 - 其余类型判断和写入逐一过一遍：`GangLaunchpad3`、`Pad3Module`、`Pad3FlyModule` 里共约 33 处（复审 N7 的数字），归到上面两类之一。
@@ -229,8 +229,9 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 | GangBond（主网，不可升级） | `_padView` 对类型 1 / 2 以外一律回滚 `UnknownToken`，`post` 会调它。这正是我们要的：它的买回销毁按 Pancake V2 的 0.25% 手续费算，在 GangSwap 的 1% 下过不了 K 检查 |
 | GangCallBond | `_checkToken` 要求类型 1，缴纳时回滚 |
 | 9 个税收模块 | 绑定时都检查 `kindOf != KIND_CURVE`，回滚 |
-| GangRouter | 曲线阶段的 `buyFor` / `sellFor` 照常可用。毕业后的 `pool*` 走 Pancake router，**会去成交别人在 Pancake 上建的第三方池子**（复审 N3：它不检查是哪个 pair），也就是 H2 的情况。**已实现**：GangRouter 的四个 `pool*` 在代币或中间那一跳是类型 4 时回滚（`GangSwapToken`），上线要走 48 小时时间锁。**只对 3.0 的 router 有效**：其他 pad 的 router 查的是自己的 pad，不认识类型 4，拦不住；web 和 CLI 也不对类型 4 调用 `pool*`，改走 GangSwapRouter |
-| GangGateway、GangPadRegistry、aggregator 入口 | 见 §4 的表；gateway 和 registry 都是代理，要升级 |
+| GangRouter | 曲线阶段的 `buyFor` / `sellFor` 照常可用。毕业后的 `pool*` 走 Pancake router，**会去成交别人在 Pancake 上建的第三方池子**（复审 N3：它不检查是哪个 pair），也就是 H2 的情况。**已实现**：GangRouter 的四个 `pool*` 在代币或中间那一跳是类型 4 时回滚（`GangSwapToken`），升级是可选的（48 小时时间锁），不是上线前提。**只对 3.0 的 router 有效**：其他 pad 的 router 查的是自己的 pad，不认识类型 4，拦不住；web 和 CLI 也不对类型 4 调用 `pool*`，改走 GangSwapRouter |
+| GangPadRegistry、aggregator 入口 | 见 §4 的表；registry 是代理，要升级 |
+| GangGateway（线上） | 不认识类型 4：状态 0、报价 0、交易回滚，不会错误路由。它是旧入口，不在上线步骤里 |
 | 现有的类型 1 币 | 不受影响。实现时要有回归测试 |
 | **第三方池子** | 毕业后代币是普通 ERC-20，任何人都可以拿自己的币去 Pancake 建一个薄池子，LP 不锁。这样的池子可能先被 DexScreener 和 GoPlus 收录（GoPlus 会标「LP 未锁」），把买单引过去；建池的人可以和 GangSwap 套利，或者撤走 LP。合约挡不住这件事，只能通过展示和对外说明处理：我们的 web 和 CLI 只显示 GangSwap 的池子；对行情网站的收录申请里写明 GangSwap 才是官方池子 |
 
@@ -269,13 +270,13 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 - **回购**：间隔从上一步算起，停过之后不追赶；0.5% 上限；零头并进最后一步；有人频繁 `sync` 或刷单时回购照常执行；夹子没有利润（按 1% 手续费、几个有效储备水平各算一次）；没有别人交易时 40 步按时买完。
 - **diff 测试**：§10 第 1 项。
 - **pad 集成**：`createGangSwap`（直接调用和 `createWithSalt` 包装）→ 曲线买卖（包括 aggregator 入口）→ 毕业 → 回购 → 毕业后交易 → 领手续费。所有模块、底仓、金库、保证金对类型 4 都回滚；`getTokenInfo` 报新的状态码。
-- **主网 fork**：在主网 fork 上模拟升级 pad、gateway 和 registry，然后跑一个 GS 币的完整流程；同时确认类型 1 的现有币不受影响。
+- **主网 fork**：在主网 fork 上模拟升级 pad 和 registry（线上的 GangRouter、GangGateway 不动），然后跑一个 GS 币的完整流程；同时确认类型 1 的现有币不受影响。
 - **测试网**：完整流程，包括 keeper 实际执行回购。
 
 ## 13. 部署与上线
 
 1. `forge clean` 之后，用 `gangswap/script/DeployGangSwap.s.sol` 部署：按 nonce 预先算出迁移合约、回购、手续费、factory 四个地址，依次部署，再部署 router。脚本里的检查只在发交易之前的模拟里执行，看不到广播中途失败或 nonce 错位。**广播之后必须对链上地址再跑一次 `check(migrator, router)`**，它直接读链上合约：owner、计价币、`wired()`、手续费合约的 bucket、router 的指向，以及 router 字节码里的 init code hash。然后在 BscScan 和 Sourcify 上验证。
-2. 升级 GangRouter 3.0（48 小时时间锁）、GangGateway、GangPadRegistry。这一步先于打开创建。
+2. 升级 GangPadRegistry（可以和第 3 步同一批）。GangRouter 3.0 的升级（48 小时时间锁）是可选的，不是打开创建的前提；GangGateway 不升级。
 3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。
 4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
 5. 上线 server（索引、keeper）→ web → CLI。
@@ -353,7 +354,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
   - 新增 `Pad3GangSwapStore`（ERC-7201，`gang.pad3.gangswap`）和 `IGangSwapPad`；
   - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator`；
   - `CurveLogic3.createGangSwap`，以及 `_graduate` 里的分流；
-  - GangLaunchpad3、GangGateway、GangPadRegistry 认类型 4，毕业后报状态 4；
+  - GangLaunchpad3、GangPadRegistry 认类型 4，毕业后报状态 4；
   - GangRouter 的 `pool*` 拒绝类型 4；
   - 新增事件 `GangSwapCreated(token)`，索引方据此区分类型 4。
 
@@ -389,7 +390,9 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 - 主项目：从干净构建跑的全量（提交 `8384760`）：2,421 通过、0 失败、197 跳过（fork 和需要 RPC 的测试，没跑）。
   - 一次增量编译后，布局测试 `test_layout_flyModuleMirrorsPad` 报过失败：它比对的类型字符串带编译时的节点编号，而 pad 和 Pad3FlyModule 不是同一次编译出来的。`forge build --force` 之后通过（6 / 6）。所以上线前的检查要从干净构建开始跑。
 
+- 主网 fork（`test/fork/Pad3GangSwapFork.t.sol`，6 BNB 档，区块 135213478）：1 通过、0 失败。线上的 GangRouter 和 GangGateway 不升级；覆盖升级 pad 和 registry、打开、曲线买卖、毕业、40 步回购、GangSwapRouter 买卖、手续费进真实 bucket、全部卖回（剩约 0.052 BNB），以及类型 1 旧币照常交易和毕业。部署脚本用真实 WBNB 和 bucket 模拟通过（没有广播）。`8384760` 之后撤掉了 gateway 的改动，主项目全量没有重跑。
+
 ### 17.4 还没做
 
-CLI（`KINDS` 加类型 4、`--venue gangswap`、毕业后走 GangSwapRouter、`creatorfee` 覆盖 `GangSwapFees.claim`）、pad3 升级脚本（`UpgradeGangLaunchpad3` 加上 GangSwap 的步骤）、fork 测试、测试网、keeper 的回购循环、server 和 web、对外对接。
+CLI（`KINDS` 加类型 4、`--venue gangswap`、毕业后走 GangSwapRouter、`creatorfee` 覆盖 `GangSwapFees.claim`）、pad3 升级脚本（`UpgradeGangLaunchpad3` 加上 GangSwap 的步骤）、测试网、keeper 的回购循环、server 和 web、对外对接。
 
