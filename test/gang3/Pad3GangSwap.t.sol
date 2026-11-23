@@ -4,6 +4,8 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
+import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
+import {DeployGang} from "../../script/DeployGang.s.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../../src/gang/Pad3Module.sol";
 import {Pad3GangSwapStore} from "../../src/gang/Pad3GangSwapStore.sol";
@@ -28,6 +30,32 @@ interface IGSMigrator {
     function launchpads(address pad) external view returns (bool);
     function padOf(address pair) external view returns (address);
     function quote() external view returns (address);
+}
+
+contract GangSwapUpgradeHarness is UpgradeGangLaunchpad3 {
+    function snap(GangLaunchpad3 p, Stack memory s) external view returns (Snapshot memory) {
+        return _snapshot(p, s, true, new bool[](0));
+    }
+
+    function compare(Snapshot memory a, Snapshot memory b) external pure {
+        _compare(a, b);
+    }
+
+    function state(GangLaunchpad3 p) external view returns (bytes memory) {
+        return _gangSwapState(p);
+    }
+
+    function check(GangLaunchpad3 p) external view {
+        _checkGangSwap(p);
+    }
+
+    function window(GangLaunchpad3 p) external view returns (bool served, bytes memory st) {
+        return _agentWindowState(p);
+    }
+
+    function checkWindow(GangLaunchpad3 p, bool servedBefore, bytes memory before) external view {
+        _checkAgentWindow(p, servedBefore, before);
+    }
 }
 
 interface IGSFactory {
@@ -374,6 +402,132 @@ contract Pad3GangSwapTest is GangFixture {
         address t = IGangAgentWindow(address(pad)).createWithAgentWindow(30, data);
         assertEq(p.kindOf(t), KIND_GS);
         assertEq(IGangAgentWindow(address(pad)).agentOpenAt(t), block.timestamp + 30 minutes);
+    }
+
+    // ---------------------------------------------------------------- the upgrade script
+    function _tokenSlot(address t) internal pure returns (bytes32) {
+        return keccak256(abi.encode(t, uint256(Pad3GangSwapStore.SLOT) + 1));
+    }
+
+    function _wiring(string memory what) internal pure returns (bytes memory) {
+        return abi.encodeWithSelector(DeployGang.WiringCheck.selector, what);
+    }
+
+    function test_upgradeScript_compare() public {
+        GangSwapUpgradeHarness h = new GangSwapUpgradeHarness();
+        DeployGang.Stack memory s;
+        _createCurve(creator);
+        UpgradeGangLaunchpad3.Snapshot memory a = h.snap(p, s);
+        UpgradeGangLaunchpad3.Snapshot memory b = h.snap(p, s);
+        h.compare(a, b);
+        b.settings = bytes32(uint256(1));
+        vm.expectRevert(_wiring("upgrade: settings changed"));
+        h.compare(a, b);
+        b = h.snap(p, s);
+        b.gangSwap = bytes32(uint256(1));
+        vm.expectRevert(_wiring("upgrade: GangSwap state changed"));
+        h.compare(a, b);
+        b = h.snap(p, s);
+        b.tokens[0] = bytes32(uint256(1));
+        vm.expectRevert(_wiring("upgrade: a token's record changed"));
+        h.compare(a, b);
+    }
+
+    /// @dev Any change of the pad's migrator or of a GangSwap token is seen, also outside the newest 25 tokens; a change
+    ///      of another token is not GangSwap's.
+    function test_upgradeScript_seesEveryGangSwapToken() public {
+        GangSwapUpgradeHarness h = new GangSwapUpgradeHarness();
+        DeployGang.Stack memory s;
+        address plain = _createCurve(creator);
+        assertEq(h.state(p), abi.encode(address(0), bytes32(0)), "closed, no token");
+        h.check(p);
+        _open();
+        address t = _createGS(creator, 6 ether);
+        (IGSMigrator v2,,,) = _deployGangSwap(true);
+        vm.prank(owner);
+        m.setGangSwapMigrator(address(v2));
+        address t2 = _createGS(creator, 6 ether);
+        for (uint256 i; i < 25; i++) {
+            _createCurve(creator);
+        }
+        UpgradeGangLaunchpad3.Snapshot memory a = h.snap(p, s);
+        bytes32 full = a.gangSwap;
+        assertEq(keccak256(h.state(p)), full);
+        h.compare(a, h.snap(p, s));
+        h.check(p);
+
+        bytes32[3] memory slots = [Pad3GangSwapStore.SLOT, _tokenSlot(t), _tokenSlot(t2)];
+        for (uint256 i; i < 3; i++) {
+            bytes32 was = vm.load(address(pad), slots[i]);
+            vm.store(address(pad), slots[i], bytes32(uint256(0xdead)));
+            assertTrue(keccak256(h.state(p)) != full);
+            vm.store(address(pad), slots[i], 0);
+            assertTrue(keccak256(h.state(p)) != full);
+            // lost by a token: refused on its own too; by the pad: just closed
+            if (i != 0) vm.expectRevert(_wiring("upgrade: a GangSwap token without its migrator"));
+            h.check(p);
+            vm.store(address(pad), slots[i], was);
+        }
+        // a migrator on a token that is not GangSwap's
+        vm.store(address(pad), _tokenSlot(plain), bytes32(uint256(1)));
+        assertTrue(keccak256(h.state(p)) != full);
+        vm.expectRevert(_wiring("upgrade: a GangSwap token without its migrator"));
+        h.check(p);
+        vm.store(address(pad), _tokenSlot(plain), 0);
+
+        // each compared view
+        bytes[] memory calls = new bytes[](5);
+        calls[0] = abi.encodeWithSignature("kindOf(address)", t);
+        calls[1] = abi.encodeWithSignature("curves(address)", t);
+        calls[2] = abi.encodeCall(GangLaunchpad3.getTokenInfo, (t));
+        calls[3] = abi.encodeCall(IGangAgentWindow.agentOpenAt, (t));
+        calls[4] = abi.encodeCall(IGangAgentWindow.walletCapOn, (t));
+        for (uint256 i; i < calls.length; i++) {
+            vm.mockCall(address(pad), calls[i], abi.encode(uint256(7)));
+            assertTrue(keccak256(h.state(p)) != full, "a view");
+            vm.clearMockedCalls();
+        }
+        assertEq(keccak256(h.state(p)), full);
+
+        // closed, and graduated: compares and passes the check
+        vm.prank(owner);
+        m.setGangSwapMigrator(address(0));
+        _graduate(t);
+        h.check(p);
+        h.compare(h.snap(p, s), h.snap(p, s));
+        assertTrue(keccak256(h.state(p)) != full);
+    }
+
+    function test_upgradeScript_notServedRefused() public {
+        GangSwapUpgradeHarness h = new GangSwapUpgradeHarness();
+        _createCurve(creator);
+        bytes memory closed = h.state(p);
+        vm.mockCallRevert(address(pad), abi.encodeCall(IGangSwapPad.gangSwapMigrator, ()), "");
+        assertEq(h.state(p), closed, "reads as closed: the first upgrade compares equal");
+        vm.expectRevert(_wiring("upgrade: GangSwap not served"));
+        h.check(p);
+        vm.clearMockedCalls();
+        vm.mockCallRevert(address(pad), abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (address(pad))), "");
+        vm.expectRevert(_wiring("upgrade: GangSwap not served"));
+        h.check(p);
+        vm.clearMockedCalls();
+        h.check(p);
+    }
+
+    /// @dev A GangSwap token's wallet cap is part of the agent-window checks, as a kind-1 token's.
+    function test_upgradeScript_walletCapOfKind4() public {
+        GangSwapUpgradeHarness h = new GangSwapUpgradeHarness();
+        _open();
+        address t = _createGS(creator, 6 ether);
+        (, bytes memory st) = h.window(p);
+        h.checkWindow(p, false, "");
+        vm.mockCall(address(pad), abi.encodeCall(IGangAgentWindow.walletCapOn, (t)), abi.encode(false));
+        (, bytes memory st2) = h.window(p);
+        assertTrue(keccak256(st2) != keccak256(st));
+        vm.expectRevert(_wiring("upgrade: a token's agent window changed"));
+        h.checkWindow(p, true, st);
+        vm.expectRevert(_wiring("upgrade: an old token's wallet cap changed"));
+        h.checkWindow(p, false, "");
     }
 
     // ---------------------------------------------------------------- curve trades

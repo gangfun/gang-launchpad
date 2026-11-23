@@ -22,6 +22,8 @@ import {Pad3Impl} from "./Pad3Impl.sol";
 import {DeployGangLaunchpad3} from "./DeployGangLaunchpad3.s.sol";
 import {Pad3VanityDeployer} from "../src/gang/Pad3VanityDeployer.sol";
 import {GangBaseVault} from "../src/gang/GangBaseVault.sol";
+import {IGangSwapPad} from "../src/gang/interfaces/IGangSwapPad.sol";
+import {Pad3GangSwapStore} from "../src/gang/Pad3GangSwapStore.sol";
 import {IGangAgentWindow} from "../src/gang/interfaces/IGangAgentWindow.sol";
 import {GangPadRegistry} from "../src/gang/GangPadRegistry.sol";
 import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
@@ -66,6 +68,10 @@ import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
 ///      any abcd activation) in the same batch, after the settings comparison. The pad owner must own that batch too.
 ///      PAD3_BASE_PROBES (optional, token,token,…: from `BaseCreated` logs; the pad can't list them): each one's base
 ///      vault and base amount are compared across the upgrade.
+///      GangSwap (docs/SPEC-GANGSWAP-2026-11-22.md): the upgrade neither opens nor closes createGangSwap
+///      (`setGangSwapMigrator` is a batch of its own, spec §13). Its migrator and EVERY GangSwap token (found by walking
+///      the pad's tokens, not the sample) are compared: own migrator, record, named views, agent window, wallet cap.
+///      The new implementation must serve GangSwap.
 ///      Optional PAD3_GRAD_REWARD=true (docs/SPEC-GRAD-REWARD-2026-11-17.md §13): `setGradReward(true, admin, factory)`
 ///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
 ///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
@@ -117,6 +123,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         /// @dev per sampled token: a gated 打新 sale the CURRENT implementation doesn't trade through the entry (status
         ///      3); its entry views (getTokenInfo, tryBuy) change on purpose with the upgrade to the 打新 entry
         bool[] newFairEntry;
+        /// @dev GangSwap: the pad's migrator and every GangSwap token (`_gangSwapState`)
+        bytes32 gangSwap;
     }
 
     function run() external override returns (Stack memory s) {
@@ -220,13 +228,10 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (R.implementationOf(s.pad) != u.impl) revert WiringCheck("upgrade: implementation slot");
         (uint64 v1, bool initializing) = R.initState(s.pad);
         if (v1 != u.wantVersion || initializing) revert WiringCheck("upgrade: initialized version");
-        Snapshot memory afterUp = _snapshot(p, s, before.vault, before.newFairEntry);
-        if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
-        for (uint256 i; i < before.tokens.length; i++) {
-            if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
-        }
+        _compare(before, _snapshot(p, s, before.vault, before.newFairEntry));
         _checkNewFairEntry(p, before.newFairEntry);
         _checkAgentWindow(p, windowBefore, windowState);
+        _checkGangSwap(p);
         // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
         // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
         _checkPad3(s, c, x);
@@ -249,6 +254,14 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         console.log("simulated: upgrade + read-back ok; tokens compared", before.tokens.length);
     }
 
+    function _compare(Snapshot memory before, Snapshot memory afterUp) internal pure {
+        if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
+        if (afterUp.gangSwap != before.gangSwap) revert WiringCheck("upgrade: GangSwap state changed");
+        for (uint256 i; i < before.tokens.length; i++) {
+            if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
+        }
+    }
+
     /// @dev Whether `p` serves the agent window (SPEC-AGENT-WINDOW-2026-11-20; its views answer from Pad3GradModule)
     ///      and, if so, each of the newest SAMPLE tokens' window and wallet cap. Raw staticcalls: before the first
     ///      upgrade to it the selectors don't exist (the pad reverts), which reads as "not served".
@@ -262,7 +275,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         uint256 k = n < SAMPLE ? n : SAMPLE;
         for (uint256 i; i < k; i++) {
             address t = p.allTokens(n - 1 - i);
-            st = abi.encode(st, t, w.agentOpenAt(t), p.kindOf(t) == 1 && w.walletCapOn(t));
+            st = abi.encode(st, t, w.agentOpenAt(t), _isCurve(p, t) && w.walletCapOn(t));
         }
     }
 
@@ -286,7 +299,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         for (uint256 i; i < k; i++) {
             address t = p.allTokens(n - 1 - i);
             if (w.agentOpenAt(t) != 0 || w.agentWindowOpen(t)) revert WiringCheck("upgrade: an old token opened");
-            if (p.kindOf(t) == 1 && w.walletCapOn(t) != p.walletCapEnabled()) {
+            if (_isCurve(p, t) && w.walletCapOn(t) != p.walletCapEnabled()) {
                 revert WiringCheck("upgrade: an old token's wallet cap changed");
             }
         }
@@ -655,6 +668,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         returns (Snapshot memory snap)
     {
         snap.vault = vault;
+        snap.gangSwap = keccak256(_gangSwapState(p));
         address[] memory callers = _callers();
         bool[] memory listed = new bool[](callers.length);
         for (uint256 i; i < callers.length; i++) {
@@ -749,6 +763,74 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (_baseState(p) == address(0) || _baseProbeList().length != 0) return;
         console.log("WARNING: the opening base is open and PAD3_BASE_PROBES is empty: tokens with a base outside the");
         console.log("newest 25 are not compared. Set it from the BaseCreated logs before the Safe signs.");
+    }
+
+    /// @dev A token that trades on a curve with a wallet cap: kind 1, or a GangSwap curve token (kind 4).
+    function _isCurve(GangLaunchpad3 p, address t) internal view returns (bool) {
+        uint8 kind = p.kindOf(t);
+        return kind == 1 || kind == Pad3GangSwapStore.KIND;
+    }
+
+    /// @dev The GangSwap migrator new tokens get and whether `p` serves GangSwap at all (not before the first upgrade
+    ///      with it: reads as closed).
+    function _gangSwapOpen(GangLaunchpad3 p) internal view returns (bool served, address migrator) {
+        (bool ok, bytes memory ret) = address(p).staticcall(abi.encodeCall(IGangSwapPad.gangSwapMigrator, ()));
+        if (ok && ret.length == 32) return (true, abi.decode(ret, (address)));
+    }
+
+    /// @dev The migrator `t` graduates through (0: not a GangSwap token).
+    function _gangSwapOf(GangLaunchpad3 p, address t) internal view returns (address) {
+        (bool ok, bytes memory ret) = address(p).staticcall(abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (t)));
+        return ok && ret.length == 32 ? abi.decode(ret, (address)) : address(0);
+    }
+
+    /// @dev The pad's GangSwap migrator and, for EVERY token that is kind 4 or has a GangSwap migrator (a walk of
+    ///      `allTokens`; a token that stops being either drops out, and that shows), its migrator, record, named views,
+    ///      agent window and wallet cap. No token before the first upgrade with GangSwap, so that upgrade compares equal.
+    ///      Storage and views: which migrator graduation itself calls is `_checkImplCode`'s.
+    function _gangSwapState(GangLaunchpad3 p) internal view returns (bytes memory st) {
+        (bool served, address migrator) = _gangSwapOpen(p);
+        if (!served) return abi.encode(migrator, bytes32(0));
+        uint256 n = p.tokenCount();
+        bytes32 h;
+        for (uint256 i; i < n; i++) {
+            // each token's data is dropped once hashed (`h` is on the stack): memory stays flat over the walk
+            uint256 free;
+            assembly ("memory-safe") {
+                free := mload(0x40)
+            }
+            h = _gangSwapTokenHash(p, p.allTokens(i), h);
+            assembly ("memory-safe") {
+                mstore(0x40, free)
+            }
+        }
+        st = abi.encode(migrator, h);
+    }
+
+    /// @dev `h` with `t` folded in; `h` as it is when `t` is no GangSwap token.
+    function _gangSwapTokenHash(GangLaunchpad3 p, address t, bytes32 h) internal view returns (bytes32) {
+        address own = _gangSwapOf(p, t);
+        if (own == address(0) && p.kindOf(t) != Pad3GangSwapStore.KIND) return h;
+        (, bytes memory openAt) = address(p).staticcall(abi.encodeCall(IGangAgentWindow.agentOpenAt, (t)));
+        (, bytes memory capOn) = address(p).staticcall(abi.encodeCall(IGangAgentWindow.walletCapOn, (t)));
+        return keccak256(abi.encode(h, t, own, _raw(p, t), _derived(p, t, false), openAt, capOn));
+    }
+
+    /// @dev After the upgrade the pad serves GangSwap (an implementation without it would read as closed, so an already
+    ///      closed pad would compare as unchanged), and a token is kind 4 exactly when it has a GangSwap migrator (a kind-4
+    ///      token without one would graduate into a Pancake V2 pair).
+    function _checkGangSwap(GangLaunchpad3 p) internal view {
+        (bool served,) = _gangSwapOpen(p);
+        (bool ok, bytes memory ret) =
+            address(p).staticcall(abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (address(p))));
+        if (!served || !ok || ret.length != 32) revert WiringCheck("upgrade: GangSwap not served");
+        uint256 n = p.tokenCount();
+        for (uint256 i; i < n; i++) {
+            address t = p.allTokens(i);
+            if ((p.kindOf(t) == Pad3GangSwapStore.KIND) != (_gangSwapOf(p, t) != address(0))) {
+                revert WiringCheck("upgrade: a GangSwap token without its migrator");
+            }
+        }
     }
 
     /// @dev A gated 打新 sale still minting that `p` reports as not traded through its entry (status 3).

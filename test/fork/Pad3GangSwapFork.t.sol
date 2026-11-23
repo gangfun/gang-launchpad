@@ -21,6 +21,7 @@ import {IGangSwapPad} from "../../src/gang/interfaces/IGangSwapPad.sol";
 import {GangGateway} from "../../src/router/GangGateway.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
+import {DeployGang} from "../../script/DeployGang.s.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {WindowBatchHarness} from "./Pad3AgentWindowFork.t.sol";
 
@@ -152,6 +153,7 @@ contract Pad3GangSwapForkTest is Test {
         assertEq(kind, 4);
         _curveTrades(t);
         address pair = _graduate(t);
+        _nextUpgrade(t);
         _afterGraduation(t, pair, creator);
 
         // the kind-1 token from before the upgrade, and a new one, still go to Pancake V2
@@ -225,6 +227,45 @@ contract Pad3GangSwapForkTest is Test {
         vm.prank(M.OWNER_SAFE);
         ProxyAdmin(regAdmin).upgradeAndCall(ITransparentUpgradeableProxy(M.PAD_REGISTRY), regImpl, "");
         assertEq(m.gangSwapMigrator(), address(0), "closed after the upgrade");
+    }
+
+    /// @dev A later upgrade, with GangSwap open and a graduated and a curve GangSwap token: the script passes it, and
+    ///      refuses one after which the pad's migrator or a token's reads differently, or GangSwap is not served (the
+    ///      upgraded answers are mocked: the implementation itself is checked byte for byte before).
+    function _nextUpgrade(address t) internal {
+        uint256 snap = vm.snapshotState();
+        _saltCreate(_actor(), "Swap", _gsData());
+        (, uint256 key) = makeAddrAndKey("gangswap fork deployer");
+        _env(key);
+        vm.setEnv("PAD3_REGISTRY_UPGRADE", "false");
+        vm.pauseGasMetering();
+        new WindowBatchHarness().run();
+        assertEq(_refused(0, t), "upgrade: GangSwap state changed");
+        assertEq(_refused(1, t), "upgrade: GangSwap state changed");
+        assertEq(_refused(2, t), "upgrade: GangSwap not served");
+        vm.resumeGasMetering();
+        vm.revertToState(snap);
+    }
+
+    function _refused(uint256 what, address t) internal returns (string memory why) {
+        bytes[] memory rets = new bytes[](2);
+        (rets[0], rets[1]) = (abi.encode(address(mig)), abi.encode(address(0xdead)));
+        if (what == 0) vm.mockCalls(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigrator, ()), rets);
+        else if (what == 1) vm.mockCalls(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (t)), rets);
+        else vm.mockCall(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (PAD3)), "");
+        try new WindowBatchHarness().run() {}
+        catch (bytes memory ret) {
+            assertEq(bytes4(ret), DeployGang.WiringCheck.selector);
+            assembly ("memory-safe") {
+                mstore(add(ret, 4), sub(mload(ret), 4))
+                ret := add(ret, 4)
+            }
+            why = abi.decode(ret, (string));
+        }
+        vm.clearMockedCalls();
+        for (uint256 i; i < _n; i++) {
+            _mockAgent(makeAddr(string.concat("gangswap fork actor ", vm.toString(i))));
+        }
     }
 
     function _deployGangSwap() internal {
@@ -439,8 +480,12 @@ contract Pad3GangSwapForkTest is Test {
     function _actor() internal returns (address a) {
         a = makeAddr(string.concat("gangswap fork actor ", vm.toString(_n++)));
         vm.deal(a, 20 ether);
-        vm.mockCall(address(p.agentIdRegistry()), abi.encodeCall(IERC721.balanceOf, (a)), abi.encode(uint256(1)));
+        _mockAgent(a);
         _holders.push(a);
+    }
+
+    function _mockAgent(address a) internal {
+        vm.mockCall(address(p.agentIdRegistry()), abi.encodeCall(IERC721.balanceOf, (a)), abi.encode(uint256(1)));
     }
 
     function _buy(address who, address t, uint256 amt) internal returns (uint256 out) {

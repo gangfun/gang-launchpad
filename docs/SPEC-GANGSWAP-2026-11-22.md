@@ -277,7 +277,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 
 1. `forge clean` 之后，用 `gangswap/script/DeployGangSwap.s.sol` 部署：按 nonce 预先算出迁移合约、回购、手续费、factory 四个地址，依次部署，再部署 router。脚本里的检查只在发交易之前的模拟里执行，看不到广播中途失败或 nonce 错位。**广播之后必须对链上地址再跑一次 `check(migrator, router)`**，它直接读链上合约：owner、计价币、`wired()`、手续费合约的 bucket、router 的指向，以及 router 字节码里的 init code hash。然后在 BscScan 和 Sourcify 上验证。
 2. 升级 GangPadRegistry（可以和第 3 步同一批）。GangRouter 3.0 的升级（48 小时时间锁）是可选的，不是打开创建的前提；GangGateway 不升级。
-3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。
+3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。升级脚本 `UpgradeGangLaunchpad3` 会比对 `gangSwapMigrator()` 和**每一个** GangSwap 币（遍历 pad 的全部币，不只最新 25 个）的迁移合约、记录、查询结果、Agent 窗口和钱包上限，并要求新实现能回答 GangSwap 的查询。所以不能用这个脚本退回没有 GangSwap 的实现。
 4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
 5. 上线 server（索引、keeper）→ web → CLI。
 6. **最后单独一个批次 `setGangSwapMigrator`**：设完 `createGangSwap` 就打开了；以后换新版也用它，老币不受影响。
