@@ -21,7 +21,9 @@ import {IGangSwapPad} from "../../src/gang/interfaces/IGangSwapPad.sol";
 import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {GangGateway} from "../../src/router/GangGateway.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
+import {OpenGangSwap} from "../../script/OpenGangSwap.s.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
+import {DeployGang} from "../../script/DeployGang.s.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {WindowBatchHarness} from "./Pad3AgentWindowFork.t.sol";
 
@@ -67,6 +69,11 @@ interface IGsRouter {
     function swapExactTokensForETH(uint256, uint256, address[] calldata, address, uint256)
         external
         returns (uint256[] memory);
+}
+
+/// @dev The set is deployed in the test: no deploy transactions on chain to compare.
+contract OpenGangSwapForkHarness is OpenGangSwap {
+    function _checkCreation(uint256, address, bytes memory) internal override {}
 }
 
 /// @notice GangSwap on a mainnet fork (docs/SPEC-GANGSWAP-2026-11-22.md §12, §13), in the rollout's order, with the
@@ -153,6 +160,7 @@ contract Pad3GangSwapForkTest is Test {
         assertEq(kind, 4);
         _curveTrades(t);
         address pair = _graduate(t);
+        _nextUpgrade(t);
         _afterGraduation(t, pair, creator);
 
         // the kind-1 token from before the upgrade, and a new one, still go to Pancake V2
@@ -281,6 +289,45 @@ contract Pad3GangSwapForkTest is Test {
         assertEq(m.gangSwapMigrator(), address(0), "closed after the upgrade");
     }
 
+    /// @dev A later upgrade, with GangSwap open and a graduated and a curve GangSwap token: the script passes it, and
+    ///      refuses one after which the pad's migrator or a token's reads differently, or GangSwap is not served (the
+    ///      upgraded answers are mocked: the implementation itself is checked byte for byte before).
+    function _nextUpgrade(address t) internal {
+        uint256 snap = vm.snapshotState();
+        _saltCreate(_actor(), "Swap", _gsData());
+        (, uint256 key) = makeAddrAndKey("gangswap fork deployer");
+        _env(key);
+        vm.setEnv("PAD3_REGISTRY_UPGRADE", "false");
+        vm.pauseGasMetering();
+        new WindowBatchHarness().run();
+        assertEq(_refused(0, t), "upgrade: GangSwap state changed");
+        assertEq(_refused(1, t), "upgrade: GangSwap state changed");
+        assertEq(_refused(2, t), "upgrade: GangSwap not served");
+        vm.resumeGasMetering();
+        vm.revertToState(snap);
+    }
+
+    function _refused(uint256 what, address t) internal returns (string memory why) {
+        bytes[] memory rets = new bytes[](2);
+        (rets[0], rets[1]) = (abi.encode(address(mig)), abi.encode(address(0xdead)));
+        if (what == 0) vm.mockCalls(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigrator, ()), rets);
+        else if (what == 1) vm.mockCalls(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (t)), rets);
+        else vm.mockCall(PAD3, abi.encodeCall(IGangSwapPad.gangSwapMigratorOf, (PAD3)), "");
+        try new WindowBatchHarness().run() {}
+        catch (bytes memory ret) {
+            assertEq(bytes4(ret), DeployGang.WiringCheck.selector);
+            assembly ("memory-safe") {
+                mstore(add(ret, 4), sub(mload(ret), 4))
+                ret := add(ret, 4)
+            }
+            why = abi.decode(ret, (string));
+        }
+        vm.clearMockedCalls();
+        for (uint256 i; i < _n; i++) {
+            _mockAgent(makeAddr(string.concat("gangswap fork actor ", vm.toString(i))));
+        }
+    }
+
     function _deployGangSwap() internal {
         SharedPlatformFeeBucket bucket = SharedPlatformFeeBucket(address(p.platformBucket()));
         uint256 n = vm.getNonce(address(this));
@@ -300,11 +347,19 @@ contract Pad3GangSwapForkTest is Test {
         address fac = deployCode("gangswap/out/GangSwapPair.sol/GangSwapFactory.json", abi.encode(mA, fA));
         gsRouter = IGsRouter(deployCode("gangswap/out/GangSwapRouter.sol/GangSwapRouter.json", abi.encode(fac, M.WBNB)));
         assertTrue(mig.wired());
+        // the opening script on the live pad: both steps checked and rehearsed, nothing sent
+        OpenGangSwap o = new OpenGangSwapForkHarness();
+        vm.expectRevert(abi.encodeWithSelector(OpenGangSwap.Check.selector, "the list step is not on chain yet"));
+        o.runWith(PAD3, address(mig), address(gsRouter), true, false, 0);
+        o.runWith(PAD3, address(mig), address(gsRouter), false, false, 0);
+        assertEq(m.gangSwapMigrator(), address(0));
         vm.prank(M.OWNER_SAFE);
         mig.addLaunchpad(PAD3);
         address bucketOwner = bucket.owner();
         vm.prank(bucketOwner);
         bucket.setOperator(address(fees), true);
+        o.runWith(PAD3, address(mig), address(gsRouter), true, false, 0);
+        assertEq(m.gangSwapMigrator(), address(0));
     }
 
     // ---------------------------------------------------------------- the token
@@ -493,8 +548,12 @@ contract Pad3GangSwapForkTest is Test {
     function _actor() internal returns (address a) {
         a = makeAddr(string.concat("gangswap fork actor ", vm.toString(_n++)));
         vm.deal(a, 20 ether);
-        vm.mockCall(address(p.agentIdRegistry()), abi.encodeCall(IERC721.balanceOf, (a)), abi.encode(uint256(1)));
+        _mockAgent(a);
         _holders.push(a);
+    }
+
+    function _mockAgent(address a) internal {
+        vm.mockCall(address(p.agentIdRegistry()), abi.encodeCall(IERC721.balanceOf, (a)), abi.encode(uint256(1)));
     }
 
     function _buy(address who, address t, uint256 amt) internal returns (uint256 out) {
