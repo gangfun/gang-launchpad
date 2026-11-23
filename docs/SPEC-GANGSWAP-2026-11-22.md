@@ -354,7 +354,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
   - 新增 `Pad3GangSwapStore`（ERC-7201，`gang.pad3.gangswap`）和 `IGangSwapPad`；
   - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator`；
   - `CurveLogic3.createGangSwap`，以及 `_graduate` 里的分流；
-  - GangLaunchpad3、GangPadRegistry 认类型 4，毕业后报状态 4；
+  - GangLaunchpad3、GangPadRegistry、GangGateway 认类型 4，毕业后报状态 4；
   - GangRouter 的 `pool*` 拒绝类型 4；
   - 新增事件 `GangSwapCreated(token)`，索引方据此区分类型 4。
 
@@ -390,7 +390,7 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 - 主项目：从干净构建跑的全量（提交 `8384760`）：2,421 通过、0 失败、197 跳过（fork 和需要 RPC 的测试，没跑）。
   - 一次增量编译后，布局测试 `test_layout_flyModuleMirrorsPad` 报过失败：它比对的类型字符串带编译时的节点编号，而 pad 和 Pad3FlyModule 不是同一次编译出来的。`forge build --force` 之后通过（6 / 6）。所以上线前的检查要从干净构建开始跑。
 
-- 主网 fork（`test/fork/Pad3GangSwapFork.t.sol`，6 BNB 档，区块 135213478）：1 通过、0 失败。线上的 GangRouter 和 GangGateway 不升级；覆盖升级 pad 和 registry、打开、曲线买卖、毕业、40 步回购、GangSwapRouter 买卖、手续费进真实 bucket、全部卖回（剩约 0.052 BNB），以及类型 1 旧币照常交易和毕业。部署脚本用真实 WBNB 和 bucket 模拟通过（没有广播）。`8384760` 之后撤掉了 gateway 的改动，主项目全量没有重跑。
+- 主网 fork（`test/fork/Pad3GangSwapFork.t.sol`，6 BNB 档，区块 135213478）：1 通过、0 失败。线上的 GangRouter 和 GangGateway 不升级；覆盖升级 pad 和 registry、打开、曲线买卖、毕业、40 步回购、GangSwapRouter 买卖、手续费进真实 bucket、全部卖回（剩约 0.052 BNB），以及类型 1 旧币照常交易和毕业。部署脚本用真实 WBNB 和 bucket 模拟通过（没有广播）。gateway 的可选升级（走时间锁）也在这个测试的末尾。
 
 ### 17.4 还没做
 

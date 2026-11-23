@@ -57,8 +57,9 @@ interface IGangGateway {
     ///         this gateway can trade it now (its pad may not list the gateway, or have its gate off): a non-zero
     ///         tryBuy / trySell does
     /// @return quote address(0) for WBNB (this gateway takes and pays native BNB), else the quote ERC-20
-    /// @return pair the PancakeSwap V2 pair once status == 2, else address(0)
-    /// @return protocolFeeBps the pad's fee on every curve trade (100 = 1%) while on the curve (status 1), else 0
+    /// @return pair status 2: the PancakeSwap V2 pair; status 4: the GangSwap pair (not a Pancake pair); else address(0)
+    /// @return protocolFeeBps status 1: the pad's fee on every curve trade (100 = 1%); status 4: the GangSwap pair's fee
+    ///         on the input (100); else 0
     /// @return graduationLeft quote the curve still needs to graduate (status 1), else 0: net of the 1% fee (paying it
     ///         takes about graduationLeft * 10000 / 9900)
     function getTokenInfo(address token)

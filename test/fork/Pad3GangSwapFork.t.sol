@@ -18,6 +18,7 @@ import {GangBond} from "../../src/gang/GangBond.sol";
 import {IGangBond} from "../../src/gang/interfaces/IGangBond.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangSwapPad} from "../../src/gang/interfaces/IGangSwapPad.sol";
+import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {GangGateway} from "../../src/router/GangGateway.sol";
 import {GangRouter} from "../../src/router/GangRouter.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
@@ -191,9 +192,10 @@ contract Pad3GangSwapForkTest is Test {
     }
 
     /// @dev The optional GangGateway upgrade through its timelock: every registered pad's newest token reads the same
-    ///      before and after (but a graduated GangSwap token: status 4), kind 4 trades, 铸币飞轮 stays closed.
+    ///      before and after (but a graduated GangSwap token: status 4), kind 4 trades.
     function _gatewayUpgrade(address t, address creator) internal {
         bytes memory before = _gatewayViews(t);
+        assertGt(before.length, 0);
         _timelocked(M.GANG_GATEWAY, address(new GangGateway()));
         assertEq(_gatewayViews(t), before, "every other token reads the same");
         assertEq(gw.owner(), M.OWNER_SAFE);
@@ -315,7 +317,7 @@ contract Pad3GangSwapForkTest is Test {
         p.sell(t, got / 2, 0);
         vm.stopPrank();
 
-        // the pad's aggregator entry, the gateway (as quoted), the 3.0 router
+        // the pad's aggregator entry, the live gateway (closed), the 3.0 router
         a = _actor();
         (,, uint256 est,,,,,) = p.tryBuy(t, a, 0, 0.02 ether);
         vm.prank(a, a);
@@ -328,7 +330,7 @@ contract Pad3GangSwapForkTest is Test {
         (,, est,,,,,) = gw.tryBuy(t, a, 0, 0.02 ether);
         assertEq(est, 0);
         vm.prank(a, a);
-        vm.expectRevert();
+        vm.expectRevert(IGangGateway.NotCurveToken.selector);
         gw.buyTokenAMAP{value: 0.02 ether}(t, a, 0.02 ether, 0);
         a = _actor();
         vm.prank(a, a);

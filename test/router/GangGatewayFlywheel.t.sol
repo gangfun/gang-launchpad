@@ -7,9 +7,7 @@ import {GangGateway} from "../../src/router/GangGateway.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
-import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangPadRegistryDeployLib as RG} from "../../script/GangPadRegistryDeployLib.sol";
-import {GangGatewayDeployLib as G} from "../../script/GangGatewayDeployLib.sol";
 import {FlywheelFixture} from "../flywheel/FlywheelFixture.sol";
 
 /// @dev An aggregator's four.meme adapter: names its caller as the trader, 1% router fee on sells.
@@ -46,7 +44,7 @@ contract FlyPhisher {
     receive() external payable {}
 }
 
-/// @notice GangGateway V2 on a 铸币飞轮 pad (GangFlywheelPad, kind 3) found through GangPadRegistry: before launch a
+/// @notice An aggregator entry on a 铸币飞轮 pad (GangFlywheelPad, kind 3) found through GangPadRegistry: before launch a
 ///         buy mints whole shares (mintFor) and a sell sells them back (withdrawFor); after launch a buy mints at the
 ///         post-launch price (mintPostFor) and sells are the pair's. Quotes match the trades wei for wei; the pad
 ///         spends exactly what it pulls and the rest goes back to the buyer; nothing stays in the gateway.

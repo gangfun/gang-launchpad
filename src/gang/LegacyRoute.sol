@@ -32,7 +32,7 @@ interface IGangFairPad {
 }
 
 /// @title LegacyRoute — GangLaunchpad 3.0's aggregator entry for tokens of the pads before it
-/// @notice External library, delegatecalled by GangLaunchpad3: GangGateway's logic (V2, AUDIT-BRIEF §25–§26) for the
+/// @notice External library, delegatecalled by GangLaunchpad3: GangGateway's logic (its V2, AUDIT-BRIEF §25–§26; GangGateway itself no longer has the 铸币飞轮 part) for the
 ///         tokens of the other pads GangPadRegistry trusts (1.0, 2.0, the vault pad: kind 1 curves; 1.0 / 2.0: kind 2
 ///         打新 sales, gated ones, before launch; 铸币飞轮 V1 / V2: kind 3), with 3.0 as the listed router on those pads (each pad's `setRouter(3.0, true)`). Running on the
 ///         pad, it spends only what the caller paid in for the trade: the pad wraps / pulls the funds first and

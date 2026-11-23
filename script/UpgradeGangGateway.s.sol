@@ -145,13 +145,14 @@ contract UpgradeGangGateway is Script {
         }
     }
 
-    /// @dev Lists the gateway on every registered pad (but mainnet's 铸币飞轮 V1 / V2) that does not list it yet: sent when the deploy wallet owns the
+    /// @dev Lists the gateway on every registered pad that has curves (not a 铸币飞轮 pad) that does not list it yet: sent when the deploy wallet owns the
     ///      pad, else printed for the pad's owner.
     function _listOnPads(GangGateway gw, address deployer, uint256 pk) internal {
         address[] memory pads = gw.registry().pads();
         for (uint256 i; i < pads.length; i++) {
-            // this gateway does not trade 铸币飞轮: it needs no router rights on those pads
-            if (pads[i] == M.FLYWHEEL_PAD_V1 || pads[i] == M.FLYWHEEL_PAD_V2) continue;
+            // this gateway trades curves only: a 铸币飞轮 pad (no `curves`) must not list it
+            (bool curves, bytes memory ret) = pads[i].staticcall(abi.encodeWithSignature("curves(address)", address(0)));
+            if (!curves || ret.length != 384) continue;
             IGangPad p = IGangPad(pads[i]);
             if (p.routers(address(gw))) {
                 console.log("listed on pad", pads[i]);
