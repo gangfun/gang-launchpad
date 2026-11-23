@@ -68,12 +68,12 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 | D7 | 不支持闪电兑换（`swap` 的 `data` 必须为空） | 少一条攻击路径，主流路由也用不到 |
 | D8 | **回购照 pump 按时间表执行**（§7，用户 2026-11-22 选定）：毕业后按 40 步、每步约 `V / 40` 买入，不看价格。每步不超过当前有效计价储备的 0.5%；两步至少隔 8 秒，从上一步算起。正常约 5.2 分钟买完 | 用户选择和 pump 一样的托底节奏，接受被埋伏的代价（评审 M3）。0.5% 上限让夹子无利可图（评审 M1，复审已验证），从上一步算间隔挡住追赶（M2），都不改变时间表的性质 |
 | D9 | 毕业后池子对所有人开放：不检查 Agent 门槛，没有 1% 钱包上限 | 毕业后的池子应该是公开市场，和毕业到 Pancake 时一样 |
-| D10 | GangSwap 的合约全部不可升级、没有 owner，也没有暂停开关。只有迁移合约有一个只能增加的 pad 名单 | 和 `SharedMigrator` 一样：池子和流动性永远不受我们控制 |
+| D10 | GangSwap 的合约全部不可升级、没有暂停开关（照 Pancake：要改就部署新版，新老并存）。只有迁移合约有一个只能增加的 pad 名单。pad 的 `setGangSwapMigrator` 可以换成新版，只影响之后创建的币；每个币在创建时记下自己的迁移合约（`gangSwapMigratorOf`），之后不变；设成 0 就关闭创建（用户 2026-11-23 定） | 和 `SharedMigrator` 一样：池子和流动性永远不受我们控制 |
 | D11 | 毕业后 `getTokenInfo` 报一个**新的状态码 `STATUS_GANGSWAP = 4`**，不报 `STATUS_POOL` | 第一轮评审 H2：现有接入方看到 `STATUS_POOL` 会去 Pancake V2 交易，要么回滚，要么进了攻击者建的第三方池子。新状态码只对显式判断「状态 == 2」的接入方有用；写成「状态 == 1 就走曲线，否则走 Pancake」的代码仍然会走错（复审 N5）。状态 4 时 `pair` 返回 GangSwap 的 pair，`protocolFeeBps` 返回 100：按 0.25% 去算的人会在 K 检查上回滚，至少不会成交错 |
 
 ## 4. 创建与曲线阶段
 
-- 在 `Pad3Module` 里新增创建入口 `createGangSwap(name, symbol, logoURI, metaURI, gradBnb)`：
+- 在 `Pad3Module` 里新增创建入口 `createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)`（`migrator` 是创建人看到的版本，和 pad 当前的不一致就回滚 `GangSwapVersionChanged`）：
   - 计价币固定为 WBNB；税为 0；`gradBnb` 是现有的 6 / 9 / 12 / 15 档之一；
   - 写入 `kindOf[token] = 4`，其余和 `_createCurve` 一样（曲线参数、版本、logo、Agent 窗口）；
   - 加进 `createWithSalt` 的白名单（`Pad3Module.sol` 约 288–308 行，abcd 路径），也加进 `Pad3GradModule._isCurveCreate`（Agent 窗口，Q4）。
@@ -96,7 +96,7 @@ PumpSwap 的池子账户里有 `virtual_quote_reserves`，买卖按「真实储�
 
 ## 5. 毕业
 
-`CurveLogic3._graduate` 现在拿不到类型号。最省的做法是在新的命名空间存储里给每个 GS 币记一个标记，由库直接读，这样不用改 `buy` 的签名（复审 N8）。对类型 4 走另一个迁移合约，其余步骤不变：
+`CurveLogic3._graduate` 现在拿不到类型号。最省的做法是在新的命名空间存储里给每个 GS 币记下它的迁移合约，由库直接读，这样不用改 `buy` 的签名（复审 N8）。对类型 4 走另一个迁移合约，其余步骤不变：
 
 1. `cv.graduated = true`；`tokenAmount = TOTAL_SUPPLY − cv.sold`；`quoteAmount = cv.realQuote`；`cv.realQuote = 0`。
 2. `token.unlock(gangSwapMigrator)`，然后把代币和 WBNB 转给 `gangSwapMigrator`。无税，所以不调用 `setPair`。
@@ -280,7 +280,9 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
 3. 升级 pad3 实现：CurveLogic3 是外部链接库，先部署新库，再部署链接它的 GangLaunchpad3、Pad3Module、Pad3GradModule。**这个批次不含 `setGangSwapMigrator`**，`createGangSwap` 此时仍关闭。
 4. Safe：迁移合约 `addLaunchpad(pad3)`；`fees.bucket()` 读出来的那个 bucket 执行 `setOperator(GangSwapFees, true)`。
 5. 上线 server（索引、keeper）→ web → CLI。
-6. **最后单独一个批次 `setGangSwapMigrator`**：它只能设一次，设完 `createGangSwap` 就打开了。
+6. **最后单独一个批次 `setGangSwapMigrator`**：设完 `createGangSwap` 就打开了；以后换新版也用它，老币不受影响。
+   - **换新版的清单**：部署新的一套并对链上跑 `check`、核对源码；新迁移合约 `addLaunchpad(pad3)`；bucket `setOperator(新手续费合约, true)`，**旧的不能撤**；keeper、索引、web、CLI 加上新版的地址（每个版本有自己的 factory、router、回购和手续费合约，要同时跟着所有版本）；最后 `setGangSwapMigrator`。
+   - 每个版本都必须保持 V2 pair 接口、1% 手续费和虚拟储备的含义：`getTokenInfo` 对状态 4 固定报 100。
 7. 每一步都走「审计 → 修复 → 复审 → 测试网」；主网要用户明确同意。
 
 ## 14. 已定事项
@@ -352,11 +354,11 @@ prod keeper 加一个常驻循环：盯 `GangSwapMigrated` 事件，对每个还
   - 部署脚本是 `gangswap/script/DeployGangSwap.s.sol`（§13 第 1 步）。
 - **pad 一侧**在主项目里：
   - 新增 `Pad3GangSwapStore`（ERC-7201，`gang.pad3.gangswap`）和 `IGangSwapPad`；
-  - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator`；
+  - `Pad3Module.createGangSwap` / `setGangSwapMigrator` / `gangSwapMigrator` / `gangSwapMigratorOf`；
   - `CurveLogic3.createGangSwap`，以及 `_graduate` 里的分流；
   - GangLaunchpad3、GangPadRegistry、GangGateway 认类型 4，毕业后报状态 4；
   - GangRouter 的 `pool*` 拒绝类型 4；
-  - 新增事件 `GangSwapCreated(token)`，索引方据此区分类型 4。
+  - 新增事件 `GangSwapCreated(token, migrator)`，索引方据此区分类型 4。
 
 ### 17.2 实现评审
 

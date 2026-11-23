@@ -9,30 +9,37 @@ pragma solidity 0.8.28;
 interface IGangSwapPad {
     event GangSwapMigratorSet(address indexed migrator);
     /// @notice A GangSwap curve token (kindOf 4) was created; its other create events are kind 1's (review 4 #4).
-    event GangSwapCreated(address indexed token);
+    ///         `migrator`: the GangSwap version it graduates through, for good.
+    event GangSwapCreated(address indexed token, address indexed migrator);
 
-    /// @notice `setGangSwapMigrator` ran already (one-shot).
-    error GangSwapMigratorAlreadySet();
     /// @notice The migrator does not list this pad, does not take WBNB, or is not `wired()`.
     error WrongGangSwapMigrator();
-    /// @notice `createGangSwap` before the GangSwap migrator is set.
+    /// @notice `createGangSwap` while no GangSwap migrator is set.
     error GangSwapNotOpen();
+    /// @notice `createGangSwap` named another version than the pad's current one (the owner switched in between).
+    error GangSwapVersionChanged(address current);
 
-    /// @notice One-shot (owner): the GangSwapMigrator every GangSwap curve token graduates through, for good. It must
-    ///         list this pad (a migrator that does not would make every such graduation revert), take WBNB and be `wired()`.
+    /// @notice Owner: the GangSwapMigrator (a GangSwap version) tokens created from now on graduate through. Every
+    ///         version must keep the V2 pair interface, the 1% fee and the virtual reserve (getTokenInfo reports them). Tokens
+    ///         created before keep theirs. 0 closes `createGangSwap`. It must list this pad (a migrator that does not would make every such graduation revert), take WBNB and be `wired()`.
     function setGangSwapMigrator(address migrator) external;
 
-    /// @notice The GangSwapMigrator (address(0) = `createGangSwap` closed).
+    /// @notice The GangSwapMigrator new tokens get (address(0) = `createGangSwap` closed).
     function gangSwapMigrator() external view returns (address);
 
+    /// @notice The GangSwapMigrator `token` graduates through, fixed at its create (address(0) = not a GangSwap token).
+    function gangSwapMigratorOf(address token) external view returns (address);
+
     /// @notice `createWithGradTarget(name, symbol, logoURI, metaURI, WBNB, 0, no tax, gradBnb)`, except the token is
-    ///         `kindOf` 4 and graduates into GangSwap. `gradBnb` one of GRAD_BNB_TIERS. Also through `createWithSalt`
+    ///         `kindOf` 4 and graduates into GangSwap. `gradBnb` one of GRAD_BNB_TIERS;
+    ///         `migrator` the version the creator expects, the pad's `gangSwapMigrator()` (GangSwapVersionChanged else). Also through `createWithSalt`
     ///         and `createWithAgentWindow`.
     function createGangSwap(
         string calldata name,
         string calldata symbol,
         string calldata logoURI,
         string calldata metaURI,
-        uint256 gradBnb
+        uint256 gradBnb,
+        address migrator
     ) external returns (address token);
 }

@@ -40,7 +40,7 @@ import {Pad3GangSwapStore} from "./Pad3GangSwapStore.sol";
 ///            every wallet trade it (`canTrade`) and the 1% wallet cap is off (`walletCapOn`); a token without a
 ///            window trades exactly as before.
 ///         9. GangSwap curve tokens (docs/SPEC-GANGSWAP-2026-11-22.md §4, §5): `createGangSwap` makes a WBNB, untaxed
-///            curve exactly as `create` does and flags it (Pad3GangSwapStore); its graduation migrates through the
+///            curve exactly as `create` does and records its migrator (Pad3GangSwapStore); its graduation migrates through the
 ///            GangSwap migrator instead of `Config.migrator`. Every other step, and every other token, is unchanged.
 /// @dev The reentrancy guard and every caller check (listed router, trader == tx.origin, the A-2 gate, a pull from
 ///      the trader only for the wallet that sent the tx) stay in the pad's wrappers. Not callable directly.
@@ -122,7 +122,7 @@ library CurveLogic3 {
 
     /// @dev A GangSwap curve token (spec §4): `create(name, symbol, logoURI, metaURI, WBNB, no reference pool, no tax,
     ///      gradBnb)` step for step (WBNB: the graduation amount is `gradBnb` itself, inside the quote bounds for every
-    ///      tier), then the flag its graduation reads (Pad3GangSwapStore). The caller (Pad3Module) checked the GangSwap
+    ///      tier), then the migrator its graduation reads (Pad3GangSwapStore; `gsMigrator`, not 0). The caller (Pad3Module) checked the GangSwap
     ///      migrator is set and writes `kindOf` 4.
     function createGangSwap(
         IGangLaunchpad.Config storage c,
@@ -132,14 +132,15 @@ library CurveLogic3 {
         string calldata symbol,
         string calldata logoURI,
         string calldata metaURI,
-        uint256 gradBnb
+        uint256 gradBnb,
+        address gsMigrator
     ) external returns (address token) {
         if (c.migrator == address(0)) revert IGangLaunchpad.MigratorNotSet();
         if (!isGradTier(gradBnb)) revert IGangLaunchpad.BadGradTarget();
         _requireAgent(c, msg.sender);
         token = IGangTokenDeployer(d.tokenDeployer).deploy(name, symbol, metaURI, address(0), 0, 0, false);
         _writeCurve(curves[token], token, d.wbnb, gradBnb, 0, 0, 0, address(0));
-        Pad3GangSwapStore.layout().isGangSwap[token] = true;
+        Pad3GangSwapStore.layout().tokenMigrator[token] = gsMigrator;
 
         emit IGangLaunchpad.Created(token, msg.sender, name, symbol, logoURI, d.wbnb, address(0), gradBnb);
         emit IGangLaunchpad.TaxConfigured(token, 0, 0, 0, address(0));

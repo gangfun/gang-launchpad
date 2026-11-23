@@ -64,7 +64,7 @@ contract GangSwapMigrator is Ownable2Step {
 
     /// @notice Factory, boost and fees point back at this migrator and at each other (their addresses are predicted
     ///         at deploy, review M2). `addLaunchpad` requires it, so no pad can be wired to a broken set: a pad's
-    ///         GangSwap migrator is set once and a wrong set would make every GangSwap graduation revert.
+    ///         tokens keep their migrator for good, and a wrong set would make their graduations revert.
     function wired() public view returns (bool) {
         address fees = factory.fees();
         return factory.migrator() == address(this) && IGangSwapBoostWiring(address(boost)).migrator() == address(this)
