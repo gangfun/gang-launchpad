@@ -44,10 +44,14 @@ export const GANGSWAP_ROUTER_SITES = 'WWFFWFFWFFWWWWFWWFFWWWWFFFWFWWFFFFF'
 const BUILD = { codeHash: GANGSWAP_ROUTER_CODE_HASH, sites: GANGSWAP_ROUTER_SITES }
 /**
  * The GangSwap versions this CLI trades on, per network: { router, codeHash, sites } each (the router's address and its
- * build). Not on mainnet yet (2026-11-24). A new version is another entry; the older ones stay for their tokens.
+ * build). On mainnet the contracts are deployed but creation is closed (2026-11-24). A new version is another entry; the older ones stay for their tokens.
  */
 export const GANGSWAP_VERSIONS = {
-  mainnet: [],
+  mainnet: [
+    // GangSwapMigrator 0x22e13298D48100420F2F386D70D18E498161B20b: factory 0xd0C15eB66e08596F9F534d0051F691b86Bc584F5,
+    // boost 0x42A3dBcBb2339f52AE332cc480766003C43f1416, fees 0xa9D9a67D724d487f843d37db92162F6728c58900
+    { router: '0xd685e3432472d0da34903888f96b0D0221bC779c', ...BUILD },
+  ],
   testnet: [
     // GangSwapMigrator 0x1B942d7eA4B9C2229e6776150d989ab1E6aDD36A: factory 0x90aF66E555E8C90fFFd0780cF4ca56A8313CEA36,
     // boost 0xBcE63184f8BA913eD1dE6002fEdDe587305F00Ea, fees 0xDbA8FEBB6aC9Da3eEb9A8805E4053C42763B7236
