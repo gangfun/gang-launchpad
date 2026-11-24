@@ -5,10 +5,11 @@ Amounts in output are human-readable (18 decimals applied; quote amounts in the 
 
 **One command per action, whatever the pad.** `gang buy | sell | info | status | claim | mint | withdraw | release
 --token <addr>` read the token's kind from GangLaunchpad (V3 curve or 打新 sale; otherwise the mainnet V2 / Soft / U / S
-pads) and run that kind's code; the result's `kind` is `v3`, `fair`, `v2` or `soft`. A command that doesn't fit the
+pads) and run that kind's code; the result's `kind` is `v3`, `gangswap`, `fair`, `fly`, `v2` or `soft`. A command that doesn't fit the
 kind (`gang mint` on a V3 token, `gang claim` on a V2 token) fails with a `hint` naming what to run instead. Kind
 details: V3 [v3.md](v3.md), 打新 [fair.md](fair.md); a graduated / launched token trades in its PancakeSwap pool
-([pool.md](pool.md)). `--testnet` works for GangLaunchpad tokens only. `gang v3 <sub>` / `gang fair <sub>` are older
+([pool.md](pool.md)). `gangswap` is a V3 curve that graduates into GangSwap: the same curve commands, then its GangSwap
+pool only, never PancakeSwap ([pool.md](pool.md#gangswap-pools)). `--testnet` works for GangLaunchpad tokens only. `gang v3 <sub>` / `gang fair <sub>` are older
 aliases of the same code.
 
 ## Reading tokens
@@ -81,7 +82,7 @@ out at the page's 3% default slippage), and prints a prefilled link
 `https://gang.fun/token/<t>?trade=buy|sell&amount=<n>|all[&from=<wallet>]` with its QR code. The user opens it in the
 Binance app (Web3 Wallet → Discover / DApp browser → paste the link) or any wallet app's browser, connects, and confirms
 each step there. Nothing is signed or sent by the CLI. The amount of a buy is in the token's quote, of a sell in the
-token. Agent-only tokens need the Agentic Wallet; graduated tokens trade on any DEX (`HANDOFF_NOT_SERVED`).
+token. Agent-only tokens need the Agentic Wallet; graduated tokens trade on any DEX, a `gangswap` one on GangSwap only (`HANDOFF_NOT_SERVED`).
 
 Afterwards `gang handoff status --token <t> --from <wallet> [--timeout 10m]` reads the chain for that wallet's trade
 since the handoff (`traded: true` only when it is there); report the trade only then.
