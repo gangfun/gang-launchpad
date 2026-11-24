@@ -1,6 +1,6 @@
 # 主网上线步骤 · GangSwap
 
-- 状态：**准备阶段，主网没有做任何操作**。每一步都要用户明确同意，Safe 批次由 Safe 签名。
+- 状态：**GangSwap 已部署，pad 和 registry 已升级（2026-11-24）**，见 `docs/MAINNET-GANGSWAP-2026-11-24.md`；登记和打开没有做。每一步都要用户明确同意，Safe 批次由 Safe 签名。
 - 规格：`docs/SPEC-GANGSWAP-2026-11-22.md`（§13）；测试网记录：`docs/TESTNET-GANGSWAP-2026-11-23.md`；对接文档：`docs/GANGSWAP-INTEGRATION.md`
 - 代码：main `a509292`。和主网正在运行的 pad 3.0 代码（`1fbab73`）相比，`src/` 的改动只有 GangSwap（11 个文件）。
 
