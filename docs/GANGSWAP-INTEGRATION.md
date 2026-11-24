@@ -1,8 +1,18 @@
 # GangSwap integration guide
 
-For wallets, aggregators, DEX screeners and bots. GangSwap is an optional graduation venue for GangLaunchpad 3.0 tokens on BNB Chain: a Uniswap/Pancake V2 style pair with a 1% fee and a **virtual quote reserve**. Status: BNB testnet only; not on mainnet yet (addresses will be added here).
+For wallets, aggregators, DEX screeners and bots. GangSwap is an optional graduation venue for GangLaunchpad 3.0 tokens on BNB Chain: a Uniswap/Pancake V2 style pair with a 1% fee and a **virtual quote reserve**. Status: live on BNB testnet; the contracts are deployed on mainnet but **not opened** (no token uses them yet).
 
 Contracts are not upgradeable. A new version is a new set of contracts; a token stays on the version it was created with, and older versions keep working. Support a list of factories, not one.
+
+## Addresses (BNB mainnet, chain 56; deployed, not opened)
+
+| Contract | Address |
+|---|---|
+| GangSwapFactory | `0xd0C15eB66e08596F9F534d0051F691b86Bc584F5` |
+| GangSwapRouter | `0xd685e3432472d0da34903888f96b0D0221bC779c` |
+| GangSwapMigrator | `0x22e13298D48100420F2F386D70D18E498161B20b` |
+| GangLaunchpad 3.0 | `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29` |
+| WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
 
 ## Addresses (BNB testnet, chain 97)
 
