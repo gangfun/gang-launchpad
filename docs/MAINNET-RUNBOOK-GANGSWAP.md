@@ -8,10 +8,25 @@
 
 | 项 | 说明 |
 |---|---|
-| 外部审计 | 目前只有内部独立复审（没有遗留中危以上）。合约不可升级：出问题只能对新币关闭或换版本，已建的币仍按原版本毕业 |
-| 第三方平台 | 至少 DexScreener 有行情、Binance Wallet 能交易，再打开创建 |
+| 外部审计 | **已定：不做外部审计，改为小范围分阶段开放**（见下）。目前只有内部独立复审（没有遗留中危以上）。合约不可升级：出问题只能对新币关闭或换版本，已建的币仍按原版本毕业 |
+| 第三方平台 | 至少 DexScreener 有行情、Binance Wallet 能交易，再进入阶段 C |
 | 测试站 | 观察几天；用真实钱包和 Agent Wallet 走一遍 |
 | server / web | 先发 server，再发 web。未打开创建前，GangSwap 功能不生效 |
+
+## 小范围开放
+
+合约没有白名单：打开期间，任何 Agent ID 钱包都能建 GangSwap 币。所以用「短时间打开、建完就关」来控制数量。关闭只影响新建，已建的币照常交易和毕业。
+
+| 阶段 | 做什么 | 进入下一阶段的条件 |
+|---|---|---|
+| A | 打开 → 我们自己建 1 个 6 BNB 档的币 → 立即关闭。用 Agent 窗口，走完曲线、毕业、真实 40 步回购、买卖、领手续费、卖回 | 每一步和演练一致；indexer、网站、CLI、keeper 数字一致 |
+| B | 分次短时间打开，邀请 3～5 个 dev 各建 1 个 6 BNB 档的币，建完就关。**提前告诉 dev**：第三方平台可能还不支持，毕业后只能在 gang.fun 和 CLI 交易 | 至少 2 个币真实毕业；观察 7 天，没有异常告警 |
+| C | 长期打开，CLI 公开发布 | 平台支持情况和 B 的结果都满意 |
+
+- A、B 期间 CLI 0.53.0 不公开发布，给受邀 dev 单独的版本；网站的建币提示会在打开期间自动出现。
+- 每次打开和关闭各要一笔 Safe 交易。打开后先看 `GangSwapCreated` 日志，再关闭；发现非受邀的币也立即关闭。
+- 单币的资金上限是它的募资额（6 BNB 档约 6 BNB，毕业后池子约 4.8 BNB 真实储备，约 1.2 BNB 进回购）。
+- 立即停止的条件：pair 的真实储备和 `realQuoteReserve() + feeAccrued()` 对不上、回购无法执行、毕业回滚、任何无法解释的余额差。停止 = `setGangSwapMigrator(0)`，再排查。
 
 ## 步骤
 
@@ -21,7 +36,7 @@
 
 ### 2. 配套
 
-- CLI：把主网 router 写进 `GANGSWAP_VERSIONS.mainnet`（部署的 router 遮罩代码哈希应等于已固定的 `0x07886a19…005d`），发布 0.53.0。
+- CLI（公开发布等阶段 C）：把主网 router 写进 `GANGSWAP_VERSIONS.mainnet`（部署的 router 遮罩代码哈希应等于已固定的 `0x07886a19…005d`），阶段 A、B 只给自己和受邀 dev 用，阶段 C 再发布 0.53.0。
 - web：`GANGSWAP_CHAINS[56].routers`（或构建变量）；server：索引的 router 映射和 keeper 配置。
 
 ### 3. 升级 pad 3.0 和 GangPadRegistry（约 4700 万 gas，含连带部署）
@@ -44,7 +59,7 @@
 
 ### 6. 打开（Safe 批次 1 笔）
 
-`GANGSWAP_STEP=open`：`setGangSwapMigrator(migrator)`，立即对新币生效。执行后建一个小额测试币，走曲线买卖，确认 CLI、网站、索引一致。
+`GANGSWAP_STEP=open`：`setGangSwapMigrator(migrator)`，立即对新币生效。执行后按「小范围开放」的阶段 A 走。建完用 `setGangSwapMigrator(0)` 关闭。
 
 ## 回退和应急
 
