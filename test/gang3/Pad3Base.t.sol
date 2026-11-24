@@ -15,6 +15,7 @@ import {IGangBasePad} from "../../src/gang/interfaces/IGangBasePad.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {IGangVaultPad} from "../../src/gang/interfaces/IGangVaultPad.sol";
+import {IGangSwapPad} from "../../src/gang/interfaces/IGangSwapPad.sol";
 import {IGangPromote} from "../../src/gang/interfaces/IGangPromote.sol";
 import {Pad3FlyModule} from "../../src/gang/Pad3FlyModule.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
@@ -540,7 +541,7 @@ contract Pad3BaseTest is GangFixture {
     ///      revert with its own error here, or take the value, and fail this test.
     function test_abcd_valueRejectedByEveryOtherEntry() public {
         _enableVanity();
-        bytes4[6] memory sels = [
+        bytes4[7] memory sels = [
             bytes4(keccak256("create(string,string,string,string,address,address,(uint16,uint16,uint16,address))")),
             bytes4(
                 keccak256(
@@ -554,6 +555,7 @@ contract Pad3BaseTest is GangFixture {
             ),
             IGangVaultPad.createWithVault.selector,
             IGangPromote.createWithPromote.selector,
+            IGangSwapPad.createGangSwap.selector,
             Pad3FlyModule.create.selector
         ];
         uint256 padBnb = address(pad).balance;
@@ -562,7 +564,7 @@ contract Pad3BaseTest is GangFixture {
             IFlywheelPad.FlyConfig memory fly;
             string[4] memory text;
             // the 铸币飞轮 entry's string[4] does not decode from zeros: its own encoding
-            bytes memory data = i == 5
+            bytes memory data = i == 6
                 ? abi.encodeCall(Pad3FlyModule.create, (text, address(0), address(0), fly, 0))
                 : abi.encodePacked(sels[i], new bytes(32 * 24));
             vm.prank(creator);

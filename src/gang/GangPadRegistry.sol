@@ -71,6 +71,8 @@ contract GangPadRegistry is IGangPadRegistry, Initializable {
     uint256 internal constant VIRTUAL_TOKEN = 1_066_666_666_666_666_666_666_666_667;
     uint256 internal constant FEE_BPS = 100;
     uint8 internal constant KIND_CURVE = 1;
+    /// @dev GangLaunchpad 3.0's GangSwap curve token: kind 1's curve (same math, quoted the same), another graduation
+    uint8 internal constant KIND_GANGSWAP = 4;
     /// @dev Gas for the token's `launchpad()` in `padOf`: GangToken returns an immutable (well under 1k); a token that
     ///      burns more just reads as not a Gang token.
     uint256 internal constant LOOKUP_GAS = 10_000;
@@ -243,7 +245,7 @@ contract GangPadRegistry is IGangPadRegistry, Initializable {
     {
         (address pad, uint8 kind) = _lookup(token);
         p = IGangPadQuoteView(pad);
-        if (kind != KIND_CURVE) return (p, s, false);
+        if (kind != KIND_CURVE && kind != KIND_GANGSWAP) return (p, s, false);
         (
             address creator,,
             uint128 realQuote,

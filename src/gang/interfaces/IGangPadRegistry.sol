@@ -25,7 +25,8 @@ interface IGangPadRegistry {
     ///         registered, a look-alike pointing at a real pad). A token cannot make it revert.
     function padOf(address token) external view returns (address pad);
 
-    /// @notice `padOf(token)` and that pad's `kindOf(token)` (1 = curve, 2 = 打新; 0 with pad = address(0)).
+    /// @notice `padOf(token)` and that pad's `kindOf(token)` (1 = curve, 2 = 打新, 3 = 铸币飞轮, 4 = GangSwap curve;
+    ///         0 with pad = address(0)).
     function lookup(address token) external view returns (address pad, uint8 kind);
 
     function padCount() external view returns (uint256);

@@ -14,6 +14,7 @@ import {CurveLogic3} from "./CurveLogic3.sol";
 import {Pad3VaultStore} from "./Pad3VaultStore.sol";
 import {IGangVaultPad} from "./interfaces/IGangVaultPad.sol";
 import {IGangPromote} from "./interfaces/IGangPromote.sol";
+import {IGangSwapPad} from "./interfaces/IGangSwapPad.sol";
 import {IGangBasePad} from "./interfaces/IGangBasePad.sol";
 
 /// @title Pad3GradModule — 冲毕业奖励's claims, refund, sweep and views (docs/SPEC-GRAD-REWARD-2026-11-17.md), moved
@@ -121,7 +122,7 @@ contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, IGangAgentWindow
             )
             ) || s == IGangVaultPad.createWithVault.selector || s == IGangPromote.createWithPromote.selector
             || s == IGangBasePad.createWithBase.selector || s == IGangGradReward.createWithGradReward.selector
-            || s == bytes4(keccak256("createWithSalt(bytes32,bytes)"));
+            || s == IGangSwapPad.createGangSwap.selector || s == bytes4(keccak256("createWithSalt(bytes32,bytes)"));
     }
 
     function settleGradReward(address token) external nonReentrant {

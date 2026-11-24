@@ -10,6 +10,7 @@ interface IGangPadView {
     /// @notice A Fair token's hold line (bps of the baseline): below it, a minter is out for good.
     function holdBpsOf(address token) external view returns (uint16);
 
-    /// @notice 0 = not this pad's, 1 = Curve (V3), 2 = Fair (打新).
+    /// @notice 0 = not this pad's, 1 = Curve (V3), 2 = Fair (打新); GangLaunchpad 3.0 also 3 = 铸币飞轮 and
+    ///         4 = GangSwap curve (kind 1's curve, graduating into a GangSwap pair, docs/SPEC-GANGSWAP-2026-11-22.md).
     function kindOf(address token) external view returns (uint8);
 }

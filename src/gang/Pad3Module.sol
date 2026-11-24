@@ -28,10 +28,19 @@ import {GangBaseVault} from "./GangBaseVault.sol";
 import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {IGangGradReward, IGangGradRewardBase} from "./interfaces/IGangGradReward.sol";
 import {Pad3GradStore, ICountdownCarry} from "./Pad3GradStore.sol";
+import {Pad3GangSwapStore} from "./Pad3GangSwapStore.sol";
+import {IGangSwapPad} from "./interfaces/IGangSwapPad.sol";
 
 /// @dev GangHandlerAdmin's record of which factory deployed a listed tax recipient.
 interface IHandlerAdminModules {
     function moduleOf(address module) external view returns (address factory);
+}
+
+/// @dev What `setGangSwapMigrator` checks on a GangSwapMigrator (gangswap/, another compiler project: not imported).
+interface IGangSwapMigratorCheck {
+    function launchpads(address pad) external view returns (bool);
+    function quote() external view returns (address);
+    function wired() external view returns (bool);
 }
 
 /// @title Pad3Module — GangLaunchpad 3.0's second half: the vault mode (GangVaultLaunchpad's rules, on the one 3.0
@@ -63,6 +72,7 @@ contract Pad3Module is
     IGangPromote,
     IGangBasePad,
     IGangGradRewardBase,
+    IGangSwapPad,
     Ownable2Step,
     ReentrancyGuard
 {
@@ -70,6 +80,8 @@ contract Pad3Module is
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
     uint8 internal constant KIND_FLY = 3;
+    /// @dev GangSwap curve tokens (Pad3GangSwapStore): created only by `createGangSwap`, never by a module entry
+    uint8 internal constant KIND_GANGSWAP = Pad3GangSwapStore.KIND;
     /// @notice Must equal GangLaunchpad3.TOKEN_VERSION (the scripts and tests check it).
     uint8 public constant TOKEN_VERSION = 1;
     /// @notice The most of the creator's fee a promoter can get. A promoter thus earns at most 0.35% of a trade that pays
@@ -306,6 +318,7 @@ contract Pad3Module is
                 && selector != IGangPromote.createWithPromote.selector && selector != Pad3FlyModule.create.selector
                 && selector != IGangBasePad.createWithBase.selector
                 && selector != IGangGradReward.createWithGradReward.selector
+                && selector != IGangSwapPad.createGangSwap.selector
         ) revert BadVanityCall();
         v.salt = keccak256(abi.encode(msg.sender, salt));
         v.active = true;
@@ -561,8 +574,14 @@ contract Pad3Module is
             tax,
             gradBnb
         );
+        _recordCurve(token, logoURI, gradBnb, KIND_CURVE);
+    }
+
+    /// @dev Both curve creates of this module (kind 1, `_createCurve`; kind 4, `createGangSwap`): the records of
+    ///      GangLaunchpad3._createCurve, line for line, and the agent window.
+    function _recordCurve(address token, string calldata logoURI, uint256 gradBnb, uint8 kind) private {
         gradTargetOf[token] = gradBnb;
-        kindOf[token] = KIND_CURVE;
+        kindOf[token] = kind;
         tokenVersionOf[token] = TOKEN_VERSION;
         emit TokenVersionSet(token, TOKEN_VERSION);
         logoURIOf[token] = logoURI;
@@ -571,6 +590,60 @@ contract Pad3Module is
         // GangLaunchpad3._createCurve, line for line
         uint40 openAt = Pad3AgentWindowStore.consume(curves[token].creator, token);
         if (openAt != 0) emit IGangAgentWindow.AgentWindowSet(token, openAt);
+    }
+
+    // ---------------------------------------------------------------- GangSwap (docs/SPEC-GANGSWAP-2026-11-22.md)
+    /// @inheritdoc IGangSwapPad
+    function setGangSwapMigrator(address migrator_) external onlyOwner {
+        Pad3GangSwapStore.Layout storage g = Pad3GangSwapStore.layout();
+        // new tokens only: each token keeps the migrator of its create. 0 closes createGangSwap. A migrator that does
+        // not list this pad, takes another quote, or whose factory / boost / fees do not point back at it (`wired`,
+        // review 4 #1) would make every graduation of the tokens created under it revert. The Pancake SharedMigrator has no `quote()` and an EOA returns nothing: refused too.
+        if (
+            migrator_ != address(0)
+                && (_gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.launchpads, (address(this)))) != 1
+                    || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.quote, ())) != uint160(wbnb)
+                    || _gangSwapCheck(migrator_, abi.encodeCall(IGangSwapMigratorCheck.wired, ())) != 1)
+        ) revert WrongGangSwapMigrator();
+        g.migrator = migrator_;
+        emit GangSwapMigratorSet(migrator_);
+    }
+
+    /// @dev One word from a view of a candidate GangSwap migrator; anything else (a revert, no code, no return) refuses it.
+    function _gangSwapCheck(address migrator_, bytes memory data) private view returns (uint256 word) {
+        (bool ok, bytes memory ret) = migrator_.staticcall(data);
+        if (!ok || ret.length < 32) revert WrongGangSwapMigrator();
+        word = abi.decode(ret, (uint256));
+    }
+
+    /// @inheritdoc IGangSwapPad
+    function gangSwapMigrator() external view returns (address) {
+        return Pad3GangSwapStore.layout().migrator;
+    }
+
+    /// @inheritdoc IGangSwapPad
+    function gangSwapMigratorOf(address token) external view returns (address) {
+        return Pad3GangSwapStore.migratorOf(token);
+    }
+
+    /// @inheritdoc IGangSwapPad
+    /// @dev No module entry nests this (each calls `_createCurve`, kind 1), so nothing binds a kind-4 token.
+    function createGangSwap(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        uint256 gradBnb,
+        address migrator_
+    ) external nonReentrant returns (address token) {
+        address current = Pad3GangSwapStore.layout().migrator;
+        if (current == address(0)) revert GangSwapNotOpen();
+        if (migrator_ != current) revert GangSwapVersionChanged(current);
+        token = CurveLogic.createGangSwap(
+            _config, curves, Pad3VanityStore.creationDeps(_deps()), name, symbol, logoURI, metaURI, gradBnb, migrator_
+        );
+        _recordCurve(token, logoURI, gradBnb, KIND_GANGSWAP);
+        emit GangSwapCreated(token, migrator_);
     }
 
     // ---------------------------------------------------------------- promoter share
@@ -586,6 +659,7 @@ contract Pad3Module is
     {
         address to = msg.sender;
         if (to != tx.origin) revert TraderNotOrigin();
+        // kind 1 only: a GangSwap curve token (kind 4) takes no promoter (spec D3)
         if (kindOf[token] != KIND_CURVE) revert NotCurveToken();
         Curve storage cv = curves[token];
         if (cv.graduated) revert NotCurveToken();
