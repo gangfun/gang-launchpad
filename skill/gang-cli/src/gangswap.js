@@ -44,7 +44,7 @@ export const GANGSWAP_ROUTER_SITES = 'WWFFWFFWFFWWWWFWWFFWWWWFFFWFWWFFFFF'
 const BUILD = { codeHash: GANGSWAP_ROUTER_CODE_HASH, sites: GANGSWAP_ROUTER_SITES }
 /**
  * The GangSwap versions this CLI trades on, per network: { router, codeHash, sites } each (the router's address and its
- * build). On mainnet the contracts are deployed but creation is closed (2026-11-24). A new version is another entry; the older ones stay for their tokens.
+ * build). Open on both networks since 2026-11-25 (the pad's owner can close it for new tokens). A new version is another entry; the older ones stay for their tokens.
  */
 export const GANGSWAP_VERSIONS = {
   mainnet: [
