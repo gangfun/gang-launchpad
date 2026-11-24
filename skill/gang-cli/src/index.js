@@ -41,7 +41,7 @@ import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, REDEEM_FEE_ALONE, runLaunch, TAX_
 import { poolPayBnb, poolTrade, refShown } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { isCurveKind, MERGED_ERRORS_ABI, genOf, PAD3_GEN, padNets } from './gangpad.js'
-import { createInput, gangSwapCreateCheck } from './gangswap.js'
+import { createInput, gangSwapCreateCheck, gangSwapRevert } from './gangswap.js'
 import { venueRefusal } from './venue.js'
 import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
 import { V2_ABI } from './abi.js'
@@ -1021,7 +1021,8 @@ for BNB buys / mints and every pool trade). Built in: GangLaunchpad 3.0 (where n
 mainnet and the testnet. A token is always served by its own generation's pad, router, GangBond and module factories; these
 variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
 GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER (development only: another deployment of the GangSwapRouter build; its code is
-checked before every trade, as a built-in one's, and it serves its own version's tokens only; none is built in yet),
+checked before every trade, as a built-in one's, and it serves its own version's tokens only. One or a comma-
+separated list, added to the built-in ones; none is built in for mainnet yet),
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
 GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2; default: the built-in mainnet / testnet V2); new 铸币飞轮 tokens go to the built-in
 GangLaunchpad 3.0. --guard / --twap-window (3.0 and V2): the guard is off by default (post-launch minting does not pause
@@ -1691,9 +1692,10 @@ async function txReport(hash) {
   // the input may carry a follow ref and a note commitment: a committed note is sent here if it's still in the
   // local queue (e.g. after PENDING_CONFIRMATION), or its state reported / refreshed if already sent
   const queued = hasQueued()
-  let note, input = null, sender = null, inputUnread = false
+  let note, input = null, sender = null, inputUnread = false, tx = null
   try {
-    ({ input, from: sender } = await client.getTransaction({ hash }))
+    tx = await client.getTransaction({ hash })
+    ;({ input, from: sender } = tx)
   } catch (e) {
     inputUnread = true
     if (queued) note = { published: false, error: `could not read tx input: ${e.message.split('\n')[0]}` }
@@ -1713,7 +1715,7 @@ async function txReport(hash) {
   const share = note?.published ? await shareFor({ note: hash }) : created ? await shareFor({ token: created, event: 'create' }) : null
   const gsCheck = await gangSwapCreateCheck({ chainId: CONFIG.chainId, read: v2PoolCtx().read }, { status: t.status, events: t.events, input, sender, inputUnread: inputUnread && await wentToPad3(hash) })
   return {
-    success: true, ...t, ...gsCheck, ...(note && { note }), ...(followed && { follow: { noteTx: followed, link: noteLink(followed) } }),
+    success: true, ...t, ...gsCheck, ...(await gangSwapRevert({ chainId: CONFIG.chainId, client }, { status: t.status, to: tx?.to, tx })), ...(note && { note }), ...(followed && { follow: { noteTx: followed, link: noteLink(followed) } }),
     ...(links && { links }), ...(invitedBy && { invitedBy }), ...(share && { share }),
   }
 }
@@ -2279,7 +2281,8 @@ async function main() {
         const events = decodeLogs(r.logs, GANG_EVENT_ABIS, await firstByModuleType(ctx.client, r.logs, SHARED_SPLIT.topic, SHARED_SPLIT.byType))
         return out({
           success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber),
-          events, ...(await gangSwapCreateCheck(ctx, { status: r.status, events, sender: r.from, ...(await createInput(ctx, r, events)) })), explorer: `${ctx.explorer}/tx/${hash}`,
+          events, ...(await gangSwapCreateCheck(ctx, { status: r.status, events, sender: r.from, ...(await createInput(ctx, r, events)) })),
+          ...(await gangSwapRevert(ctx, { status: r.status, to: r.to, tx: () => ctx.client.getTransaction({ hash }) })), explorer: `${ctx.explorer}/tx/${hash}`,
         })
       }
       return out(await txReport(hash))

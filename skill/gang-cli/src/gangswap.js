@@ -44,19 +44,35 @@ export const GANGSWAP_ROUTER_SITES = 'WWFFWFFWFFWWWWFWWFFWWWWFFFWFWWFFFFF'
 const BUILD = { codeHash: GANGSWAP_ROUTER_CODE_HASH, sites: GANGSWAP_ROUTER_SITES }
 /**
  * The GangSwap versions this CLI trades on, per network: { router, codeHash, sites } each (the router's address and its
- * build). None deployed yet (2026-11-23). A new version is another entry; the older ones stay for their tokens.
+ * build). Not on mainnet yet (2026-11-24). A new version is another entry; the older ones stay for their tokens.
  */
-export const GANGSWAP_VERSIONS = { mainnet: [], testnet: [] }
+export const GANGSWAP_VERSIONS = {
+  mainnet: [],
+  testnet: [
+    // GangSwapMigrator 0x1B942d7eA4B9C2229e6776150d989ab1E6aDD36A: factory 0x90aF66E555E8C90fFFd0780cF4ca56A8313CEA36,
+    // boost 0xBcE63184f8BA913eD1dE6002fEdDe587305F00Ea, fees 0xDbA8FEBB6aC9Da3eEb9A8805E4053C42763B7236
+    { router: '0x1EAdAEe9b7C04Db9b828CcC342c3Ef2355722d94', ...BUILD },
+  ],
+}
 const netOf = (ctx) => (Number(ctx.chainId) === 56 ? 'mainnet' : 'testnet')
 /** Every router build this CLI knows: what a router named by the env must be one of. */
 const knownBuilds = () => [BUILD, ...GANGSWAP_VERSIONS.mainnet, ...GANGSWAP_VERSIONS.testnet]
-/** The routers a token of this network may trade on: { router, builds }, the env's alone when it names one. */
-const candidates = (net) => (process.env[ROUTER_ENV[net]] ? [{ router: process.env[ROUTER_ENV[net]], builds: knownBuilds() }]
-  : GANGSWAP_VERSIONS[net].map((v) => ({ router: v.router, builds: [v] })))
+const fromEnv = (routers) => routers.map((router) => ({ router, builds: knownBuilds(), env: true }))
+/**
+ * The routers a token of this network may trade on: { router, builds, env }. The pinned ones and every one the
+ * network's env lists (comma-separated; one pinned already is not added again). Whichever way, a router is used only for its own version's tokens and after every check (verifyRouter).
+ */
+function candidates(net) {
+  const env = process.env[ROUTER_ENV[net]]
+  const pinned = GANGSWAP_VERSIONS[net].map((v) => ({ router: v.router, builds: [v], env: false }))
+  const listed = [...new Map((env ?? '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
+  return [...pinned, ...fromEnv(listed.filter((x) => !pinned.some((p) => p.router.toLowerCase() === x.toLowerCase())))]
+}
 /** Every GangSwapRouter address this run knows on `testnet` / mainnet (the env's too), whatever its version. */
 export const gangSwapRouterAddresses = (testnet) => {
   const net = testnet ? 'testnet' : 'mainnet'
-  return [...candidates(net).map((c) => c.router), ...GANGSWAP_VERSIONS[net].map((v) => v.router)]
+  const known = [...candidates(net).map((c) => c.router), ...GANGSWAP_VERSIONS[net].map((v) => v.router)]
+  return known.filter((r, i) => known.findIndex((x) => x.toLowerCase() === r.toLowerCase()) === i)
 }
 
 export const GANGSWAP_PAD_ABI = parseAbi([
@@ -176,6 +192,31 @@ export function asksGangSwap(input) {
     data = d.args[1]
   }
   return false
+}
+
+/**
+ * Why a reverted GangSwap create reverted, when it was the version (GangSwapVersionChanged) or closed (GangSwapNotOpen):
+ * { gangSwap } to add to the result, else {}. Replays the call on the state before its block, then (a change in the same
+ * block) on that block's own. Best effort: anything else, or a node without that state, adds nothing. `tx`: the
+ * transaction, or a function that reads it (called only for a reverted tx to a 3.0 pad).
+ */
+export async function gangSwapRevert(ctx, { status, to, tx }) {
+  const pads = gangGens(netOf(ctx) === 'testnet').filter((g) => g.gen === PAD3_GEN).map((g) => g.pad)
+  if (status !== 'reverted' || (to && !pads.some((p) => same(p, to)))) return {}
+  try {
+    const t = typeof tx === 'function' ? await tx() : tx
+    if (!t?.blockNumber || !pads.some((p) => same(p, t.to)) || !asksGangSwap(t.input)) return {}
+    for (const blockNumber of [t.blockNumber - 1n, t.blockNumber]) {
+      try {
+        await ctx.client.call({ account: t.from, to: t.to, data: t.input, value: t.value, gas: t.gas, blockNumber })
+      } catch (e) {
+        const r = revertIn(e, [GANGSWAP_PAD_ABI], HINTS)
+        if (r?.error !== 'GangSwapVersionChanged' && r?.error !== 'GangSwapNotOpen') return {}
+        return { gangSwap: { created: false, reverted: r.error, ...(r.reason && { current: r.reason }), hint: r.hint, source: 'a replay of the call' } }
+      }
+    }
+  } catch { /* nothing to add */ }
+  return {}
 }
 
 /** { input } of a landed tx that went to a 3.0 pad and made no GangSwap token, for gangSwapCreateCheck (inputUnread when it could not be read); { input: null } for any other. */
@@ -312,10 +353,10 @@ async function routersFor(ctx, factory, all = true) {
 }
 
 /** Every check of one candidate against the token's factory, once per ctx; a PoolError when it is not the router. */
-const verifyRouter = (ctx, set, { router, builds }) => cached(ctx, `router:${set.factory}:${router}`, async () => {
+const verifyRouter = (ctx, set, { router, builds, env }) => cached(ctx, `router:${set.factory}:${router}`, async () => {
   const net = netOf(ctx)
   const bad = (why) => new PoolError(`the router address ${router} is not this token's GangSwapRouter (${why}): nothing is built`, {
-    router, hint: process.env[ROUTER_ENV[net]] ? `unset ${ROUTER_ENV[net]} (a development setting), then ${UPDATE_CLI}` : UPDATE_CLI,
+    router, hint: env ? `unset ${ROUTER_ENV[net]} (a development setting), then ${UPDATE_CLI}` : UPDATE_CLI,
   })
   if (!isAddress(router)) throw bad('not a 0x address')
   let code
@@ -468,15 +509,15 @@ export async function gangSwapView(ctx, token, c) {
     const cap = (s.rq * BOOST_CAP_BPS) / BPS
     const next = cap < perStep ? cap : perStep
     const net = netOf(ctx)
-    const fromEnv = process.env[ROUTER_ENV[net]] || null
     // the router is beside the point here: one that can't be read leaves the rest as it is
     let routerUnread = null
-    const router = fromEnv ? null : (await routersFor(ctx, set.factory).catch((e) => { routerUnread = e.message; return [] }))[0]?.router
+    const fit = (await routersFor(ctx, set.factory).catch((e) => { routerUnread = e.message; return [] }))[0]
+    const router = fit?.env ? null : fit?.router
     return {
       pair: c.pair, migrator: set.migrator, factory: set.factory, fees: set.fees, router: router ?? null,
-      ...(fromEnv && { routerFromEnv: fromEnv, routerVerified: false, routerNote: `${ROUTER_ENV[net]} names this router; it is not verified here (gang buy / gang sell check its code before they build anything)` }),
+      ...(fit?.env && { routerFromEnv: fit.router, routerVerified: false, routerNote: `${ROUTER_ENV[net]} names this router; it is not verified here (gang buy / gang sell check its code before they build anything)` }),
       ...(routerUnread && { routerUnread }),
-      ...(!fromEnv && !router && !routerUnread && { routerNote: `no GangSwapRouter of this token's GangSwap version in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
+      ...(!fit && !routerUnread && { routerNote: `no GangSwapRouter of this token's GangSwap version in this CLI version: gang buy / gang sell need one; ${UPDATE_CLI}` }),
       poolFeePct: Number(FEE_BPS) / 100,
       liquidity: { ...shownLiquidity(s), note: 'prices follow the effective reserves (real + virtual); only the real BNB can be paid out' },
       buyBack: isZero(bPair) ? { error: 'the boost has no record of this token' } : {

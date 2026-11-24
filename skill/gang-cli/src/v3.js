@@ -7,7 +7,7 @@ import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, genFields, GRAD_TARGET_
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, followPromoter, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
-import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
+import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapRevert, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
 import { parseVenue, venueRefusal } from './venue.js'
 import { decodeLogs } from './chain.js'
 import { bondGuard } from './bond.js'
@@ -1158,7 +1158,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     }
     const gsEvents = decodeLogs(r.logs, [GANGSWAP_PAD_ABI])
     const gsCheck = await gangSwapCreateCheck(ctx, { status: r.status, events: gsEvents, sender: r.from, ...(await createInput(ctx, r, gsEvents)) })
-    return out({ success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber), events, ...gsCheck, explorer: `${ctx.explorer}/tx/${hash}` })
+    return out({ success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber), events, ...gsCheck, ...(await gangSwapRevert(ctx, { status: r.status, to: r.to, tx: () => ctx.client.getTransaction({ hash }) })), explorer: `${ctx.explorer}/tx/${hash}` })
   }
 
   return fail(USAGE, { got: sub })
