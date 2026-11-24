@@ -65,12 +65,13 @@ const NOW = 2_000_000_000
 // a second GangSwap version: its own set, a token of it
 const GS2 = lc(t(0x9b5)), MIGRATOR2 = lc(t(0x326)), FACTORY2 = lc(t(0xfad)), BOOST2 = lc(t(0xb006)), FEES2 = lc(t(0xfef)), ROUTER2 = lc(t(0x5b9)), PAIR2 = lc(t(0xda2))
 
-// ---- the pinned versions: the testnet one (read on chain 2026-11-24), none on mainnet; then emptied for the fake node
-assert.deepEqual(G.GANGSWAP_VERSIONS, { mainnet: [], testnet: [{ router: '0x1EAdAEe9b7C04Db9b828CcC342c3Ef2355722d94', codeHash: G.GANGSWAP_ROUTER_CODE_HASH, sites: G.GANGSWAP_ROUTER_SITES }] })
-assert.deepEqual([G.gangSwapRouterAddresses(true), G.gangSwapRouterAddresses(false)], [['0x1EAdAEe9b7C04Db9b828CcC342c3Ef2355722d94'], []])
+// ---- the pinned versions: one on each network (read on chain 2026-11-24); then emptied for the fake node
+assert.deepEqual(G.GANGSWAP_VERSIONS, { mainnet: [{ router: '0xd685e3432472d0da34903888f96b0D0221bC779c', codeHash: G.GANGSWAP_ROUTER_CODE_HASH, sites: G.GANGSWAP_ROUTER_SITES }], testnet: [{ router: '0x1EAdAEe9b7C04Db9b828CcC342c3Ef2355722d94', codeHash: G.GANGSWAP_ROUTER_CODE_HASH, sites: G.GANGSWAP_ROUTER_SITES }] })
+assert.deepEqual([G.gangSwapRouterAddresses(true), G.gangSwapRouterAddresses(false)], [['0x1EAdAEe9b7C04Db9b828CcC342c3Ef2355722d94'], ['0xd685e3432472d0da34903888f96b0D0221bC779c']])
 const PINNED = lc(G.GANGSWAP_VERSIONS.testnet[0].router) // what a CLI process started here has: another version's on the fake node
 const F3 = lc(t(0xfa3)), M3 = lc(t(0x336)), B3 = lc(t(0xb03)), E3 = lc(t(0xfe3))
 G.GANGSWAP_VERSIONS.testnet.length = 0
+G.GANGSWAP_VERSIONS.mainnet.length = 0
 
 // ---------------------------------------------------------------- pure
 assert.equal(GANGSWAP_KIND, 4)

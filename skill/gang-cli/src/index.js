@@ -1022,7 +1022,7 @@ mainnet and the testnet. A token is always served by its own generation's pad, r
 variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
 GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER (development only: another deployment of the GangSwapRouter build; its code is
 checked before every trade, as a built-in one's, and it serves its own version's tokens only. One or a comma-
-separated list, added to the built-in ones; none is built in for mainnet yet),
+separated list, added to the built-in ones),
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
 GANG_FLY_PAD_V2 / GANG_TESTNET_FLY_PAD_V2 (V2; default: the built-in mainnet / testnet V2); new 铸币飞轮 tokens go to the built-in
 GangLaunchpad 3.0. --guard / --twap-window (3.0 and V2): the guard is off by default (post-launch minting does not pause
