@@ -3,7 +3,7 @@
 - 日期：2026-11-24（Asia/Shanghai）
 - 网络：BSC 主网（56）
 - 步骤和应急：`docs/MAINNET-RUNBOOK-GANGSWAP.md`；规格：`docs/SPEC-GANGSWAP-2026-11-22.md`
-- 状态：**GangSwap 已部署，pad 3.0 和 registry 已升级**。没有登记，创建没有打开。
+- 状态：**GangSwap 已部署，pad 3.0 和 registry 已升级，已登记（2026-11-25）**。创建没有打开。
 
 ## 第 1 步：部署
 
@@ -71,3 +71,11 @@
 - **全部 1,068 个币**在升级前一个区块和升级区块上逐个比较：`kindOf`、`curves`、`getTokenInfo`、`walletCapOn`、`agentOpenAt`、`promoteOf`，以及 registry 的买入和卖出报价，共 8 项，没有差别。
 
 签名前没有再做一次探针和 fork 复核（Safe 先签了）；上面的逐币比较覆盖了它们要看的内容，推广绑定除外：升级前查到的是没有绑定。
+
+## 第 4 步：登记（2026-11-25）
+
+`OpenGangSwap` `GANGSWAP_STEP=list` 在主网只读核对通过（运行代码、部署交易的创建代码、指向、owner；模拟里完整走一个币），打印的批次归档：[MAINNET-GANGSWAP-LIST-SAFE-BATCH-2026-11-25.json](MAINNET-GANGSWAP-LIST-SAFE-BATCH-2026-11-25.json)，SHA-256 `26a50ec7a31f4d1c21d75a599843cb3a82ba0ccdffde0999c4879e92b4343f06`。主网 fork（区块 135491599）上以 Safe 身份原样执行，两笔成功，创建仍关闭。
+
+执行：交易 [`0xb6b550e1ef3ed017c0f256449c60ecf6c87e3db6198cfa5f28bcd6d952f4e17f`](https://bscscan.com/tx/0xb6b550e1ef3ed017c0f256449c60ecf6c87e3db6198cfa5f28bcd6d952f4e17f)，区块 135492044，Safe nonce 61（执行后 62）。
+
+核对：migrator 登记了 pad 3.0、没有登记 1.0 pad，bucket 的 operator 有 GangSwapFees、原有的 pad 授权不变；migrator 和 bucket 的 owner 仍是 Safe，`wired()` = true，没有任何 pair；`gangSwapMigrator()` = 0，`createGangSwap` 返回 `GangSwapNotOpen`。
