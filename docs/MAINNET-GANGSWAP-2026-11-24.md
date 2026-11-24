@@ -3,7 +3,7 @@
 - 日期：2026-11-24（Asia/Shanghai）
 - 网络：BSC 主网（56）
 - 步骤和应急：`docs/MAINNET-RUNBOOK-GANGSWAP.md`；规格：`docs/SPEC-GANGSWAP-2026-11-22.md`
-- 状态：**完成了第 1 步（部署 GangSwap）和第 2 步（部署新实现）**。pad 没有升级（等 Safe 签名），没有登记，创建没有打开，对现有功能没有影响。
+- 状态：**GangSwap 已部署，pad 3.0 和 registry 已升级**。没有登记，创建没有打开。
 
 ## 第 1 步：部署
 
@@ -48,7 +48,7 @@
 
 探针（签名前再跑一次 `script/pad3-upgrade-probes.py`）：1,067 个币里 4 个带推广分成、没有任何绑定，没有底仓币，两个探针都为空。
 
-### Safe 批次（待签）
+### Safe 批次（已执行）
 
 带 `PAD3_IMPL`、`PAD_REGISTRY_IMPL`、`PAD3_FLY_HANDLER`、`PAD3_FLY_VAULT_CORE` 只读重跑：新实现、模块、registry 实现逐字节是本次构建的代码，模拟升级并读回通过（25 个币、全部 GangSwap 状态、设置）。归档：[MAINNET-GANG-LAUNCHPAD-3-UPGRADE-GANGSWAP-SAFE-BATCH-2026-11-24.json](MAINNET-GANG-LAUNCHPAD-3-UPGRADE-GANGSWAP-SAFE-BATCH-2026-11-24.json)，SHA-256 `0d81d11344e4ecf9cb9ad804428958815b10256e0e8efa7c0043ba9efc0ebe75`。两笔，不转 BNB，顺序不能换：
 
@@ -59,4 +59,15 @@
 
 **fork 复核**（anvil，主网区块 135481201，以 Safe 身份原样发送归档里的两笔）：都成功；两个实现槽是新地址，owner 仍是 Safe，`gangSwapMigrator()` = 0，`createGangSwap` 返回 `GangSwapNotOpen`；老币 `0x09bB6Ce8b9fa670EA91413D6Fb1167DDEb07abCD` 的 `getTokenInfo`、`curves` 和 registry 报价升级前后相同。随后用真实部署的 GangSwap 继续跑 `OpenGangSwap` 的 `list` 和 `open`（核对和完整演练通过、逐笔执行成功）。以上都只在 fork 上。
 
-执行后要做：核对上面各项；更新监控里 pad 和 registry 的预期实现。
+## 第 3 步：升级执行
+
+交易 [`0xc2da3a87d1fd31a3bd5cb64c9631f3e5883549369403f67f68bad7d1fc12bc7b`](https://bscscan.com/tx/0xc2da3a87d1fd31a3bd5cb64c9631f3e5883549369403f67f68bad7d1fc12bc7b)，区块 135485276，Safe nonce 60（执行后 61）。
+
+执行后核对：
+
+- 实现槽：pad = `0x782f449D8476a873D4a1105a19B297E85e60246F`，registry = `0x9d7C3D56ee2eC7bdc7b1eC2B85a5a7Eec91cb162`；`module()` = `0xF8ec5231838C5A07aa4f59BCDaa669Ed8e370225`，它的 `gradModule()`、`flyModule()` 是上表的地址；两个 owner 仍是 Safe。
+- pad 设置不变：agent gate 和 1% 上限仍开启，migrator、abcd、底仓金库实现、冲毕业奖励的设置和升级前相同，`MAX_AGENT_WINDOW_MINUTES()` = 1440。
+- `gangSwapMigrator()` = 0，`createGangSwap` 返回 `GangSwapNotOpen`。
+- **全部 1,068 个币**在升级前一个区块和升级区块上逐个比较：`kindOf`、`curves`、`getTokenInfo`、`walletCapOn`、`agentOpenAt`、`promoteOf`，以及 registry 的买入和卖出报价，共 8 项，没有差别。
+
+签名前没有再做一次探针和 fork 复核（Safe 先签了）；上面的逐币比较覆盖了它们要看的内容，推广绑定除外：升级前查到的是没有绑定。
