@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
 
+import {IGangGradRewardBase} from "./IGangGradReward.sol";
+
 /// @notice GangLaunchpad 3.0's GangSwap curve tokens (docs/SPEC-GANGSWAP-2026-11-22.md §4, §5), served by Pad3Module.
 ///         A GangSwap curve token is `kindOf` 4: on its curve it trades as a kind-1 token (same entries, fee, gate,
 ///         cap, agent window); at graduation it moves into a GangSwap pair (GangSwapMigrator) instead of a Pancake V2
 ///         pair. After graduation `getTokenInfo` reports status 4 (STATUS_GANGSWAP), the GangSwap pair and a 1% fee.
-///         Phase 1: WBNB quote, no tax, no modules (vault, promoter share, base, graduation reward cannot be added).
+///         Phase 1: WBNB quote, no tax, no modules (vault, promoter share, base cannot be added). Optionally a
+///         graduation reward the creator funds (docs/SPEC-GANGSWAP-GRAD-REWARD-2026-11-25.md).
 interface IGangSwapPad {
     event GangSwapMigratorSet(address indexed migrator);
     /// @notice A GangSwap curve token (kindOf 4) was created; its other create events are kind 1's (review 4 #4).
@@ -41,5 +44,21 @@ interface IGangSwapPad {
         string calldata metaURI,
         uint256 gradBnb,
         address migrator
+    ) external returns (address token);
+
+    /// @notice `createGangSwap` plus a graduation reward (IGangGradReward: same config, rules, claims, refund and sweep as
+    ///         a kind-1 token's). `cfg.seed` is pulled from the creator in WBNB (approve the pad first). Needs both
+    ///         switches open: the pad's `gangSwapMigrator()` and the graduation reward's. `cfg.carryBps`,
+    ///         `cfg.promoteBps` and `cfg.promoteWindow` must be 0 (BadGradConfig): a GangSwap token takes no countdown
+    ///         module and no promoter share, so what nobody claims goes back to the creator. Also through
+    ///         `createWithSalt` and `createWithAgentWindow`.
+    function createGangSwapWithGradReward(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        uint256 gradBnb,
+        address migrator,
+        IGangGradRewardBase.GradConfig calldata cfg
     ) external returns (address token);
 }

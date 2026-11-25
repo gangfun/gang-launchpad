@@ -11,7 +11,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {Pad3GradStore} from "../src/gang/Pad3GradStore.sol";
 import {Pad3Module} from "../src/gang/Pad3Module.sol";
-import {IGangGradReward} from "../src/gang/interfaces/IGangGradReward.sol";
+import {IGangGradReward, IGangGradRewardBase} from "../src/gang/interfaces/IGangGradReward.sol";
 import {FlywheelTaxHandler} from "../src/flywheel/FlywheelTaxHandler.sol";
 import {MintTokenDeployer} from "../src/flywheel/MintTokenDeployer.sol";
 import {SharedDividendVault} from "../src/common/SharedDividendVault.sol";
@@ -72,6 +72,10 @@ import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
 ///      (`setGangSwapMigrator` is a batch of its own, spec §13). Its migrator and EVERY GangSwap token (found by walking
 ///      the pad's tokens, not the sample) are compared: own migrator, record, named views, agent window, wallet cap.
 ///      The new implementation must serve GangSwap.
+///      Graduation rewards (docs/SPEC-GRAD-REWARD-2026-11-17.md): the deps and EVERY token with a reward (found by its raw
+///      state word, so a moved namespace shows) are compared: stored words, `gradReward`, `gradEntries`, each listed
+///      buyer's `gradClaimable`. After the upgrade createGangSwapWithGradReward must answer, directly and through
+///      createWithAgentWindow and (abcd on) createWithSalt, with a refusal of an empty config.
 ///      Optional PAD3_GRAD_REWARD=true (docs/SPEC-GRAD-REWARD-2026-11-17.md §13): `setGradReward(true, admin, factory)`
 ///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
 ///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
@@ -125,6 +129,8 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         bool[] newFairEntry;
         /// @dev GangSwap: the pad's migrator and every GangSwap token (`_gangSwapState`)
         bytes32 gangSwap;
+        /// @dev graduation rewards: the deps and every token with one (`_gradState`)
+        bytes32 grad;
     }
 
     function run() external override returns (Stack memory s) {
@@ -232,6 +238,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         _checkNewFairEntry(p, before.newFairEntry);
         _checkAgentWindow(p, windowBefore, windowState);
         _checkGangSwap(p);
+        _checkGangSwapGradCreate(p);
         // final audit (deploy) L-5: the proxy, implementation, libraries and wiring of 3.0 itself, not the deploy-time
         // pins (TWAP, keeper, gate…) the Safe may have changed since: drift is what the snapshot above compares
         _checkPad3(s, c, x);
@@ -257,6 +264,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     function _compare(Snapshot memory before, Snapshot memory afterUp) internal pure {
         if (afterUp.settings != before.settings) revert WiringCheck("upgrade: settings changed");
         if (afterUp.gangSwap != before.gangSwap) revert WiringCheck("upgrade: GangSwap state changed");
+        if (afterUp.grad != before.grad) revert WiringCheck("upgrade: graduation reward state changed");
         for (uint256 i; i < before.tokens.length; i++) {
             if (afterUp.tokens[i] != before.tokens[i]) revert WiringCheck("upgrade: a token's record changed");
         }
@@ -669,6 +677,7 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
     {
         snap.vault = vault;
         snap.gangSwap = keccak256(_gangSwapState(p));
+        snap.grad = keccak256(_gradState(p));
         address[] memory callers = _callers();
         bool[] memory listed = new bool[](callers.length);
         for (uint256 i; i < callers.length; i++) {
@@ -830,6 +839,70 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
             if ((p.kindOf(t) == Pad3GangSwapStore.KIND) != (_gangSwapOf(p, t) != address(0))) {
                 revert WiringCheck("upgrade: a GangSwap token without its migrator");
             }
+        }
+    }
+
+    /// @dev The graduation reward's deps and, for EVERY token whose stored reward state is not NONE (read raw at
+    ///      Pad3GradStore's slot, the same before and after whatever the implementation does), `_gradTokenHash`. A pad
+    ///      that does not serve the reward yet has no such token.
+    function _gradState(GangLaunchpad3 p) internal view returns (bytes memory) {
+        (, bytes memory deps) = address(p).staticcall(abi.encodeCall(IGangGradReward.gradRewardDeps, ()));
+        uint256 n = p.tokenCount();
+        bytes32 h;
+        for (uint256 i; i < n; i++) {
+            // memory stays flat over the walk (`_gangSwapState`)
+            uint256 free;
+            assembly ("memory-safe") {
+                free := mload(0x40)
+            }
+            address t = p.allTokens(i);
+            uint256 slot = uint256(keccak256(abi.encode(t, uint256(Pad3GradStore.SLOT) + 2)));
+            if (uint8(uint256(vm.load(address(p), bytes32(slot)))) != Pad3GradStore.NONE) {
+                h = _gradTokenHash(p, t, slot, h);
+            }
+            assembly ("memory-safe") {
+                mstore(0x40, free)
+            }
+        }
+        return abi.encode(deps, h);
+    }
+
+    /// @dev `h` with `t`'s reward folded in: its five stored words, its view, its list and what each listed buyer may claim.
+    function _gradTokenHash(GangLaunchpad3 p, address t, uint256 slot, bytes32 h) internal view returns (bytes32) {
+        IGangGradReward g = IGangGradReward(address(p));
+        bytes32[5] memory w;
+        for (uint256 i; i < 5; i++) {
+            w[i] = vm.load(address(p), bytes32(slot + i));
+        }
+        h = keccak256(abi.encode(h, t, w, p.kindOf(t), g.gradReward(t)));
+        (address[] memory buyers, uint64[] memory seqs, uint96[] memory spent, bool[] memory valid) = g.gradEntries(t);
+        h = keccak256(abi.encode(h, buyers, seqs, spent, valid));
+        for (uint256 i; i < buyers.length; i++) {
+            h = keccak256(abi.encode(h, g.gradClaimable(t, buyers[i])));
+        }
+        return h;
+    }
+
+    /// @dev After the upgrade the pad answers createGangSwapWithGradReward itself, directly and through both wrappers'
+    ///      lists: an empty config is refused as such (GradNotOpen while the reward is closed), before anything is
+    ///      created; a wrapper that does not list it, or a pad without it, answers something else.
+    function _checkGangSwapGradCreate(GangLaunchpad3 p) internal {
+        IGangGradRewardBase.GradConfig memory none;
+        bytes memory data =
+            abi.encodeCall(IGangSwapPad.createGangSwapWithGradReward, ("", "", "", "", 0, address(0), none));
+        (bool open,,) = IGangGradReward(address(p)).gradRewardDeps();
+        bytes4 want = open ? IGangGradRewardBase.BadGradConfig.selector : IGangGradRewardBase.GradNotOpen.selector;
+        _refusedWith(p, data, want);
+        _refusedWith(p, abi.encodeCall(IGangAgentWindow.createWithAgentWindow, (uint16(1), data)), want);
+        if (_vanityState(p) != address(0)) {
+            _refusedWith(p, abi.encodeCall(Pad3Module.createWithSalt, (bytes32(0), data)), want);
+        }
+    }
+
+    function _refusedWith(GangLaunchpad3 p, bytes memory data, bytes4 want) private {
+        (bool ok, bytes memory ret) = address(p).call(data);
+        if (ok || ret.length != 4 || bytes4(ret) != want) {
+            revert WiringCheck("upgrade: createGangSwapWithGradReward not served");
         }
     }
 
