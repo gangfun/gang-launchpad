@@ -7,7 +7,7 @@ import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, genFields, GRAD_TARGET_
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, followPromoter, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
-import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapRevert, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
+import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapRevert, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapGradSupport, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
 import { parseVenue, venueRefusal } from './venue.js'
 import { decodeLogs } from './chain.js'
 import { bondGuard } from './bond.js'
@@ -423,20 +423,20 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const gen = await curveCreatorFee(ctx, token, c, net)
     if (gs && gen.creatorFee) gen.creatorFee = { ...gen.creatorFee, pool: await gangSwapFeeView(ctx, token, c, net) }
     const gangSwap = gs ? await gangSwapView(ctx, token, c) : null
-    // a GangSwap token has none of these: no vault, promoter share, base or graduation reward
+    // a GangSwap token has none of these: no vault, promoter share or base (a graduation reward it may have)
     const vault = gs ? null : await vaultView(ctx, token, c, net)
     const promote = gs ? null : await promoteField(ctx, token, { recipient: c.recipient, dividendPct: c.dividendPct, testnet })
     // 3.0: the opening base (gang create --base): the vault, its size, period and progress
     const baseSeen = gs ? null : await baseVaultView(ctx, token).catch((e) => ({ raw: null, error: `could not read the token's base vault (${e.shortMessage || e.message.split('\n')[0]})`, retry: `gang base status --token ${token}${net}` }))
     const { raw: _baseRaw, ...baseField } = baseSeen ?? {}
     // 3.0: the graduation reward (gang create --grad-reward): the pool, the rules and the list so far
-    const grSeen = gs ? null : await gradOf(ctx, token, c.quote).catch((e) => ({ raw: null, error: `could not read the token's graduation reward (${e.shortMessage || e.message.split('\n')[0]})` }))
+    const grSeen = await gradOf(ctx, token, c.quote).catch((e) => ({ raw: null, error: `could not read the token's graduation reward (${e.shortMessage || e.message.split('\n')[0]})` }))
     const { raw: _grRaw, ...grField } = grSeen ?? {}
     // 3.0: the agent window (gang create --agent-window): when the curve opens to every wallet, and whether the 1% cap applies
     const windowSeen = await agentWindowOf(ctx, token, { graduated: c.graduated, venue: gs ? 'GangSwap' : 'PancakeSwap' })
     const agentWindow = windowSeen && {
       ...shownWindow(windowSeen),
-      ...(windowSeen.set && grSeen?.raw && !c.graduated && { gradReward: GRAD_OPEN_WARNING }),
+      ...(windowSeen.set && grSeen?.raw && !c.graduated && !gs && { gradReward: GRAD_OPEN_WARNING }),
     }
     // 3.0: the rule set the token was created under (fixed for good; an upgrade adds rules for new tokens only)
     const tokenVersion = ctx.gen === PAD3_GEN ? await ctx.read(ctx.pad, PAD_ABI, 'tokenVersionOf', [token]).then(Number).catch(() => null) : null
@@ -667,6 +667,12 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const support = await gradSupport(ctx)
       if (support.unread) fail('could not check the pad for the graduation reward (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
       if (!support.open) fail(`${support.why}: drop --grad-reward${testnet ? '' : ' (it is on the BSC testnet: --testnet)'}`, { pad: ctx.pad })
+      // a GangSwap create has its own entry: asked of the pad in the shape this create takes, before any wrap or approval
+      if (gsCreate) {
+        const gsGrad = await gangSwapGradSupport(ctx, aw?.minutes ?? null)
+        if (gsGrad.unread) fail('could not check the pad for a graduation reward on GangSwap tokens (RPC error)', { pad: ctx.pad, detail: gsGrad.unread, retry: 'same command again' })
+        if (!gsGrad.open) fail(`${gsGrad.why}: drop --grad-reward, or --venue gangswap`, { pad: ctx.pad, hint: 'this run built no wrap, approval or create' })
+      }
       const cf = countdownFactoryAddress(testnet)
       grToModule = cdLaunch && !!cf && String(support.countdownFactory ?? '').toLowerCase() === cf.toLowerCase()
       if (carryBps > 0 && !grToModule) fail(carryClosed(support.countdownFactory, cf), { pad: ctx.pad })
@@ -747,17 +753,19 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }
       grView = gradCreateView({
         seed: await units(ctx, quote, seedRaw), minBuy: await units(ctx, quote, minBuyRaw), sym, entries: gr.entries, lastBps: gr.lastBps,
-        refundDays: gr.refundDays, targetBnb, gateOn: await ctx.read(ctx.pad, GRAD_PAD_ABI, 'agentGateEnabled'), carryBps, toModule: grToModule,
+        refundDays: gr.refundDays, targetBnb, gateOn: await ctx.read(ctx.pad, GRAD_PAD_ABI, 'agentGateEnabled'), carryBps, toModule: grToModule, gangSwap: gsCreate,
         ...(!gr.minBuy && { seedFloorNote: `--gr-min-buy left out: ${DEFAULT_MIN_BUY_BNB} BNB at this token's rate` }),
       })
       const pre = await fundingStep(ctx, me, quote, seedRaw, sym, 'approve-quote', rawOnly, summarize)
-      if (pre) return out(pre.success ? { ...pre, why: `the create pulls the ${grView.pool} reward pool from this wallet` } : pre)
+      // each run builds the one step still missing (wrap, approve, create), read from the chain: re-run once the last one landed
+      const gsPre = gsCreate && { venue: { name: 'gangswap', version: gsMigrator, ...(gsRouterWarning && { routerWarning: gsRouterWarning }) }, gradReward: grView, stages: 'wrap-bnb (if WBNB is short) → approve-quote (exactly the seed) → create: one per run of the same command; the create is its own preview' }
+      if (pre) return out(pre.success ? { ...pre, why: `the create pulls the ${grView.pool} reward pool from this wallet`, ...gsPre } : pre)
     }
     // createWithVault, createWithPromote, createWithBase and createWithGradReward always take the target (the pad's
     // default when --grad is left out)
-    const fn = gsCreate ? 'createGangSwap' : base ? 'createWithBase' : gr ? 'createWithGradReward' : vault ? 'createWithVault' : promote ? 'createWithPromote' : grad !== null ? 'createWithGradTarget' : 'create'
+    const fn = gsCreate ? (gr ? 'createGangSwapWithGradReward' : 'createGangSwap') : base ? 'createWithBase' : gr ? 'createWithGradReward' : vault ? 'createWithVault' : promote ? 'createWithPromote' : grad !== null ? 'createWithGradTarget' : 'create'
     const argsOf = (logoURI, metaURI) => (gsCreate
-      ? [name, symbol, logoURI, metaURI, parseUnits(String(targetBnb), 18), gsMigrator]
+      ? [name, symbol, logoURI, metaURI, parseUnits(String(targetBnb), 18), gsMigrator, ...(gr ? [grCfg] : [])]
       : base
       ? [name, symbol, logoURI, metaURI, tax, parseUnits(String(targetBnb), 18), { baseBps: base.baseBps, vestDays: base.vestDays }]
       : [name, symbol, logoURI, metaURI, quote, refPool, tax,
@@ -851,8 +859,8 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }),
       ...(base && { base: baseView }),
       ...(grView && { gradReward: grView }),
-      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator, gsRouterWarning), ...(gsRouterWarning && { warning: gsRouterWarning }) }),
-      ...(aw && { agentWindow: windowCreateView(aw.minutes, { gradReward: !!gr, vault: !!vault, promote: !!promote }) }),
+      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator, gsRouterWarning, !!gr), ...(gsRouterWarning && { warning: gsRouterWarning }) }),
+      ...(aw && { agentWindow: windowCreateView(aw.minutes, { gradReward: !!gr && !gsCreate, vault: !!vault, promote: !!promote }) }),
       ...(vault && {
         padGen: ctx.gen, pad: ctx.pad, vault,
         vaultNote: 'the token is bound to this vault for good. Until graduation the token moves only through the pad: the vault locks a holder\'s tokens (counted in that holder\'s 1% cap) and releases them through the pad, for the holder that sends the tx and holds an Agent ID; after graduation it is a plain token. This create uses up the wallet\'s naming for the vault: one token per naming. A vault-bound token takes no GangBond (gang bond post refuses it): a lock moves tokens out of the creator\'s wallet, which would forfeit a bond',
@@ -954,7 +962,6 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     }
     // the token's buy-time rewards (3.0): what this buy means for each, one key per kind
     const rewardsOf = async (tokensOut) => {
-      if (gs) return {}
       const { spent, cut } = await spentFor(ctx, c, quoteIn, tokensOut, room)
       // the pad graduates the token once the curve holds its graduation amount (realQuote >= gradAmt): a buy whose net
       // reaches what is left graduates it, cut or not
@@ -965,9 +972,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const gradReward = grLine && !grLine.error && win?.set ? {
         ...grLine,
         ...(win.open && !agent && { counts: false, why: 'the token is open to every wallet, but only Agent ID wallets\' buys count for the list: this wallet holds none' }),
-        openWarning: GRAD_OPEN_WARNING,
+        ...(!gs && { openWarning: GRAD_OPEN_WARNING }),
       } : grLine
-      const countdown = await cdCurveLine()
+      const countdown = gs ? null : await cdCurveLine() // an untaxed token has none
       return gradReward || countdown ? { rewards: { ...(gradReward && { gradReward }), ...(countdown && { countdown }) } } : {}
     }
     const extra = async (tokensOut, minOut, refundAs = c.quoteSymbol) => ({
@@ -1112,7 +1119,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const pre = await fundingStep(ctx, me, token, amount, c.quoteSymbol, 'approve', rawOnly, summarize)
     if (pre) return out(pre.success ? { ...pre, ...notes.skipped() } : pre)
     // a graduation reward: this sell takes the seller's entries in its list out
-    const grSell = gs ? null : await gradSellLine(ctx, token, c.quote, c.quoteSymbol, me)
+    const grSell = await gradSellLine(ctx, token, c.quote, c.quoteSymbol, me)
     const sim = await simulate(ctx, me, ctx.pad, PAD_ABI, 'sell', [token, amount, 0n])
     if (sim.failed) return out({ success: false, step: 'sell', ...simFailed(sim.failed) })
     const minOut = minOf(sim.result, slippage)

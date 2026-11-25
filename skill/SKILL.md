@@ -172,7 +172,8 @@ rules; see the CLI README). Report amounts in plain units with their quote symbo
   ([v3.md](references/v3.md)).
 - **GangSwap** (`gang create … --venue gangswap`, 0.53.0+, GangLaunchpad 3.0 where its pad serves it): only when the user
   asked for it; before the create relay every line of the preview's `venue` (permanent; trades on GangSwap after
-  graduation, not PancakeSwap; sites such as DexScreener may not list it; its GangSwap version is fixed at the create too). A token whose `kind` is `gangswap` trades with
+  graduation, not PancakeSwap; sites such as DexScreener may not list it; its GangSwap version is fixed at the create too). `--grad-reward` goes with it
+  where the pad serves that (0.54.0+): relay `gradReward` too. A token whose `kind` is `gangswap` trades with
   `gang buy` / `gang sell` only once graduated: never send the user to a PancakeSwap pool of it or any other router, and
   approve nothing to one ([v3.md](references/v3.md#gangswap-cli-0530), [pool.md](references/pool.md#gangswap-pools)).
 - **Countdown reward** (`countdown-v1`, 0.43.2+, BSC mainnet and testnet): the creator's own share of the pool tax, paid to the last

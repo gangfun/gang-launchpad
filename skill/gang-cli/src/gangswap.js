@@ -5,8 +5,8 @@ import { gangGens, GANGSWAP_KIND, PAD3_GEN } from './gangpad.js'
 import { missingRead } from './base.js'
 import { bondGuard } from './bond.js'
 import { callBondGuard } from './callbond.js'
-import { VANITY_ABI } from './vanity.js'
-import { AGENT_WINDOW_ABI } from './agentwindow.js'
+import { VANITY_ABI, vanityDeployer } from './vanity.js'
+import { AGENT_WINDOW_ABI, wrapCreate } from './agentwindow.js'
 
 /**
  * GangSwap (docs/SPEC-GANGSWAP-2026-11-22.md): the optional graduation venue of a GangLaunchpad 3.0 curve token, picked
@@ -83,10 +83,13 @@ export const GANGSWAP_PAD_ABI = parseAbi([
   'function gangSwapMigrator() view returns (address)',
   'function gangSwapMigratorOf(address token) view returns (address)',
   'function createGangSwap(string name, string symbol, string logoURI, string metaURI, uint256 gradBnb, address migrator) returns (address token)',
+  // the same with a graduation reward the creator seeds in WBNB (docs/SPEC-GANGSWAP-GRAD-REWARD-2026-11-25.md); cfg as gradreward.js's
+  'function createGangSwapWithGradReward(string name, string symbol, string logoURI, string metaURI, uint256 gradBnb, address migrator, (uint128 seed, uint96 minBuy, uint8 entries, uint16 lastBps, uint16 carryBps, uint32 refundAfter, uint16 promoteBps, uint32 promoteWindow) cfg) returns (address token)',
   'error GangSwapNotOpen()', 'error GangSwapVersionChanged(address current)', 'error WrongGangSwapMigrator()',
   'event GangSwapCreated(address indexed token, address indexed migrator)',
   'event GangSwapMigratorSet(address indexed migrator)',
 ])
+const GRAD_REFUSALS = parseAbi(['error GradNotOpen()', 'error BadGradConfig()'])
 const KIND_ABI = parseAbi(['function kindOf(address token) view returns (uint8)'])
 const CREATOR_ABI = parseAbi(['function curves(address token) view returns (address creator, address quote, uint128 realQuote, uint128 sold, uint128 gradAmt, uint128 virtualQuote, bool graduated, uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address pair, address refPair)'])
 const MIGRATOR_ABI = parseAbi([
@@ -172,8 +175,33 @@ export async function gangSwapSupport(ctx) {
   return isZero(migrator) ? { open: false, why } : { open: true, migrator }
 }
 
-/** What the create preview says about --venue gangswap. */
-export const gangSwapCreateView = (migrator, routerWarning = null) => ({
+/**
+ * Whether ctx's pad serves createGangSwapWithGradReward in the very shape the create will take (inside createWithSalt
+ * with abcd on, inside createWithAgentWindow with `windowMinutes`): { open: true } | { open: false, why } | { unread }.
+ * Nothing on the pad names the entry, so it is asked with an empty config, which it refuses as such (BadGradConfig)
+ * before anything else. A pad without it answers a bare revert, a wrapper that does not list it its own error.
+ */
+export async function gangSwapGradSupport(ctx, windowMinutes = null) {
+  const where = netOf(ctx) === 'mainnet' ? 'BSC mainnet' : 'the BSC testnet'
+  const no = { open: false, why: `GangLaunchpad 3.0 on ${where} has no graduation reward for GangSwap tokens yet (the pad is not upgraded for it)` }
+  if (ctx.gen !== PAD3_GEN) return no
+  const none = { seed: 0n, minBuy: 0n, entries: 0, lastBps: 0, carryBps: 0, refundAfter: 0, promoteBps: 0, promoteWindow: 0 }
+  let data = encodeFunctionData({ abi: GANGSWAP_PAD_ABI, functionName: 'createGangSwapWithGradReward', args: ['', '', '', '', 0n, zeroAddress, none] })
+  try {
+    if (await vanityDeployer(ctx)) data = encodeFunctionData({ abi: VANITY_ABI, functionName: 'createWithSalt', args: [`0x${'00'.repeat(32)}`, data] })
+    if (windowMinutes !== null) data = wrapCreate(windowMinutes, data)
+  } catch (e) { return { unread: short(e) } }
+  try { await ctx.client.call({ to: ctx.pad, data }) } catch (e) {
+    if (!isRevert(e)) return { unread: short(e) }
+    const r = revertIn(e, [GRAD_REFUSALS])?.error
+    if (r === 'BadGradConfig') return { open: true }
+    return r === 'GradNotOpen' ? { open: false, why: 'the graduation reward is closed on this pad' } : no
+  }
+  return no
+}
+
+/** What the create preview says about --venue gangswap. `gradReward`: with a graduation reward. */
+export const gangSwapCreateView = (migrator, routerWarning = null, gradReward = false) => ({
   name: 'gangswap',
   ...(routerWarning && { routerWarning }),
   version: migrator,
@@ -182,16 +210,16 @@ export const gangSwapCreateView = (migrator, routerWarning = null) => ({
   trading: `${VENUE_LINE}: only GangSwapRouter (gang buy / gang sell) and tools that support GangSwap trade it, and sites such as DexScreener may not list it. A PancakeSwap pool of this token would be someone else's`,
   buyBack: 'at graduation the part of the raise no trade could ever reach is replaced by an equal virtual reserve (the price curve stays the same), and that quote is used for a scheduled buy-back and burn: about 40 steps over about 5 minutes',
   fee: 'the pool takes a 1% fee on the input: on buys (paid in BNB) the creator gets 70% of it, claimed with gang creator-fee; on sells the fee is tokens, burned, and the creator gets nothing',
-  terms: 'WBNB quote, untaxed, no modules (no bond, promoter share, base, vault, reward or recipient). The curve is an ordinary V3 one',
+  terms: `WBNB quote, untaxed, no modules (no bond, promoter share, base, vault, countdown reward or recipient). ${gradReward ? 'With the graduation reward you fund (see gradReward): it is paid from your seed only, never from the curve, the fees, the GangSwap pool or its buy-back' : 'No graduation reward'}. The curve is an ordinary V3 one`,
 })
 
-/** The creates a tx input asks for, unwrapped: true when it is (or wraps) createGangSwap. */
+/** The creates a tx input asks for, unwrapped: true when it is (or wraps) createGangSwap / createGangSwapWithGradReward. */
 export function asksGangSwap(input) {
   let data = input
   for (let i = 0; i < 3 && typeof data === 'string'; i++) {
     let d
     try { d = decodeFunctionData({ abi: [...GANGSWAP_PAD_ABI, ...VANITY_ABI, ...AGENT_WINDOW_ABI], data }) } catch { return false }
-    if (d.functionName === 'createGangSwap') return true
+    if (d.functionName === 'createGangSwap' || d.functionName === 'createGangSwapWithGradReward') return true
     if (d.functionName !== 'createWithSalt' && d.functionName !== 'createWithAgentWindow') return false
     data = d.args[1]
   }

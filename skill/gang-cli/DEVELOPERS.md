@@ -134,6 +134,12 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
 - Creating: `createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)` names the version expected, the pad's
   current `gangSwapMigrator()`, or reverts `GangSwapVersionChanged(current)`; also inside `createWithSalt` and
   `createWithAgentWindow`.
+- With a graduation reward (0.54.0+, on a pad that serves it; mainnet's does not yet):
+  `createGangSwapWithGradReward(name, symbol, logoURI, metaURI, gradBnb, migrator, cfg)`, `cfg` as `createWithGradReward`'s
+  with `carryBps`, `promoteBps` and `promoteWindow` 0. Not payable: `cfg.seed` is pulled from the creator in WBNB (approve
+  the pad for exactly it). Also inside both wrappers. No getter names the entry: call it statically with an empty `cfg`;
+  `BadGradConfig()` means it is served, `GradNotOpen()` closed, a bare revert (or a wrapper's own error) not there. The
+  reward's views, claims, refund, sweep and events are those of any graduation reward.
 - Addresses: `pad.gangSwapMigratorOf(token)` → `factory()` and `boost()`; `factory.fees()`. The router is named by
   nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI keeps a list
   of versions, takes the router whose `factory()` is the token's own factory, and requires the code itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must be a known build's (`GANGSWAP_ROUTER_CODE_HASH`) and the

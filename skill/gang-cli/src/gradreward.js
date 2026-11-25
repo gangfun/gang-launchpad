@@ -1,6 +1,6 @@
 import { createPublicClient, encodeFunctionData, isAddress, parseAbi, parseUnits } from 'viem'
 import { walletFor } from './fair.js'
-import { atTokenPad, KIND_UNREAD, NOT_ON_MAINNET, PAD3_GEN, padNets, rpcTransport, gangSwapTakesNone } from './gangpad.js'
+import { atTokenPad, KIND_UNREAD, NOT_ON_MAINNET, PAD3_GEN, padNets, rpcTransport } from './gangpad.js'
 import { missingRead } from './base.js'
 import { revertOf as revertIn, step, units } from './steps.js'
 
@@ -15,6 +15,9 @@ import { revertOf as revertIn, step, units } from './steps.js'
  * within 3 days (else the request lapses); a graduation during the notice pays as usual.
  *
  * The pool is the creator's own money, paid by a fixed public rule; buyers buy the token as on any curve.
+ *
+ * A GangSwap curve token (kind 4) takes one too (createGangSwapWithGradReward, gangswap.js): the same rules, always in
+ * WBNB, without a carry or a promoter share.
  */
 
 const TAX = '(uint16 buyTaxBps, uint16 sellTaxBps, uint16 dividendBps, address recipient)'
@@ -150,7 +153,7 @@ const iso = (s) => (Number(s) > 0 ? new Date(Number(s) * 1000).toISOString() : n
 const pctOf = (bps) => Number(bps) / 100
 
 /** What the create preview says about the reward (pure; amounts as display strings). */
-export function gradCreateView({ seed, minBuy, sym, entries, lastBps, refundDays, targetBnb, seedFloorNote, gateOn, carryBps = 0, toModule = false }) {
+export function gradCreateView({ seed, minBuy, sym, entries, lastBps, refundDays, targetBnb, seedFloorNote, gateOn, carryBps = 0, toModule = false, gangSwap = false }) {
   const last = pctOf(lastBps)
   const carry = pctOf(carryBps)
   const pool = carry > 0 ? `the payout (the pool less the ${carry}% carry)` : 'the pool'
@@ -167,7 +170,8 @@ export function gradCreateView({ seed, minBuy, sym, entries, lastBps, refundDays
     claims: `buyers claim with gang grad-reward claim for ${CLAIM_DAYS} days after graduation; then anyone sweeps the unclaimed rest (and the rounding dust) ${rest}`,
     refund: `if the token does not graduate: ${refundDays} days after the create you may ask for the pool back (gang grad-reward refund-request). The request is public for ${NOTICE_DAYS} days; a graduation in that time pays the buyers as usual. Then you have ${WINDOW_DAYS} days to take it (gang grad-reward refund), after which the request lapses and must be made again`,
     rule: RULE,
-    risks: 'anyone watching the curve can time the last buys, and one person with several Agent IDs can fill several entries: weighting by spend means many small entries earn no more than one large one, but a push into a full list still crowds out the oldest entries. A higher --gr-min-buy and more --gr-entries make that harder',
+    ...(gangSwap && { gangSwap: 'the seed stays in the pad apart from the raise: it is never part of the GangSwap pool or its buy-back. No countdown module and no promoter share: what nobody claims goes back to you' }),
+    ...(!gangSwap && { risks: 'anyone watching the curve can time the last buys, and one person with several Agent IDs can fill several entries: weighting by spend means many small entries earn no more than one large one, but a push into a full list still crowds out the oldest entries. A higher --gr-min-buy and more --gr-entries make that harder' }),
     ...(seedFloorNote && { seedFloor: seedFloorNote }),
     warning: `PERMANENT: ${seed} ${sym} leaves this wallet in the create. You get it back only through the refund above (if the token does not graduate)${toModule ? '' : ' or as the unclaimed rest 180 days after graduation'}. The size, the rules and the numbers never change`,
   }
@@ -278,8 +282,8 @@ export async function runGradReward(sub, { opt, flag, out, fail, summarize }) {
   if (!isAddress(token ?? '')) return fail('--token must be a 3.0 curve token address (0x…)', { got: token ?? null })
   const kind = await atTokenPad(ctx, token)
   if (kind === null) return fail(KIND_UNREAD.error, { token, retry: KIND_UNREAD.retry })
-  if (kind === 'gangswap') return fail(gangSwapTakesNone(kind, 'graduation reward'), { token, chainId, kind })
-  if (kind !== 'v3') return fail(`not a V3 curve token on a GangLaunchpad (${testnet ? 'BSC testnet' : 'BSC mainnet; add --testnet for a testnet token'})`, { token, chainId, ...(kind && kind !== 'none' && { kind }) })
+  const gs = kind === 'gangswap' // a GangSwap curve token: the same reward, no carry
+  if (kind !== 'v3' && !gs) return fail(`not a V3 curve token on a GangLaunchpad (${testnet ? 'BSC testnet' : 'BSC mainnet; add --testnet for a testnet token'})`, { token, chainId, ...(kind && kind !== 'none' && { kind }) })
   let creator, quote
   try { [creator, quote] = await ctx.read(ctx.pad, CURVE_ABI, 'curves', [token]) } catch (e) {
     return fail('could not read the token\'s curve (RPC error)', { token, detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' })
@@ -291,14 +295,14 @@ export async function runGradReward(sub, { opt, flag, out, fail, summarize }) {
   try { g = await gradOf(ctx, token, quote, me) } catch (e) {
     return fail('could not read the token\'s graduation reward (RPC error)', { token, detail: e.shortMessage || e.message.split('\n')[0], retry: 'same command again' })
   }
-  if (!g) return fail('this token has no graduation reward (it was not created with --grad-reward)', { token, pad: ctx.pad, padGen: ctx.gen })
+  if (!g) return fail('this token has no graduation reward (it was not created with --grad-reward)', { token, pad: ctx.pad, padGen: ctx.gen, ...(gs && { kind }) })
   const { raw, ...shown } = g
   const isCreator = me && me.toLowerCase() === creator.toLowerCase()
   if (sub === 'status') {
     const next = raw.state === 2 && raw.claimable > 0n ? `gang grad-reward claim --token ${token}${tn}`
       : raw.state === 2 && raw.now >= raw.gradAt + CLAIM_DAYS * 86400 ? `gang grad-reward sweep --token ${token}${tn}`
         : raw.carryOwed > 0n ? `gang grad-reward retry-carry --token ${token}${tn}` : null
-    return out({ success: true, chainId, token, pad: ctx.pad, quote: sym, creator, ...shown, rule: RULE, ...(next && { next }) })
+    return out({ success: true, chainId, token, ...(gs && { kind }), pad: ctx.pad, quote: sym, creator, ...shown, rule: RULE, ...(next && { next }) })
   }
 
   if (!me) return fail('no wallet: sign in to baw, or pass --from <addr> with --calldata')
@@ -311,7 +315,7 @@ export async function runGradReward(sub, { opt, flag, out, fail, summarize }) {
     claim: () => closed ?? (raw.state !== 2 ? HINTS.NotGradState : raw.claimable === 0n ? 'nothing to claim for this wallet: it already claimed, or it has no valid entry in the list (not among the last buys counted, or it sold on the curve after its buys)' : null),
     settle: () => closed ?? (raw.state !== 2 ? HINTS.NotGradState : raw.settled ? 'already settled: the entries are counted (claims read them)' : null),
     sweep: () => closed ?? (raw.state !== 2 ? HINTS.NotGradState : raw.now < raw.gradAt + CLAIM_DAYS * 86400 ? HINTS.SweepNotDue : null),
-    'retry-carry': () => (raw.carryOwed === 0n ? HINTS.NoCarryOwed : null),
+    'retry-carry': () => (gs ? 'a GangSwap token has no countdown module: there is never a carry to resend' : raw.carryOwed === 0n ? HINTS.NoCarryOwed : null),
     'refund-request': () => (!isCreator ? 'only the token\'s creator may ask for the pool back' : raw.state !== 1 ? HINTS.NotGradState
       : raw.now < raw.createdAt + raw.refundAfter ? `too early: the pool can be asked back from ${g.refundAskableAt}` : raw.refundPending ? 'a refund request is already running' : null),
     'refund-cancel': () => (!isCreator ? 'only the token\'s creator may cancel its refund request' : !raw.refundPending ? 'no refund request is running' : null),
@@ -336,7 +340,7 @@ export async function runGradReward(sub, { opt, flag, out, fail, summarize }) {
     refund: `takes the whole pool (${g.pool} ${sym}) back to you and ends the reward for good: a later graduation pays nobody. Send it before ${iso(lapsesAt)}: the request lapses then, and the tx would revert`,
   }[sub]
   return out(step(ctx, { from: me, to: ctx.pad, data }, {
-    step: `grad-reward-${sub}`, chainId, token, quote: sym, pool: g.pool, ...(sub === 'claim' && { amount: g.claimable }), ...(sub === 'refund' && { lapsesAt: iso(lapsesAt) }), note,
+    step: `grad-reward-${sub}`, chainId, token, ...(gs && { kind }), quote: sym, pool: g.pool, ...(sub === 'claim' && { amount: g.claimable }), ...(sub === 'refund' && { lapsesAt: iso(lapsesAt) }), note,
   }, flag('calldata'), summarize))
 }
 

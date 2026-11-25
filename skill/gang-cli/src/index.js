@@ -715,7 +715,7 @@ AGENT WINDOW (GangLaunchpad 3.0, 0.49.0+; the pad says whether it is open):
                                          only once the chain shows one), its balance then and now
 
 GANGSWAP (GangLaunchpad 3.0, 0.53.0+; the pad says whether it is open):
-  gang create … --venue gangswap [--grad 6|9|12|15] [--agent-window <1-1440>]
+  gang create … --venue gangswap [--grad 6|9|12|15] [--agent-window <1-1440>] [--grad-reward <seed> …]
                                          the curve graduates into GangSwap instead of PancakeSwap (--venue pancake, the
                                          default). PERMANENT. On the curve it is an ordinary V3 token; afterwards it trades on
                                          GangSwap, not PancakeSwap, and sites such as DexScreener may not list it. At graduation
@@ -724,7 +724,8 @@ GANGSWAP (GangLaunchpad 3.0, 0.53.0+; the pad says whether it is open):
                                          about 5 minutes. The GangSwap version (its migrator) is fixed at the create too: the
                                          one the preview shows, or the tx reverts. 1% pool fee; on buys the creator gets 70% of it (gang creator-fee).
                                          WBNB quote, untaxed, alone: no tax, dividend, recipient, --quote / --ref-pool,
-                                         --promote, --base, --vault, modules, rewards, bond, launch in one command, --fair / --fly.
+                                         --promote, --base, --vault, modules, countdown reward, bond, launch in one command, --fair / --fly.
+                                         --grad-reward goes with it (0.54.0+, where the pad serves it; GRADUATION REWARD below)
                                          gang tx --hash then checks the token really is a GangSwap one, and on which version
   gang buy / gang sell                   after graduation: GangSwapRouter only (BNB by default, --use-quote pays WBNB; a sell
                                          pays WBNB, --to-bnb BNB), never GangRouter or PancakeSwap: a PancakeSwap pool of such a
@@ -753,6 +754,13 @@ GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; open on BSC main
                                          or a launch in one command (--dev-buy, --bond, --buyback, --split, --lp, --tax-cap,
                                          --floor). gang buy / gang sell previews say whether a buy counts (rewards.gradReward)
                                          and what a sell takes out
+  gang create … --venue gangswap --grad-reward <seed> [--gr-min-buy …] [--gr-entries …] [--gr-last …] [--gr-refund-days …]
+                                         0.54.0+, only where the pad serves it (asked before any wrap or approval; mainnet
+                                         does not yet): the same reward on a GangSwap token, seeded in WBNB. One step per run
+                                         of the same command: wrap-bnb, approve-quote (exactly the seed), then the create
+                                         (with --agent-window too). No --gr-carry, --promote or --countdown-reward: the
+                                         unclaimed rest always goes back to you. The seed is never part of the GangSwap pool
+                                         or its buy-back. The grad-reward commands below work on it (retry-carry: never owed)
   gang grad-reward status --token <addr> the pool, the rules, the list (newest first, valid or not), the refund state and,
                                          after graduation, what this wallet can claim
   gang grad-reward claim --token <addr>  after graduation: this wallet's share (all its valid entries), once
