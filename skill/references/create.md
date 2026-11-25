@@ -21,7 +21,8 @@ gang tx --hash 0x…
   `--grad 6|9|12|15` picks it (default 9; market cap at graduation ≈ 5×). The preview shows it as
   `graduationTargetBnb` and, in the quote, `graduationAt` ([v3.md](v3.md#graduation-target-ganglaunchpad-20)).
 - `--venue gangswap` (0.53.0+, where the pad serves it) makes the curve graduate into GangSwap instead of PancakeSwap, for
-  good. Only on the user's request; it goes with `--grad`, `--agent-window`, the logo, links and notes and nothing else
+  good. Only on the user's request; it goes with `--grad`, `--agent-window`, `--grad-reward` (0.54.0+, where
+  the pad serves it), the logo, links and notes and nothing else
   ([v3.md](v3.md#gangswap-cli-0530)). `--venue pancake` is the default.
 - The creator gets nothing for free: to hold tokens it buys like everyone else, under the same 1% cap. Create and curve
   buys both require an Agent ID.

@@ -6,6 +6,8 @@
  *   - after graduation: buy / sell through GangSwapRouter only (target, args, minimum, exact approvals), GangRouter's
  *     pool functions and PancakeSwap never asked; each failing router check; the env override is checked the same way;
  *   - info / status / portfolio / creator-fee (list, status, both claims) / handoff / MCP / tx;
+ *   - --grad-reward on it (docs/SPEC-GANGSWAP-GRAD-REWARD-2026-11-25.md): served or not (asked before any wrap or approval),
+ *     the stages, the exact approval, every nesting, info / buy / sell previews and gang grad-reward on a kind-4 token;
  *   - kinds 1 / 2 / 3 as before.
  *
  *   node skill/gang-cli/test/gangswap.mjs
@@ -31,7 +33,7 @@ const { GANG_GENS, CREATOR_FEE_ABI, GRAD_TARGET_ABI, GANGSWAP_KIND, gangGens, ge
 const { ROUTER_ABI, POOL_HANDLER_ABI } = await import('../src/steps.js')
 const { refShown, poolTrade, POOL_NO_REF, GANGSWAP_NO_REF } = await import('../src/pool.js')
 const { PROMOTE_PAD_ABI } = await import('../src/promote.js')
-const { GRAD_PAD_ABI } = await import('../src/gradreward.js')
+const { GRAD_PAD_ABI, GRAD_EVENT_ABIS, runGradReward } = await import('../src/gradreward.js')
 const { BASE_PAD_ABI } = await import('../src/base.js')
 const { BOND_ABI } = await import('../src/bond.js')
 const { CALL_BOND_ABI } = await import('../src/callbond.js')
@@ -140,7 +142,7 @@ assert.equal(refusal({ quote: V3_NETS.testnet.wbnb }), null)
 assert.equal(refusal({ quote: WBNB }), null)
 const REFUSED = {
   'buy-tax': '2', 'sell-tax': '2', dividend: '0', recipient: ME, quote: OTHER, 'ref-pool': OTHER, promote: '10', 'promote-days': '30', base: '5', 'base-vest': '30', vault: OTHER,
-  'grad-reward': '1', 'gr-min-buy': '1', 'gr-entries': '5', 'gr-last': '1', 'gr-refund-days': '30', 'gr-carry': '1',
+  'gr-carry': '0',
   'countdown-reward': '', 'cd-max-payout': '1', 'cd-window': '60m', 'cd-seed': '1',
   'dev-buy': '1', bond: '1', 'bond-hold': 'all', 'bond-days': '7', buyback: '10', 'buyback-to': ME, split: 'self:100', lp: '10', 'lp-to': ME, 'tax-cap': '1', 'tax-cap-share': '1', 'after-cap': 'x', floor: '', 'redeem-fee': '1', restart: '',
   fair: '', fly: '', raise: '15', hold: '60', 'mint-fee': '1', 'exit-fee': '1', cap: '1', shares: '1', preset: 'j', quota: '5', 'dev-shares': '1',
@@ -166,7 +168,7 @@ const fresh = () => ({
   boost: [PAIR, 1_999_999_990n, false, 12n * E18 / 10n, 9n * E18 / 10n],
   routerCode: deployed(), routerFactory: FACTORY, routerWeth: WBNB, listedPair: PAIR, hash: HASH,
   curveFee: 5n * E18 / 100n, creator: ME, agents: new Set([lc(ME)]), native: 10n * E18, wbnb: 10n * E18, wbnbAllow: 0n, tokenBal: 5_000_000n * E18, tokenAllow: 0n,
-  creators: {}, promote: [0, 0], swapData: null, openAt: 0, swapRevert: null, gas: 160_000n, calls: [], sent: [], code: [], txs: {}, receipts: {},
+  gsGrad: 'served', reward: null, gated: true, creators: {}, promote: [0, 0], swapData: null, openAt: 0, swapRevert: null, gas: 160_000n, calls: [], sent: [], code: [], txs: {}, receipts: {},
 })
 let world = fresh()
 const ERC20 = parseAbi(['function symbol() view returns (string)', 'function name() view returns (string)', 'function decimals() view returns (uint8)', 'function balanceOf(address) view returns (uint256)',
@@ -187,7 +189,8 @@ const err = (sig) => ({ error: { code: 3, message: 'execution reverted', data: t
 const reason = (s) => ({ error: { code: 3, message: `execution reverted: ${s}`, data: `0x08c379a0${encodeAbiParameters([{ type: 'string' }], [s]).slice(2)}` } })
 const rpcDown = { error: { code: -32603, message: 'internal error' } }
 
-let inMulti = false
+const stripped = { error: { code: 3, message: 'execution reverted' } }
+let inMulti = false, atBlock = 'latest'
 const call = ({ to, data, from, value }) => {
   const f = functions.get(data.slice(0, 10))
   const at = lc(to) === MPAD ? PAD : lc(to)
@@ -240,7 +243,8 @@ const call = ({ to, data, from, value }) => {
     }
     return revert
   }
-  if (at === WBNB) return { balanceOf: () => ok(world.wbnb), allowance: () => ok(world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
+  if (at === WBNB && world.wbnbAt?.[atBlock] === 'down') return rpcDown
+  if (at === WBNB) return { balanceOf: () => ok(world.wbnbAt?.[atBlock]?.[0] ?? world.wbnb), allowance: () => ok(world.wbnbAt?.[atBlock]?.[1] ?? world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
   if (at === GS || at === GS2 || at === K1) return { balanceOf: () => ok(world.tokenBal), allowance: () => ok(world.tokenAllow), symbol: () => ok('GSW'), decimals: () => ok(18), launchpad: () => ok(PAD) }[f.name]?.() ?? revert
   if (at === lc(HANDLER) && f.name === 'owedOf') return ok(0n)
   if (f.name === 'kindOf' && world.kindDown && inMulti) return revert
@@ -273,7 +277,39 @@ const call = ({ to, data, from, value }) => {
     if (lc(decodeFunctionData({ abi: [g], data: d }).args[5]) === current) return null
     return { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: G.GANGSWAP_PAD_ABI, errorName: 'GangSwapVersionChanged', args: [current] }) } }
   }
+  // createGangSwapWithGradReward as the pad runs it: `via` the wrappers around it (window first); null: another create
+  const gradCreate = (d, via = []) => {
+    const g = functions.get(d.slice(0, 10))
+    if (g?.name === 'createWithAgentWindow' || g?.name === 'createWithSalt') return gradCreate(decodeFunctionData({ abi: [g], data: d }).args[1], [...via, g.name])
+    if (g?.name !== 'createGangSwapWithGradReward') return null
+    const a = decodeFunctionData({ abi: [g], data: d }).args
+    world.gradCalls = [...(world.gradCalls ?? []), { via, seed: a[6].seed }]
+    if (world.gsGrad === 'down') return rpcDown
+    if (world.gsGrad?.error) return world.gsGrad
+    if (world.gsGrad === 'absent') return via.length ? err(via.at(-1) === 'createWithSalt' ? 'BadVanityCall()' : 'BadAgentWindowCall()') : revert
+    if (world.gsGrad === 'unwrapped' && via.length) return err('BadVanityCall()')
+    if (world.gsGrad === 'odd') return { result: '0x' }
+    if (world.gsGrad === 'closed') return err('GradNotOpen()')
+    const c = a[6]
+    if (!c.seed || !c.minBuy || !c.entries || c.carryBps || c.promoteBps || c.promoteWindow) return err('BadGradConfig()')
+    if (world.vanity && !via.includes('createWithSalt')) return err('VanityContextRequired()')
+    if (world.late) return err(`${world.late}()`)
+    const current = world.nowMigrator ?? world.migrator
+    if (lc(a[5]) !== current) return { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: G.GANGSWAP_PAD_ABI, errorName: 'GangSwapVersionChanged', args: [current] }) } }
+    assert.ok(world.wbnb >= c.seed && world.wbnbAllow >= c.seed, 'the real dry run comes after the funding')
+    return { result: encodeAbiParameters([{ type: 'address' }], [t(0x6abcd)]) }
+  }
+  if (/^create/.test(f.name)) { const x = gradCreate(data); if (x) return x }
+  const noReward = { state: 0, pot: 0n, minBuy: 0n, entries: 0, lastBps: 0, carryBps: 0, refundAfter: 0, createdAt: 0, refundAt: 0, gradAt: 0, seq: 0n, countdown: zeroAddress, claimed: 0n, carryOwed: 0n, settled: false, valid: 0, validSpent: 0n, refundPending: false }
+  const rw = lc(args[0] ?? '') === GS ? world.reward : null
   switch (f.name) {
+    case 'gradRewardDeps': return ok([world.gradOpen ?? true, t(0xad), zeroAddress])
+    case 'gradReward': return world.noGradViews ? revert : ok({ ...noReward, ...rw })
+    case 'gradEntries': return ok(rw ? [[ME, OTHER], [2n, 1n], [E18 / 50n, E18 / 20n], [true, true]] : [[], [], [], []])
+    case 'gradClaimable': return ok(rw?.state === 2 && lc(args[1]) === lc(ME) ? E18 / 5n : 0n)
+    case 'claimGradReward': return rw ? ok(E18 / 5n) : world.stripped ? stripped : err('NotGradState()')
+    case 'gradRefund': return ok(rw.pot)
+    case 'requestGradRefund': case 'cancelGradRefund': case 'settleGradReward': case 'sweepGradReward': return ok(undefined)
     case 'gangSwapMigrator': return world.hasGetter ? ok(world.migrator) : revert
     case 'gangSwapMigratorOf': return world.hasOf ? ok(world.migratorOf[lc(args[0])] ?? zeroAddress) : revert
     case 'createGangSwap': world.sent.push(f.name); if (changed(data)) return changed(data); return world.vanity ? err('VanityContextRequired()') : world.migrator === zeroAddress ? err('GangSwapNotOpen()') : ok(t(0x2abcd))
@@ -288,7 +324,7 @@ const call = ({ to, data, from, value }) => {
     case 'walletCapOn': return ok(!(world.openAt !== 0 && NOW >= world.openAt))
     case 'canTradeCurve': return ok(world.agents.has(lc(args[1])) || (world.openAt !== 0 && NOW >= world.openAt))
     case 'taxHandler': case 'router': case 'recipientRegistry': return ok(HANDLER)
-    case 'agentGateEnabled': return ok(true)
+    case 'agentGateEnabled': return ok(world.gated)
     case 'isAgent': return ok(world.agents.has(lc(args[0])))
     case 'walletRoom': return ok(10_000_000n * E18)
     case 'curves': {
@@ -330,7 +366,8 @@ const answer = (b) => {
     case 'eth_getTransactionReceipt': return { result: world.receipts[p[0]] ?? null }
     case 'eth_getBlockByNumber': return { result: { number: '0x100', timestamp: `0x${NOW.toString(16)}`, hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'22'.repeat(32)}`, transactions: [], baseFeePerGas: '0x0', gasLimit: '0x1', gasUsed: '0x0', difficulty: '0x0', logsBloom: `0x${'00'.repeat(256)}`, miner: zeroAddress, extraData: '0x', nonce: '0x0000000000000000', sha3Uncles: `0x${'00'.repeat(32)}`, size: '0x1', stateRoot: `0x${'00'.repeat(32)}`, receiptsRoot: `0x${'00'.repeat(32)}`, transactionsRoot: `0x${'00'.repeat(32)}`, uncles: [], totalDifficulty: '0x0' } }
     case 'eth_call':
-      if (world.replay && p[1] !== 'latest') { world.replayed = [...(world.replayed ?? []), p[1]]; return world.replay[p[1]] ?? { result: '0x' } }
+      if (world.replay && p[1] !== 'latest' && lc(p[0].to) !== WBNB) { world.replayed = [...(world.replayed ?? []), p[1]]; return world.replay[p[1]] ?? { result: '0x' } }
+      atBlock = p[1]
       return call(p[0])
     default: return { error: { code: -32601, message: `unexpected ${b.method}` } }
   }
@@ -382,7 +419,9 @@ try {
     [['create', '--venue', 'gangswap', '--fair'], /--fair can't go/], [['fair', 'create', '--venue', 'gangswap'], /--fair can't go/], [['create', '--venue', 'gangswap', '--fly'], /--fly can't go/], [['fly', 'create', '--venue', 'gangswap'], /--fly can't go/],
     [['create', '--venue', 'gangswap', '--dev-buy', '1'], /--dev-buy can't go/], [['v3', 'create', '--venue', 'gangswap', '--buy-tax', '2', '--sell-tax', '2', '--promote', '10'], /--buy-tax can't go/],
     [['create', '--venue', 'gangswap', '--promote', '10'], /--promote can't go/], [['create', '--venue', 'gangswap', '--bond', '1'], /--bond can't go/], [['create', '--venue', 'gangswap', '--countdown-reward', '--cd-max-payout', '1'], /--countdown-reward can't go/],
-    [['create', '--venue', 'gangswap', '--vault', OTHER], /--vault can't go/], [['create', '--venue', 'gangswap', '--base', '5', '--base-vest', '30'], /--base can't go/], [['create', '--venue', 'gangswap', '--grad-reward', '1'], /--grad-reward can't go/],
+    [['create', '--venue', 'gangswap', '--vault', OTHER], /--vault can't go/], [['create', '--venue', 'gangswap', '--base', '5', '--base-vest', '30'], /--base can't go/], [['create', '--venue', 'gangswap', '--grad-reward', '1', '--gr-carry', '0'], /--gr-carry can't go.*untaxed, so it has none/],
+    [['create', '--venue', 'gangswap', '--grad-reward', '1', '--promote', '10'], /--promote can't go.*no promoter share/], [['create', '--venue', 'gangswap', '--grad-reward', '1', '--countdown-reward', '--cd-max-payout', '1'], /--countdown-reward can't go/],
+    [['create', '--venue', 'gangswap', '--grad-reward', '1', '--dev-buy', '1'], /--dev-buy can't go/], [['create', '--venue', 'gangswap', '--gr-last', '10'], /--gr-last goes with --grad-reward/],
     [['create', '--venue', 'gangswap', '--quote', OTHER, '--ref-pool', OTHER], /--quote can't go/],
   ]) {
     world = fresh()
@@ -524,6 +563,281 @@ try {
     assert.ok(!world.calls.some(([, fn]) => fn === 'gangSwapMigrator'), 'the pad is not asked about GangSwap')
   }
 
+  // ---------------------------------------------------------------- create with a graduation reward
+  {
+    const cfgT = (abi, fn) => JSON.stringify(abi.find((x) => x.name === fn).inputs.at(-1).components.map((c) => [c.name, c.type]))
+    assert.equal(cfgT(G.GANGSWAP_PAD_ABI, 'createGangSwapWithGradReward'), cfgT(GRAD_PAD_ABI, 'createWithGradReward'))
+    // the selector of the contract's signature (IGangSwapPad)
+    assert.equal(toFunctionSelector(G.GANGSWAP_PAD_ABI.find((x) => x.name === 'createGangSwapWithGradReward')),
+      toFunctionSelector('function createGangSwapWithGradReward(string,string,string,string,uint256,address,(uint128,uint96,uint8,uint16,uint16,uint32,uint16,uint32))'))
+    assert.equal(refusal({ 'grad-reward': '1', 'gr-min-buy': '1', 'gr-entries': '5', 'gr-last': '1', 'gr-refund-days': '30', grad: '6', 'agent-window': '5' }), null)
+    const G1 = { 'grad-reward': '0.5' }
+    const SHAPES = [
+      [{ vanity: true }, {}, ['createWithSalt']], [{ vanity: false }, {}, []],
+      [{ vanity: true }, { 'agent-window': '30' }, ['createWithAgentWindow', 'createWithSalt']], [{ vanity: false }, { 'agent-window': '30' }, ['createWithAgentWindow']],
+    ]
+    const ABIS = [...G.GANGSWAP_PAD_ABI, ...VANITY_ABI, ...AGENT_WINDOW_ABI]
+    const unwrap = (data, via = []) => {
+      const x = decodeFunctionData({ abi: ABIS, data })
+      return x.functionName.startsWith('createWith') ? unwrap(x.args[1], [...via, x.functionName]) : { ...x, via }
+    }
+    // ---- not served / closed / unread: refused in the shape asked for, with no money in the wallet: before any wrap, approval or upload
+    for (const [o, f, via] of SHAPES) {
+      for (const [gsGrad, re] of [['absent', /^GangLaunchpad 3\.0 on the BSC testnet has no graduation reward for GangSwap tokens yet \(the pad is not upgraded for it\): drop --grad-reward, or --venue gangswap/],
+        ['odd', /could not tell whether the pad serves .*without an error/], ['closed', /^the graduation reward is closed on this pad/], ['down', /^could not tell whether the pad serves a graduation reward on GangSwap tokens .*same command again/]]) {
+        world = { ...fresh(), ...o, gsGrad, wbnb: 0n }
+        await refused(create({ ...G1, ...f }), re)
+        assert.deepEqual(world.gradCalls.map((x) => [x.via, x.seed])[0], [via, 0n], 'asked with an empty config, in the shape of this create')
+        assert.ok(world.gradCalls.every((x) => x.seed === 0n))
+        assert.deepEqual([world.uploads, world.sent], [undefined, []])
+        assert.ok(!world.calls.some(([at, fn]) => at === WBNB && (fn === 'balanceOf' || fn === 'allowance')), `${gsGrad}: the wallet's WBNB was not looked at`)
+      }
+    }
+    // the revert data in every shape nodes nest it; and what must never read as served
+    {
+      const BAD = toFunctionSelector('BadGradConfig()')
+      const on = async (error, extra = {}) => {
+        world = { ...fresh(), gsGrad: { error }, wbnb: 0n, ...extra }
+        try { return (await create(G1)).step } catch (e) { assert.ok(e instanceof Failed, e); return /not upgraded/.test(e.message) ? 'no' : /could not tell/.test(e.message) ? 'unread' : /closed/.test(e.message) ? 'closed' : e.message }
+      }
+      const m = 'execution reverted', hash = `0x${'ab'.repeat(32)}`
+      for (const data of [BAD, BAD.toUpperCase().replace('0X', '0x'), { data: BAD }, { data: { data: BAD } }, { originalError: { code: 3, data: BAD } }, { error: { data: BAD } }, { code: 3, message: m, data: BAD }, { result: BAD }, { [hash]: { error: 'revert', return: BAD } }, `Reverted ${BAD}`]) {
+        for (const code of [3, -32000, -32603, -32015]) assert.equal(await on({ code, message: code === 3 ? m : 'x', data }), 'wrap-bnb', JSON.stringify([code, data]))
+      }
+      assert.equal(await on({ code: 3, message: m, data: { data: toFunctionSelector('GradNotOpen()') } }), 'closed')
+      for (const s of ['BadVanityCall()', 'BadAgentWindowCall()']) assert.equal(await on({ code: 3, message: m, data: { data: toFunctionSelector(s) } }), 'no')
+      for (const data of [undefined, null, '0x', { data: '0x' }]) {
+        assert.equal(await on({ code: 3, message: m, data }), 'no', 'a bare revert on a node that returns data')
+        assert.equal(await on({ code: 3, message: m, data }, { stripped: true }), 'unread', 'a node that drops it')
+      }
+      assert.equal(await on({ code: -32000, message: m }), 'no', 'geth without the data field')
+      assert.equal(await on({ code: -32603, message: m }), 'unread')
+      assert.equal(await on({ code: 3, message: m }, { down: new Set(['claimGradReward']) }), 'unread', 'the control call failed')
+      const padded = `${BAD}${'00'.repeat(32)}`
+      for (const [data, message] of [[padded, m], [`${BAD}zz`, m], [`${BAD} and more`, m], [{ data: `${BAD}0` }, m], [[170, 2, 85, 135], m], [{ output: BAD }, m], [{ code: 3, details: { output: BAD } }, m], [toFunctionSelector('NotAgent()'), m], [`0x${'00'.repeat(32)}`, m], [{ data: BAD, result: toFunctionSelector('GradNotOpen()') }, m], [{ foo: BAD }, `${m}: ${BAD}`], [BAD.slice(0, 9), m], [`0x08c379a0${encodeAbiParameters([{ type: 'string' }], [BAD]).slice(2)}`, `${m}: ${BAD}`]]) {
+        assert.notEqual(await on({ code: 3, message, data }, { stripped: true }), 'wrap-bnb', JSON.stringify(data))
+        assert.equal(await on({ code: 3, message, data }, { stripped: true }), 'unread', JSON.stringify(data))
+      }
+      // data there in a shape we do not know, on a node that does return data: not "not upgraded" either
+      for (const data of [`${BAD}zz`, { output: BAD }, [170, 2, 85, 135], { foo: { bar: BAD } }, 'odd']) assert.equal(await on({ code: 3, message: m, data }), 'unread', JSON.stringify(data))
+      world = { ...fresh(), gsGrad: { error: { code: 3, message: m, data: { output: BAD } } }, wbnb: 0n }
+      await refused(create(G1), /could not tell .*revert data in a shape this CLI does not know/)
+      for (const data of ['Reverted 0x', '', {}, { code: 3, message: m, data: '0x' }]) assert.equal(await on({ code: 3, message: m, data }), 'no', JSON.stringify(data))
+      assert.equal(await on({ code: 3, message: m, data: toFunctionSelector('NotAgent()') }), 'unread', 'an answer this CLI does not know is not "no" either')
+      assert.equal(await on({ code: -32000, message: 'out of gas' }), 'unread')
+    }
+    // closed after the money was set aside: whose it is and how to take it back
+    for (const o of [{ gsGrad: 'closed' }, { gradOpen: false }, { migrator: zeroAddress }, { gsGrad: 'absent' }]) {
+      world = { ...fresh(), ...o, wbnbAllow: E18 }
+      await assert.rejects(create(G1), (e) => e instanceof Failed && /still in this wallet and yours.*no unwrap or revoke command.*withdraw\(amount\).*approve\(pad, 0\)/.test(e.d.funds), JSON.stringify(Object.keys(o)))
+    }
+    world = { ...fresh(), migrator: zeroAddress }
+    await assert.rejects(create(), (e) => e instanceof Failed && e.d.funds === undefined)
+    for (const name of ['GradNotOpen', 'GangSwapNotOpen']) { // closed between the checks and the dry run
+      world = { ...fresh(), wbnbAllow: E18, late: name }
+      r = await create(G1)
+      assert.deepEqual([r.success, r.error, /still in this wallet and yours/.test(r.funds)], [false, name, true])
+    }
+    {
+      // mainnet's own switch: no claim about another network
+      world = { ...fresh(), gradOpen: false }
+      const c = await cli(['create', '--grad-reward', '0.5', '--name', 'G', '--symbol', 'GSW', '--calldata', '--from', ME], { GANG_RPC_URL: rpc })
+      assert.match(c.error, /closed on this pad: drop --grad-reward$/, JSON.stringify(c))
+      assert.match(c.funds, /yours/)
+    }
+    // an entry without the wrapper's listing is not served in that shape
+    world = { ...fresh(), gsGrad: 'unwrapped', wbnb: 0n }
+    await refused(create(G1), /no graduation reward for GangSwap tokens yet/)
+    world = { ...fresh(), gsGrad: 'absent', vanity: false }
+    assert.equal((await create()).success, true, 'a plain GangSwap create does not need it')
+    assert.equal(world.gradCalls, undefined, 'nor asks for it')
+    // mainnet says so by name
+    {
+      world = { ...fresh(), gsGrad: 'absent', wbnb: 0n }
+      const o = await cli(['create', '--venue', 'gangswap', '--grad-reward', '0.5', '--name', 'G', '--symbol', 'GSW', '--calldata', '--from', ME], { GANG_RPC_URL: rpc })
+      assert.deepEqual([o.success, /GangLaunchpad 3\.0 on BSC mainnet has no graduation reward for GangSwap tokens yet/.test(o.error)], [false, true], JSON.stringify(o))
+    }
+    // the reward closed by its own switch
+    world = { ...fresh(), gradOpen: false, wbnb: 0n }
+    await refused(create(G1), /the graduation reward is closed on this pad: drop --grad-reward/)
+    // GangSwap closed: that first
+    world = { ...fresh(), migrator: zeroAddress, wbnb: 0n }
+    await refused(create(G1), /GangSwap is not open/)
+
+    // ---- the stages, each read from the chain: wrap what is short, approve exactly the seed, create
+    for (const [o, f, via] of SHAPES) {
+      world = { ...fresh(), ...o, wbnb: E18 / 5n }
+      for (let again = 0; again < 2; again++) {
+        r = await create({ ...G1, ...f })
+        assert.deepEqual([r.step, r.wrap, lc(r.tx.to), r.tx.value], ['wrap-bnb', '0.3', WBNB, String((E18 * 3n) / 10n)], 'the same step again until it lands')
+      }
+      assert.match(r.why, /pulls the 0\.5 WBNB reward pool/)
+      assert.deepEqual([lc(r.venue.version), r.gradReward.pool], [MIGRATOR, '0.5 WBNB'], 'what the money is for, before it moves')
+      assert.match(r.stages, /wrap-bnb.*approve-quote \(exactly the seed, if the approval is short\) → create/)
+      assert.equal('payWithThisTx' in r.gradReward, false, 'a wrap step pays no seed')
+      world.wbnb = E18 / 2n
+      for (const allow of [0n, E18 / 2n - 1n]) {
+        world.wbnbAllow = allow
+        r = await create({ ...G1, ...f })
+        const ap = decodeFunctionData({ abi: ERC20, data: r.tx.data })
+        assert.deepEqual([r.step, r.approve, ap.functionName, lc(ap.args[0]), ap.args[1], r.tx.value], ['approve-quote', '0.5', 'approve', PAD, E18 / 2n, '0'])
+        assert.equal('payWithThisTx' in r.gradReward, false)
+        assert.equal(world.uploads, undefined, 'nothing uploaded before the create stage')
+      }
+      world.wbnbAllow = E18 / 2n
+      world.gradCalls = []
+      r = await create({ ...G1, ...f, grad: '6' })
+      assert.deepEqual([r.success, r.step, lc(r.tx.to), r.tx.value], [true, 'create', PAD, '0'], JSON.stringify(r))
+      const u = unwrap(r.tx.data)
+      assert.deepEqual([u.via, u.functionName], [via, 'createGangSwapWithGradReward'])
+      assert.deepEqual(u.args, ['G', 'GSW', 'ipfs://logo', 'ipfs://meta', 6n * E18, getAddress(MIGRATOR), { seed: E18 / 2n, minBuy: E18 / 100n, entries: 10, lastBps: 3000, carryBps: 0, refundAfter: 90 * 86_400, promoteBps: 0, promoteWindow: 0 }])
+      assert.deepEqual(world.gradCalls.map((x) => [x.via, x.seed]), [[via, 0n], [via, E18 / 2n]], 'asked, then dry-run in the very shape')
+      if (f['agent-window']) assert.equal(decodeFunctionData({ abi: AGENT_WINDOW_ABI, data: r.tx.data }).args[0], 30)
+      assert.equal(G.asksGangSwap(r.tx.data), true)
+      // the preview
+      assert.match(r.venue.terms, /graduation reward you fund \(see gradReward\): it is paid from your seed only/)
+      assert.match(r.gradReward.gangSwap, /never part of the GangSwap pool or its buy-back.*back to you/)
+      assert.match(r.gradReward.claims, /sweeps the unclaimed rest .* back to you/)
+      assert.match(r.gradReward.warning, /PERMANENT: 0\.5 WBNB leaves this wallet/)
+      assert.match(r.gradReward.payWithThisTx, /0\.5 WBNB, pulled/)
+      assert.equal(r.gradReward.allowance, undefined, 'the approval is exactly the seed')
+      assert.match(r.graduation, /graduates into GangSwap once 6 BNB/)
+      assert.deepEqual([r.gradReward.risks, r.agentWindow?.gradReward], [undefined, undefined])
+    }
+    // a larger approval than the seed: said with both amounts, never blocking; on a kind-1 reward create too
+    for (const f of [{}, { venue: 'pancake' }]) {
+      for (const [allow, shown, rest] of [[E18, '1 WBNB', /the rest of the approval stays/], [E18 / 2n + 1n, '0.500000000000000001 WBNB', /the rest/], [maxUint256, 'unlimited (WBNB)', /may stay unlimited/]]) {
+        world = { ...fresh(), wbnbAllow: allow }
+        r = await create({ ...G1, ...f })
+        assert.deepEqual([r.success, r.step, r.gradReward.allowance.current, r.gradReward.allowance.seed], [true, 'create', shown, '0.5 WBNB'])
+        assert.match(r.gradReward.allowance.note, rest)
+        assert.match(r.gradReward.allowance.note, new RegExp(`approval of ${PAD} to 0.*no revoke command`, 'i'))
+      }
+    }
+    // the settings
+    world = { ...fresh(), wbnbAllow: E18 }
+    r = await create({ 'grad-reward': '1', 'gr-min-buy': '0.05', 'gr-entries': '20', 'gr-last': '0', 'gr-refund-days': '30', quote: WBNB })
+    assert.deepEqual(unwrap(r.tx.data).args[6], { seed: E18, minBuy: E18 / 20n, entries: 20, lastBps: 0, carryBps: 0, refundAfter: 30 * 86_400, promoteBps: 0, promoteWindow: 0 })
+    // a larger seed on a later run: the shortfall and a new exact approval, never the old one
+    world = { ...fresh(), wbnb: E18 / 2n, wbnbAllow: E18 / 2n }
+    r = await create({ 'grad-reward': '0.8' })
+    assert.deepEqual([r.step, r.wrap], ['wrap-bnb', '0.3'])
+    world.wbnb = E18
+    r = await create({ 'grad-reward': '0.8' })
+    assert.deepEqual([r.step, r.approve], ['approve-quote', '0.8'])
+    // a bad logo file: before any read of the chain (so before any wrap or approval), on both venues; nothing uploaded
+    {
+      const dir = mkdtempSync(join(tmpdir(), 'gs-logo-'))
+      const put = (n, b) => { writeFileSync(join(dir, n), b); return join(dir, n) }
+      const png = Buffer.from('89504e470d0a1a0a00000000', 'hex')
+      for (const [v, args, re] of [['--venue', [put('a.txt', 'hello')], /not a png\/jpeg\/webp\/gif image/], ['', [join(dir, 'none.png')], /file not found/], ['--venue', [dir], /not a file/], ['', [put('e.png', '')], /empty image/], ['--venue', [put('big.png', Buffer.concat([png, Buffer.alloc(600_000)]))], /logo too large/],
+        ['--venue', [put('ok.png', png), '--logo-uri', 'https://x.y/a.png'], /not both/]]) {
+        world = { ...fresh(), wbnb: 0n }
+        const o = await cli(['create', ...(v ? ['--venue', 'gangswap'] : []), '--name', 'G', '--symbol', 'G', '--testnet', '--calldata', '--from', ME, '--grad-reward', '0.5', '--logo', ...args], { GANG_LOGO_API: 'http://127.0.0.1:1/api/logos' })
+        assert.equal(o.success, false)
+        assert.match(o.error, re)
+        assert.equal(world.calls.length, 0, 'before any chain read')
+      }
+      // a good one does not get in the way, and is not uploaded before the create stage (the upload address is dead)
+      world = { ...fresh(), wbnb: 0n }
+      const o = await cli(['create', '--venue', 'gangswap', '--name', 'G', '--symbol', 'G', '--testnet', '--calldata', '--from', ME, '--grad-reward', '0.5', '--logo', join(dir, 'ok.png')], { GANG_LOGO_API: 'http://127.0.0.1:1/api/logos', GANG_TESTNET_RPC_URL: rpc })
+      assert.equal(o.step, 'wrap-bnb', JSON.stringify(o))
+      rmSync(dir, { recursive: true })
+    }
+    // refused before the money: a seed too small, bounds, no Agent ID, --gr-* alone
+    world = { ...fresh(), wbnb: 0n }
+    await refused(create({ 'grad-reward': '0.09' }), /at least 0\.1 WBNB/)
+    await refused(create({ ...G1, 'gr-entries': '21' }), /between 1 and 20/)
+    await refused(create({ 'gr-entries': '5' }), /--gr-entries goes with --grad-reward/)
+    for (const [k, v] of [['gr-carry', '0'], ['gr-carry', '20'], ['promote', '10'], ['countdown-reward', ''], ['cd-seed', '1']]) await refused(create({ ...G1, [k]: v }), new RegExp(`--${k} can't go with --venue gangswap`))
+    await refused(create({ ...G1, 'countdown-reward': '' }), /untaxed, so it takes no countdown reward/)
+    await refused(create({ ...G1, 'gr-carry': '20' }), /a carry goes into the token's countdown reward.*goes back to you/)
+    world = { ...fresh(), wbnb: 0n, agents: new Set() }
+    await refused(create(G1), /no Agent ID/)
+    world = { ...fresh(), wbnb: 0n, native: E18 / 10n }
+    r = await create(G1)
+    assert.deepEqual([r.success, r.error], [false, 'not enough BNB'])
+    // the version moved after it was read: the pad's words, no tx, no upload
+    world = { ...fresh(), wbnbAllow: E18, nowMigrator: MIGRATOR2 }
+    r = await create(G1)
+    assert.deepEqual([r.success, r.error, r.tx, world.uploads], [false, 'GangSwapVersionChanged', undefined, undefined])
+    // without --venue the entry is kind 1's, and the GangSwap one is not asked for
+    world = { ...fresh(), wbnbAllow: E18 }
+    r = await runV3('create', io({ name: 'G', symbol: 'GSW', from: ME, testnet: true, calldata: true, ...G1 }))
+    assert.equal(decodeFunctionData({ abi: GRAD_PAD_ABI, data: decodeFunctionData({ abi: VANITY_ABI, data: r.tx.data }).args[1] }).functionName, 'createWithGradReward')
+    assert.deepEqual([world.gradCalls, r.venue, r.stages, typeof r.gradReward.risks], [undefined, undefined, undefined, 'string'])
+    // a landed one whose event is missing is seen as a GangSwap create through every wrapper
+    const bare = encodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, functionName: 'createGangSwapWithGradReward', args: ['G', 'G', '', '', 6n * E18, MIGRATOR, { seed: 1n, minBuy: 1n, entries: 1, lastBps: 0, carryBps: 0, refundAfter: 1, promoteBps: 0, promoteWindow: 0 }] })
+    assert.equal(G.asksGangSwap(bare), true)
+
+    // ---- the token: info, the previews, gang grad-reward
+    const live = { state: 1, pot: E18 / 2n, minBuy: E18 / 20n, entries: 10, lastBps: 3000, refundAfter: 90 * 86_400, createdAt: NOW - 86_400, seq: 2n }
+    world = { ...fresh(), reward: live, openAt: NOW - 5, wbnbAllow: maxUint256, tokenAllow: maxUint256 }
+    r = await run('info')
+    assert.deepEqual([r.kind, r.gradReward.state, r.gradReward.pool, r.gradReward.list.length, r.agentWindow.gradReward], ['gangswap', 'on the curve', '0.5', 2, undefined])
+    assert.match(r.gradReward.more, /gang grad-reward status --token .* --testnet/)
+    r = await run('buy', { amount: '0.1', 'use-wbnb': true })
+    assert.deepEqual([r.rewards.gradReward.counts, r.rewards.gradReward.openWarning, r.rewards.countdown], [true, undefined, undefined])
+    r = await run('buy', { amount: '0.01', 'use-wbnb': true })
+    assert.equal(r.rewards.gradReward.counts, false)
+    world.agents = new Set()
+    r = await run('buy', { amount: '0.1', 'use-wbnb': true })
+    assert.deepEqual([r.rewards.gradReward.counts, /only Agent ID wallets/.test(r.rewards.gradReward.why)], [false, true])
+    world.agents = new Set([lc(ME)])
+    r = await run('sell', { all: true, 'break-bond': true, 'break-call-bond': true })
+    assert.equal(r.rewards.gradReward.entriesLost, 1)
+    // none on the token, or a pad without the views: no field, as before
+    for (const o of [{}, { noGradViews: true }]) {
+      world = { ...fresh(), ...o, wbnbAllow: maxUint256, tokenAllow: maxUint256 }
+      assert.equal((await run('info')).gradReward, undefined)
+      assert.equal((await run('buy', { amount: '0.1', 'use-wbnb': true })).rewards, undefined)
+      assert.equal((await run('sell', { all: true, 'break-bond': true, 'break-call-bond': true })).rewards, undefined)
+    }
+    // an unreadable reward is said, never read as none
+    world = { ...fresh(), down: new Set(['gradReward']), tokenAllow: maxUint256 }
+    assert.match((await run('info')).gradReward.error, /could not read/)
+    assert.match((await run('sell', { all: true, 'break-bond': true, 'break-call-bond': true })).rewards.gradReward.warning, /could not read/)
+
+    const gr = (sub, f = {}) => runGradReward(sub, io({ token: GS, testnet: true, calldata: true, from: ME, ...f }))
+    const built = async (sub, fn) => {
+      const x = await gr(sub)
+      assert.deepEqual([x.success, x.kind, lc(x.tx.to)], [true, 'gangswap', PAD], JSON.stringify(x))
+      assert.deepEqual(decodeFunctionData({ abi: GRAD_PAD_ABI, data: x.tx.data }), { functionName: fn, args: [getAddress(GS)] })
+      return x
+    }
+    world = { ...fresh(), reward: live }
+    r = await gr('status')
+    assert.deepEqual([r.kind, r.state, r.pool, r.quote, r.restGoesTo], ['gangswap', 'on the curve', '0.5', 'WBNB', undefined])
+    await refused(gr('claim'), /not in the state/)
+    await refused(gr('refund-request'), /too early/)
+    await refused(gr('retry-carry'), /GangSwap token has no countdown module/)
+    world.reward = { ...live, createdAt: NOW - 91 * 86_400 }
+    await built('refund-request', 'requestGradRefund')
+    await refused(gr('refund-request', { from: OTHER }), /only the token's creator/)
+    world.reward = { ...world.reward, refundAt: NOW - 3 * 86_400, refundPending: true }
+    await refused(gr('refund'), /notice runs until/)
+    await built('refund-cancel', 'cancelGradRefund')
+    world.reward = { ...world.reward, refundAt: NOW - 8 * 86_400 }
+    assert.match((await built('refund', 'gradRefund')).note, /whole pool \(0\.5 WBNB\)/)
+    world = { ...fresh(), graduated: true, reward: { ...live, state: 2, gradAt: NOW - 86_400 } }
+    assert.match((await gr('status')).next, /gang grad-reward claim/)
+    assert.equal((await run('info')).gradReward.state, 'graduated: claims open')
+    assert.equal((await built('claim', 'claimGradReward')).amount, '0.2')
+    await built('settle', 'settleGradReward')
+    await refused(gr('sweep'), /180 days/)
+    world.reward = { ...world.reward, gradAt: NOW - 181 * 86_400 }
+    assert.match((await built('sweep', 'sweepGradReward')).note, /the creator 0x/)
+    await refused(gr('retry-carry'), /GangSwap token has no countdown module/)
+    // a kind-4 token without one; the other kinds still refused
+    world = fresh()
+    await refused(gr('status'), /has no graduation reward/)
+    await refused(gr('status', { token: K2 }), /not a V3 curve token/)
+    // gang tx decodes what the pad logs for it
+    assert.ok(GRAD_EVENT_ABIS.flat().some((x) => x.name === 'GradRewardSet'))
+    const caps = capabilities().commands.find((x) => x.command === 'create --venue gangswap --grad-reward')
+    assert.deepEqual([caps.access, caps.risk, caps.needsUserConfirmation], ['preview', 'high', true])
+  }
+
   // ---------------------------------------------------------------- the created tx, checked
   const gsCreate = encodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, functionName: 'createGangSwap', args: ['G', 'GSW', '', '', 6n * E18, MIGRATOR] })
   const salted = encodeFunctionData({ abi: VANITY_ABI, functionName: 'createWithSalt', args: [HASH, gsCreate] })
@@ -628,15 +942,94 @@ try {
       const changed = { error: { code: 3, message: 'execution reverted', data: encodeErrorResult({ abi: G.GANGSWAP_PAD_ABI, errorName: 'GangSwapVersionChanged', args: [MIGRATOR2] }) } }
       const closed = { error: { code: 3, message: 'execution reverted', data: toFunctionSelector('function GangSwapNotOpen()') } }
       const oog = { error: { code: -32000, message: 'out of gas' } }
+      {
+        const gsg = `0x${'a7'.repeat(32)}`
+        const rewarded = encodeFunctionData({ abi: G.GANGSWAP_PAD_ABI, functionName: 'createGangSwapWithGradReward', args: ['G', 'G', '', '', 6n * E18, MIGRATOR, { seed: E18 / 2n, minBuy: 1n, entries: 1, lastBps: 0, carryBps: 0, refundAfter: 1, promoteBps: 0, promoteWindow: 0 }] })
+        const nested = encodeFunctionData({ abi: AGENT_WINDOW_ABI, functionName: 'createWithAgentWindow', args: [5, encodeFunctionData({ abi: VANITY_ABI, functionName: 'createWithSalt', args: [HASH, rewarded] })] })
+        const gradClosed = err('GradNotOpen()')
+        for (const input of [rewarded, nested]) {
+          world.receipts[gsg] = rc(gsg); world.txs[gsg] = txOf(gsg, input)
+          const ask = async (replay, o = {}) => { Object.assign(world, { wbnb: E18, wbnbAllow: E18, replay, replayed: [], ...o }); return (await cli(['tx', '--testnet', '--hash', gsg])).gangSwap }
+          const both = (x) => ({ '0xfe': x, '0xff': x })
+          const at = (a, b) => ({ wbnb: 77n * E18, wbnbAllow: 77n * E18, wbnbAt: { '0xfe': a, '0xff': b } })
+          const FULL = [E18 / 2n, E18 / 2n], EARLIER = /This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash \(gang tx --hash <hash> --testnet\) and the tokens this wallet created \(gang creator-fee --from 0x0*d3[fF] --testnet, unless it says scanNote or unreadNote.*re-run the create only once sure none succeeded/
+          let g = await ask(both(gradClosed))
+          assert.deepEqual([g.created, g.reverted, g.certain], [false, 'GradNotOpen', true])
+          assert.doesNotMatch(g.hint, /No seed was taken|portfolio/)
+          assert.match(g.hint, EARLIER)
+          g = await ask({ '0xff': gradClosed })
+          assert.deepEqual([g.reverted, g.mayBe], [undefined, 'GradNotOpen'])
+          // the wallet short before the block and at it (the amounts of those blocks, not the latest): said as the cause
+          for (const [x, re, not] of [[[0n, 0n], /but it held 0 WBNB and it had approved the pad for 0 WBNB/, /may be this/], [[0n, E18], /but it held 0 WBNB\./, /approved the pad for/], [[E18, E18 / 4n], /but it had approved the pad for 0\.25 WBNB\./, /it held/]]) {
+            for (const bare of [revert, stripped]) {
+              g = await ask(both(bare), at(x, x))
+              assert.deepEqual([g.reverted, g.certain, g.seed, g.mayBe], ['seed not covered', true, '0.5', undefined], JSON.stringify(g))
+              assert.match(g.hint, re)
+              assert.match(g.hint, EARLIER)
+              assert.doesNotMatch(g.hint, not)
+            }
+          }
+          // a duplicate send, the first create in an earlier block: it pulled the seed, so the wallet is short at both. Never "re-run"
+          g = await ask(both(revert), at([0n, 0n], [0n, 0n]))
+          assert.match(g.hint, EARLIER)
+          assert.doesNotMatch(g.hint, /nothing was created|Re-run the create: /)
+          // in the same block: covered before it, short at its end. Not certain, and the same warning
+          g = await ask({ '0xff': revert }, at(FULL, [0n, 0n]))
+          assert.deepEqual([g.reverted, g.mayBe, g.certain], [undefined, 'seed not covered', false])
+          assert.match(g.hint, /^it may be this.*it held 0 WBNB/)
+          assert.match(g.hint, EARLIER)
+          assert.match(g.source, /at the end of its block only/)
+          // approved (or wrapped) earlier in the same block, then a create with too little gas: not blamed on the allowance
+          for (const x of [[E18, 0n], [0n, E18], [0n, 0n]]) {
+            for (const own of [oog, revert, { result: '0x' }]) {
+              g = await ask({ '0xfe': revert, '0xff': own }, at(x, FULL))
+              assert.deepEqual([g.reverted, g.mayBe, g.certain], [undefined, 'seed not covered', false], JSON.stringify(g))
+              assert.match(g.hint, /^it may be this.*too little gas/)
+              assert.match(g.source, /before its block only/)
+            }
+          }
+          // short of another thing at each: neither is certain
+          g = await ask(both(revert), at([0n, E18], [E18, 0n]))
+          assert.deepEqual([g.mayBe, g.certain], ['seed not covered', false])
+          // short of one at both: only that one is named
+          g = await ask(both(revert), at([0n, 0n], [E18, 0n]))
+          assert.deepEqual([g.reverted, /approved the pad for 0 WBNB/.test(g.hint), /it held/.test(g.hint)], ['seed not covered', true, false])
+          assert.equal(await ask(both(revert), at(FULL, FULL)), undefined, 'covered: another reason, nothing said')
+          for (const e of [err('NotAgent()'), oog, rpcDown, { error: { code: 3, message: 'execution reverted', data: { foo: '0x12345678' } } }]) assert.equal(await ask(both(e), at([0n, 0n], [0n, 0n])), undefined, 'a named error, the node, or data not understood: not the seed')
+          // the wallet can't be read at the block itself: what the state before it says still stands, as not certain
+          g = await ask(both(revert), at([0n, 0n], 'down'))
+          assert.deepEqual([g?.reverted, g?.mayBe, g?.certain], [undefined, 'seed not covered', false])
+          assert.equal(await ask(both(revert), at('down', [0n, 0n])), undefined)
+          // a create without a reward pulls no seed: its bare revert never looks at the wallet's WBNB
+          world.txs[gsg] = txOf(gsg, salted); world.calls = []
+          assert.equal(await ask(both(revert), at([0n, 0n], [0n, 0n])), undefined)
+          assert.ok(!world.calls.some(([x]) => x === WBNB), 'no WBNB read')
+          world.txs[gsg] = txOf(gsg, input)
+          // the list the hint names shows a fresh token of this wallet, with no fee yet
+          world.wbnbAt = null; world.replay = null; world.curveFee = 0n
+          const mine = await cli(['creator-fee', '--from', ME, '--testnet'])
+          assert.deepEqual([mine.success, mine.tokens.filter((x) => lc(x.token) === GS).map((x) => [x.graduated, x.claimable])], [true, [[false, '0']]], JSON.stringify(mine))
+          // mainnet: the same commands without --testnet
+          world.receipts[gsg] = rc(gsg, { to: MPAD }); world.txs[gsg] = txOf(gsg, input, { to: MPAD }); world.replay = both(gradClosed)
+          const mg = (await cli(['tx', '--hash', gsg], { GANG_RPC_URL: rpc })).gangSwap
+          assert.match(mg.hint, /gang tx --hash <hash>\) and the tokens this wallet created \(gang creator-fee --from 0x0*d3[fF], unless/)
+        }
+        Object.assign(world, { replay: null, wbnb: E18, wbnbAllow: 0n })
+      }
       for (const args of [['tx', '--testnet'], ['v3', 'tx', '--testnet']]) {
         const ask = async (h, replay) => { world.replay = replay; world.replayed = []; const y = await cli([...args, '--hash', h]); assert.deepEqual([y.success, y.status], [true, 'reverted'], JSON.stringify(y)); return y.gangSwap }
         let g = await ask(bad, { '0xfe': changed })
-        assert.deepEqual([g.created, g.reverted, lc(g.current)], [false, 'GangSwapVersionChanged', MIGRATOR2])
+        assert.deepEqual([g.created, g.reverted, g.mayBe, g.certain, lc(g.current)], [false, undefined, 'GangSwapVersionChanged', false, MIGRATOR2], 'it passes at the block itself: not said as the cause')
+        assert.match(g.hint, /^it may be this/)
         assert.match(g.hint, /re-run the create to see the new version/)
-        assert.deepEqual(world.replayed, ['0xfe'])
+        assert.deepEqual(world.replayed, ['0xfe', '0xff'])
+        g = await ask(bad, { '0xfe': changed, '0xff': changed })
+        assert.deepEqual([g.created, g.reverted, g.mayBe, g.certain, lc(g.current)], [false, 'GangSwapVersionChanged', undefined, true, MIGRATOR2])
+        assert.doesNotMatch(g.hint, /may be|earlier create/)
+        for (const o of [oog, rpcDown, closed, err('NotAgent()')]) assert.deepEqual([(await ask(bad, { '0xfe': changed, '0xff': o })).mayBe], ['GangSwapVersionChanged'])
         g = await ask(bad, { '0xff': changed }) // switched in the same block
-        assert.deepEqual([g.reverted, world.replayed.join()], ['GangSwapVersionChanged', '0xfe,0xff'])
-        g = await ask(bad, { '0xfe': closed })
+        assert.deepEqual([g.mayBe, g.reverted, world.replayed.join()], ['GangSwapVersionChanged', undefined, '0xfe,0xff'])
+        g = await ask(bad, { '0xfe': closed, '0xff': closed })
         assert.deepEqual([g.reverted, g.current, /not open/.test(g.hint)], ['GangSwapNotOpen', undefined, true])
         assert.equal(await ask(bad, {}), undefined, 'the replay passes: nothing said')
         for (const e of [revert, err('NotAgent()'), oog]) assert.equal(await ask(bad, { '0xfe': e, '0xff': changed }), undefined, 'another reason, or no state: nothing said')
@@ -651,7 +1044,7 @@ try {
       }
       // mainnet
       world.receipts[bad].to = MPAD; world.txs[bad].to = MPAD
-      world.replay = { '0xfe': changed }
+      world.replay = { '0xfe': changed, '0xff': changed }
       let y = await cli(['tx', '--hash', bad], { GANG_RPC_URL: rpc })
       assert.deepEqual([y.success, y.status, y.gangSwap?.reverted], [true, 'reverted', 'GangSwapVersionChanged'], JSON.stringify(y))
       // a tx that succeeded is never replayed
@@ -725,7 +1118,7 @@ try {
     [['call-bond', 'post', '--token', GS, '--amount', '1', '--for', '48h'], /takes no call bond/],
     [['buyback', 'status', '--token', GS], /takes no buy-back splitter/], [['split', 'status', '--token', GS], /takes no split module/], [['lp', 'status', '--token', GS], /takes no LP splitter/],
     [['combo', 'status', '--token', GS], /takes no combined recipient/], [['capped', 'status', '--token', GS], /takes no capped recipient/], [['floor', 'status', '--token', GS], /takes no floor module/],
-    [['base', 'status', '--token', GS], /takes no opening base/], [['grad-reward', 'status', '--token', GS], /takes no graduation reward/], [['countdown', 'status', '--token', GS], /takes no countdown reward/],
+    [['base', 'status', '--token', GS], /takes no opening base/], [['grad-reward', 'status', '--token', GS], /this token has no graduation reward/], [['countdown', 'status', '--token', GS], /takes no countdown reward/],
     [['promote', 'status', '--token', GS], /takes no promoter share/],
   ]) {
     const o = await cli([...args, '--testnet', '--calldata', '--from', ME])
