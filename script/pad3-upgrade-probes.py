@@ -92,6 +92,11 @@ print('tokens', n, 'kinds', dict(collections.Counter(int(x[1], 16) for x in each
 share = [t for t, x in zip(tokens, each('promoteOf(address)')) if int(x[1][:64], 16)]
 base = [t for t, x in zip(tokens, each('baseVaultOf(address)')) if int(x[1], 16)]
 print('agent windows', sum(1 for x in each('agentOpenAt(address)') if int(x[1], 16)))
+GS = [t for t, x in zip(tokens, each('gangSwapMigratorOf(address)')) if int(x[1], 16)]
+grad = [(t, int(x[1][:64], 16)) for t, x in zip(tokens, each('gradReward(address)')) if int(x[1][:64], 16)]
+names = {1: 'curve', 2: 'booked', 3: 'refunded', 4: 'closed'}
+# information only: UpgradeGangLaunchpad3 finds these by itself and compares every one
+print('GangSwap tokens', len(GS), '; graduation rewards', dict(collections.Counter(names[s] for _, s in grad)), '; both', len(set(GS) & {t for t, _ in grad}))
 print('tokens with a promoter share', len(share), '; with an opening base', len(base))
 
 pairs = []

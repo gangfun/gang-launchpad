@@ -122,7 +122,8 @@ contract Pad3GradModule is IGangLaunchpad, IGangGradRewardBase, IGangAgentWindow
             )
             ) || s == IGangVaultPad.createWithVault.selector || s == IGangPromote.createWithPromote.selector
             || s == IGangBasePad.createWithBase.selector || s == IGangGradReward.createWithGradReward.selector
-            || s == IGangSwapPad.createGangSwap.selector || s == bytes4(keccak256("createWithSalt(bytes32,bytes)"));
+            || s == IGangSwapPad.createGangSwap.selector || s == IGangSwapPad.createGangSwapWithGradReward.selector
+            || s == bytes4(keccak256("createWithSalt(bytes32,bytes)"));
     }
 
     function settleGradReward(address token) external nonReentrant {

@@ -80,7 +80,7 @@ contract Pad3Module is
 
     uint8 internal constant KIND_CURVE = CurveLogic.KIND;
     uint8 internal constant KIND_FLY = 3;
-    /// @dev GangSwap curve tokens (Pad3GangSwapStore): created only by `createGangSwap`, never by a module entry
+    /// @dev GangSwap curve tokens (Pad3GangSwapStore): created only by `_createGangSwap` (a graduation reward at most on top), never by a module entry
     uint8 internal constant KIND_GANGSWAP = Pad3GangSwapStore.KIND;
     /// @notice Must equal GangLaunchpad3.TOKEN_VERSION (the scripts and tests check it).
     uint8 public constant TOKEN_VERSION = 1;
@@ -319,6 +319,7 @@ contract Pad3Module is
                 && selector != IGangBasePad.createWithBase.selector
                 && selector != IGangGradReward.createWithGradReward.selector
                 && selector != IGangSwapPad.createGangSwap.selector
+                && selector != IGangSwapPad.createGangSwapWithGradReward.selector
         ) revert BadVanityCall();
         v.salt = keccak256(abi.encode(msg.sender, salt));
         v.active = true;
@@ -406,13 +407,7 @@ contract Pad3Module is
         uint256 gradBnb,
         GradConfig calldata cfg
     ) external nonReentrant returns (address token) {
-        Pad3GradStore.Layout storage g = Pad3GradStore.layout();
-        if (!g.open) revert GradNotOpen();
-        if (
-            cfg.seed == 0 || cfg.minBuy == 0 || cfg.entries == 0 || cfg.entries > Pad3GradStore.MAX_ENTRIES
-                || cfg.lastBps > MAX_GRAD_LAST_BPS || cfg.carryBps > MAX_GRAD_CARRY_BPS
-                || cfg.refundAfter < MIN_GRAD_REFUND_AFTER || cfg.refundAfter > MAX_GRAD_REFUND_AFTER
-        ) revert BadGradConfig();
+        Pad3GradStore.Layout storage g = _checkGradConfig(cfg);
         bool promote = cfg.promoteBps != 0 || cfg.promoteWindow != 0;
         if (
             promote
@@ -431,6 +426,29 @@ contract Pad3Module is
         address q = curves[token].quote;
         address countdown = _countdownOf(g, token, q);
         if (cfg.carryBps > 0 && countdown == address(0)) revert BadCountdown();
+        _fundGrad(g, token, q, countdown, cfg);
+    }
+
+    /// @dev Both graduation-reward creates: the switch is open and the config within bounds.
+    function _checkGradConfig(GradConfig calldata cfg) private view returns (Pad3GradStore.Layout storage g) {
+        g = Pad3GradStore.layout();
+        if (!g.open) revert GradNotOpen();
+        if (
+            cfg.seed == 0 || cfg.minBuy == 0 || cfg.entries == 0 || cfg.entries > Pad3GradStore.MAX_ENTRIES
+                || cfg.lastBps > MAX_GRAD_LAST_BPS || cfg.carryBps > MAX_GRAD_CARRY_BPS
+                || cfg.refundAfter < MIN_GRAD_REFUND_AFTER || cfg.refundAfter > MAX_GRAD_REFUND_AFTER
+        ) revert BadGradConfig();
+    }
+
+    /// @dev Both graduation-reward creates: the seed pulled exactly from the creator in `q` (a failing pull reverts the
+    ///      whole create), then `token`'s reward written.
+    function _fundGrad(
+        Pad3GradStore.Layout storage g,
+        address token,
+        address q,
+        address countdown,
+        GradConfig calldata cfg
+    ) private {
         PadCommon.pullExact(q, cfg.seed);
 
         Pad3GradStore.Reward storage r = g.rewardOf[token];
@@ -577,7 +595,7 @@ contract Pad3Module is
         _recordCurve(token, logoURI, gradBnb, KIND_CURVE);
     }
 
-    /// @dev Both curve creates of this module (kind 1, `_createCurve`; kind 4, `createGangSwap`): the records of
+    /// @dev Both curve creates of this module (kind 1, `_createCurve`; kind 4, `_createGangSwap`): the records of
     ///      GangLaunchpad3._createCurve, line for line, and the agent window.
     function _recordCurve(address token, string calldata logoURI, uint256 gradBnb, uint8 kind) private {
         gradTargetOf[token] = gradBnb;
@@ -628,6 +646,8 @@ contract Pad3Module is
 
     /// @inheritdoc IGangSwapPad
     /// @dev No module entry nests this (each calls `_createCurve`, kind 1), so nothing binds a kind-4 token.
+    ///      A graduation reward (`createGangSwapWithGradReward`) is the one thing a kind-4 token can carry: it binds no
+    ///      module and only pays out.
     function createGangSwap(
         string calldata name,
         string calldata symbol,
@@ -636,6 +656,36 @@ contract Pad3Module is
         uint256 gradBnb,
         address migrator_
     ) external nonReentrant returns (address token) {
+        token = _createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator_);
+    }
+
+    /// @inheritdoc IGangSwapPad
+    /// @dev `createGangSwap`, then `createWithGradReward`'s funding with no countdown module (an untaxed token has no tax
+    ///      recipient). A kind-4 token takes no carry and no promoter share: refused here, never dropped silently.
+    function createGangSwapWithGradReward(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        uint256 gradBnb,
+        address migrator_,
+        GradConfig calldata cfg
+    ) external nonReentrant returns (address token) {
+        Pad3GradStore.Layout storage g = _checkGradConfig(cfg);
+        if (cfg.carryBps != 0 || cfg.promoteBps != 0 || cfg.promoteWindow != 0) revert BadGradConfig();
+        token = _createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator_);
+        _fundGrad(g, token, wbnb, address(0), cfg);
+    }
+
+    /// @dev Both GangSwap creates (no reward / a graduation reward).
+    function _createGangSwap(
+        string calldata name,
+        string calldata symbol,
+        string calldata logoURI,
+        string calldata metaURI,
+        uint256 gradBnb,
+        address migrator_
+    ) private returns (address token) {
         address current = Pad3GangSwapStore.layout().migrator;
         if (current == address(0)) revert GangSwapNotOpen();
         if (migrator_ != current) revert GangSwapVersionChanged(current);
