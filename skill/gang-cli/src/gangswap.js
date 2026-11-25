@@ -295,14 +295,17 @@ export async function gangSwapRevert(ctx, { status, to, tx }) {
       : c.hint
     return { gangSwap: {
       created: false, ...(certain ? { reverted: c.error } : { mayBe: c.error }), certain, ...(c.reason && { current: c.reason }), ...(c.error === SEED && { seed: c.seed, wbnb: c.wbnb, approved: c.approved }),
-      hint: `${certain ? '' : 'it may be this, but the state changed around its block (or could not be read), so another cause, e.g. too little gas, is possible: '}${hint}${d.functionName === 'createGangSwapWithGradReward' ? `. ${EARLIER_CREATE}` : ''}`,
+      hint: `${certain ? '' : 'it may be this, but the state changed around its block (or could not be read), so another cause, e.g. too little gas, is possible: '}${hint}${d.functionName === 'createGangSwapWithGradReward' ? `. ${earlierCreate(t.from, netOf(ctx) === 'testnet')}` : ''}`,
       source: `a replay of the call${c.error === SEED ? ' and the wallet\'s WBNB' : ''}, ${certain ? 'before its block and at it' : before ? 'before its block only' : 'at the end of its block only'}`,
     } }
   } catch { /* nothing to add */ }
   return {}
 }
 const SEED = 'seed not covered'
-const EARLIER_CREATE = 'This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash (gang tx --hash) and the wallet\'s tokens (gang portfolio) first, and re-run the create only once sure none succeeded, or it makes a second token and pays a second seed'
+const earlierCreate = (from, testnet) => {
+  const tn = testnet ? ' --testnet' : ''
+  return `This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash (gang tx --hash <hash>${tn}) and the tokens this wallet created (gang creator-fee --from ${from}${tn}, unless it says scanNote or unreadNote: then the list is not complete) first, and re-run the create only once sure none succeeded, or it makes a second token and pays a second seed`
+}
 
 /** One replay of a reverted create at `blockNumber`: undefined when it passes, null when its failure is not one we name, else { error, … }. */
 async function replayCause(ctx, t, d, blockNumber) {
@@ -310,11 +313,11 @@ async function replayCause(ctx, t, d, blockNumber) {
     await ctx.client.call({ account: t.from, to: t.to, data: t.input, value: t.value, gas: t.gas, blockNumber })
     return undefined
   } catch (e) {
-    const r = revertIn(e, [GANGSWAP_PAD_ABI, GRAD_REFUSALS], { ...HINTS, GradNotOpen: 'the graduation reward is closed on this pad: drop --grad-reward. No seed was taken by this transaction' })
+    const r = revertIn(e, [GANGSWAP_PAD_ABI, GRAD_REFUSALS], { ...HINTS, GradNotOpen: 'the graduation reward is closed on this pad: drop --grad-reward' })
     if (['GangSwapVersionChanged', 'GangSwapNotOpen', 'GradNotOpen'].includes(r?.error)) return r
     // a bare revert of a reward create: the pull of its seed, when the creator's WBNB or allowance was short of it there
     if (d.functionName !== 'createGangSwapWithGradReward' || !bareRevert(e)) return null
-    const { seed } = d.args[6]
+    const seed = d.args[6]?.seed
     const wbnb = padNets('v3')[netOf(ctx)].wbnb
     const ask = (functionName, args) => ctx.client.readContract({ address: wbnb, abi: ERC20_ABI, functionName, args, blockNumber })
     const [have, approved] = await Promise.all([ask('balanceOf', [t.from]), ask('allowance', [t.from, t.to])])

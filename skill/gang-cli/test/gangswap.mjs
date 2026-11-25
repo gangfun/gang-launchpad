@@ -243,6 +243,7 @@ const call = ({ to, data, from, value }) => {
     }
     return revert
   }
+  if (at === WBNB && world.wbnbAt?.[atBlock] === 'down') return rpcDown
   if (at === WBNB) return { balanceOf: () => ok(world.wbnbAt?.[atBlock]?.[0] ?? world.wbnb), allowance: () => ok(world.wbnbAt?.[atBlock]?.[1] ?? world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
   if (at === GS || at === GS2 || at === K1) return { balanceOf: () => ok(world.tokenBal), allowance: () => ok(world.tokenAllow), symbol: () => ok('GSW'), decimals: () => ok(18), launchpad: () => ok(PAD) }[f.name]?.() ?? revert
   if (at === lc(HANDLER) && f.name === 'owedOf') return ok(0n)
@@ -951,10 +952,10 @@ try {
           const ask = async (replay, o = {}) => { Object.assign(world, { wbnb: E18, wbnbAllow: E18, replay, replayed: [], ...o }); return (await cli(['tx', '--testnet', '--hash', gsg])).gangSwap }
           const both = (x) => ({ '0xfe': x, '0xff': x })
           const at = (a, b) => ({ wbnb: 77n * E18, wbnbAllow: 77n * E18, wbnbAt: { '0xfe': a, '0xff': b } })
-          const FULL = [E18 / 2n, E18 / 2n], EARLIER = /This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash \(gang tx --hash\).*gang portfolio.*re-run the create only once sure none succeeded/
+          const FULL = [E18 / 2n, E18 / 2n], EARLIER = /This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash \(gang tx --hash <hash> --testnet\) and the tokens this wallet created \(gang creator-fee --from 0x0*d3[fF] --testnet, unless it says scanNote or unreadNote.*re-run the create only once sure none succeeded/
           let g = await ask(both(gradClosed))
           assert.deepEqual([g.created, g.reverted, g.certain], [false, 'GradNotOpen', true])
-          assert.match(g.hint, /No seed was taken by this transaction/)
+          assert.doesNotMatch(g.hint, /No seed was taken|portfolio/)
           assert.match(g.hint, EARLIER)
           g = await ask({ '0xff': gradClosed })
           assert.deepEqual([g.reverted, g.mayBe], [undefined, 'GradNotOpen'])
@@ -995,7 +996,23 @@ try {
           assert.deepEqual([g.reverted, /approved the pad for 0 WBNB/.test(g.hint), /it held/.test(g.hint)], ['seed not covered', true, false])
           assert.equal(await ask(both(revert), at(FULL, FULL)), undefined, 'covered: another reason, nothing said')
           for (const e of [err('NotAgent()'), oog, rpcDown, { error: { code: 3, message: 'execution reverted', data: { foo: '0x12345678' } } }]) assert.equal(await ask(both(e), at([0n, 0n], [0n, 0n])), undefined, 'a named error, the node, or data not understood: not the seed')
-          world.wbnbAt = null
+          // the wallet can't be read at the block itself: what the state before it says still stands, as not certain
+          g = await ask(both(revert), at([0n, 0n], 'down'))
+          assert.deepEqual([g?.reverted, g?.mayBe, g?.certain], [undefined, 'seed not covered', false])
+          assert.equal(await ask(both(revert), at('down', [0n, 0n])), undefined)
+          // a create without a reward pulls no seed: its bare revert never looks at the wallet's WBNB
+          world.txs[gsg] = txOf(gsg, salted); world.calls = []
+          assert.equal(await ask(both(revert), at([0n, 0n], [0n, 0n])), undefined)
+          assert.ok(!world.calls.some(([x]) => x === WBNB), 'no WBNB read')
+          world.txs[gsg] = txOf(gsg, input)
+          // the list the hint names shows a fresh token of this wallet, with no fee yet
+          world.wbnbAt = null; world.replay = null; world.curveFee = 0n
+          const mine = await cli(['creator-fee', '--from', ME, '--testnet'])
+          assert.deepEqual([mine.success, mine.tokens.filter((x) => lc(x.token) === GS).map((x) => [x.graduated, x.claimable])], [true, [[false, '0']]], JSON.stringify(mine))
+          // mainnet: the same commands without --testnet
+          world.receipts[gsg] = rc(gsg, { to: MPAD }); world.txs[gsg] = txOf(gsg, input, { to: MPAD }); world.replay = both(gradClosed)
+          const mg = (await cli(['tx', '--hash', gsg], { GANG_RPC_URL: rpc })).gangSwap
+          assert.match(mg.hint, /gang tx --hash <hash>\) and the tokens this wallet created \(gang creator-fee --from 0x0*d3[fF], unless/)
         }
         Object.assign(world, { replay: null, wbnb: E18, wbnbAllow: 0n })
       }

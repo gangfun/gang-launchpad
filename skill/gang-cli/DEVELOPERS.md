@@ -141,6 +141,9 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
   `BadGradConfig()` means it is served, `GradNotOpen()` closed, a bare revert (or a wrapper's own error) not there,
   once a call known to revert with data shows the node returns revert data. The
   reward's views, claims, refund, sweep and events are those of any graduation reward.
+- `gang tx` on a reverted GangSwap create (changed in 0.54.0): `gangSwap.reverted` names the cause, with `certain: true`, only
+  when the state before its block and at it both give it. Otherwise it returns `gangSwap.mayBe` instead (`certain: false`),
+  also for `GangSwapVersionChanged` and `GangSwapNotOpen`: read both fields.
 - Addresses: `pad.gangSwapMigratorOf(token)` → `factory()` and `boost()`; `factory.fees()`. The router is named by
   nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI keeps a list
   of versions, takes the router whose `factory()` is the token's own factory, and requires the code itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must be a known build's (`GANGSWAP_ROUTER_CODE_HASH`) and the
