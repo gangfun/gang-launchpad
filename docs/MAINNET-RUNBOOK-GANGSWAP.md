@@ -1,6 +1,6 @@
 # 主网上线步骤 · GangSwap
 
-- 状态：**GangSwap 已部署，pad 和 registry 已升级（2026-11-24）**，见 `docs/MAINNET-GANGSWAP-2026-11-24.md`；登记和打开没有做。每一步都要用户明确同意，Safe 批次由 Safe 签名。
+- 状态：**GangSwap 已部署，pad 和 registry 已升级，已登记并打开（2026-11-24 至 25）**，见 `docs/MAINNET-GANGSWAP-2026-11-24.md`。阶段 A 改用隔离的主网部署验收，之后决定保持打开、观察，有异常再关闭；下面「上线前要定的事」和「小范围开放」的 A / B / C 分阶段条件（包括平台支持、限量、建完就关）是原计划，没有照做，也不再适用；现在是长期打开、CLI 0.53.0 已公开发布。每一步都要用户明确同意，Safe 批次由 Safe 签名。
 - 规格：`docs/SPEC-GANGSWAP-2026-11-22.md`（§13）；测试网记录：`docs/TESTNET-GANGSWAP-2026-11-23.md`；对接文档：`docs/GANGSWAP-INTEGRATION.md`
 - 代码：main `a509292`。和主网正在运行的 pad 3.0 代码（`1fbab73`）相比，`src/` 的改动只有 GangSwap（11 个文件）。
 
@@ -59,7 +59,7 @@
 
 ### 6. 打开（Safe 批次 1 笔）
 
-`GANGSWAP_STEP=open`：`setGangSwapMigrator(migrator)`，立即对新币生效。执行后按「小范围开放」的阶段 A 走。建完用 `setGangSwapMigrator(0)` 关闭。
+`GANGSWAP_STEP=open`：`setGangSwapMigrator(migrator)`，立即对新币生效。执行后按「小范围开放」的阶段 A 走。（原计划；实际保持打开，`setGangSwapMigrator(0)` 只用于应急关闭。）
 
 ## 回退和应急
 

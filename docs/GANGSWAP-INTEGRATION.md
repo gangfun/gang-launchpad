@@ -1,18 +1,33 @@
 # GangSwap integration guide
 
-For wallets, aggregators, DEX screeners and bots. GangSwap is an optional graduation venue for GangLaunchpad 3.0 tokens on BNB Chain: a Uniswap/Pancake V2 style pair with a 1% fee and a **virtual quote reserve**. Status: live on BNB testnet; the contracts are deployed on mainnet but **not opened** (no token uses them yet).
+For wallets, aggregators, DEX screeners and bots. GangSwap is an optional graduation venue for GangLaunchpad 3.0 tokens on BNB Chain: a Uniswap/Pancake V2 style pair with a 1% fee and a **virtual quote reserve**. Status: **open on BNB mainnet since block 135505289 (2026-11-24 17:46 UTC)**; no token of this version has graduated yet (as of 2026-11-25). The contracts had several internal reviews and no external audit.
 
 Contracts are not upgradeable. A new version is a new set of contracts; a token stays on the version it was created with, and older versions keep working. Support a list of factories, not one.
 
-## Addresses (BNB mainnet, chain 56; deployed, not opened)
+## Addresses (BNB mainnet, chain 56)
 
 | Contract | Address |
 |---|---|
 | GangSwapFactory | `0xd0C15eB66e08596F9F534d0051F691b86Bc584F5` |
 | GangSwapRouter | `0xd685e3432472d0da34903888f96b0D0221bC779c` |
 | GangSwapMigrator | `0x22e13298D48100420F2F386D70D18E498161B20b` |
+| GangSwapBoost | `0x42A3dBcBb2339f52AE332cc480766003C43f1416` |
+| GangSwapFees | `0xa9D9a67D724d487f843d37db92162F6728c58900` |
 | GangLaunchpad 3.0 | `0x2bEbED4be8c8F46C17776C71D7a6A45dbC5CAB29` |
 | WBNB | `0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c` |
+
+Pair init code hash: `0x118a6e086410ad99bc0968c3a4afdce6653288e14174b6248da8a05b0693e13b`.
+
+A throwaway mainnet stack with the same code over real WBNB has one graduated pair with its buy-back finished. It holds about 0.05 WBNB; use it for integration tests only, it is not a market to list:
+
+| Contract | Address |
+|---|---|
+| Pad | `0xa5Ed346AfB5cD8D7CdDce8a02d0D55b51EC0198B` |
+| Migrator | `0x4F53325AD55536d70Bd68131FFE27C807D27497c` |
+| Factory | `0x0053eb9B66DB1d5D2fE5dDF84f9CB3E487c83121` |
+| Router | `0x71310eAf34584389408D8847a3ef86482B9998Db` |
+| Token (token0) | `0xb532b2374B820a74916311d46B8AcF02804E791f` |
+| Pair (token1 = WBNB) | `0x52c9843cfCdeC52363BB5B8027478C172581b40D` |
 
 ## Addresses (BNB testnet, chain 97)
 
@@ -36,7 +51,7 @@ Mock WBNB (both): `0x4054E65E4c73cA0Abc30239C012D31DA34361F74`.
 
 ## How a token gets here
 
-1. Created on GangLaunchpad 3.0 as `kindOf(token) == 4`; it trades on the pad's curve.
+1. Created on GangLaunchpad 3.0 as `kindOf(token) == 4` (event `GangSwapCreated(address indexed token, address indexed migrator)`); it trades on the pad's curve.
 2. At graduation the pair is created and all LP is minted to `0x…dEaD` (plus V2's minimum liquidity to the zero address) (`Transfer`, `PairCreated`, `GangSwapMigrated`). Only GangSwapMigrator can create pairs; nobody can add or remove liquidity afterwards.
 3. `pad.getTokenInfo(token)` returns status **4** with the GangSwap pair and a 100 bps fee. Status 2 is PancakeSwap; do not treat 4 as 2. Anyone can create an unrelated PancakeSwap pair of such a token: it is not its graduation pool.
 
