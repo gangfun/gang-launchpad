@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangFixture} from "../utils/GangFixture.sol";
 import {GangLaunchpad} from "../../src/gang/GangLaunchpad.sol";
 import {UpgradeGangLaunchpad3} from "../../script/UpgradeGangLaunchpad3.s.sol";
+import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
 import {DeployGang} from "../../script/DeployGang.s.sol";
 import {GangLaunchpad3} from "../../src/gang/GangLaunchpad3.sol";
 import {Pad3Module} from "../../src/gang/Pad3Module.sol";
@@ -358,14 +359,7 @@ contract Pad3GangSwapTest is GangFixture {
         vm.prank(owner);
         m.enableVanity(address(f));
         bytes32 hash = f.tokenInitCodeHash("Swap", "GSW", "meta", address(0), 0, 0, false);
-        bytes32 salt;
-        for (uint256 i;; i++) {
-            address a = f.predict(hash, keccak256(abi.encode(creator, bytes32(i))));
-            if (uint16(uint160(a)) == 0xabcd && a.code.length == 0) {
-                salt = bytes32(i);
-                break;
-            }
-        }
+        (bytes32 salt,) = Pad3VanitySalt.find(address(f), creator, hash);
         bytes memory data =
             abi.encodeCall(IGangSwapPad.createGangSwap, ("Swap", "GSW", "logo", "meta", 9 ether, address(gsMigrator)));
         // a value with this non-payable entry reverts the whole call
