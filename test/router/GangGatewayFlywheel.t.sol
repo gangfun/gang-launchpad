@@ -4,11 +4,10 @@ pragma solidity 0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {GangPadRegistry} from "../../src/gang/GangPadRegistry.sol";
 import {GangGateway} from "../../src/router/GangGateway.sol";
+import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {IGangGateway} from "../../src/router/interfaces/IGangGateway.sol";
 import {IFlywheelPad} from "../../src/flywheel/interfaces/IFlywheelPad.sol";
-import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
 import {GangPadRegistryDeployLib as RG} from "../../script/GangPadRegistryDeployLib.sol";
-import {GangGatewayDeployLib as G} from "../../script/GangGatewayDeployLib.sol";
 import {FlywheelFixture} from "../flywheel/FlywheelFixture.sol";
 
 /// @dev An aggregator's four.meme adapter: names its caller as the trader, 1% router fee on sells.
@@ -45,11 +44,12 @@ contract FlyPhisher {
     receive() external payable {}
 }
 
-/// @notice GangGateway V2 on a 铸币飞轮 pad (GangFlywheelPad, kind 3) found through GangPadRegistry: before launch a
+/// @notice An aggregator entry on a 铸币飞轮 pad (GangFlywheelPad, kind 3) found through GangPadRegistry: before launch a
 ///         buy mints whole shares (mintFor) and a sell sells them back (withdrawFor); after launch a buy mints at the
 ///         post-launch price (mintPostFor) and sells are the pair's. Quotes match the trades wei for wei; the pad
 ///         spends exactly what it pulls and the rest goes back to the buyer; nothing stays in the gateway.
-contract GangGatewayFlywheelTest is FlywheelFixture {
+/// @dev Run against GangLaunchpad 3.0's entry only (test/gang3/Pad3AsGateway.t.sol): GangGateway does not trade 铸币飞轮.
+abstract contract GangGatewayFlywheelTest is FlywheelFixture {
     GangPadRegistry internal reg;
     GangGateway internal gw;
     FlyAdapter internal adapter;
@@ -69,9 +69,7 @@ contract GangGatewayFlywheelTest is FlywheelFixture {
     }
 
     /// @dev The aggregator entry under test (test/gang3/Pad3AsGateway.t.sol: GangLaunchpad 3.0's built-in one).
-    function _newGateway(address reg_) internal virtual returns (address) {
-        return G.deploy(reg_, address(wbnb), owner, R.MAINNET_MIN_DELAY).proxy;
-    }
+    function _newGateway(address reg_) internal virtual returns (address);
 
     // ---------------------------------------------------------------- helpers
     function _tryBuy(address t, address who, uint256 funds)
@@ -218,7 +216,7 @@ contract GangGatewayFlywheelTest is FlywheelFixture {
         (uint256 amount,,,) = _tryBuy(t, w, funds);
         assertEq(amount, 0);
         vm.prank(w, w);
-        vm.expectRevert(IGangGateway.FundsTooLow.selector);
+        vm.expectRevert(IGangLaunchpad3.FundsTooLow.selector);
         adapter.buyBnb{value: funds}(t, 0);
     }
 
@@ -329,9 +327,9 @@ contract GangGatewayFlywheelTest is FlywheelFixture {
         (funds,) = _trySell(t, 0);
         assertEq(funds, 0);
         vm.startPrank(w, w);
-        vm.expectRevert(IGangGateway.NotWholeShares.selector);
+        vm.expectRevert(IGangLaunchpad3.NotWholeShares.selector);
         gw.sellToken(0, t, w, TPS + 1, 0, 0, address(0));
-        vm.expectRevert(IGangGateway.NotWholeShares.selector);
+        vm.expectRevert(IGangLaunchpad3.NotWholeShares.selector);
         gw.sellToken(0, t, w, 0, 0, 0, address(0));
         // more than it minted: the pad refuses
         vm.expectRevert(IFlywheelPad.BadAmount.selector);
@@ -432,7 +430,7 @@ contract GangGatewayFlywheelTest is FlywheelFixture {
         address w = _newAgent();
         (, uint256 paid, uint256 fee,,) = pad.previewMintPost(t, w, 1);
         vm.prank(w, w);
-        vm.expectRevert(IGangGateway.FundsTooLow.selector);
+        vm.expectRevert(IGangLaunchpad3.FundsTooLow.selector);
         adapter.buyBnb{value: paid + fee - 1}(t, 0);
     }
 

@@ -22,7 +22,7 @@
 
 | 函数 | 对应 four.meme | 说明 |
 |---|---|---|
-| `getTokenInfo(token)` → `(status, quote, pair, protocolFeeBps, graduationLeft)` | Helper3.getTokenInfo（同 selector，返回结构不同：按 four.meme 解码会回滚） | `status`：0 不是 Gang 币，1 在内盘，2 已毕业 / 已发射（走 Pancake V2 的 `pair`），3 打新还在进行（不能经网关交易）。status 1 只说明币在内盘，**能不能经网关交易以 `tryBuy` / `trySell` 不为 0 为准**（pad 可能还没列入网关，或关了准入）。`quote` 为 0 表示 BNB 计价。`protocolFeeBps` 只在 status 1 时为 100。`graduationLeft` 是扣 1% 手续费后的净额，实际要付约 `graduationLeft × 10000 / 9900` |
+| `getTokenInfo(token)` → `(status, quote, pair, protocolFeeBps, graduationLeft)` | Helper3.getTokenInfo（同 selector，返回结构不同：按 four.meme 解码会回滚） | `status`：0 不是 Gang 币，1 在内盘，2 已毕业 / 已发射（走 Pancake V2 的 `pair`），3 打新还在进行（不能经网关交易），4 GangSwap 币已毕业（`pair` 是 GangSwap 的 pair，**不是 Pancake pair**，不要走 Pancake 路由）。status 1 只说明币在内盘，**能不能经网关交易以 `tryBuy` / `trySell` 不为 0 为准**（pad 可能还没列入网关，或关了准入）。`quote` 为 0 表示 BNB 计价。`protocolFeeBps` 在 status 1 和 4 时为 100，其余为 0。`graduationLeft` 是扣 1% 手续费后的净额，实际要付约 `graduationLeft × 10000 / 9900` |
 | `tryBuy(token, trader, 0, funds)` | Helper3.tryBuy（Helper3 是 `tryBuy(token, amount, funds)`，这里多了 trader，selector 不同） | 返回结构同 Helper3；只支持按资金买（`amount` 必须为 0，否则 `AmountNotSupported`）。会回滚的情况返回全 0：不是内盘币、pad 没列入网关、准入关闭、trader 没有 Agent ID、钱包已满、`funds` 为 0。`trader` 传 0 地址按新钱包报价 |
 | `trySell(token, amount)` → `(tokenManager, quote, funds, fee)` | Helper3.trySell | `funds` 是扣 pad 1% 手续费后、扣路由手续费前的所得。会回滚的情况（含 pad 没列入网关）返回 0；dust 也返回 0，这时 `sellToken` 会拿走代币却付 0，**`funds == 0` 就不要卖** |
 | `buyTokenAMAP(token, to, funds, minAmount)` payable → `(amountOut, fundsUsed)` | TokenManager2.buyTokenAMAP | `to` 必须是 `tx.origin`。BNB 计价：`msg.value == funds`；ERC-20 计价：从 `msg.sender` 拉 `funds` |
@@ -32,6 +32,8 @@
 报价通过 GangPadRegistry 的 `previewBuy` / `previewSell` 计算，和成交逐 wei 一致（fuzz 测试核对）。
 
 ## 铸币飞轮（V2，2026-11-02）
+
+> **2026-11-23：代码已移除。** 网关源码回到主网在跑的第一版，只加 GangSwap 曲线币（类型 4）。铸币飞轮的交易逻辑、`GatewayFlywheelTestnetAcceptance.s.sol` 和 `GatewayFlywheelMainnetFork.t.sol` 只在 git 历史里（`72c2b58`）；`GangGatewayFlywheel.t.sol` 改为只测 GangLaunchpad 3.0 自带的入口。以下内容作为记录保留。
 
 网关 V2 的设计（**没有上线主网**，见开头）：同一个地址，经 48 小时时间锁升级，也能交易铸币飞轮 V1、V2 两个 pad 的币（registry kind 3），接口不变：
 

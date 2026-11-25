@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
-// GangSwap curve tokens through every entry (2026-11-22 integration review): graduation via buyTokenAMAP and GangRouter
-// buyFor on an agent-window token, sells after graduation, a pre-graduation donation to the predicted
+// GangSwap curve tokens through every entry (2026-11-22 integration review): graduation via buyTokenAMAP, GangRouter
+// buyFor and GangGateway on an agent-window token, sells after graduation, a pre-graduation donation to the predicted
 // pair, and a value-carrying createWithSalt.
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -11,6 +11,8 @@ import {IGangAgentWindow} from "../../src/gang/interfaces/IGangAgentWindow.sol";
 import {IGangLaunchpad} from "../../src/gang/interfaces/IGangLaunchpad.sol";
 import {IGangLaunchpad3} from "../../src/gang/interfaces/IGangLaunchpad3.sol";
 import {Pad3VanityDeployer} from "../../src/gang/Pad3VanityDeployer.sol";
+import {GangGateway} from "../../src/router/GangGateway.sol";
+import {GangGatewayDeployLib as G} from "../../script/GangGatewayDeployLib.sol";
 
 interface IGSFactoryX {
     function INIT_CODE_PAIR_HASH() external view returns (bytes32);
@@ -50,6 +52,22 @@ contract Pad3GangSwapEntriesTest is Pad3GangSwapTest {
         router.v3BuyBNB{value: 20 ether}(t, 0, block.timestamp);
         assertTrue(_graduated(t));
         (uint8 s,,,,) = p.getTokenInfo(t);
+        assertEq(s, 4);
+    }
+
+    function test_gradViaGateway() public {
+        address t = _windowGS();
+        vm.prank(owner);
+        padRegistry3.addPad(address(pad));
+        G.Gateway memory g = G.deploy(address(padRegistry3), address(wbnb), owner, 0);
+        GangGateway gw = GangGateway(payable(g.proxy));
+        vm.prank(owner);
+        pad.setRouter(address(gw), true);
+        address w = _newAgent();
+        vm.prank(w, w);
+        gw.buyTokenAMAP{value: 20 ether}(t, w, 20 ether, 0);
+        assertTrue(_graduated(t));
+        (uint8 s,,,,) = gw.getTokenInfo(t);
         assertEq(s, 4);
     }
 

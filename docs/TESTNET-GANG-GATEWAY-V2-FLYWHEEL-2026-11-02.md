@@ -1,5 +1,7 @@
 # 测试网 · GangGateway V2（铸币飞轮）
 
+> **2026-11-23：代码已移除。** 网关源码回到主网在跑的第一版，只加 GangSwap 曲线币（类型 4）。铸币飞轮的交易逻辑、`GatewayFlywheelTestnetAcceptance.s.sol` 和 `GatewayFlywheelMainnetFork.t.sol` 只在 git 历史里（`72c2b58`）；`GangGatewayFlywheel.t.sol` 改为只测 GangLaunchpad 3.0 自带的入口。以下内容作为记录保留。
+
 - 链：BSC 测试网（chainId 97），2026-11-02
 - 代码：网关 V2（AUDIT-BRIEF §26），审计 → 修复 → 独立复审之后的版本；规格 `docs/SPEC-GANG-GATEWAY-2026-10-30.md`「铸币飞轮」一节。
 - 两件事：
@@ -53,6 +55,8 @@
 | schedule | [`0xe798e6d6…b3b9`](https://testnet.bscscan.com/tx/0xe798e6d687423e0c72fb4a183dd7c99f6e48cd8ea789be74056dcfb955efb3b9)，区块 140,375,524 |
 | 操作 id | `0xd78437e44560e1f27fa2f2e89ad3d43fc0ae7d5c4e12b8f995e5230d74df8435` |
 | 最早可执行 | 2026-11-04 19:43:21 +08:00 |
+
+**下面的命令不再适用**：当前源码已不是 V2，脚本会以 `GATEWAY_IMPL code` 回滚，也不再把网关列入铸币飞轮 pad；只作记录。
 
 到时用同样的命令再跑两次：第一次执行升级，第二次自检并把网关列入测试网的飞轮 pad（V1 两套 `0x7E30…937e`、`0xD648…951c` 和 V2 `0x7069…E3d6`）。
 

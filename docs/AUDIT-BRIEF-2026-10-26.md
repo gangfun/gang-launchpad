@@ -1446,6 +1446,8 @@ Safe 已执行 `setRouter`，网关已列入 pad，报价和买入在主网上�
 
 ## 26. GangGateway V2：铸币飞轮（2026-11-02）
 
+> **2026-11-23：代码已移除。** 网关源码回到主网在跑的第一版，只加 GangSwap 曲线币（类型 4）。铸币飞轮的交易逻辑、`GatewayFlywheelTestnetAcceptance.s.sol` 和 `GatewayFlywheelMainnetFork.t.sol` 只在 git 历史里（`72c2b58`）；`GangGatewayFlywheel.t.sol` 改为只测 GangLaunchpad 3.0 自带的入口。以下内容作为记录保留。
+
 > 网关升级（同一个代理地址，经 48 小时时间锁）：`src/router/GangGateway.sol`、`src/router/interfaces/IGangGateway.sol`；新的升级脚本 `script/UpgradeGangGateway.s.sol`、测试网验收脚本 `script/GatewayFlywheelTestnetAcceptance.s.sol`；测试 `test/router/GangGatewayFlywheel.t.sol`、`test/fork/GatewayFlywheelMainnetFork.t.sol`；`config/GangDeployRefs.sol` 加了 `GANG_GATEWAY`、`FLYWHEEL_PAD_V1`、`FLYWHEEL_PAD_V2`。pad、代币、registry 的代码都不改。
 
 ### 26.1 需求
