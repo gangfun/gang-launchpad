@@ -1,7 +1,7 @@
 # 规格 · GangSwap 曲线币的冲毕业奖励（dev 自己出钱）
 
 - 日期：2026-11-25
-- 状态：**已实现，本地测试和主网 fork 通过；没有独立评审，没有上测试网和主网**
+- 状态：**已独立评审并复审，测试网验收过；2026-11-25 部署主网，Safe（nonce 63）执行后 2026-11-26 核对生效**。新实现 `0xB27149F0131Efe6fAF182d393E3D07AF9A0b21Cb`，`Pad3Module` `0x78416Dcb826C18797c6A6fc10560a12f9Ab688D5`，`Pad3GradModule` `0x98Cb1AD780332B8f5D2eaE64399effeB3397DE97`，`Pad3FlyModule` `0xB8F63118cb85b922BAe40A426dE69650f1447823`；之前的实现 `0x782f449D8476a873D4a1105a19B297E85e60246F`。部署记录在 `broadcast/UpgradeGangLaunchpad3.s.sol/56/`，批次 `docs/MAINNET-GANG-LAUNCHPAD-3-UPGRADE-GANGSWAP-GRAD-SAFE-BATCH-2026-11-25.json`。主网上还没有带奖励的 GangSwap 币
 - 基础：`SPEC-GRAD-REWARD-2026-11-17.md`（冲毕业奖励）、`SPEC-GANGSWAP-2026-11-22.md`（GangSwap，可选的毕业去处）
 - 改掉的决定：GangSwap 规格 D3「第一期不带任何模块」里的「冲毕业奖励」一项。其余不变：WBNB 计价、无税、不带底仓、金库、推广分成、倒计时奖励
 
