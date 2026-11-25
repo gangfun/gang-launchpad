@@ -93,11 +93,21 @@
 
 - 升级前后比较 `gradRewardDeps` 和**每一个**有奖励的币（按原始状态字查找，所以命名空间被移动也看得出来）：5 个存储字、`gradReward`、`gradEntries`、名单里每个买家的 `gradClaimable`；
 - GangSwap 币照旧逐个比较（包括已毕业的），最新 25 个币照旧比较；
-- 升级后新入口必须能应答：直接调用、经 `createWithAgentWindow`、（abcd 开着时）经 `createWithSalt`，都要以「配置为空」被拒绝。
+- 升级后的应答检查：直接调用、经 `createWithAgentWindow`、（abcd 开着时）经 `createWithSalt`，空配置都要被拒（`BadGradConfig`；奖励关着时 `GradNotOpen`）；奖励开着时，合法配置加错误版本也都要被拒（`GangSwapVersionChanged`，带当前版本；GangSwap 关着时 `GangSwapNotOpen`）。这只证明入口已接上、两个名单已加上、请求能走到版本检查，**不证明建币能成功**（发币、拉种子钱、写奖励）：那由 Foundry 和 fork 测试证明，部署的代码由脚本逐字节比对。
 
 `script/pad3-upgrade-probes.py` 多报 GangSwap 币和奖励币的数量（只读，供对照）。
 
-主网要用的环境：`PAD3_GRAD_REWARD`、`PAD3_REGISTRY_UPGRADE`、`PAD3_ABCD_DEPLOYER`、`PAD3_BASE_VAULT_IMPL` 都不设（都已经执行过；奖励和 registry 再设一次脚本会拒绝）。批次只有一笔 `upgradeAndCall`。
+主网要用的环境（**这些必须都不设**，它们是以前各次上线的一次性步骤）：
+
+| 变量 | 设了会怎样 |
+|---|---|
+| `PAD3_REGISTRY_UPGRADE`、`PAD_REGISTRY_IMPL` | registry 已经是这份代码，`PAD3_REGISTRY_UPGRADE` 会被脚本拒绝；单独设 `PAD_REGISTRY_IMPL` 没有作用 |
+| `PAD3_GRAD_REWARD`、`PAD3_GRAD_HANDLER_ADMIN`、`PAD3_GRAD_COUNTDOWN_FACTORY` | 奖励已经打开，`PAD3_GRAD_REWARD` 会被拒绝；另两个单独设没有作用 |
+| `PAD3_ABCD_DEPLOYER` | 已经启用，会被拒绝 |
+| `PAD3_BASE_VAULT_IMPL` | 和线上相同会被拒绝；换成另一份同样代码的地址会进批次，脚本会打印警告 |
+| `PAD3_INIT_CALL` | 没有新的 reinitializer，会被拒绝 |
+
+`PAD3_FLY_*` 可以不设，设了必须等于线上的值。第二次（只读）运行要设 `PAD3_IMPL`。批次里只要有 `upgradeAndCall` 以外的交易（包括脚本自己找到的铸币飞轮登记），脚本就打印 `WARNING: the batch is NOT the upgrade alone`。这次升级的批次必须只有一笔：到 pad 的 ProxyAdmin，value 0，`upgradeAndCall(pad, 新实现, 0x)`；看到警告就停。
 
 过期的东西：
 
@@ -119,4 +129,4 @@
 - 主网现状（只读探针）：1,084 个币，9 个 GangSwap 币都还在曲线上，1 个奖励币（类型 1，还在曲线上），37 个 Agent 窗口，4 个推广分成币没有任何绑定，没有底仓币；两个探针列表都为空。
 - 没有验证：全部 1,084 个币逐个比较（脚本比较最新 25 个、全部 GangSwap 币、全部奖励币）；真实的旧版 CLI、server 和网站。
 - 变异检查：新代码 23 处、升级脚本 9 处，共 32 个；31 个第一次就被发现，剩下 1 个（升级脚本里直接调用的那条应答检查，和另外两条重叠）补了测试后也被发现。
-- 全量 Foundry：209 个套件，2,490 通过、3 失败、199 跳过（fork 测试没有 RPC）。3 个失败是同一个旧测试 `test_createWithSalt`（GangSwap 套件和继承它的两个套件）找 salt 时超过默认 gas 上限，main 上也失败，提高 `--gas-limit` 就通过；改用 `Pad3VanitySalt.find` 后这三个套件 97 / 97 通过。`gangswap/` 140 / 140。
+- 全量 Foundry（不含 fork），`b426644`，独立干净运行：2,493 通过 / 0 失败 / 199 跳过（跳过的是没有 RPC 的 fork 测试）。`gangswap/` 140 / 140。

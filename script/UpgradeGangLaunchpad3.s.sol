@@ -74,8 +74,9 @@ import {GangPadRegistryDeployLib as D} from "./GangPadRegistryDeployLib.sol";
 ///      The new implementation must serve GangSwap.
 ///      Graduation rewards (docs/SPEC-GRAD-REWARD-2026-11-17.md): the deps and EVERY token with a reward (found by its raw
 ///      state word, so a moved namespace shows) are compared: stored words, `gradReward`, `gradEntries`, each listed
-///      buyer's `gradClaimable`. After the upgrade createGangSwapWithGradReward must answer, directly and through
-///      createWithAgentWindow and (abcd on) createWithSalt, with a refusal of an empty config.
+///      buyer's `gradClaimable`. After the upgrade createGangSwapWithGradReward must refuse an empty config and, with a
+///      valid one, a wrong GangSwap version, directly and through createWithAgentWindow and (abcd on) createWithSalt: that
+///      shows the entry is dispatched and listed there, not that a create works end to end (the tests' part).
 ///      Optional PAD3_GRAD_REWARD=true (docs/SPEC-GRAD-REWARD-2026-11-17.md §13): `setGradReward(true, admin, factory)`
 ///      runs last in the same batch, once (refused when already set), with PAD3_GRAD_HANDLER_ADMIN (required: this
 ///      build's GangHandlerAdmin owning the pad's handler, owned by OWNER) and PAD3_GRAD_COUNTDOWN_FACTORY (must be 0:
@@ -216,7 +217,24 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         if (_baseImpl != address(0)) console.log("(set the base vault implementation last, in the same batch)");
         if (_grad) console.log("(open the graduation reward last, in the same batch)");
         if (_regImpl != address(0)) console.log("(then move GangPadRegistry to this build, last, in the same batch)");
-        console.log(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call, proxy));
+        _warnNotUpgradeAlone(prepTo.length);
+        _emitBatch(_batchJson(c.mainnet, upgrader, prepTo, prepCall, admin, call, proxy));
+    }
+
+    /// @dev The batch `run` prints. Virtual: a test keeps exactly what was printed.
+    function _emitBatch(string memory json) internal virtual {
+        console.log(json);
+    }
+
+    /// @dev Anything in the batch besides the one upgradeAndCall, said out loud: the optional steps are one-time, and an
+    ///      env variable left over from an earlier rollout must not slip into a batch by itself.
+    function _warnNotUpgradeAlone(uint256 preps) internal view {
+        uint256 extra = preps + (_abcd != address(0) ? 1 : 0) + (_baseImpl != address(0) ? 1 : 0) + (_grad ? 1 : 0)
+            + (_regImpl != address(0) ? 1 : 0);
+        if (extra == 0) return;
+        console.log("WARNING: the batch is NOT the upgrade alone; transactions besides upgradeAndCall:", extra);
+        console.log("Unset PAD3_ABCD_DEPLOYER, PAD3_BASE_VAULT_IMPL, PAD3_GRAD_REWARD and PAD3_REGISTRY_UPGRADE unless");
+        console.log("this rollout means them (docs/SPEC-GANGSWAP-GRAD-REWARD-2026-11-25.md sec. 7).");
     }
 
     /// @dev The upgrade in the simulation, as the owner sends it (the 铸币飞轮 listings first); checked; rolled back.
@@ -883,15 +901,39 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         return h;
     }
 
-    /// @dev After the upgrade the pad answers createGangSwapWithGradReward itself, directly and through both wrappers'
-    ///      lists: an empty config is refused as such (GradNotOpen while the reward is closed), before anything is
-    ///      created; a wrapper that does not list it, or a pad without it, answers something else.
+    /// @dev What this shows: after the upgrade the pad dispatches createGangSwapWithGradReward, and both wrappers' lists let
+    ///      it through (a wrapper that does not list it, or a pad without it, answers something else). Two calls, each
+    ///      refused before anything is created: an empty config (`_checkGradConfig`), and, the reward open, a valid config
+    ///      naming a version that is not the pad's current one, which must get past the config check into the GangSwap
+    ///      one. What it does not show: a create that succeeds (token, seed pull, stored reward); the Foundry and fork
+    ///      tests do, on the code `_checkImplCode` compares byte for byte.
     function _checkGangSwapGradCreate(GangLaunchpad3 p) internal {
-        IGangGradRewardBase.GradConfig memory none;
-        bytes memory data =
-            abi.encodeCall(IGangSwapPad.createGangSwapWithGradReward, ("", "", "", "", 0, address(0), none));
         (bool open,,) = IGangGradReward(address(p)).gradRewardDeps();
-        bytes4 want = open ? IGangGradRewardBase.BadGradConfig.selector : IGangGradRewardBase.GradNotOpen.selector;
+        IGangGradRewardBase.GradConfig memory cfg;
+        _probeGradCreate(
+            p,
+            cfg,
+            abi.encodeWithSelector(
+                open ? IGangGradRewardBase.BadGradConfig.selector : IGangGradRewardBase.GradNotOpen.selector
+            )
+        );
+        if (!open) return;
+        (cfg.seed, cfg.minBuy, cfg.entries, cfg.refundAfter) = (1, 1, 1, 30 days);
+        (, address migrator) = _gangSwapOpen(p);
+        _probeGradCreate(
+            p,
+            cfg,
+            migrator == address(0)
+                ? abi.encodeWithSelector(IGangSwapPad.GangSwapNotOpen.selector)
+                : abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, migrator)
+        );
+    }
+
+    /// @dev The create with `cfg` and a version no pad has (the pad itself), refused with exactly `want` each way in.
+    function _probeGradCreate(GangLaunchpad3 p, IGangGradRewardBase.GradConfig memory cfg, bytes memory want) private {
+        bytes memory data = abi.encodeCall(
+            IGangSwapPad.createGangSwapWithGradReward, ("", "", "", "", uint256(6 ether), address(p), cfg)
+        );
         _refusedWith(p, data, want);
         _refusedWith(p, abi.encodeCall(IGangAgentWindow.createWithAgentWindow, (uint16(1), data)), want);
         if (_vanityState(p) != address(0)) {
@@ -899,10 +941,10 @@ contract UpgradeGangLaunchpad3 is DeployGangLaunchpad3 {
         }
     }
 
-    function _refusedWith(GangLaunchpad3 p, bytes memory data, bytes4 want) private {
+    function _refusedWith(GangLaunchpad3 p, bytes memory data, bytes memory want) private {
         (bool ok, bytes memory ret) = address(p).call(data);
-        if (ok || ret.length != 4 || bytes4(ret) != want) {
-            revert WiringCheck("upgrade: createGangSwapWithGradReward not served");
+        if (ok || keccak256(ret) != keccak256(want)) {
+            revert WiringCheck("upgrade: createGangSwapWithGradReward not wired");
         }
     }
 

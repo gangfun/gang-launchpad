@@ -18,7 +18,19 @@ import {IGangAgentWindow} from "../../src/gang/interfaces/IGangAgentWindow.sol";
 import {IGangGradReward, IGangGradRewardBase} from "../../src/gang/interfaces/IGangGradReward.sol";
 import {Pad3VanitySalt} from "../../script/Pad3VanitySalt.sol";
 import {GangRouterDeployLib as R} from "../../script/GangRouterDeployLib.sol";
-import {WindowBatchHarness} from "./Pad3AgentWindowFork.t.sol";
+import {FlyUpgradeHarness} from "./Pad3LiveUpgrade.sol";
+
+/// @dev The batch the script's own `run` printed (with the listings it really resolved), empty when it printed none.
+contract EmittedBatchHarness is FlyUpgradeHarness {
+    string public emitted;
+    uint256 public batches;
+
+    function _emitBatch(string memory json) internal override {
+        super._emitBatch(json);
+        emitted = json;
+        batches++;
+    }
+}
 
 interface IWBNBGg {
     function deposit() external payable;
@@ -40,8 +52,8 @@ interface IGgPair {
 
 /// @notice createGangSwapWithGradReward on a mainnet fork (docs/SPEC-GANGSWAP-GRAD-REWARD-2026-11-25.md), over the LIVE
 ///         pad, GangSwap version, abcd deployer and registry, none of which the upgrade touches. UpgradeGangLaunchpad3 is run
-///         against the live proxy (deploying this build, checking, simulating), then read-only over what it deployed; its
-///         batch is the one upgrade; sent as the Safe it writes only the implementation slot. The creates that exist
+///         against the live proxy (deploying this build, checking, simulating), then read-only over what it deployed; the
+///         batch that run prints is the one upgrade; sent as the Safe it writes only the implementation slot. The creates that exist
 ///         today (kind 1, kind 1 with a reward, GangSwap), each traded, give the same logs, records and balances, to the byte,
 ///         on the live implementation and on the new one. A kind-1 token, a kind-1 reward token and a GangSwap token created
 ///         and traded BEFORE the upgrade read the same after it (registry quotes too) and graduate as before. Then a
@@ -149,13 +161,14 @@ contract Pad3GangSwapGradForkTest is Test {
         (, uint256 key) = makeAddrAndKey("gangswap grad fork deployer");
         vm.deal(vm.addr(key), 10 ether);
         _env(key);
-        WindowBatchHarness up = new WindowBatchHarness();
+        EmittedBatchHarness up = new EmittedBatchHarness();
         vm.pauseGasMetering();
         up.run();
         next = up.deployedImpl();
+        assertEq(up.batches(), 0, "a run that deploys prints no batch");
         // read-only over the deployed implementation: the run that prints the batch
         vm.setEnv("PAD3_IMPL", vm.toString(next));
-        WindowBatchHarness again = new WindowBatchHarness();
+        EmittedBatchHarness again = new EmittedBatchHarness();
         again.run();
         vm.resumeGasMetering();
         emit log_named_uint("size GangLaunchpad3", next.code.length);
@@ -168,13 +181,17 @@ contract Pad3GangSwapGradForkTest is Test {
         address admin = R.adminOf(PAD3);
         bytes memory call =
             abi.encodeCall(ProxyAdmin.upgradeAndCall, (ITransparentUpgradeableProxy(PAD3), next, bytes("")));
-        string memory json = again.batchJson(admin, call, PAD3);
+        assertEq(again.batches(), 1);
+        string memory json = again.emitted();
+        assertEq(vm.parseJsonString(json, ".chainId"), "56");
+        assertEq(vm.parseJsonAddress(json, ".meta.createdFromSafeAddress"), M.OWNER_SAFE);
         assertEq(vm.parseJsonAddress(json, ".transactions[0].to"), admin);
+        assertEq(vm.parseJsonString(json, ".transactions[0].value"), "0");
         assertEq(vm.parseJsonBytes(json, ".transactions[0].data"), call);
         assertFalse(vm.keyExistsJson(json, ".transactions[1]"), "the upgrade alone");
         vm.record();
         vm.prank(M.OWNER_SAFE);
-        (bool ok,) = admin.call(call);
+        (bool ok,) = admin.call(vm.parseJsonBytes(json, ".transactions[0].data"));
         assertTrue(ok);
         (, bytes32[] memory writes) = vm.accesses(PAD3);
         assertEq(writes.length, 1, "only the implementation slot");

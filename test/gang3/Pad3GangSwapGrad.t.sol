@@ -925,37 +925,54 @@ contract Pad3GangSwapGradTest is Pad3GangSwapTest {
         assertEq(keccak256(h.gradState(p)), full);
     }
 
-    function test_gr_upgradeScript_createServed() public {
+    function test_gr_upgradeScript_createWired() public {
         GradUpgradeHarness h = new GradUpgradeHarness();
         h.checkGradCreate(p); // reward closed, abcd off
         _openBoth();
         uint256 n = p.tokenCount();
         h.checkGradCreate(p);
+        vm.prank(owner);
+        m.setGangSwapMigrator(address(0));
+        h.checkGradCreate(p); // GangSwap closed
+        _open();
         _vanity();
         h.checkGradCreate(p);
         assertEq(p.tokenCount(), n);
-        IGangGradRewardBase.GradConfig memory none;
-        bytes memory data =
-            abi.encodeCall(IGangSwapPad.createGangSwapWithGradReward, ("", "", "", "", 0, address(0), none));
-        bytes[3] memory calls = [
-            data,
-            abi.encodeCall(IGangAgentWindow.createWithAgentWindow, (uint16(1), data)),
-            abi.encodeCall(Pad3Module.createWithSalt, (bytes32(0), data))
+
+        // each probe, each way in, answered otherwise: refused (the other ways answer as they should)
+        bytes[2] memory wants = [
+            abi.encodeWithSelector(IGangGradRewardBase.BadGradConfig.selector),
+            abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(gsMigrator))
         ];
-        for (uint256 i; i < 3; i++) {
-            vm.mockCallRevert(address(pad), calls[i], abi.encodeWithSelector(Pad3Module.BadVanityCall.selector));
-            vm.expectRevert(_wiring("upgrade: createGangSwapWithGradReward not served"));
-            h.checkGradCreate(p);
-            vm.clearMockedCalls();
+        for (uint256 k; k < 2; k++) {
+            IGangGradRewardBase.GradConfig memory c;
+            if (k == 1) (c.seed, c.minBuy, c.entries, c.refundAfter) = (1, 1, 1, 30 days);
+            bytes memory data = _probe(c);
+            bytes[3] memory calls = [
+                data,
+                abi.encodeCall(IGangAgentWindow.createWithAgentWindow, (uint16(1), data)),
+                abi.encodeCall(Pad3Module.createWithSalt, (bytes32(0), data))
+            ];
+            for (uint256 i; i < 3; i++) {
+                for (uint256 j; j < 3; j++) {
+                    vm.mockCallRevert(
+                        address(pad),
+                        calls[j],
+                        j == i ? abi.encodeWithSelector(Pad3Module.BadVanityCall.selector) : wants[k]
+                    );
+                }
+                vm.expectRevert(_wiring("upgrade: createGangSwapWithGradReward not wired"));
+                h.checkGradCreate(p);
+                vm.clearMockedCalls();
+            }
         }
-        // the direct entry alone (the wrappers answer as they should)
-        bytes memory want = abi.encodeWithSelector(IGangGradRewardBase.BadGradConfig.selector);
-        vm.mockCallRevert(address(pad), calls[0], abi.encodeWithSelector(Pad3Module.BadVanityCall.selector));
-        vm.mockCallRevert(address(pad), calls[1], want);
-        vm.mockCallRevert(address(pad), calls[2], want);
-        vm.expectRevert(_wiring("upgrade: createGangSwapWithGradReward not served"));
         h.checkGradCreate(p);
-        vm.clearMockedCalls();
-        h.checkGradCreate(p);
+    }
+
+    function _probe(IGangGradRewardBase.GradConfig memory c) internal view returns (bytes memory) {
+        return
+            abi.encodeCall(
+                IGangSwapPad.createGangSwapWithGradReward, ("", "", "", "", uint256(6 ether), address(pad), c)
+            );
     }
 }
