@@ -190,7 +190,7 @@ const reason = (s) => ({ error: { code: 3, message: `execution reverted: ${s}`, 
 const rpcDown = { error: { code: -32603, message: 'internal error' } }
 
 const stripped = { error: { code: 3, message: 'execution reverted' } }
-let inMulti = false
+let inMulti = false, atBlock = 'latest'
 const call = ({ to, data, from, value }) => {
   const f = functions.get(data.slice(0, 10))
   const at = lc(to) === MPAD ? PAD : lc(to)
@@ -243,7 +243,7 @@ const call = ({ to, data, from, value }) => {
     }
     return revert
   }
-  if (at === WBNB) return { balanceOf: () => ok(world.wbnb), allowance: () => ok(world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
+  if (at === WBNB) return { balanceOf: () => ok(world.wbnbAt?.[atBlock]?.[0] ?? world.wbnb), allowance: () => ok(world.wbnbAt?.[atBlock]?.[1] ?? world.wbnbAllow), symbol: () => ok('WBNB'), decimals: () => ok(18) }[f.name]?.() ?? revert
   if (at === GS || at === GS2 || at === K1) return { balanceOf: () => ok(world.tokenBal), allowance: () => ok(world.tokenAllow), symbol: () => ok('GSW'), decimals: () => ok(18), launchpad: () => ok(PAD) }[f.name]?.() ?? revert
   if (at === lc(HANDLER) && f.name === 'owedOf') return ok(0n)
   if (f.name === 'kindOf' && world.kindDown && inMulti) return revert
@@ -366,6 +366,7 @@ const answer = (b) => {
     case 'eth_getBlockByNumber': return { result: { number: '0x100', timestamp: `0x${NOW.toString(16)}`, hash: `0x${'11'.repeat(32)}`, parentHash: `0x${'22'.repeat(32)}`, transactions: [], baseFeePerGas: '0x0', gasLimit: '0x1', gasUsed: '0x0', difficulty: '0x0', logsBloom: `0x${'00'.repeat(256)}`, miner: zeroAddress, extraData: '0x', nonce: '0x0000000000000000', sha3Uncles: `0x${'00'.repeat(32)}`, size: '0x1', stateRoot: `0x${'00'.repeat(32)}`, receiptsRoot: `0x${'00'.repeat(32)}`, transactionsRoot: `0x${'00'.repeat(32)}`, uncles: [], totalDifficulty: '0x0' } }
     case 'eth_call':
       if (world.replay && p[1] !== 'latest' && lc(p[0].to) !== WBNB) { world.replayed = [...(world.replayed ?? []), p[1]]; return world.replay[p[1]] ?? { result: '0x' } }
+      atBlock = p[1]
       return call(p[0])
     default: return { error: { code: -32601, message: `unexpected ${b.method}` } }
   }
@@ -612,10 +613,15 @@ try {
       assert.equal(await on({ code: -32603, message: m }), 'unread')
       assert.equal(await on({ code: 3, message: m }, { down: new Set(['claimGradReward']) }), 'unread', 'the control call failed')
       const padded = `${BAD}${'00'.repeat(32)}`
-      for (const [data, message] of [[padded, m], [toFunctionSelector('NotAgent()'), m], [`0x${'00'.repeat(32)}`, m], [{ data: BAD, result: toFunctionSelector('GradNotOpen()') }, m], [{ foo: BAD }, `${m}: ${BAD}`], [BAD.slice(0, 9), m], [`0x08c379a0${encodeAbiParameters([{ type: 'string' }], [BAD]).slice(2)}`, `${m}: ${BAD}`]]) {
+      for (const [data, message] of [[padded, m], [`${BAD}zz`, m], [`${BAD} and more`, m], [{ data: `${BAD}0` }, m], [[170, 2, 85, 135], m], [{ output: BAD }, m], [{ code: 3, details: { output: BAD } }, m], [toFunctionSelector('NotAgent()'), m], [`0x${'00'.repeat(32)}`, m], [{ data: BAD, result: toFunctionSelector('GradNotOpen()') }, m], [{ foo: BAD }, `${m}: ${BAD}`], [BAD.slice(0, 9), m], [`0x08c379a0${encodeAbiParameters([{ type: 'string' }], [BAD]).slice(2)}`, `${m}: ${BAD}`]]) {
         assert.notEqual(await on({ code: 3, message, data }, { stripped: true }), 'wrap-bnb', JSON.stringify(data))
         assert.equal(await on({ code: 3, message, data }, { stripped: true }), 'unread', JSON.stringify(data))
       }
+      // data there in a shape we do not know, on a node that does return data: not "not upgraded" either
+      for (const data of [`${BAD}zz`, { output: BAD }, [170, 2, 85, 135], { foo: { bar: BAD } }, 'odd']) assert.equal(await on({ code: 3, message: m, data }), 'unread', JSON.stringify(data))
+      world = { ...fresh(), gsGrad: { error: { code: 3, message: m, data: { output: BAD } } }, wbnb: 0n }
+      await refused(create(G1), /could not tell .*revert data in a shape this CLI does not know/)
+      for (const data of ['Reverted 0x', '', {}, { code: 3, message: m, data: '0x' }]) assert.equal(await on({ code: 3, message: m, data }), 'no', JSON.stringify(data))
       assert.equal(await on({ code: 3, message: m, data: toFunctionSelector('NotAgent()') }), 'unread', 'an answer this CLI does not know is not "no" either')
       assert.equal(await on({ code: -32000, message: 'out of gas' }), 'unread')
     }
@@ -943,31 +949,70 @@ try {
         for (const input of [rewarded, nested]) {
           world.receipts[gsg] = rc(gsg); world.txs[gsg] = txOf(gsg, input)
           const ask = async (replay, o = {}) => { Object.assign(world, { wbnb: E18, wbnbAllow: E18, replay, replayed: [], ...o }); return (await cli(['tx', '--testnet', '--hash', gsg])).gangSwap }
-          let g = await ask({ '0xfe': gradClosed })
-          assert.deepEqual([g.created, g.reverted, /no seed was taken/.test(g.hint)], [false, 'GradNotOpen', true])
-          assert.equal((await ask({ '0xff': gradClosed })).reverted, 'GradNotOpen')
-          for (const [o, re, not] of [[{ wbnb: 0n }, /it held 0 WBNB/, /approved the pad for/], [{ wbnbAllow: E18 / 4n }, /approved the pad for 0\.25 WBNB/, /it held/], [{ wbnb: E18 / 2n - 1n, wbnbAllow: E18 / 2n - 1n }, /it held 0\.4\d+ WBNB and it had approved/, /never/]]) {
+          const both = (x) => ({ '0xfe': x, '0xff': x })
+          const at = (a, b) => ({ wbnb: 77n * E18, wbnbAllow: 77n * E18, wbnbAt: { '0xfe': a, '0xff': b } })
+          const FULL = [E18 / 2n, E18 / 2n], EARLIER = /This transaction created nothing, but an earlier create from this wallet may already have succeeded and pulled the seed: check its tx hash \(gang tx --hash\).*gang portfolio.*re-run the create only once sure none succeeded/
+          let g = await ask(both(gradClosed))
+          assert.deepEqual([g.created, g.reverted, g.certain], [false, 'GradNotOpen', true])
+          assert.match(g.hint, /No seed was taken by this transaction/)
+          assert.match(g.hint, EARLIER)
+          g = await ask({ '0xff': gradClosed })
+          assert.deepEqual([g.reverted, g.mayBe], [undefined, 'GradNotOpen'])
+          // the wallet short before the block and at it (the amounts of those blocks, not the latest): said as the cause
+          for (const [x, re, not] of [[[0n, 0n], /but it held 0 WBNB and it had approved the pad for 0 WBNB/, /may be this/], [[0n, E18], /but it held 0 WBNB\./, /approved the pad for/], [[E18, E18 / 4n], /but it had approved the pad for 0\.25 WBNB\./, /it held/]]) {
             for (const bare of [revert, stripped]) {
-              g = await ask({ '0xfe': bare }, o)
-              assert.deepEqual([g.reverted, g.seed], ['seed not covered', '0.5'])
+              g = await ask(both(bare), at(x, x))
+              assert.deepEqual([g.reverted, g.certain, g.seed, g.mayBe], ['seed not covered', true, '0.5', undefined], JSON.stringify(g))
               assert.match(g.hint, re)
+              assert.match(g.hint, EARLIER)
               assert.doesNotMatch(g.hint, not)
             }
           }
-          assert.equal(await ask({ '0xfe': revert }, { wbnb: E18 / 2n, wbnbAllow: E18 / 2n }), undefined, 'covered: another reason, nothing said')
-          for (const e of [err('NotAgent()'), oog, rpcDown]) assert.equal(await ask({ '0xfe': e }, { wbnb: 0n }), undefined, 'a named error or the node: not the seed')
+          // a duplicate send, the first create in an earlier block: it pulled the seed, so the wallet is short at both. Never "re-run"
+          g = await ask(both(revert), at([0n, 0n], [0n, 0n]))
+          assert.match(g.hint, EARLIER)
+          assert.doesNotMatch(g.hint, /nothing was created|Re-run the create: /)
+          // in the same block: covered before it, short at its end. Not certain, and the same warning
+          g = await ask({ '0xff': revert }, at(FULL, [0n, 0n]))
+          assert.deepEqual([g.reverted, g.mayBe, g.certain], [undefined, 'seed not covered', false])
+          assert.match(g.hint, /^it may be this.*it held 0 WBNB/)
+          assert.match(g.hint, EARLIER)
+          assert.match(g.source, /at the end of its block only/)
+          // approved (or wrapped) earlier in the same block, then a create with too little gas: not blamed on the allowance
+          for (const x of [[E18, 0n], [0n, E18], [0n, 0n]]) {
+            for (const own of [oog, revert, { result: '0x' }]) {
+              g = await ask({ '0xfe': revert, '0xff': own }, at(x, FULL))
+              assert.deepEqual([g.reverted, g.mayBe, g.certain], [undefined, 'seed not covered', false], JSON.stringify(g))
+              assert.match(g.hint, /^it may be this.*too little gas/)
+              assert.match(g.source, /before its block only/)
+            }
+          }
+          // short of another thing at each: neither is certain
+          g = await ask(both(revert), at([0n, E18], [E18, 0n]))
+          assert.deepEqual([g.mayBe, g.certain], ['seed not covered', false])
+          // short of one at both: only that one is named
+          g = await ask(both(revert), at([0n, 0n], [E18, 0n]))
+          assert.deepEqual([g.reverted, /approved the pad for 0 WBNB/.test(g.hint), /it held/.test(g.hint)], ['seed not covered', true, false])
+          assert.equal(await ask(both(revert), at(FULL, FULL)), undefined, 'covered: another reason, nothing said')
+          for (const e of [err('NotAgent()'), oog, rpcDown, { error: { code: 3, message: 'execution reverted', data: { foo: '0x12345678' } } }]) assert.equal(await ask(both(e), at([0n, 0n], [0n, 0n])), undefined, 'a named error, the node, or data not understood: not the seed')
+          world.wbnbAt = null
         }
         Object.assign(world, { replay: null, wbnb: E18, wbnbAllow: 0n })
       }
       for (const args of [['tx', '--testnet'], ['v3', 'tx', '--testnet']]) {
         const ask = async (h, replay) => { world.replay = replay; world.replayed = []; const y = await cli([...args, '--hash', h]); assert.deepEqual([y.success, y.status], [true, 'reverted'], JSON.stringify(y)); return y.gangSwap }
         let g = await ask(bad, { '0xfe': changed })
-        assert.deepEqual([g.created, g.reverted, lc(g.current)], [false, 'GangSwapVersionChanged', MIGRATOR2])
+        assert.deepEqual([g.created, g.reverted, g.mayBe, g.certain, lc(g.current)], [false, undefined, 'GangSwapVersionChanged', false, MIGRATOR2], 'it passes at the block itself: not said as the cause')
+        assert.match(g.hint, /^it may be this/)
         assert.match(g.hint, /re-run the create to see the new version/)
-        assert.deepEqual(world.replayed, ['0xfe'])
+        assert.deepEqual(world.replayed, ['0xfe', '0xff'])
+        g = await ask(bad, { '0xfe': changed, '0xff': changed })
+        assert.deepEqual([g.created, g.reverted, g.mayBe, g.certain, lc(g.current)], [false, 'GangSwapVersionChanged', undefined, true, MIGRATOR2])
+        assert.doesNotMatch(g.hint, /may be|earlier create/)
+        for (const o of [oog, rpcDown, closed, err('NotAgent()')]) assert.deepEqual([(await ask(bad, { '0xfe': changed, '0xff': o })).mayBe], ['GangSwapVersionChanged'])
         g = await ask(bad, { '0xff': changed }) // switched in the same block
-        assert.deepEqual([g.reverted, world.replayed.join()], ['GangSwapVersionChanged', '0xfe,0xff'])
-        g = await ask(bad, { '0xfe': closed })
+        assert.deepEqual([g.mayBe, g.reverted, world.replayed.join()], ['GangSwapVersionChanged', undefined, '0xfe,0xff'])
+        g = await ask(bad, { '0xfe': closed, '0xff': closed })
         assert.deepEqual([g.reverted, g.current, /not open/.test(g.hint)], ['GangSwapNotOpen', undefined, true])
         assert.equal(await ask(bad, {}), undefined, 'the replay passes: nothing said')
         for (const e of [revert, err('NotAgent()'), oog]) assert.equal(await ask(bad, { '0xfe': e, '0xff': changed }), undefined, 'another reason, or no state: nothing said')
@@ -982,7 +1027,7 @@ try {
       }
       // mainnet
       world.receipts[bad].to = MPAD; world.txs[bad].to = MPAD
-      world.replay = { '0xfe': changed }
+      world.replay = { '0xfe': changed, '0xff': changed }
       let y = await cli(['tx', '--hash', bad], { GANG_RPC_URL: rpc })
       assert.deepEqual([y.success, y.status, y.gangSwap?.reverted], [true, 'reverted', 'GangSwapVersionChanged'], JSON.stringify(y))
       // a tx that succeeded is never replayed

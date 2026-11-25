@@ -363,9 +363,12 @@ try {
   const cdToken = vanityAddress(VAN, ME, `0x${'ab'.repeat(32)}`, cdSalt)
   const cdCreate = (extra) => runV3('create', {
     ...io({ name: 'Grad', symbol: 'GRAD', from: ME, testnet: true, calldata: true, 'grad-reward': '0.5', 'buy-tax': '3', 'sell-tax': '3', recipient: MOD, ...extra }),
+    checkLogo: () => { throw new Failed('file not found') },
     launchFloor: { noun: 'countdown reward module', token: cdToken, salt: cdSalt, logoURI: 'ipfs://logo', metaURI: 'ipfs://meta', metadata: { name: 'Grad' } },
   })
   world.saltResult = cdToken
+  // a pinned launch resumes after its local --logo file is gone: the file is not looked at again (a plain create looks)
+  await assert.rejects(runV3('create', { ...io({ name: 'G', symbol: 'G', from: ME, testnet: true, calldata: true, 'grad-reward': '0.5' }), checkLogo: () => { throw new Failed('file not found') } }), /file not found/)
   // every dry run of a pinned launch, the first included, uses the pinned salt and metadata
   world.pinSalt = cdSalt
   // the pad has no countdown factory: a carry is refused, --gr-carry 0 goes through
