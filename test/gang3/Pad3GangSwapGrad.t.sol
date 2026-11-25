@@ -966,6 +966,19 @@ contract Pad3GangSwapGradTest is Pad3GangSwapTest {
                 vm.clearMockedCalls();
             }
         }
+        // the right error naming another version is refused too: the whole answer is compared, not its selector
+        {
+            IGangGradRewardBase.GradConfig memory c;
+            (c.seed, c.minBuy, c.entries, c.refundAfter) = (1, 1, 1, 30 days);
+            vm.mockCallRevert(
+                address(pad),
+                _probe(c),
+                abi.encodeWithSelector(IGangSwapPad.GangSwapVersionChanged.selector, address(0xdead))
+            );
+            vm.expectRevert(_wiring("upgrade: createGangSwapWithGradReward not wired"));
+            h.checkGradCreate(p);
+            vm.clearMockedCalls();
+        }
         h.checkGradCreate(p);
     }
 
