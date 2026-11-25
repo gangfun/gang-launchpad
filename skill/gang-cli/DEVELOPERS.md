@@ -136,9 +136,10 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
   `createWithAgentWindow`.
 - With a graduation reward (0.54.0+, on a pad that serves it; mainnet's does not yet):
   `createGangSwapWithGradReward(name, symbol, logoURI, metaURI, gradBnb, migrator, cfg)`, `cfg` as `createWithGradReward`'s
-  with `carryBps`, `promoteBps` and `promoteWindow` 0. Not payable: `cfg.seed` is pulled from the creator in WBNB (approve
-  the pad for exactly it). Also inside both wrappers. No getter names the entry: call it statically with an empty `cfg`;
-  `BadGradConfig()` means it is served, `GradNotOpen()` closed, a bare revert (or a wrapper's own error) not there. The
+  with `carryBps`, `promoteBps` and `promoteWindow` 0. Not payable: `cfg.seed` is pulled from the creator in WBNB (the pad's
+  allowance must cover it; a larger one is not reduced to it). Also inside both wrappers. No getter names the entry: call it statically with an empty `cfg`;
+  `BadGradConfig()` means it is served, `GradNotOpen()` closed, a bare revert (or a wrapper's own error) not there,
+  once a call known to revert with data shows the node returns revert data. The
   reward's views, claims, refund, sweep and events are those of any graduation reward.
 - Addresses: `pad.gangSwapMigratorOf(token)` → `factory()` and `boost()`; `factory.fees()`. The router is named by
   nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI keeps a list

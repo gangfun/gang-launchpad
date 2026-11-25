@@ -145,6 +145,15 @@ export async function gradLaunchCheck(read, pad, testnet, gr, cliFactory) {
   return closed ? { error: closed, pad } : null
 }
 
+/** What a refused reward create says about money an earlier run may have set aside for it. */
+export const fundsNote = (pad, sym = 'WBNB') => `this run moves nothing. If an earlier run ${sym === 'WBNB' ? 'wrapped BNB or ' : ''}approved the pad, that ${sym} is still in this wallet and yours, and the approval stays until you change it. This CLI has no ${sym === 'WBNB' ? 'unwrap or ' : ''}revoke command: in your wallet app, ${sym === 'WBNB' ? 'call withdraw(amount) on the WBNB contract for BNB, and ' : ''}set the ${sym} approval of ${pad} to 0 (approve(pad, 0))`
+
+/** The create preview's note when the pad may already take more than the seed (the CLI approves only when it is short); null otherwise. */
+export const allowanceNote = (allowance, seed, shown, sym, pad) => (allowance <= seed ? null : {
+  current: allowance >= 2n ** 128n ? `unlimited (${sym})` : `${shown.allowance} ${sym}`, seed: `${shown.seed} ${sym}`,
+  note: `this wallet's ${sym} approval of the pad is already larger than the seed, so no approval was built and it is left as it is. The create takes only ${shown.seed} ${sym}; ${allowance >= 2n ** 128n ? 'the approval may stay unlimited' : 'the rest of the approval stays'}. To reset it, in your wallet app set the ${sym} approval of ${pad} to 0 after the create (approve(pad, 0)), or to exactly the seed before it: this CLI has no revoke command`,
+})
+
 /** `amountBnb` (a decimal string) in the quote, at the rate the curve's graduation amount fixes (gradAmt ÷ target BNB). */
 export const bnbInQuote = (amountBnb, gradAmt, targetBnb) =>
   (parseUnits(String(amountBnb), 18) * gradAmt) / parseUnits(String(targetBnb), 18)

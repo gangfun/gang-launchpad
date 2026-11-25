@@ -22,7 +22,7 @@ import { COUNTDOWN_TYPE, countdownBuy, countdownFactoryAddress, countdownForToke
 import { VANITY_ABI, vanityCreate, vanityDeployer } from './vanity.js'
 import { BASE_LOST, BASE_NO_BOND, BASE_PAD_ABI, baseOf as baseVaultView, basePayoff, baseSupport, baseTaxLine, HINTS as BASE_HINTS, parseBase, scheduleLine } from './base.js'
 import { AGENT_WINDOW_ABI, agentWindowOf, agentWindowSupport, GRAD_OPEN_WARNING, HINTS as WINDOW_HINTS, parseAgentWindow, shownWindow, windowCreateView, wrapCreate } from './agentwindow.js'
-import { bnbInQuote, carryClosed, DEFAULT_MIN_BUY_BNB, DEFAULTS as GRAD_DEFAULTS, GRAD_FLAGS, GRAD_PAD_ABI, gradBuyLine, gradCreateView, gradOf, gradSellLine, gradSupport, HINTS as GRAD_HINTS, MIN_SEED_BNB, parseGradReward } from './gradreward.js'
+import { allowanceNote, bnbInQuote, carryClosed, fundsNote, DEFAULT_MIN_BUY_BNB, DEFAULTS as GRAD_DEFAULTS, GRAD_FLAGS, GRAD_PAD_ABI, gradBuyLine, gradCreateView, gradOf, gradSellLine, gradSupport, HINTS as GRAD_HINTS, MIN_SEED_BNB, parseGradReward } from './gradreward.js'
 
 /**
  * `gang v3 …` — LaunchpadV3 (tax recipient): a token with its own buy / sell tax (1–5% each), a dividend share and a
@@ -103,6 +103,7 @@ const REGISTRY_ABI = parseAbi([
   'function entries(address recipient) view returns (bool listed, uint64 listedAt, string label)',
 ])
 const ERC20_ABI = parseAbi([
+  'function allowance(address, address) view returns (uint256)',
   'function balanceOf(address) view returns (uint256)',
   'function symbol() view returns (string)',
 ])
@@ -319,7 +320,7 @@ const USAGE = 'usage: gang v3 <list|info|status|create|buy|sell|claim|income|rel
  * Entry for `gang v3 <sub>`. io: { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta, notes } from
  * index.js (summarize = summarizePreview, so previews look like every other command's; notes = padNotes: --note / --follow).
  */
-export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, checkMeta, resolveMeta, notes, launchPoolModule = null, launchFloor = null }) {
+export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo, checkLogo = () => {}, checkMeta, resolveMeta, notes, launchPoolModule = null, launchFloor = null }) {
   if (!SUBS.includes(sub)) return fail(USAGE, { got: sub ?? null })
   const testnet = flag('testnet')
   const net = testnet ? ' --testnet' : ''
@@ -516,6 +517,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const name = opt('name'), symbol = opt('symbol')
     if (!name || !symbol) fail('--name and --symbol are required')
     checkMeta() // a bad --website / --twitter / --description fails here, before any chain read or upload
+    if (!launchFloor) checkLogo() // so does a bad --logo file (a pinned launch does not read it again)
     // --venue gangswap: graduates into GangSwap (createGangSwap, 3.0 once upgraded); WBNB, untaxed, alone
     const badVenue = venueRefusal({ opt, flag, testnet })
     if (badVenue) fail(badVenue.error, 'got' in badVenue ? { got: badVenue.got } : {})
@@ -526,7 +528,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       // asked of the pad before any wallet step or upload
       const support = await gangSwapSupport(ctx)
       if (support.unread) fail('could not check the pad for GangSwap (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
-      if (!support.open) fail(support.why, { pad: ctx.pad, hint: 'leave --venue out: the token then graduates into PancakeSwap' })
+      if (!support.open) fail(support.why, { pad: ctx.pad, hint: 'leave --venue out: the token then graduates into PancakeSwap', ...(flag('grad-reward') && { funds: fundsNote(ctx.pad) }) })
       gsMigrator = support.migrator
       gsRouterWarning = await gangSwapRouterWarning(ctx, gsMigrator)
     }
@@ -664,14 +666,15 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     // the carry with this CLI's countdown factory
     let grToModule = false
     if (gr) {
+      const quoteSym = quote.toLowerCase() === String(ctx.wbnb).toLowerCase() ? 'WBNB' : 'quote'
       const support = await gradSupport(ctx)
       if (support.unread) fail('could not check the pad for the graduation reward (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
-      if (!support.open) fail(`${support.why}: drop --grad-reward${testnet ? '' : ' (it is on the BSC testnet: --testnet)'}`, { pad: ctx.pad })
+      if (!support.open) fail(`${support.why}: drop --grad-reward`, { pad: ctx.pad, funds: fundsNote(ctx.pad, quoteSym) })
       // a GangSwap create has its own entry: asked of the pad in the shape this create takes, before any wrap or approval
       if (gsCreate) {
         const gsGrad = await gangSwapGradSupport(ctx, aw?.minutes ?? null)
-        if (gsGrad.unread) fail('could not check the pad for a graduation reward on GangSwap tokens (RPC error)', { pad: ctx.pad, detail: gsGrad.unread, retry: 'same command again' })
-        if (!gsGrad.open) fail(`${gsGrad.why}: drop --grad-reward, or --venue gangswap`, { pad: ctx.pad, hint: 'this run built no wrap, approval or create' })
+        if (gsGrad.unread) fail('could not tell whether the pad serves a graduation reward on GangSwap tokens', { pad: ctx.pad, detail: gsGrad.unread, retry: 'same command again' })
+        if (!gsGrad.open) fail(`${gsGrad.why}: drop --grad-reward, or --venue gangswap`, { pad: ctx.pad, hint: 'this run built no wrap, approval or create', funds: fundsNote(ctx.pad) })
       }
       const cf = countdownFactoryAddress(testnet)
       grToModule = cdLaunch && !!cf && String(support.countdownFactory ?? '').toLowerCase() === cf.toLowerCase()
@@ -758,8 +761,13 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       })
       const pre = await fundingStep(ctx, me, quote, seedRaw, sym, 'approve-quote', rawOnly, summarize)
       // each run builds the one step still missing (wrap, approve, create), read from the chain: re-run once the last one landed
-      const gsPre = gsCreate && { venue: { name: 'gangswap', version: gsMigrator, ...(gsRouterWarning && { routerWarning: gsRouterWarning }) }, gradReward: grView, stages: 'wrap-bnb (if WBNB is short) → approve-quote (exactly the seed) → create: one per run of the same command; the create is its own preview' }
+      const { payWithThisTx: _pay, ...preView } = grView // the seed is pulled by the create, not by this step
+      const gsPre = gsCreate && { venue: { name: 'gangswap', version: gsMigrator, ...(gsRouterWarning && { routerWarning: gsRouterWarning }) }, gradReward: preView, stages: 'wrap-bnb (if WBNB is short) → approve-quote (exactly the seed, if the approval is short) → create: one per run of the same command; the create is its own preview' }
       if (pre) return out(pre.success ? { ...pre, why: `the create pulls the ${grView.pool} reward pool from this wallet`, ...gsPre } : pre)
+      // a larger approval than the seed: said, never blocking (a read that fails says nothing; the dry run needs the approval anyway)
+      const allowance = await ctx.read(quote, ERC20_ABI, 'allowance', [me, ctx.pad]).catch(() => 0n)
+      const note = allowanceNote(allowance, seedRaw, { allowance: await units(ctx, quote, allowance), seed: await units(ctx, quote, seedRaw) }, sym, ctx.pad)
+      if (note) grView.allowance = note
     }
     // createWithVault, createWithPromote, createWithBase and createWithGradReward always take the target (the pad's
     // default when --grad is left out)
@@ -788,7 +796,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ? await simulate(ctx, me, ctx.pad, AGENT_WINDOW_ABI, 'createWithAgentWindow', [aw.minutes, probe.data], baseCost)
       : await simulate(ctx, me, ctx.pad, probe.salt ? VANITY_ABI : createAbi,
         probe.salt ? 'createWithSalt' : fn, probe.salt ? [probe.salt, createData(...pinned)] : argsOf(...pinned), baseCost)
-    if (dry?.failed) return out({ success: false, step: 'create', ...dry.failed })
+    if (dry?.failed) return out({ success: false, step: 'create', ...dry.failed, ...(gr && ['GradNotOpen', 'GangSwapNotOpen'].includes(dry.failed.error) && { funds: fundsNote(ctx.pad, quote.toLowerCase() === String(ctx.wbnb).toLowerCase() ? 'WBNB' : 'quote') }) })
     // a floor launch: the module was cloned for one token address, so the create reuses the metadata and the salt that
     // give it, and is refused when anything that decides the address (name, symbol, tax rates) changed since
     const logo = launchFloor ? { logoURI: launchFloor.logoURI, uploaded: !!launchFloor.uploaded } : await resolveLogo()

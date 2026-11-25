@@ -38,7 +38,7 @@
 - **领取**：毕业后 180 天内买家自己领，之后任何人都可以把剩下的部分退给你。
 - **不毕业**：建币满 `--gr-refund-days` 天（默认 90）后，你可以申请撤回。申请公示 7 天，期间毕业照常发放；公示期满后 3 天内可以取回，过期就要重新申请。
 - **组合**：可以和 `--promote` 一起用（不带税，或者带 `--recipient`）；也可以和 `--countdown-reward` 一起用：毕业时奖励池的 `--gr-carry`%（默认 20）转进这个币的倒计时奖励模块，没领的剩余也转进去，不退给你；不能和 `--vault` / `--base` / `--fair` / `--fly` 或一条命令发射一起用。
-- **GangSwap 币（0.54.0+，只在 pad 支持的链上可用，CLI 在包 BNB 和批准之前会先问 pad；主网还不支持）**：加上 `--venue gangswap`。种子钱是 WBNB，同一条命令每次运行一步：包 WBNB、批准（正好是种子钱）、建币，可以带 `--agent-window`。规则、领取和撤回都一样；不能带 `--gr-carry`、`--promote`、`--countdown-reward`，没领的剩余一律退给你。种子钱不进 GangSwap 池子，也不进回购。
+- **GangSwap 币（0.54.0+，只在 pad 支持的链上可用，CLI 在包 BNB 和批准之前会先问 pad；主网还不支持）**：加上 `--venue gangswap`。种子钱是 WBNB，同一条命令每次运行一步：包 WBNB、批准（额度不够时才批准，正好是种子钱；之前批过更大的额度不会动，预览会说明）、建币，可以带 `--agent-window`。规则、领取和撤回都一样；不能带 `--gr-carry`、`--promote`、`--countdown-reward`，没领的剩余一律退给你。种子钱不进 GangSwap 池子，也不进回购。
 
 买家只付正常的价格和手续费：奖励池是你自己的钱，按公开的固定规则发给毕业前最后几笔买入。`gang buy` / `gang sell` 的预览会在 `rewards.gradReward` 里说明这笔会不会计入、卖出会让哪些格子失效。`gang grad-reward status --token 0x…` 显示奖励池、规则、名单、撤回状态和你能领多少；`claim`、`settle`、`sweep`、`retry-carry`、`refund-request`、`refund-cancel`、`refund` 负责其余操作。
 

@@ -5,7 +5,7 @@ import {
 } from './chain.js'
 import { wantsHelp } from './help.js'
 import { baw, bawAddress, bawError, bawFailed, bawSettings, bawStatus, bawPreview, bawExecute } from './baw.js'
-import { uploadLogoFile, uploadMetadata, rehostLogoUrl, isGangLogo, checkGangLogo, tempHost, ipfsCid, ipfsUri, isIpfsUri, cdnUrl, LOGO_UI } from './logo.js'
+import { readLogoFile, uploadLogoFile, uploadMetadata, rehostLogoUrl, isGangLogo, checkGangLogo, tempHost, ipfsCid, ipfsUri, isIpfsUri, cdnUrl, LOGO_UI } from './logo.js'
 import { API, fetchMarket, get as apiGet, rank, watch, parseDuration, WINDOW_EVENTS } from './discover.js'
 import {
   makeNote, withNote, withTool, toolInfo, queueNote, findByRequestId, findByHashes, hashesIn, publishNote, hasQueued, followSuffix, readFollowRef,
@@ -757,7 +757,8 @@ GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; open on BSC main
   gang create … --venue gangswap --grad-reward <seed> [--gr-min-buy …] [--gr-entries …] [--gr-last …] [--gr-refund-days …]
                                          0.54.0+, only where the pad serves it (asked before any wrap or approval; mainnet
                                          does not yet): the same reward on a GangSwap token, seeded in WBNB. One step per run
-                                         of the same command: wrap-bnb, approve-quote (exactly the seed), then the create
+                                         of the same command: wrap-bnb, approve-quote (exactly the seed, only if the approval is
+                                         short; a larger one you gave before is left as it is), then the create
                                          (with --agent-window too). No --gr-carry, --promote or --countdown-reward: the
                                          unclaimed rest always goes back to you. The seed is never part of the GangSwap pool
                                          or its buy-back. The grad-reward commands below work on it (retry-carry: never owed)
@@ -1170,13 +1171,22 @@ const withRetry = (r, hash) =>
 // logo.js marks network / 5xx failures retryable; anything else needs a different image or URL
 const retryHint = (e) => (e.retryable ? { retry: 'same command again' } : {})
 
-async function resolveLogoUri() {
+/** The logo flags and the local file, read and checked: nothing is uploaded or fetched (resolveLogoUri does it all). { uri, file } */
+function checkLogoFlags() {
   const uri = opt('logo-uri')
   const file = opt('logo') || opt('logo-file') || opt('file-logo')
   // `--logo-uri ""` is the documented empty logo; a missing value (or the next flag) is a mistake
   if (flag('logo-uri') && (uri == null || uri.startsWith('--'))) fail('--logo-uri needs a URL; use --logo ./file.png for a local image')
   if (uri && file) fail('use either --logo-uri or --logo/--logo-file, not both')
   if (flag('keep-logo-uri') && !uri) fail('--keep-logo-uri only applies together with --logo-uri <URL>')
+  if (file) {
+    try { readLogoFile(file) } catch (e) { fail(e.message, retryHint(e)) }
+  }
+  return { uri, file }
+}
+
+async function resolveLogoUri() {
+  const { uri, file } = checkLogoFlags()
   if (uri) {
     // a file on gang.fun's IPFS bucket (ipfs://<cid> or its CDN URL) goes on-chain as ipfs://<cid>, once the CDN serves it
     const cid = ipfsCid(uri)
@@ -1376,7 +1386,7 @@ const createGateAgent = (me) =>
   client.readContract({ address: padNets('v3').mainnet.pad, abi: PAD_AGENT_ABI, functionName: 'isAgent', args: [me] }).catch(() => isAgent(me))
 
 // what `gang v3` / `gang fair` (and `gang create`) get from here; each call adds its `notes` (padNotes)
-const PAD_IO = { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, checkMeta: parseMeta, resolveMeta: resolveMetaUri }
+const PAD_IO = { opt, flag, out, fail, summarize: summarizePreview, resolveLogo: resolveLogoUri, checkLogo: checkLogoFlags, checkMeta: parseMeta, resolveMeta: resolveMetaUri }
 /** `gang create … --dev-buy … [--bond …]` / `gang fair create … --bond …`: one command, one tx per run (launch.js). */
 const LAUNCH_DEPS = { io: PAD_IO, runV3, runFair, runBond, padNotes: (kind, sub, pre) => padNotes(kind, sub, pre) }
 
