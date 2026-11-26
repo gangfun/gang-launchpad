@@ -4,7 +4,11 @@ For wallets, aggregators, DEX screeners and bots. GangSwap is an optional gradua
 
 Contracts are not upgradeable. A new version is a new set of contracts; a token stays on the version it was created with, and older versions keep working. Support a list of factories, not one.
 
+There are two versions. **v1** is described below the address tables. **v2** differs only in fees, quotes and a few swap checks: see [GangSwap v2](#gangswap-v2). Tell them apart by `pair.factory()` (or by `pad.gangSwapMigratorOf(token)`); `pad.getTokenInfo` reports status 4 for both.
+
 ## Addresses (BNB mainnet, chain 56)
+
+v1 (v2 is not on mainnet yet):
 
 | Contract | Address |
 |---|---|
@@ -31,6 +35,8 @@ A throwaway mainnet stack with the same code over real WBNB has one graduated pa
 
 ## Addresses (BNB testnet, chain 97)
 
+v1:
+
 | Contract | Address |
 |---|---|
 | GangSwapFactory | `0x90aF66E555E8C90fFFd0780cF4ca56A8313CEA36` |
@@ -48,6 +54,18 @@ This version has no graduated pair yet. A throwaway stack with the same GangSwap
 | Router | `0x5208FB39e8b219e08381E76a6a13Ad9c35668902` | `0x474F382f2D4Bf6B328d2540Ef1771AD76f83BaC8` |
 
 Mock WBNB (both): `0x4054E65E4c73cA0Abc30239C012D31DA34361F74`.
+
+v2 (new GangSwap tokens on the testnet pad use it since 2026-11-26):
+
+| Contract | Address |
+|---|---|
+| GangSwapV2Factory | `0x172f7c853f590E01F10167A6850B74a86746689a` |
+| GangSwapV2Router | `0xbf433dDf64f64f4Fcd57C987AD002c5530E91d9D` |
+| GangSwapV2Migrator | `0x343767BE5FB3A0F5906788B56B7120bE508f2D1E` |
+| GangSwapV2Boost | `0x18F6117796f2c90A86b4D159FF733e60b59ad705` |
+| GangSwapV2Fees | `0x466Da84c5E4979f212f6cac53BF85a89108a8fe3` |
+
+v2 pair init code hash: `0x7d0ae8a9907b33dcd44d9c41729c9d2921dab9e5a948210209b1e2a61646904c`.
 
 ## How a token gets here
 
@@ -70,7 +88,7 @@ The real quote reserve cannot go negative: pricing is constant product on the ef
 
 ## Quotes
 
-Standard V2 with a 1% input fee on effective reserves:
+v1: standard V2 with a 1% input fee on effective reserves (v2 sells differ, see below):
 
 ```
 inWithFee = amountIn * 9900
@@ -97,12 +115,35 @@ not `balanceOf(pair) - reserve`. With the latter a small buy underflows and reve
 
 V2 `Swap`, `Sync` (effective reserves), `Mint` (once), plus `FeeTaken(feeQuote, feeTokenBurned)` and `FeesClaimed(to, amount)`. Right after graduation a scheduled buy-back (40 steps, at least 8 s apart) buys from the pair and sends the tokens to `0x…dEaD`; these are ordinary `Swap` events with `to = 0x…dEaD` and `BoostStep` on GangSwapBoost.
 
+## GangSwap v2
+
+Same pair layout, virtual reserve, one-shot liquidity, buy-back schedule and router functions as v1. The differences:
+
+**Fees are always paid in the quote (WBNB).** Buys: 1% of the quote in, as v1. Sells: no fee on the token side and no burn; the pool pays `n + fs` of the quote, the recipient gets `n`, and `fs = ceil(n / 99)` (about 1% of the gross) goes to `feeAccrued`.
+
+**Quotes: call the pair.** `getAmountOut(uint amountIn, address tokenIn)` and `getAmountIn(uint amountOut, address tokenOut)` on the pair give exact quotes in both directions (effective reserves `q` quote, `t` token):
+
+```
+buy,  quote in A:      out = floor(99·A·t / (100·q + 99·A))
+sell, tokens in X:     g = floor(X·q / (t + X)),  out = g − ceil(g / 100)
+sell, quote out n:     d = n + ceil(n / 99),      in = ceil(t·d / (q − d))
+```
+
+The v1 / standard V2 formula overquotes v2 sells; such a swap reverts on K (no loss, but a failed trade). The router's pure `getAmountOut(uint,uint,uint)` / `getAmountIn(uint,uint,uint)` are the buy formula only; its `getAmountsOut` / `getAmountsIn` use the pair views. The pair views have the same signature as Solidly-style pairs, but the pair is not a Solidly pool.
+
+**Swap checks.** A swap must move the quote (`NO_QUOTE_MOVEMENT`), and `to` may not be the pair. When tokens are both sent in and taken out in one call, the token input counts at 99% in the K check. Balance-based executors still compute quote input with `balanceOf(pair) − quoteBalanceBase()`.
+
+**Fee split.** While the token's buy-back still holds quote, for 60 seconds after its last step, and for the first fee collection after that, all quote fees go to the platform; from then on 70% to the creator and 30% to the platform. `GangSwapV2Fees` emits `WindowClosed(token)` at that first collection; anyone can trigger it with `collect(pair)`. Each buy-back step books the pair's fees to the platform.
+
+**Events.** `FeeTaken(feeQuote, feeTokenBurned)`: in v2 `feeTokenBurned` is always 0 and a sell's fee is in `feeQuote`, so do not infer the direction from it; use the `Swap` amounts (`Swap` reports the net quote out). For both versions the reserves change by `quote in − quote out − feeQuote` and `token in − token out − feeTokenBurned`. Fees: `FeesCollected(pair, token, amount, toCreator)` (`toCreator = 0` while the window is open), `WindowClosed(token)`, `CreatorFeeClaimed`, `PlatformFlushed`, `PlatformDeferred`. Donations and `skim` have no pair event; a `Swap` input can include an earlier unsynced donation (as v1).
+
 ## Checklist
 
 - [ ] Factory list per version; LP burned at `0x…dEaD` is the liquidity lock.
 - [ ] Price from effective reserves, liquidity from `realQuoteReserve()`.
-- [ ] 1% fee, taken out of the pool.
+- [ ] 1% fee, taken out of the pool (v1 sells: in tokens, burned; v2: always in WBNB).
+- [ ] v2: quotes from the pair views; direction from `Swap`, not from `FeeTaken`.
 - [ ] Balance-based executors use `quoteBalanceBase()`.
 - [ ] Tokens: standard ERC-20, no transfer tax in this version, transfers limited on the curve before graduation.
 
-Source: `gangswap/src/`. Design: `docs/SPEC-GANGSWAP-2026-11-22.md` (Chinese).
+Source: `gangswap/src/` (v1) and `gangswap/src/v2/` (v2). Design: `docs/SPEC-GANGSWAP-2026-11-22.md` (Chinese).
