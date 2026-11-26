@@ -38,7 +38,7 @@ contract DeployGangSwapV2 is Script {
         address bucket = vm.envAddress("GANGSWAP_V2_FEE_BUCKET");
         require(owner != address(0) && wbnb.code.length > 0 && bucket.code.length > 0, "bad env");
 
-        vm.startBroadcast();
+        _startBroadcast();
         (, address deployer,) = vm.readCallers();
         uint64 n = vm.getNonce(deployer);
         address mAddr = vm.computeCreateAddress(deployer, n);
@@ -70,7 +70,8 @@ contract DeployGangSwapV2 is Script {
         address wbnb = vm.envAddress("GANGSWAP_V2_WBNB");
         address owner = m.owner();
         require(owner == vm.envAddress("GANGSWAP_V2_OWNER") && m.quote() == wbnb, "migrator owner / quote");
-        require(owner.code.length > 0, "migrator owner has no code");
+        // mainnet: the Safe; the BSC testnet's set is owned by its deployer
+        require(block.chainid == 97 || owner.code.length > 0, "migrator owner has no code");
         require(m.wired(), "not wired");
 
         GangSwapV2Fees fees = GangSwapV2Fees(factory.fees());
@@ -90,6 +91,13 @@ contract DeployGangSwapV2 is Script {
         // pairFor's constant in the router's own code: PUSH32 <hash>, exactly once
         bytes memory needle = abi.encodePacked(hex"7f", factory.INIT_CODE_PAIR_HASH());
         require(_count(router.code, needle) == 1, "router init code hash");
+    }
+
+    /// @dev The key from env when given (DEPLOYER_PRIVATE_KEY, never printed), else --account / --private-key.
+    function _startBroadcast() private {
+        uint256 pk = vm.envOr("DEPLOYER_PRIVATE_KEY", uint256(0));
+        if (pk != 0) vm.startBroadcast(pk);
+        else vm.startBroadcast();
     }
 
     function _count(bytes memory hay, bytes memory needle) private pure returns (uint256 n) {
