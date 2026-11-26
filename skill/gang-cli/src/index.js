@@ -41,7 +41,7 @@ import { FAIR_DEV_BUY, isLaunch, LAUNCH_FLAGS, REDEEM_FEE_ALONE, runLaunch, TAX_
 import { poolPayBnb, poolTrade, refShown } from './pool.js'
 import { parseAmount, ROUTER_ABI, ROUTER_HINTS, revertOf as revertIn, step as writeStep } from './steps.js'
 import { isCurveKind, MERGED_ERRORS_ABI, genOf, PAD3_GEN, padNets } from './gangpad.js'
-import { createInput, gangSwapCreateCheck, gangSwapRevert } from './gangswap.js'
+import { createInput, gangSwapCreateCheck, gangSwapEventDecoders, gangSwapRevert } from './gangswap.js'
 import { venueRefusal } from './venue.js'
 import { creatorFeeCtx, creatorFeeList, runCreatorFee } from './creatorfee.js'
 import { V2_ABI } from './abi.js'
@@ -631,7 +631,9 @@ creator, less any promoter share the creator set, before and after graduation, n
   gang creator-fee --token <addr> --claim [--to <addr>] [--part curve|pool]
                                          claim all of it (the creator only), to this wallet or --to (not 0x0 or the pad).
                                          A GangSwap token has two parts, each its own tx: the curve part on the pad, then
-                                         (graduated) 70% of the GangSwap fee on buys; --part picks one
+                                         the pool part after graduation. --part picks one. v1 pays 70% of buy fees to
+                                         the creator. v2 pays 0 during the fee window and its closing collection, then
+                                         70% of buy and sell fees to the creator
                                          The fee is the creator's own: never the tax recipient's or a buy-back / split / LP
                                          module's. gang info / status (the creator's) and gang portfolio show it too
 
@@ -718,11 +720,14 @@ GANGSWAP (GangLaunchpad 3.0, 0.53.0+; the pad says whether it is open):
   gang create … --venue gangswap [--grad 6|9|12|15] [--agent-window <1-1440>] [--grad-reward <seed> …]
                                          the curve graduates into GangSwap instead of PancakeSwap (--venue pancake, the
                                          default). PERMANENT. On the curve it is an ordinary V3 token; afterwards it trades on
-                                         GangSwap, not PancakeSwap, and sites such as DexScreener may not list it. At graduation
-                                         the part of the raise no trade could ever reach is replaced by an equal virtual reserve
-                                         (same price curve) and used for a scheduled buy-back and burn, about 40 steps over
-                                         about 5 minutes. The GangSwap version (its migrator) is fixed at the create too: the
-                                         one the preview shows, or the tx reverts. 1% pool fee; on buys the creator gets 70% of it (gang creator-fee).
+                                         GangSwap, not PancakeSwap, and sites such as DexScreener may not list it. The preview
+                                         shows the version fixed at create, the fee rules and the buy-back schedule.
+                                         v1: 1% WBNB fee on buys (70% creator, 30% platform), 1% token fee burned on sells.
+                                         v2: 1% WBNB fee on buys and sells. All fees go to the platform during the buy-back,
+                                         for one minute after its last step, and on the first collection after that.
+                                         Later collections split 70% to the creator and 30% to the platform.
+                                         The buy-back starts at graduation. v1 takes about 40 steps over about 5 minutes.
+                                         v2 takes about 40 to 140 steps, capped at 0.5% of effective quote per step.
                                          WBNB quote, untaxed, alone: no tax, dividend, recipient, --quote / --ref-pool,
                                          --promote, --base, --vault, modules, countdown reward, bond, launch in one command, --fair / --fly.
                                          --grad-reward goes with it (0.54.0+, where the pad serves it; GRADUATION REWARD below)
@@ -732,7 +737,7 @@ GANGSWAP (GangLaunchpad 3.0, 0.53.0+; the pad says whether it is open):
                                          token is someone else's. Prices follow the pool's effective reserves; only its real
                                          BNB can be paid out, and a trade large against it is warned about. The router's code
                                          must be a GangSwapRouter build this CLI knows and the router of the token's own
-                                         version, or nothing is built. gang info / status: gangSwap
+                                         version, or nothing is built. gang info / status show gangSwap, including the v2 fee window
 
 GRADUATION REWARD (冲毕业奖励, GangLaunchpad 3.0, 0.42.0+; open on BSC mainnet and testnet; the pad says whether it is open):
   gang create … --grad-reward <seed> [--gr-min-buy <amount>] [--gr-entries <1-20>] [--gr-last <0-50>] [--gr-refund-days <30-180>]
@@ -1029,7 +1034,7 @@ GANG_V3_TESTNET_RPC_URL / GANG_FAIR_TESTNET_RPC_URL), GANG_ROUTER / GANG_TESTNET
 for BNB buys / mints and every pool trade). Built in: GangLaunchpad 3.0 (where new tokens go), 2.0, 1.0 and 2.0 金库版 on
 mainnet and the testnet. A token is always served by its own generation's pad, router, GangBond and module factories; these
 variables (and GANG_BOND / GANG_*_FACTORY) set the create target's only,
-GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER (development only: another deployment of the GangSwapRouter build; its code is
+GANG_SWAP_ROUTER / GANG_TESTNET_SWAP_ROUTER (development only: another router deployment for a known version; its code is
 checked before every trade, as a built-in one's, and it serves its own version's tokens only. One or a comma-
 separated list, added to the built-in ones),
 GANG_FLY_PAD / GANG_TESTNET_FLY_PAD (GangFlywheelPad V1; default: the built-in mainnet / testnet set 2 addresses),
@@ -1706,7 +1711,7 @@ const wentToPad3 = (hash) => client.getTransactionReceipt({ hash })
 
 /** A mainnet tx decoded, its queued note published (or its state refreshed), its follow ref and token links. */
 async function txReport(hash) {
-  const t = await decodeTx(hash, GANG_EVENT_ABIS, SHARED_SPLIT)
+  const t = await decodeTx(hash, GANG_EVENT_ABIS, SHARED_SPLIT, gangSwapEventDecoders)
   // the input may carry a follow ref and a note commitment: a committed note is sent here if it's still in the
   // local queue (e.g. after PENDING_CONFIRMATION), or its state reported / refreshed if already sent
   const queued = hasQueued()
@@ -2296,7 +2301,9 @@ async function main() {
         let ctx
         try { ctx = v3Ctx(true) } catch (e) { fail(e.message) }
         const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
-        const events = decodeLogs(r.logs, GANG_EVENT_ABIS, await firstByModuleType(ctx.client, r.logs, SHARED_SPLIT.topic, SHARED_SPLIT.byType))
+        const firstFor = await firstByModuleType(ctx.client, r.logs, SHARED_SPLIT.topic, SHARED_SPLIT.byType)
+        const swapAbi = gangSwapEventDecoders(r.logs)
+        const events = decodeLogs(r.logs, GANG_EVENT_ABIS, (log) => swapAbi(log) ?? firstFor?.(log))
         return out({
           success: true, chainId: Number(ctx.chainId), hash, status: r.status, block: Number(r.blockNumber),
           events, ...(await gangSwapCreateCheck(ctx, { status: r.status, events, sender: r.from, ...(await createInput(ctx, r, events)) })),

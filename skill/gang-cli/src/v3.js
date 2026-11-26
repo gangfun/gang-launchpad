@@ -7,7 +7,7 @@ import { atTokenPad, CREATOR_FEE_ABI, creatorFeeShareOf, genFields, GRAD_TARGET_
 import { createNote, curveCreatorFee } from './creatorfee.js'
 import { checkPromoter, DEFAULT_WINDOW_DAYS, firstBuyWarning, followPromoter, isMissingRead, HINTS as PROMOTE_HINTS, parsePromote, poolFactoryAddress, poolOf, promoteField, promoteLine, PROMOTE_PAD_ABI } from './promote.js'
 import { poolPayBnb, poolTrade } from './pool.js'
-import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapRevert, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapGradSupport, gangSwapSupport, gangSwapTrade, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
+import { GANGSWAP_EVENT_ABIS, GANGSWAP_PAD_ABI, createInput, gangSwapCreateCheck, gangSwapEventDecoders, gangSwapRevert, gangSwapCreateView, gangSwapFeeView, gangSwapRouterWarning, gangSwapSellQuote, gangSwapGradSupport, gangSwapSupport, gangSwapTrade, gangSwapVersion, gangSwapView, HINTS as GANGSWAP_HINTS } from './gangswap.js'
 import { parseVenue, venueRefusal } from './venue.js'
 import { decodeLogs } from './chain.js'
 import { bondGuard } from './bond.js'
@@ -482,6 +482,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       ...(q && {
         poolSellAll: {
           expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)), slippagePct: slippage,
+          ...(q.debit !== undefined && { poolQuoteOut: await units(ctx, c.quote, q.debit) }),
           quotedWith: q.quotedWith, hint: gs ? '`gang sell` builds this sell through GangSwapRouter; never sell it into a PancakeSwap pool' : POOL_SELL_HINT,
         },
       }),
@@ -522,7 +523,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     const badVenue = venueRefusal({ opt, flag, testnet })
     if (badVenue) fail(badVenue.error, 'got' in badVenue ? { got: badVenue.got } : {})
     const gsCreate = parseVenue(opt, flag).venue === 'gangswap'
-    let gsMigrator = null, gsRouterWarning = null
+    let gsMigrator = null, gsVersion = null, gsRouterWarning = null
     if (gsCreate) {
       if (launchFloor || launchPoolModule) fail('--venue gangswap goes on a plain create only: no chained launch')
       // asked of the pad before any wallet step or upload
@@ -530,6 +531,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       if (support.unread) fail('could not check the pad for GangSwap (RPC error)', { pad: ctx.pad, detail: support.unread, retry: 'same command again' })
       if (!support.open) fail(support.why, { pad: ctx.pad, hint: 'leave --venue out: the token then graduates into PancakeSwap', ...(flag('grad-reward') && { funds: fundsNote(ctx.pad) }) })
       gsMigrator = support.migrator
+      try { gsVersion = gangSwapVersion(ctx, gsMigrator) } catch (e) { fail(e.message, e.fields) }
       gsRouterWarning = await gangSwapRouterWarning(ctx, gsMigrator)
     }
     // no --buy-tax / --sell-tax (or both 0): an untaxed token (tax all 0, no dividend, no recipient; the pad never hooks it)
@@ -762,7 +764,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       const pre = await fundingStep(ctx, me, quote, seedRaw, sym, 'approve-quote', rawOnly, summarize)
       // each run builds the one step still missing (wrap, approve, create), read from the chain: re-run once the last one landed
       const { payWithThisTx: _pay, ...preView } = grView // the seed is pulled by the create, not by this step
-      const gsPre = gsCreate && { venue: { name: 'gangswap', version: gsMigrator, ...(gsRouterWarning && { routerWarning: gsRouterWarning }) }, gradReward: preView, stages: 'wrap-bnb (if WBNB is short) → approve-quote (exactly the seed, if the approval is short) → create: one per run of the same command; the create is its own preview' }
+      const gsPre = gsCreate && { venue: gangSwapCreateView(gsVersion, gsRouterWarning, true), gradReward: preView, stages: 'wrap-bnb (if WBNB is short) → approve-quote (exactly the seed, if the approval is short) → create: one per run of the same command; the create is its own preview' }
       if (pre) return out(pre.success ? { ...pre, why: `the create pulls the ${grView.pool} reward pool from this wallet`, ...gsPre } : pre)
       // a larger approval than the seed: said, never blocking (a read that fails says nothing; the dry run needs the approval anyway)
       const allowance = await ctx.read(quote, ERC20_ABI, 'allowance', [me, ctx.pad]).catch(() => 0n)
@@ -867,7 +869,7 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
       }),
       ...(base && { base: baseView }),
       ...(grView && { gradReward: grView }),
-      ...(gsCreate && { venue: gangSwapCreateView(gsMigrator, gsRouterWarning, !!gr), ...(gsRouterWarning && { warning: gsRouterWarning }) }),
+      ...(gsCreate && { venue: gangSwapCreateView(gsVersion, gsRouterWarning, !!gr), ...(gsRouterWarning && { warning: gsRouterWarning }) }),
       ...(aw && { agentWindow: windowCreateView(aw.minutes, { gradReward: !!gr && !gsCreate, vault: !!vault, promote: !!promote }) }),
       ...(vault && {
         padGen: ctx.gen, pad: ctx.pad, vault,
@@ -1097,11 +1099,12 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
         pair: c.pair, ...(q && {
           poolQuote: {
             amount: formatUnits(amount, 18), expectOut: await units(ctx, c.quote, q.out), minOut: await units(ctx, c.quote, minOf(q.out, slippage)),
+            ...(q.debit !== undefined && { poolQuoteOut: await units(ctx, c.quote, q.debit) }),
             slippagePct: slippage, quote: c.quoteSymbol, sellTaxPct: c.sellTaxPct, quotedWith: q.quotedWith,
           },
           hint: gs ? 'sell it on GangSwap only (gang sell builds it through GangSwapRouter)' : POOL_SELL_HINT,
         }),
-        ...(!q && { note: gs ? 'no pool quote: the GangSwap pair did not answer (RPC); re-run for one' : 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
+        ...(!q && { note: gs ? 'no executable GangSwap quote: check the version and real liquidity with gang info, then retry' : 'no pool quote: the tax handler did not answer (RPC); re-run for one' }),
       })
     }
     const me = walletFor(ctx, opt('from'))
@@ -1162,8 +1165,9 @@ export async function runV3(sub, { opt, flag, out, fail, summarize, resolveLogo,
     if (!/^0x[0-9a-fA-F]{64}$/.test(hash ?? '')) fail('--hash must be a tx hash')
     const r = await ctx.client.waitForTransactionReceipt({ hash, timeout: 120_000 })
     const events = []
+    const swapAbi = gangSwapEventDecoders(r.logs)
     for (const log of r.logs) {
-      for (const abi of V3_EVENT_ABIS) {
+      for (const abi of [...(swapAbi(log) ?? []), ...V3_EVENT_ABIS]) {
         try {
           const ev = decodeEventLog({ abi, data: log.data, topics: log.topics })
           events.push({ event: ev.eventName, ...Object.fromEntries(Object.entries(ev.args).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v])) })

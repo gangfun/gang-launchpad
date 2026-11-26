@@ -50,8 +50,15 @@ pool trade of it: a PancakeSwap pool of such a token was made by someone else.
 
 - The same `gang buy` / `gang sell`: a buy pays BNB (`--use-quote` WBNB), a sell pays WBNB (`--to-bnb` BNB). 1% pool fee
   (`poolFeePct`), no token tax. Approvals are for this trade's amount, to that router.
+- v1 charges the 1% fee in WBNB on buys (70% creator, 30% platform) and burns the 1% token fee on sells. v2 charges
+  1% in WBNB on buys and sells. During the v2 buy-back, the minute after its last step and the first collection after
+  that, the platform receives all fees. Later collections split 70% to the creator and 30% to the platform.
+- The v1 buy-back takes about 40 steps over about five minutes. v2 takes about 40 to 140 steps, each capped at 0.5%
+  of the effective WBNB reserve. Read the v2 fee window and buy-back progress in `gang info` or `gang status`.
 - `minTokensOut` / `minOut` come from the pair's **effective** reserves; only its **real** BNB (`liquidity.realBnb`) can be
-  paid out. Relay `warning` when a trade is large against it, and `priceImpactPct`.
+  paid out. v2 takes its quote from the pair's `getAmountOut`. The liquidity needed for a v2 sell (`poolQuoteOut`)
+  includes the WBNB fee on top of the seller's quoted output. Relay `warning` when a trade is large against real
+  liquidity, and `priceImpactPct`.
 - **Versions:** a token stays on the GangSwap version (`gangSwap.migrator`) of its create forever, with its own router, even
   when new tokens get a later version or creation is closed; `gang buy` / `gang sell` use that version's router only.
 - **The router is checked before any step** (its version and its code). `… is not this token's GangSwapRouter (…)`, `this CLI

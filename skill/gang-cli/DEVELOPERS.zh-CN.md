@@ -119,14 +119,28 @@ deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的�
 3.0 pad 上 `kindOf` 是 `4` 的币（`kind: "gangswap"`），曲线阶段和 V3 币（`kindOf` 1）完全一样，毕业后在 GangSwap 交易对里交易，不在 PancakeSwap：
 毕业后 pad 的 `getTokenInfo` 状态是 `4`。「状态 1 走曲线，其他都走 PancakeSwap」的写法是错的。PancakeSwap 上如果有它的池子，那是别人建的。
 
-- 交易对是 V2 接口，但 `getReserves()`（和 `Sync`）报的是有效储备：计价币一侧含固定的 `virtualReserve()`。按它算价，手续费 1%，按输入收（9900 / 10000）。真正能付出的看 `realQuoteReserve()`。
+- 交易对是 V2 接口，但 `getReserves()`（和 `Sync`）报的是有效储备：计价币一侧含固定的 `virtualReserve()`。真正能付出的看 `realQuoteReserve()`。
+- v1 按有效储备报价，输入收 1% 手续费（9900 / 10000）。买入手续费以 WBNB 支付，70% 归创建者，30% 归平台。卖出的代币手续费会销毁。
+- v2 买入和卖出均收取 1% WBNB 手续费。按输入报价读交易对的 `getAmountOut(amountIn, tokenIn)`，按输出报价读
+  `getAmountIn(amountOut, tokenOut)`。卖方到账 `n` 时，真实储备需覆盖 `n + ceil(n / 99)`。卖出的代币留在池子。
+  Router 的三参数纯函数使用买入公式。
 - 计价币一侧 `balanceOf(pair)` 和储备不相等是设计如此（加了虚拟储备，扣了未领的手续费）。输入要按 `balanceOf(pair) - quoteBalanceBase()` 量，或者直接用 GangSwapRouter（V2 router 的 ABI，支持原生 BNB）。
-- 版本：`pad.gangSwapMigrator()` 只是新币会用的 GangSwapMigrator（0 = 不开放创建，会变）。每个币永远用创建时的那个：`pad.gangSwapMigratorOf(token)`（0 = 不是 GangSwap 币），`GangSwapCreated(address indexed token, address indexed migrator)` 里也有。每个版本各有自己的 factory、回购、手续费合约和 router；已有的币不要从 `gangSwapMigrator()` 找合约。
+- 版本：`pad.gangSwapMigrator()` 只是新币会用的 GangSwapMigrator（0 = 不开放创建，会变）。每个币永远用创建时的那个：`pad.gangSwapMigratorOf(token)`（0 = 不是 GangSwap 币），`GangSwapCreated(address indexed token, address indexed migrator)` 里也有。每个版本各有自己的 factory、回购、手续费合约和 router。已有交易对的版本可由 `pair.factory()` 确认，须和代币 migrator 的 factory 一致。CLI 在测试网支持 v1 和 v2，主网支持 v1。创建预览的 `venue.version` 是 migrator 地址，`venue.protocolVersion` 是版本名。
 - 创建：`createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)` 要写明预期的版本，必须等于 pad 当前的 `gangSwapMigrator()`，否则回滚 `GangSwapVersionChanged(current)`；套在 `createWithSalt`、`createWithAgentWindow` 里也一样。
 - 带冲毕业奖励（0.54.0+，pad 要支持；主网还不支持）：`createGangSwapWithGradReward(name, symbol, logoURI, metaURI, gradBnb, migrator, cfg)`，`cfg` 和 `createWithGradReward` 的一样，`carryBps`、`promoteBps`、`promoteWindow` 必须是 0。不是 payable：`cfg.seed` 从创建人拉 WBNB（给 pad 的额度要够；更大的额度不会被改小）。同样可以套在上面两个入口里。链上没有 getter 说明有没有这个入口：用空的 `cfg` 静态调用，`BadGradConfig()` 表示支持，`GradNotOpen()` 表示奖励关闭，没有数据的回滚（或外层入口自己的错误）表示不支持，前提是先用一个必然带数据回滚的调用确认节点会返回回滚数据。奖励的查询、领取、撤回、回收和事件都和普通冲毕业奖励一样。
 - `gang tx` 查回滚的 GangSwap 创建（0.54.0 起有变化）：只有区块前和区块末两个状态都给出同一原因，才有 `gangSwap.reverted`，并带 `certain: true`；否则返回 `gangSwap.mayBe`（`certain: false`），`GangSwapVersionChanged`、`GangSwapNotOpen` 也一样，两个字段都要读。
-- 地址：`pad.gangSwapMigratorOf(token)` → `factory()` 和 `boost()`；`factory.fees()`。链上没有地方指向 router，合约自己说的 `factory()`、`WETH()` 也证明不了什么。CLI 维护一个版本列表，选 `factory()` 等于这个币自己的 factory 的 router，再核对代码本身：把代码里 factory / WBNB 的 PUSH32 换成零之后，keccak256 必须是已知的编译结果（`GANGSWAP_ROUTER_CODE_HASH`），并且这些位置的先后顺序和编译结果一致（怎么从源码重算见 `src/gangswap.js`）。
+- 地址：`pad.gangSwapMigratorOf(token)` → `factory()` 和 `boost()`；`factory.fees()`。链上没有地方指向 router，合约自己说的 `factory()`、`WETH()` 也证明不了什么。CLI 维护一个版本列表，选 `factory()` 等于这个币自己的 factory 的 router，再核对代码本身：把代码里 factory / WBNB 的 PUSH32 换成零之后，keccak256 必须匹配该版本已记录的编译指纹，并且这些位置的先后顺序和编译结果一致（怎么从源码重算见 `src/gangswap.js`）。
 - 两部分都有可领时，`gang creator-fee --claim --calldata` 在 `steps` 里给出两笔：pad 的 `claimCreatorFee(token, to)` 和 `GangSwapFees.claim(token, to)`。
+- v2 在回购期间、最后一步后的 60 秒内，以及此后的首次归集，手续费全归平台。关闭窗口的首次归集会发出 `WindowClosed(token)`。
+  任何人都可以调用该版本手续费合约的 `collect(pair)`。窗口内及关闭时领取返回 0，CLI 会说明金额并省去交易。
+  关闭后手续费 70% 归创建者、30% 归平台，余额为零时领取会回滚 `ZeroAmount`。
+  `gang info` 和 `gang status` 在 `gangSwap` 中显示版本、回购进度及窗口状态
+  `in-window`、`awaiting-collection` 或 `closed`。
+- 回购通常约 40 步。v2 可达约 140 步，每步最多使用有效 WBNB 储备的 0.5%，并把当时的池子手续费归集给平台。
+- 用 `Swap` 的进出金额区分买卖。v2 的 `FeeTaken.feeQuote` 记录买入或卖出的 WBNB 手续费，`feeTokenBurned` 始终为 0。
+  `Swap` 记录净计价币输出。两个版本的计价储备变化都是 `quoteIn - quoteOut - feeQuote`，代币储备变化是
+  `tokenIn - tokenOut - feeTokenBurned`。`FeesCollected.toCreator` 可以是 0。v2 交换须有 WBNB 进出池子
+  （`NO_QUOTE_MOVEMENT`），且接收地址不能是交易对或任一代币（`INVALID_TO`）。
 
 ### 失败代码
 

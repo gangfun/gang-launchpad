@@ -332,15 +332,16 @@ export async function firstByModuleType(c, logs, topic, byType) {
  * `extraAbis`: decoders for logs not from the V2 / Soft / U / S pads (see decodeLogs). `shared`: { topic, byType } for
  * an event signature several module kinds share (firstByModuleType).
  */
-export async function decodeTx(hash, extraAbis = [], shared = null) {
+export async function decodeTx(hash, extraAbis = [], shared = null, receiptDecoders = null) {
   const r = await client.waitForTransactionReceipt({ hash, timeout: 120_000 })
   const firstFor = shared ? await firstByModuleType(client, r.logs, shared.topic, shared.byType) : null
+  const extraFor = receiptDecoders?.(r.logs)
   const events = []
   const known = new Map(PADS.map((p) => [p.address.toLowerCase(), p]))
   for (const log of r.logs) {
     const pad = known.get(log.address.toLowerCase())
     if (!pad) {
-      events.push(...decodeLogs([log], extraAbis, firstFor))
+      events.push(...decodeLogs([log], extraAbis, (l) => extraFor?.(l) ?? firstFor?.(l)))
       continue
     }
     try {
