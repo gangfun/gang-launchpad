@@ -7,12 +7,22 @@ import {GangSwapV2Migrator} from "../../src/v2/GangSwapV2Migrator.sol";
 import {IGangSwapV2Factory} from "../../src/v2/interfaces/IGangSwapV2.sol";
 import {MockWBNB, MockBucket} from "../Mocks.sol";
 
+contract MockContractOwner {}
+
+contract MockPadBucket {
+    address public immutable platformBucket;
+
+    constructor(address bucket) {
+        platformBucket = bucket;
+    }
+}
+
 /// @dev The deploy script's set passes its own `check`, and `check` refuses a set that differs in any one place.
 contract DeployGangSwapV2Test is Test {
     DeployGangSwapV2 s;
     MockWBNB wbnb;
     MockBucket bucket;
-    address owner = makeAddr("safe");
+    address owner;
     address migrator;
     address factory;
     address router;
@@ -20,6 +30,8 @@ contract DeployGangSwapV2Test is Test {
     function setUp() public {
         wbnb = new MockWBNB();
         bucket = new MockBucket();
+        owner = address(new MockContractOwner());
+        vm.setEnv("GANGSWAP_V2_PAD", "");
         _env(owner, address(wbnb), address(bucket));
         s = new DeployGangSwapV2();
         (migrator,,, factory, router) = s.run();
@@ -35,6 +47,19 @@ contract DeployGangSwapV2Test is Test {
     function test_deployScript() public {
         s.check(migrator, router);
         assertEq(GangSwapV2Migrator(migrator).owner(), owner);
+
+        bytes memory ownerCode = owner.code;
+        vm.etch(owner, "");
+        vm.expectRevert(bytes("migrator owner has no code"));
+        s.check(migrator, router);
+        vm.etch(owner, ownerCode);
+
+        vm.setEnv("GANGSWAP_V2_PAD", vm.toString(address(new MockPadBucket(address(bucket)))));
+        s.check(migrator, router);
+        vm.setEnv("GANGSWAP_V2_PAD", vm.toString(address(new MockPadBucket(address(new MockBucket())))));
+        vm.expectRevert(bytes("pad fee bucket"));
+        s.check(migrator, router);
+        vm.setEnv("GANGSWAP_V2_PAD", "");
 
         // the deployed router's hash, not its source: one changed byte of the constant is refused
         bytes memory code = router.code;

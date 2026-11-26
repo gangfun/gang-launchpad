@@ -224,14 +224,10 @@ contract GangSwapV2RulesTest is GangSwapV2Fixture {
         assertEq(fees.claim(address(token), creator), charge * 7 / 10);
     }
 
-    function test_emptyClaimOutsideWindowRevertsZeroAmount() public {
+    function test_emptyClaimAfterClosingCollectionRevertsZeroAmount() public {
         _runBoost();
         _endWindow();
         assertEq(pair.feeAccrued(), 0);
-        vm.prank(creator);
-        vm.expectRevert(GangSwapV2Fees.ZeroAmount.selector);
-        fees.claim(address(token), creator);
-
         _expectWindowClosed();
         assertEq(fees.collect(address(pair)), 0);
         vm.prank(creator);

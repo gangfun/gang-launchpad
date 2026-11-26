@@ -17,6 +17,10 @@ interface IBucketView {
     function accruedQuote(address quote) external view returns (uint256);
 }
 
+interface IPadBucketView {
+    function platformBucket() external view returns (address);
+}
+
 /// @notice Deploys the GangSwap set (spec docs/SPEC-GANGSWAP-2026-11-22.md §13 step 1): migrator, boost, fees and
 ///         factory point at each other, so their addresses are predicted from the deployer's nonce; then the router.
 ///         `run` checks the set with `check` in the simulation, BEFORE anything is sent: it cannot see a partial or
@@ -25,7 +29,8 @@ interface IBucketView {
 /// @dev    From gangswap/, after `forge clean`:
 ///           forge script script/DeployGangSwapV2.s.sol --rpc-url <rpc> --account <keystore> --broadcast
 ///           forge script script/DeployGangSwapV2.s.sol --rpc-url <rpc> --sig "check(address,address)" <migrator> <router>
-///         Env: GANGSWAP_V2_OWNER (migrator owner: the Safe), GANGSWAP_V2_WBNB, GANGSWAP_V2_FEE_BUCKET (SharedPlatformFeeBucket). No keys in env.
+///         Env: GANGSWAP_V2_OWNER (migrator owner), GANGSWAP_V2_WBNB, GANGSWAP_V2_FEE_BUCKET (SharedPlatformFeeBucket).
+///         Optional GANGSWAP_V2_PAD checks that the pad uses the same fee bucket.
 contract DeployGangSwapV2 is Script {
     function run() external returns (address migrator, address boost, address fees, address factory, address router) {
         address owner = vm.envAddress("GANGSWAP_V2_OWNER");
@@ -63,12 +68,18 @@ contract DeployGangSwapV2 is Script {
         GangSwapV2Migrator m = GangSwapV2Migrator(migrator);
         IGangSwapV2Factory factory = m.factory();
         address wbnb = vm.envAddress("GANGSWAP_V2_WBNB");
-        require(m.owner() == vm.envAddress("GANGSWAP_V2_OWNER") && m.quote() == wbnb, "migrator owner / quote");
+        address owner = m.owner();
+        require(owner == vm.envAddress("GANGSWAP_V2_OWNER") && m.quote() == wbnb, "migrator owner / quote");
+        require(owner.code.length > 0, "migrator owner has no code");
         require(m.wired(), "not wired");
 
         GangSwapV2Fees fees = GangSwapV2Fees(factory.fees());
         address bucket = address(fees.bucket());
         require(bucket == vm.envAddress("GANGSWAP_V2_FEE_BUCKET"), "fee bucket");
+        string memory pad = vm.envOr("GANGSWAP_V2_PAD", string(""));
+        if (bytes(pad).length > 0) {
+            require(IPadBucketView(vm.parseAddress(pad)).platformBucket() == bucket, "pad fee bucket");
+        }
         // a fee bucket answers these; WBNB, a Safe or an EOA does not (its own getters revert here)
         IBucketView(bucket).operators(address(fees));
         IBucketView(bucket).accruedQuote(wbnb);

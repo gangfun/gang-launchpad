@@ -77,16 +77,16 @@ contract GangSwapV2Fees is ReentrancyGuard {
     }
 
     /// @notice The creator of `token` takes everything booked for it (collecting its pair first) to `to`.
+    ///         The closing claim returns zero when there is nothing to pay.
     function claim(address token, address to) external nonReentrant returns (uint256 amount) {
         if (to == address(0)) revert ZeroAddress();
         address pair = factory.getPair(token, quote);
         if (pair == address(0)) revert UnknownPair();
-        (uint256 collected, bool platformOnly) = _collect(pair, false);
+        (, bool platformOnly) = _collect(pair, false);
         if (msg.sender != creatorOf(token, pair)) revert NotCreator();
         amount = creatorFeeOf[token];
         if (amount == 0) {
-            // The closing claim can settle a platform batch. An empty claim after the window reverts.
-            if (!platformOnly || (collected == 0 && windowClosed[token])) revert ZeroAmount();
+            if (!platformOnly) revert ZeroAmount();
         } else {
             creatorFeeOf[token] = 0;
             IERC20(quote).safeTransfer(to, amount);
