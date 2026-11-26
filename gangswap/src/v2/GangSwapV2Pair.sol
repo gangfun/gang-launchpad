@@ -360,6 +360,7 @@ contract GangSwapV2Pair is IPancakePair, GangSwapV2ERC20 {
             return amountInWithFee.mul(t) / q.mul(100).add(amountInWithFee);
         }
         uint gross = amountIn.mul(q) / t.add(amountIn);
+        require(gross <= q.sub(virtualReserve), 'GangSwap: INSUFFICIENT_LIQUIDITY');
         return gross.sub(_ceilDiv(gross, 100));
     }
 

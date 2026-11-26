@@ -4,6 +4,7 @@ pragma solidity 0.8.28;
 import {GangSwapV2Fixture} from "./GangSwapV2.t.sol";
 import {GangSwapV2Fees} from "../../src/v2/GangSwapV2Fees.sol";
 import {IGangSwapV2Boost} from "../../src/v2/interfaces/IGangSwapV2.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract GangSwapV2RulesTest is GangSwapV2Fixture {
     event FeeTaken(uint256 feeQuote, uint256 feeTokenBurned);
@@ -89,6 +90,19 @@ contract GangSwapV2RulesTest is GangSwapV2Fixture {
         _swapRaw(net, 0, holder);
         assertEq(wbnb.balanceOf(holder), net);
         _checkInvariants();
+    }
+
+    function test_sellExactInRequiresRealQuoteForGrossOutput() public {
+        (uint256 q, uint256 t) = _reserves();
+        uint256 real = pair.realQuoteReserve();
+        uint256 atLimit = token.balanceOf(holder);
+        assertEq(atLimit * q / (t + atLimit), real);
+        assertEq(pair.getAmountOut(atLimit, address(token)), real * 99 / 100);
+
+        uint256 aboveLimit = Math.ceilDiv(t * (real + 1), q - real - 1);
+        assertEq(aboveLimit * q / (t + aboveLimit), real + 1);
+        vm.expectRevert(bytes("GangSwap: INSUFFICIENT_LIQUIDITY"));
+        pair.getAmountOut(aboveLimit, address(token));
     }
 
     function test_bothInputsAndOutputsBookBothFees() public {

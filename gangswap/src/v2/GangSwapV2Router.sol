@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
-// GangSwap v2 router: pair-provided trade quotes and fee-on-transfer input measured against quoteBalanceBase().
+// PancakeRouter (upstream/PancakeRouter.sol) adapted for GangSwap v2 with pair-provided trade quotes.
+// Fee-on-transfer routes measure quote input against quoteBalanceBase().
+// See gangswap/check-diff.sh for the v1 diff and gangswap/check-v2-diff.sh for the v2 diffs.
 
 // File: @uniswap\lib\contracts\libraries\TransferHelper.sol
 
@@ -228,7 +230,7 @@ library PancakeLibrary {
                 hex'ff',
                 factory,
                 keccak256(abi.encodePacked(token0, token1)),
-                hex'4efa380c2f16ba0a05eb33d8393b30cfdd40ef4d71cc2bf80c9c416d75d1f072' // init code hash (GangSwapV2Factory.INIT_CODE_PAIR_HASH)
+                hex'7d0ae8a9907b33dcd44d9c41729c9d2921dab9e5a948210209b1e2a61646904c' // init code hash (GangSwapV2Factory.INIT_CODE_PAIR_HASH)
             ))));
     }
 

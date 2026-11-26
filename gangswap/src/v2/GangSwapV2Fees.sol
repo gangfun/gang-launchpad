@@ -10,7 +10,6 @@ import {
 
 interface IGangSwapV2MigratorView {
     function padOf(address pair) external view returns (address);
-    function boost() external view returns (IGangSwapV2Boost);
 }
 
 /// @title GangSwapV2Fees
@@ -101,7 +100,7 @@ contract GangSwapV2Fees is ReentrancyGuard {
     }
 
     function _inWindow(address token) private view returns (bool) {
-        (, uint64 lastStepAt,,, uint128 left) = migrator.boost().boosts(token);
+        (, uint64 lastStepAt,,, uint128 left) = IGangSwapV2Boost(boost).boosts(token);
         return left > 0 || block.timestamp < uint256(lastStepAt) + GRACE;
     }
 
