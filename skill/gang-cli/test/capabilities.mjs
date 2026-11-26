@@ -89,6 +89,10 @@ for (const t of doc.tools) {
   if (t.access === 'read' && urlInput) assert.equal(t.riskIf?.[urlInput[0]]?.needsUserConfirmation, true, `${t.name}: ${urlInput[0]} sends data`)
 }
 assert.equal(doc.commands.find((x) => x.command === 'creator-fee --claim --to').risk, 'high')
+const closeWindow = doc.commands.find((x) => x.command === 'creator-fee --close-window')
+assert.deepEqual([closeWindow.access, closeWindow.needsUserConfirmation], ['preview', true])
+assert.match(help, /gang creator-fee --token <addr> --close-window/)
+assert.match(desc, /--close-window.*Wait for the user to approve before gang_execute/)
 assert.equal(doc.commands.find((x) => x.command === 'upload-logo').needsUserConfirmation, true)
 assert.equal(doc.tools.find((t) => t.name === 'gang_sell').riskIf.breakBond.risk, 'high')
 

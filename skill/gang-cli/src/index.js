@@ -636,6 +636,10 @@ creator, less any promoter share the creator set, before and after graduation, n
                                          70% of buy and sell fees to the creator
                                          The fee is the creator's own: never the tax recipient's or a buy-back / split / LP
                                          module's. gang info / status (the creator's) and gang portfolio show it too
+  gang creator-fee --token <addr> --close-window
+                                         anyone can preview the closing collection for a graduated GangSwap v2 token
+                                         after the one-minute grace period. The closing collection pays the creator 0 WBNB.
+                                         Show the preview and wait for approval before gang execute
 
 PROMOTER SHARE (GangLaunchpad 3.0, 0.34.0+; GANG_PROMOTE_POOL_FACTORY / GANG_TESTNET_PROMOTE_POOL_FACTORY):
   gang create … --promote <0.01-50> [--promote-days <7-90, default 30>]
@@ -1804,7 +1808,7 @@ async function main() {
   if (unknown) fail(unknown)
   // a claim's flags are read exactly or not at all: a misspelled --to or --to=0x… must not fall back to a default
   if (cmd === 'creator-fee') {
-    for (const f of ['--token', '--to', '--part', '--from']) if (args.filter((a) => a === f).length > 1) fail(`give ${f} once`)
+    for (const f of ['--token', '--to', '--part', '--from', '--close-window']) if (args.filter((a) => a === f).length > 1) fail(`give ${f} once`)
   }
   const feeFlag = cmd === 'creator-fee' && unknownFlagError(args, CREATOR_FEE_ACCEPTS, 'gang creator-fee', 'Nothing was built')
   if (feeFlag) fail(feeFlag)

@@ -159,7 +159,8 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
   `claimCreatorFee(token, to)` and `GangSwapFees.claim(token, to)`.
 - In v2 all fees go to the platform during the buy-back and for 60 seconds after its last step. The first subsequent
   collection also goes to the platform and emits `WindowClosed(token)`. Anyone can call the version's
-  `fees.collect(pair)`. A v2 claim in that period or on the closing collection returns 0. After closure, fees split
+  `fees.collect(pair)`. `gang creator-fee --token <addr> --close-window` previews that call in the awaiting-collection
+  state, including when the pair has 0 WBNB to collect. A v2 claim in that period or on the closing collection returns 0. After closure, fees split
   70% to the creator and 30% to the platform, and an empty claim reverts `ZeroAmount`. The CLI reports zero-payout
   claims without building a transaction. `gangSwap.feeWindow.state` is `in-window`, `awaiting-collection` or `closed`.
 - The buy-back takes about 40 steps in quiet conditions. v2 can take up to about 140 steps and caps each at 0.5%

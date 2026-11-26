@@ -238,6 +238,9 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const testnet = flag('testnet')
   const net = testnet ? ' --testnet' : ''
   const rawOnly = flag('calldata')
+  const closeWindow = flag('close-window')
+  if (closeWindow && !flag('token')) fail('--close-window needs --token <addr>')
+  if (closeWindow && ['claim', 'part', 'to'].some(flag)) fail('--close-window cannot be used with --claim, --part or --to')
   if (flag('to') && !flag('claim')) fail('--to goes with --claim (where the claimed fee is sent)')
   if (flag('part') && !flag('claim')) fail('--part goes with --claim (a GangSwap token has two parts: curve | pool)')
   if (flag('part') && !['curve', 'pool'].includes(opt('part'))) fail('--part must be curve or pool', { got: opt('part') ?? null })
@@ -275,15 +278,39 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const c = await ctx.read(ctx.pad, CURVES_ABI, 'curves', [token])
   const [creator, quote, , , , , graduated] = c
   const symbol = await ctx.read(token, SYMBOL_ABI, 'symbol').catch(() => null)
+  const gs = kind === 'gangswap'
+  const pair = c[10]
+  const pool = gs ? await gangSwapFeeView(ctx, token, { graduated, pair }, net) : null
+  if (closeWindow) {
+    if (pool?.error) return fail(pool.error, { token, retry: 'same command again' })
+    if (pool?.version !== 'v2' || !graduated) return fail('--close-window requires a graduated GangSwap v2 token', { token })
+    const { feeWindow, contract } = pool
+    if (feeWindow.state !== 'awaiting-collection') return fail(
+      feeWindow.state === 'closed' ? 'the GangSwap fee window is already closed' : 'the GangSwap fee window can close one minute after the last buy-back step',
+      { token, feeWindow },
+    )
+    const from = walletFor(ctx, opt('from'))
+    const args = [pair]
+    let result
+    try {
+      ;({ result } = await ctx.client.simulateContract({ account: from, address: contract, abi: GANGSWAP_FEES_ABI, functionName: 'collect', args }))
+    } catch (e) {
+      const r = feesRevertOf(e)
+      return out({ success: false, step: 'close-gangswap-window', token, pair, ...(r ? { reverted: true, ...r } : { reverted: false, error: e.shortMessage || e.message.split('\n')[0] }) })
+    }
+    const data = encodeFunctionData({ abi: GANGSWAP_FEES_ABI, functionName: 'collect', args })
+    return out(step(ctx, { from, to: contract, data }, {
+      step: 'close-gangswap-window', chainId, token, symbol, kind, pair, contract, version: 'v2', feeWindow,
+      collected: formatUnits(result, 18), toCreator: '0', quote: 'WBNB',
+      note: 'The closing collection allocates the accrued fees to the platform and pays the creator 0 WBNB. If someone closes the window first, this call collects at the 70% creator and 30% platform split.',
+    }, rawOnly, summarize))
+  }
   const view = await curveCreatorFee(ctx, token, { creator, quote }, net)
   if (!view.creatorFee) {
     return fail(`this token is on GangLaunchpad ${view.padGen}, which has no creator fee: its whole 1% curve fee goes to the platform (the creator fee is on tokens created on 2.0 or 3.0)`,
       { token, padGen: view.padGen, pad: ctx.pad })
   }
   // a GangSwap token (kind 4): the curve part on the pad as any, and after graduation its part of the pool fee on GangSwapFees
-  const gs = kind === 'gangswap'
-  const pair = c[10]
-  const pool = gs ? await gangSwapFeeView(ctx, token, { graduated, pair }, net) : null
   const base = { chainId, token, symbol, graduated, padGen: view.padGen, pad: ctx.pad, ...(gs && { kind }), ...view.creatorFee, ...(pool && { pool }) }
 
   if (!flag('claim')) return out({ success: true, ...base })

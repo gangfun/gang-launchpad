@@ -132,7 +132,7 @@ deadline, mustCount)`。通过 PancakeSwap 路由、聚合器或 GangRouter 的�
 - 地址：`pad.gangSwapMigratorOf(token)` → `factory()` 和 `boost()`；`factory.fees()`。链上没有地方指向 router，合约自己说的 `factory()`、`WETH()` 也证明不了什么。CLI 维护一个版本列表，选 `factory()` 等于这个币自己的 factory 的 router，再核对代码本身：把代码里 factory / WBNB 的 PUSH32 换成零之后，keccak256 必须匹配该版本已记录的编译指纹，并且这些位置的先后顺序和编译结果一致（怎么从源码重算见 `src/gangswap.js`）。
 - 两部分都有可领时，`gang creator-fee --claim --calldata` 在 `steps` 里给出两笔：pad 的 `claimCreatorFee(token, to)` 和 `GangSwapFees.claim(token, to)`。
 - v2 在回购期间、最后一步后的 60 秒内，以及此后的首次归集，手续费全归平台。关闭窗口的首次归集会发出 `WindowClosed(token)`。
-  任何人都可以调用该版本手续费合约的 `collect(pair)`。窗口内及关闭时领取返回 0，CLI 会说明金额并省去交易。
+  任何人都可以调用该版本手续费合约的 `collect(pair)`。进入等待归集状态后，`gang creator-fee --token <addr> --close-window` 可预览该调用，池子待归集金额为 0 时也可关闭。窗口内及关闭时领取返回 0，CLI 会说明领取金额。
   关闭后手续费 70% 归创建者、30% 归平台，余额为零时领取会回滚 `ZeroAmount`。
   `gang info` 和 `gang status` 在 `gangSwap` 中显示版本、回购进度及窗口状态
   `in-window`、`awaiting-collection` 或 `closed`。

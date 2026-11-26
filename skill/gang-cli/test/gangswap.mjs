@@ -227,10 +227,11 @@ const call = ({ to, data, from, value }) => {
   if (at === F3) return { fees: () => ok(E3), migrator: () => ok(M3) }[f.name]?.() ?? revert
   if (at === M3) return { factory: () => ok(F3), boost: () => ok(B3) }[f.name]?.() ?? revert
   if (at === MIGRATOR2) return { factory: () => ok(FACTORY2), boost: () => ok(BOOST2) }[f.name]?.() ?? revert
-  if (at === FACTORY2) return { fees: () => ok(FEES2), migrator: () => ok(MIGRATOR2), getPair: () => ok(lc(args[0]) === GS2 ? PAIR2 : zeroAddress), INIT_CODE_PAIR_HASH: () => ok(HASH2) }[f.name]?.() ?? revert
+  if (at === FACTORY2) return { fees: () => ok(FEES2), migrator: () => ok(MIGRATOR2), getPair: () => ok(lc(args[0]) === GS2 ? PAIR2 : zeroAddress), INIT_CODE_PAIR_HASH: () => ok(world.hash2 ?? HASH2) }[f.name]?.() ?? revert
   if (at === BOOST2) return { boosts: () => ok(world.boost2), nextStep: () => ok(world.nextStep2) }[f.name]?.() ?? revert
   if (at === FEES2) return {
     CREATOR_BPS: () => ok(7000n), creatorFeeOf: () => ok(world.collected2), windowClosed: () => ok(world.windowClosed),
+    collect: () => lc(args[0]) === PAIR2 ? world.collectRevert ?? ok(world.feeAccrued2) : err('UnknownPair()'),
     claim: () => {
       if (lc(from) !== lc(world.creator)) return err('NotCreator()')
       const amount = world.collected2 + (world.windowClosed ? world.feeAccrued2 * 7n / 10n : 0n)
@@ -246,9 +247,16 @@ const call = ({ to, data, from, value }) => {
   if (at === ROUTER2) {
     if (f.name === 'factory') return ok(FACTORY2)
     if (f.name === 'WETH') return ok(WBNB)
-    if (world.swapRevert && f.name.startsWith('swap')) return world.swapRevert
-    if (f.name === 'swapExactETHForTokens') return ok([BigInt(value), quoteV2(BigInt(value), true)])
-    return f.name.startsWith('swap') ? ok([args[0], quoteV2(args[0], lc(args[2][0]) === WBNB)]) : revert
+    if (f.name.startsWith('swap')) {
+      if (world.swapRevert) return world.swapRevert
+      const native = f.name === 'swapExactETHForTokens'
+      const [amountIn, minOut, path, , deadline] = native ? [BigInt(value), ...args] : args
+      if (world.routerTime2 !== undefined && deadline < world.routerTime2) return reason('GangSwapV2Router: EXPIRED')
+      const out = world.swapOut2 ?? quoteV2(amountIn, lc(path[0]) === WBNB)
+      if (out < minOut) return reason('GangSwapV2Router: INSUFFICIENT_OUTPUT_AMOUNT')
+      return ok([amountIn, out])
+    }
+    return revert
   }
   if (at === MIGRATOR) return { factory: () => ok(FACTORY), boost: () => ok(BOOST) }[f.name]?.() ?? revert
   if (at === FACTORY) return { fees: () => ok(FEES), migrator: () => ok(MIGRATOR), getPair: () => ok(lc(args[0]) === GS2 ? zeroAddress : world.listedPair), INIT_CODE_PAIR_HASH: () => ok(world.hash) }[f.name]?.() ?? revert
@@ -499,13 +507,43 @@ try {
     assert.equal(unknown.tx, undefined)
     grad({ router2Code: deployed((c) => c === 'F' ? FACTORY2 : WBNB).replace(HASH.slice(2), HASH2.slice(2)) })
     assert.match((await run('buy', { token: GS2, amount: '1' })).error, /not a GangSwapRouter build/)
+    // Keep all on-chain reads and the router valid. Each independently mismatched pinned address must stop the trade.
+    for (const address of ['factory', 'boost', 'fees']) {
+      setTestRouters(V1, { ...V2, [address]: OTHER })
+      grad()
+      const refused = await run('buy', { token: GS2, amount: '1' })
+      assert.match(refused.error, /GangSwap contracts do not match the known v2 deployment/, address)
+      assert.equal(refused.tx, undefined)
+      assert.deepEqual(world.code, [])
+    }
+    // An override reporting the v2 factory and matching its reported init hash still needs a build tagged v2.
+    setTestRouters(V1)
+    process.env.GANG_TESTNET_SWAP_ROUTER = ROUTER2
+    try {
+      grad({ hash2: HASH, router2Code: deployed((c) => c === 'F' ? FACTORY2 : WBNB) })
+      const refused = await run('buy', { token: GS2, amount: '1' })
+      assert.match(refused.error, /not a GangSwapRouter build/)
+      assert.equal(refused.tx, undefined)
+    } finally { delete process.env.GANG_TESTNET_SWAP_ROUTER }
+    setTestRouters(V1, V2)
     for (const why of ['NO_QUOTE_MOVEMENT', 'INVALID_TO']) {
       grad({ swapRevert: reason(`GangSwap: ${why}`) })
       const r = await run('buy', { token: GS2, amount: '1' })
       assert.deepEqual([r.success, r.error, r.tx, r.doNotSend], [false, `GangSwap: ${why}`, undefined, true])
       assert.ok(r.hint)
     }
+    for (const [state, why, hint] of [
+      [{ swapOut2: 1n }, 'INSUFFICIENT_OUTPUT_AMOUNT', /slippage/],
+      [{ routerTime2: maxUint256 }, 'EXPIRED', /deadline/],
+    ]) {
+      grad(state)
+      const reverted = await run('buy', { token: GS2, amount: '1' })
+      assert.deepEqual([reverted.success, reverted.reverted, reverted.error, reverted.tx], [false, true, `GangSwapV2Router: ${why}`, undefined])
+      assert.match(reverted.hint, hint)
+    }
     const poolClaim = () => cli(['creator-fee', '--testnet', '--token', GS2, '--claim', '--part', 'pool', '--from', ME, '--calldata'])
+    const closeCmd = `gang creator-fee --token ${GS2} --close-window --testnet`
+    const closeWindow = (token = GS2, flags = []) => cli(['creator-fee', '--testnet', '--token', token, '--close-window', '--from', OTHER, '--calldata', ...flags])
     for (const [left, elapsed, closed, expected] of [[E18, 120, false, 'in-window'], [0n, 59, false, 'in-window'], [0n, 60, false, 'awaiting-collection'], [0n, 60, true, 'closed']]) {
       grad({ windowClosed: closed, collected2: 0n, feeAccrued2: 100n, boost2: [PAIR2, BigInt(NOW - elapsed), false, 2n * E18, left], nextStep2: left ? [E18 / 100n, true] : [0n, false] })
       const info = await run('info', { token: GS2 })
@@ -515,8 +553,40 @@ try {
       const r = await poolClaim()
       assert.deepEqual([r.success, parseUnits(r.amount, 18), r.tx ? lc(r.tx.to) : undefined], [true, closed ? 70n : 0n, closed ? FEES2 : undefined])
       if (!closed) assert.match(r.note, /0 WBNB/)
-      if (expected === 'awaiting-collection') assert.match(r.note, /collect\(pair\)/)
+      if (expected === 'awaiting-collection') {
+        assert.match(r.note, /--close-window/)
+        assert.equal(r.pool.feeWindow.closeWindow, closeCmd)
+        assert.equal(info.gangSwap.feeWindow.closeWindow?.toLowerCase(), closeCmd)
+        const close = await closeWindow()
+        assert.deepEqual([close.success, close.step, lc(close.tx?.from), lc(close.tx?.to), close.tx?.value, parseUnits(close.collected, 18), close.toCreator],
+          [true, 'close-gangswap-window', lc(OTHER), FEES2, '0', 100n, '0'])
+        const decoded = decodeFunctionData({ abi: G.GANGSWAP_FEES_ABI, data: close.tx.data })
+        assert.deepEqual([decoded.functionName, decoded.args.map(lc)], ['collect', [PAIR2]])
+        assert.match(close.note, /pays the creator 0 WBNB/)
+      } else {
+        const closedPreview = await closeWindow()
+        assert.deepEqual([closedPreview.success, closedPreview.tx], [false, undefined])
+        assert.match(closedPreview.error, closed ? /already closed/ : /one minute after/)
+      }
     }
+    const waiting = { windowClosed: false, boost2: [PAIR2, BigInt(NOW - 60), false, 2n * E18, 0n] }
+    grad(waiting)
+    assert.deepEqual(await closeWindow().then((r) => [r.success, r.collected, !!r.tx]), [true, '0', true])
+    grad({ ...waiting, collectRevert: err('UnknownPair()') })
+    assert.deepEqual(await closeWindow().then((r) => [r.success, r.reverted, r.error, r.tx]), [false, true, 'UnknownPair', undefined])
+    grad()
+    for (const token of [GS, K1]) assert.match((await closeWindow(token)).error, /requires a graduated GangSwap v2 token/)
+    world = fresh()
+    assert.match((await closeWindow()).error, /requires a graduated GangSwap v2 token/)
+    grad({ down: new Set(['windowClosed']) })
+    assert.match((await closeWindow()).error, /could not read the GangSwap creator fee/)
+    grad()
+    for (const [flags, re] of [
+      [['--claim'], /cannot be used with --claim/], [['--part', 'pool'], /cannot be used with --claim, --part/],
+      [['--to', ME], /cannot be used with --claim, --part or --to/], [['--close-window'], /give --close-window once/],
+    ]) assert.match((await closeWindow(GS2, flags)).error, re)
+    assert.match((await cli(['creator-fee', '--testnet', '--close-window'])).error, /--close-window needs --token/)
+    assert.deepEqual(world.calls, [])
     grad({ collected2: 0n })
     assert.match((await poolClaim()).error, /nothing to claim/)
     grad({ claimResult2: 0n })
@@ -546,18 +616,23 @@ try {
       makeLog(PAIR2, 'FeeTaken(uint256,uint256)', raw(10n, 0n)), makeLog(PAIR2, swapSig, raw(100n, 0n, 0n, 990n), [ME, OTHER]),
       makeLog(FEES2, 'WindowClosed(address)', '0x', [GS2]), makeLog(FEES2, 'FeesCollected(address,address,uint256,uint256)', raw(10n, 0n), [PAIR2, GS2]),
       makeLog(FEES, 'FeesCollected(address,address,uint256,uint256)', raw(10n, 7n), [PAIR, GS]),
+      makeLog(FEES, 'PlatformFlushed(uint256)', raw(3n)), makeLog(FEES2, 'PlatformFlushed(uint256)', raw(10n)),
+      makeLog(FEES, 'PlatformDeferred(uint256)', raw(4n)), makeLog(FEES2, 'PlatformDeferred(uint256)', raw(11n)),
       makeLog(OTHER, swapSig, raw(100n, 0n, 0n, 2n), [ME, OTHER]),
     ] }
     for (const cmd of [['tx'], ['v3', 'tx']]) {
       const { events } = await cli([...cmd, '--testnet', '--hash', hash])
-      assert.deepEqual(events.map((e) => e.event), ['FeeTaken', 'Swap', 'FeeTaken', 'Swap', 'WindowClosed', 'FeesCollected', 'FeesCollected'])
+      assert.deepEqual(events.map((e) => e.event), ['FeeTaken', 'Swap', 'FeeTaken', 'Swap', 'WindowClosed', 'FeesCollected', 'FeesCollected', 'PlatformFlushed', 'PlatformFlushed', 'PlatformDeferred', 'PlatformDeferred'])
       assert.deepEqual(events.filter((e) => e.event === 'FeeTaken').map((e) => [e.feeQuote, e.feeTokenBurned]), [['0', '1'], ['10', '0']])
       assert.deepEqual(events.filter((e) => e.event === 'Swap').map((e) => [e.amount0In, e.amount1Out]), [['100', '987'], ['100', '990']])
       assert.deepEqual([lc(events[4].token), events[5].toCreator, events[6].toCreator], [GS2, '0', '7'])
+      assert.deepEqual(events.slice(7).map((e) => e.amount ?? e.pending), ['3', '10', '4', '11'])
     }
     const directSwap = parseAbi(['function swap(uint256,uint256,address,bytes)'])
+    const routerSwap = encodeFunctionData({ abi: G.GANGSWAP_ROUTER_ABI, functionName: 'swapExactTokensForETH', args: [1n, 1n, [GS2, WBNB], ME, 2n] })
     for (const [to, input, error, expected] of [
-      [LIVE_V2.router, encodeFunctionData({ abi: G.GANGSWAP_ROUTER_ABI, functionName: 'swapExactTokensForETH', args: [1n, 1n, [GS2, WBNB], ME, 2n] }), reason('GangSwap: NO_QUOTE_MOVEMENT'), 'GangSwap: NO_QUOTE_MOVEMENT'],
+      ...['GangSwap: NO_QUOTE_MOVEMENT', 'GangSwapV2Router: INSUFFICIENT_OUTPUT_AMOUNT', 'GangSwapV2Router: EXPIRED']
+        .map((why) => [LIVE_V2.router, routerSwap, reason(why), why]),
       [PAIR2, encodeFunctionData({ abi: directSwap, functionName: 'swap', args: [1n, 0n, PAIR2, '0x'] }), reason('GangSwap: INVALID_TO'), 'GangSwap: INVALID_TO'],
       ...[FEES, FEES2].map((fees) => [fees, encodeFunctionData({ abi: G.GANGSWAP_FEES_ABI, functionName: 'collect', args: [OTHER] }), err('UnknownPair()'), 'UnknownPair']),
     ]) {
@@ -1643,6 +1718,14 @@ esac
     w = await cli(['buy', '--token', GS, '--amount', '0.1', '--testnet'], W)
     assert.equal(w.success, false)
     assert.doesNotMatch(readFileSync(log, 'utf8'), /contract-call/)
+    // Anyone can prepare the closing collection using the ordinary confirmation path.
+    writeFileSync(log, '')
+    grad({ creator: OTHER, windowClosed: false })
+    w = await cli(['creator-fee', '--token', GS2, '--close-window', '--testnet'], W)
+    assert.deepEqual([w.success, w.step, w.requestId, w.next], [true, 'close-gangswap-window', 'req-1', 'gang execute --request-id req-1'])
+    const walletCalls = readFileSync(log, 'utf8')
+    assert.match(walletCalls, new RegExp(`contract-call preview .*--to ${FEES2} --value 0 --inputData ${toFunctionSelector('collect(address)')}`, 'i'))
+    assert.doesNotMatch(walletCalls, /contract-call execute/)
     rmSync(dir, { recursive: true, force: true })
   }
 
@@ -1678,6 +1761,9 @@ esac
     assert.deepEqual([m.kind, lc(m.tx.to)], ['gangswap', ROUTER])
     m = await use('gang_cli', { args: ['create', '--venue', 'gangswap', '--name', 'G', '--symbol', 'G', '--testnet', '--vault', OTHER] })
     assert.match(m.error, /--vault can't go with --venue gangswap/)
+    grad({ windowClosed: false })
+    m = await use('gang_cli', { args: ['creator-fee', '--token', GS2, '--close-window', '--testnet', '--calldata', '--from', OTHER] })
+    assert.deepEqual([m.success, m.step, lc(m.tx?.to)], [true, 'close-gangswap-window', FEES2])
     child.stdin.end()
     child.kill()
   }

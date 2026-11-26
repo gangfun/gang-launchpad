@@ -130,7 +130,7 @@ export const GANGSWAP_FEES_ABI = parseAbi([
   'function windowClosed(address token) view returns (bool)',
   'error ZeroAddress()', 'error UnknownPair()', 'error NotCreator()', 'error ZeroAmount()', 'error OnlyBoost()',
   'event FeesCollected(address indexed pair, address indexed token, uint256 amount, uint256 toCreator)',
-  'event WindowClosed(address indexed token)', 'event PlatformDeferred(uint256 pending)',
+  'event WindowClosed(address indexed token)', 'event PlatformFlushed(uint256 amount)', 'event PlatformDeferred(uint256 pending)',
   // the pad's creator fee has an event of the same signature with `to` indexed too: the topic count tells them apart
   'event CreatorFeeClaimed(address indexed token, address indexed creator, address to, uint256 amount)',
 ])
@@ -690,7 +690,8 @@ function feeWindowOf(ctx, token, set) {
     }
     return {
       state: 'awaiting-collection', sharePct: 0, graceEndsAt: Number(closesAfter),
-      note: 'The first collection after the grace period closes the window and pays 0 WBNB to the creator. After it, the creator receives 70% of pool fees. Anyone can call collect(pair) on the fees contract to close the window.',
+      closeWindow: `gang creator-fee --token ${token} --close-window${netOf(ctx) === 'testnet' ? ' --testnet' : ''}`,
+      note: 'The first collection after the grace period closes the window and pays 0 WBNB to the creator. After it, the creator receives 70% of pool fees. Anyone can preview that collection with --close-window.',
     }
   })
 }
@@ -818,7 +819,7 @@ function swapReason(e) {
     try { return decodeErrorResult({ data }).args?.[0] } catch { return '' }
   }).join(' ')
   const text = `${decoded} ${e?.walk?.((x) => typeof x?.reason === 'string')?.reason ?? ''} ${e?.details ?? ''} ${short(e)}`
-  const m = text.match(/GangSwap(?:Router|Library)?: ([A-Z_]+)/)
+  const m = text.match(/GangSwap(?:V2)?(?:Router|Library)?: ([A-Z_]+)/)
   if (!m) return null
   const hint = {
     INSUFFICIENT_OUTPUT_AMOUNT: 'the price moved past --slippage; re-run to re-quote, or raise --slippage',

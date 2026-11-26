@@ -65,6 +65,7 @@ export const COMMANDS = [
   c('creator-fee', 'read', 'none', '0.23.0', 'What a creator can claim'),
   c('creator-fee --claim', 'preview', 'low', '0.23.0', 'Creator only: claim the creator fee to this wallet. GangSwap v1 pays a share of buy fees. GangSwap v2 pays a share of buy and sell fees after the fee window closes'),
   c('creator-fee --claim --to', 'preview', 'high', '0.23.0', 'Creator only: claim the creator fee to another address'),
+  c('creator-fee --close-window', 'preview', 'low', '0.54.0', 'Anyone can preview the closing collection after the GangSwap v2 grace period. The closing collection pays 0 WBNB to the creator'),
   c('upload-logo', 'publish', 'medium', '0.2.0', 'Publish a local image or a URL on gang.fun, at once: only a file the user named', { needsUserConfirmation: true }),
   c('create', 'preview', 'high', '0.1.0', 'Launch a token. Its name, tax, logo and links never change; a launch in one command also buys, bonds or binds modules'),
   c('create --grad-reward', 'preview', 'high', '0.42.0', 'Create a 3.0 curve token with a reward pool the creator seeds for the last curve buys before graduation (by what each spent; the graduating buy gets a share on top); refundable only after a public notice if it never graduates'),
