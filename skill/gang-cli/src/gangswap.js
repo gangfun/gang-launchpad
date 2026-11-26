@@ -352,12 +352,15 @@ async function swapRevert(ctx, tx, net) {
     return null
   }
   const [before, at] = await Promise.all([replay(tx.blockNumber - 1n), replay(tx.blockNumber)])
-  const why = before ?? at
+  // The router checks the deadline against the tx's block timestamp before pricing the swap.
+  const expiredAt = router && /^GangSwap(?:V2)?Router: EXPIRED$/.test(at?.error ?? '')
+  const why = expiredAt ? at : before ?? at
   if (!why) return {}
-  const certain = !!before && before.error === at?.error
+  const sameReason = !!before && before.error === at?.error
+  const certain = expiredAt || sameReason
   return { gangSwap: {
     ...(certain ? { reverted: why.error } : { mayBe: why.error }), certain, ...(why.hint && { hint: why.hint }),
-    source: `a replay of the call, ${certain ? 'before its block and at it' : before ? 'before its block only' : 'at the end of its block only'}`,
+    source: `a replay of the call, ${sameReason ? 'before its block and at it' : why === before ? 'before its block only' : 'at the end of its block only'}`,
   } }
 }
 const SEED = 'seed not covered'

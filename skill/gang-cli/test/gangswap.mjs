@@ -644,6 +644,19 @@ try {
       world.replay['0xff'] = rpcDown
       assert.deepEqual(await read().then((r) => [r?.mayBe, r?.certain]), [expected, false], expected)
     }
+    for (const [router, token, prefix] of [[LIVE_V1.router, GS, 'GangSwapRouter'], [LIVE_V2.router, GS2, 'GangSwapV2Router']]) {
+      const input = encodeFunctionData({ abi: G.GANGSWAP_ROUTER_ABI, functionName: 'swapExactTokensForETH', args: [1n, 1n, [token, WBNB], ME, BigInt(NOW - 1)] })
+      world.receipts[hash] = { ...receipt, to: router, status: '0x0', logs: [] }
+      world.txs[hash] = { ...world.txs[hash], to: router, input }
+      world.replay = {
+        '0xfe': reason(`${prefix}: INSUFFICIENT_OUTPUT_AMOUNT`),
+        '0xff': reason(`${prefix}: EXPIRED`),
+      }
+      const { gangSwap } = await cli(['tx', '--testnet', '--hash', hash])
+      assert.deepEqual([gangSwap?.reverted, gangSwap?.certain, gangSwap?.mayBe], [`${prefix}: EXPIRED`, true, undefined], prefix)
+      assert.match(gangSwap.hint, /deadline.*fresh one/)
+      assert.equal(gangSwap.source, 'a replay of the call, at the end of its block only')
+    }
   }
 
   // ---------------------------------------------------------------- create
