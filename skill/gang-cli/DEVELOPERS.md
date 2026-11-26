@@ -124,13 +124,20 @@ then in a GangSwap pair, never in PancakeSwap: after graduation the pad's `getTo
 curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token was made by someone else.
 
 - The pair has the V2 interface, but `getReserves()` (and `Sync`) are effective reserves: the quote side includes a fixed
-  `virtualReserve()`. Price from them with a 1% fee on the input (9900 / 10000). `realQuoteReserve()` is what can be paid out.
+  `virtualReserve()`. `realQuoteReserve()` is what can be paid out.
+- v1 uses effective reserves and a 1% input fee (9900 / 10000) for both quotes. Its WBNB buy fee splits 70% to the creator
+  and 30% to the platform. The token sell fee is burned.
+- v2 uses the pair's `getAmountOut(amountIn, tokenIn)` for exact input and `getAmountIn(amountOut, tokenOut)` for exact
+  output. Both directions pay a 1% WBNB fee. A sell that pays the seller `n` requires real liquidity for
+  `n + ceil(n / 99)`. The tokens sold stay in the pool. The router's three-argument pure quote functions use buy math.
 - The quote side's `balanceOf(pair)` differs from its reserve by design (virtual reserve added, unclaimed fee left out). Measure quote input as
   `balanceOf(pair) - quoteBalanceBase()`, or trade through GangSwapRouter (V2 router ABI, native BNB swaps).
 - Versions: `pad.gangSwapMigrator()` is only the GangSwapMigrator NEW tokens get (0 = creation closed; it can change).
   A token keeps the one of its create forever: `pad.gangSwapMigratorOf(token)` (0 = not a GangSwap token), also in
   `GangSwapCreated(address indexed token, address indexed migrator)`. Each version has its own factory, boost, fees and
-  router; never read an existing token's contracts from `gangSwapMigrator()`.
+  router. For an existing pair, `pair.factory()` identifies the version and matches the token's migrator's factory.
+  The CLI's table includes both versions on testnet and v1 on mainnet. `venue.version` remains the migrator address,
+  and `venue.protocolVersion` gives the version name. `gang info` and `gang status` give both in `gangSwap`.
 - Creating: `createGangSwap(name, symbol, logoURI, metaURI, gradBnb, migrator)` names the version expected, the pad's
   current `gangSwapMigrator()`, or reverts `GangSwapVersionChanged(current)`; also inside `createWithSalt` and
   `createWithAgentWindow`.
@@ -146,10 +153,23 @@ curve, anything else = PancakeSwap" as a bug. A PancakeSwap pool of such a token
   also for `GangSwapVersionChanged` and `GangSwapNotOpen`: read both fields.
 - Addresses: `pad.gangSwapMigratorOf(token)` → `factory()` and `boost()`; `factory.fees()`. The router is named by
   nothing on chain, and what a contract says (`factory()`, `WETH()`) does not prove it is one. This CLI keeps a list
-  of versions, takes the router whose `factory()` is the token's own factory, and requires the code itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must be a known build's (`GANGSWAP_ROUTER_CODE_HASH`) and the
+  of versions, takes the router whose `factory()` is the token's own factory, and requires the code itself: each PUSH32 of the factory / WBNB turned to zero, its keccak256 must match a build pinned for that version and the
   operands in the build's order (`src/gangswap.js` says how both are recomputed from the sources).
 - `gang creator-fee --claim --calldata` prints both claims in `steps` when both parts are due: the pad's
   `claimCreatorFee(token, to)` and `GangSwapFees.claim(token, to)`.
+- In v2 all fees go to the platform during the buy-back and for 60 seconds after its last step. The first subsequent
+  collection also goes to the platform and emits `WindowClosed(token)`. Anyone can call the version's
+  `fees.collect(pair)`. `gang creator-fee --token <addr> --close-window` previews that call in the awaiting-collection
+  state, including when the pair has 0 WBNB to collect. A v2 claim in that period or on the closing collection returns 0. After closure, fees split
+  70% to the creator and 30% to the platform, and an empty claim reverts `ZeroAmount`. The CLI reports zero-payout
+  claims without building a transaction. `gangSwap.feeWindow.state` is `in-window`, `awaiting-collection` or `closed`.
+- The buy-back takes about 40 steps in quiet conditions. v2 can take up to about 140 steps and caps each at 0.5%
+  of the effective WBNB reserve. Each v2 step also collects fees to the platform.
+- Use the legs in `Swap` to read swap direction. `FeeTaken(feeQuote, feeTokenBurned)` reports WBNB fees on either
+  side in v2, with `feeTokenBurned` always zero. `Swap` reports net quote out. For either version, the quote reserve
+  changes by `quoteIn - quoteOut - feeQuote` and the token reserve by `tokenIn - tokenOut - feeTokenBurned`.
+  `FeesCollected.toCreator` can be zero. v2 requires WBNB movement (`NO_QUOTE_MOVEMENT`) and a recipient other
+  than the pair or either token (`INVALID_TO`).
 
 ### Failure codes
 

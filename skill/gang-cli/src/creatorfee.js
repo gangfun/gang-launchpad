@@ -213,7 +213,7 @@ export async function creatorFeeList(ctx, creator) {
         tokens.push({
           token: t, symbol: syms[2 * i].result ?? null, quote: c[1], quoteSymbol: syms[2 * i + 1].result ?? null, graduated: c[6],
           padGen: g.gen ?? '2.0', claimable: await units(ctx, c[1], owed[0]), claimableRaw: owed[0],
-          ...(pool && { kind: 'gangswap', poolRaw: pool.claimable, gangSwapPool: { claimable: await units(ctx, c[1], pool.claimable), contract: pool.fees } }),
+          ...(pool && { kind: 'gangswap', poolRaw: pool.claimable, gangSwapPool: { claimable: await units(ctx, c[1], pool.claimable), contract: pool.fees, version: pool.version, ...(pool.feeWindow && { feeWindow: pool.feeWindow }) } }),
         })
       }
     }
@@ -238,6 +238,9 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const testnet = flag('testnet')
   const net = testnet ? ' --testnet' : ''
   const rawOnly = flag('calldata')
+  const closeWindow = flag('close-window')
+  if (closeWindow && !flag('token')) fail('--close-window needs --token <addr>')
+  if (closeWindow && ['claim', 'part', 'to'].some(flag)) fail('--close-window cannot be used with --claim, --part or --to')
   if (flag('to') && !flag('claim')) fail('--to goes with --claim (where the claimed fee is sent)')
   if (flag('part') && !flag('claim')) fail('--part goes with --claim (a GangSwap token has two parts: curve | pool)')
   if (flag('part') && !['curve', 'pool'].includes(opt('part'))) fail('--part must be curve or pool', { got: opt('part') ?? null })
@@ -275,15 +278,39 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const c = await ctx.read(ctx.pad, CURVES_ABI, 'curves', [token])
   const [creator, quote, , , , , graduated] = c
   const symbol = await ctx.read(token, SYMBOL_ABI, 'symbol').catch(() => null)
+  const gs = kind === 'gangswap'
+  const pair = c[10]
+  const pool = gs ? await gangSwapFeeView(ctx, token, { graduated, pair }, net) : null
+  if (closeWindow) {
+    if (pool?.error) return fail(pool.error, { token, retry: 'same command again' })
+    if (pool?.version !== 'v2' || !graduated) return fail('--close-window requires a graduated GangSwap v2 token', { token })
+    const { feeWindow, contract } = pool
+    if (feeWindow.state !== 'awaiting-collection') return fail(
+      feeWindow.state === 'closed' ? 'the GangSwap fee window is already closed' : 'the GangSwap fee window can close one minute after the last buy-back step',
+      { token, feeWindow },
+    )
+    const from = walletFor(ctx, opt('from'))
+    const args = [pair]
+    let result
+    try {
+      ;({ result } = await ctx.client.simulateContract({ account: from, address: contract, abi: GANGSWAP_FEES_ABI, functionName: 'collect', args }))
+    } catch (e) {
+      const r = feesRevertOf(e)
+      return out({ success: false, step: 'close-gangswap-window', token, pair, ...(r ? { reverted: true, ...r } : { reverted: false, error: e.shortMessage || e.message.split('\n')[0] }) })
+    }
+    const data = encodeFunctionData({ abi: GANGSWAP_FEES_ABI, functionName: 'collect', args })
+    return out(step(ctx, { from, to: contract, data }, {
+      step: 'close-gangswap-window', chainId, token, symbol, kind, pair, contract, version: 'v2', feeWindow,
+      collected: formatUnits(result, 18), toCreator: '0', quote: 'WBNB',
+      note: 'The closing collection allocates the accrued fees to the platform and pays the creator 0 WBNB. If someone closes the window first, this call collects at the 70% creator and 30% platform split.',
+    }, rawOnly, summarize))
+  }
   const view = await curveCreatorFee(ctx, token, { creator, quote }, net)
   if (!view.creatorFee) {
     return fail(`this token is on GangLaunchpad ${view.padGen}, which has no creator fee: its whole 1% curve fee goes to the platform (the creator fee is on tokens created on 2.0 or 3.0)`,
       { token, padGen: view.padGen, pad: ctx.pad })
   }
   // a GangSwap token (kind 4): the curve part on the pad as any, and after graduation its part of the pool fee on GangSwapFees
-  const gs = kind === 'gangswap'
-  const pair = c[10]
-  const pool = gs ? await gangSwapFeeView(ctx, token, { graduated, pair }, net) : null
   const base = { chainId, token, symbol, graduated, padGen: view.padGen, pad: ctx.pad, ...(gs && { kind }), ...view.creatorFee, ...(pool && { pool }) }
 
   if (!flag('claim')) return out({ success: true, ...base })
@@ -294,10 +321,12 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   const part = opt('part')
   const curveDue = BigInt(view.creatorFee.claimableRaw) > 0n && part !== 'pool'
   const poolDue = gs && BigInt(pool.claimableRaw ?? 0) > 0n && part !== 'curve'
+  const emptyWindow = gs && part !== 'curve' && pool.feeWindow?.sharePct === 0 && !poolDue ? pool.feeWindow : null
   // a pool part that could not be read is never taken for "nothing there"
   if (gs && pool.error && part !== 'curve' && !curveDue) return fail(pool.error, { token, retry: 'same command again' })
   if (!curveDue && !poolDue) {
-    return fail(gs ? `nothing to claim yet${part ? ` in the ${part} part` : ''}: the curve part grows with curve trades, the pool part with GangSwap buys after graduation` : HINTS.ZeroAmount, { token, claimable: view.creatorFee.claimable, ...(gs && { pool }) })
+    if (emptyWindow) return out({ success: true, ...base, part: 'pool', amount: '0', quote: 'WBNB', note: emptyWindow.note })
+    return fail(gs ? `nothing to claim yet${part ? ` in the ${part} part` : ''}: the curve part grows with curve trades and the pool part with eligible GangSwap fees after graduation` : HINTS.ZeroAmount, { token, claimable: view.creatorFee.claimable, ...(gs && { pool }) })
   }
   const to = flag('to') ? opt('to') : me
   if (!isAddress(to ?? '')) fail('--to must be a 0x address (checksummed or all lowercase)', { got: to ?? null })
@@ -348,17 +377,20 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
   // the pool part: its own contract and tx
   const poolStep = async (others = {}) => {
     const f = await gangSwapFeeOf(ctx, token, pair).catch((e) => fail(e.message, { token, retry: 'same command again' }))
+    let simulated
     try {
-      await ctx.client.simulateContract({ account: me, address: f.fees, abi: GANGSWAP_FEES_ABI, functionName: 'claim', args })
+      simulated = await ctx.client.simulateContract({ account: me, address: f.fees, abi: GANGSWAP_FEES_ABI, functionName: 'claim', args })
     } catch (e) {
       const r = feesRevertOf(e, HINTS)
       return { success: false, step: 'claim-gangswap-fee', part: 'pool', ...(r ? { reverted: true, ...r } : { reverted: false, error: e.shortMessage || e.message.split('\n')[0] }) }
     }
+    const amount = f.version === 'v2' ? simulated.result : f.claimable
+    if (f.version === 'v2' && amount === 0n) return { success: true, part: 'pool', amount: '0', quote: 'WBNB', note: f.feeWindow?.note ?? 'The simulated pool claim returned 0 WBNB.' }
     return step(ctx, { from: me, to: f.fees, data: encodeFunctionData({ abi: GANGSWAP_FEES_ABI, functionName: 'claim', args }) }, {
-      step: 'claim-gangswap-fee', part: 'pool', chainId, token, symbol, kind, padGen: view.padGen, contract: f.fees, amount: formatUnits(f.claimable, 18), quote: 'WBNB',
+      step: 'claim-gangswap-fee', part: 'pool', chainId, token, symbol, kind, padGen: view.padGen, contract: f.fees, version: f.version, amount: formatUnits(amount, 18), quote: 'WBNB',
       to, ...(!same(to, me) && { toNote: `the fee goes to --to, not to this wallet${payOut ? `: --to is a module (${toType}); ${warning ? `${warning}. ` : ''}${payOut}` : ''}` }),
       ...(warning && { warning }), ...toUnchecked, ...others,
-      note: `collects what the pair still holds, then claims the creator's ${f.sharePct}% of the GangSwap fee on buys, in WBNB; it keeps growing with later buys`,
+      note: `Collects the pair's accrued fees, then pays the creator's share in WBNB. ${pool.note}`,
     }, rawOnly, summarize)
   }
   if (!curveDue) return out(await poolStep())
@@ -368,13 +400,15 @@ export async function runCreatorFee({ opt, flag, out, fail, summarize }) {
     ...(warning && { warning }), ...toUnchecked,
     ...(poolDue && !rawOnly && { alsoClaimable: { part: 'pool', amount: pool.claimable, quote: 'WBNB', then: `gang creator-fee --token ${token}${net} --claim --part pool${flag('to') ? ` --to ${to}` : ''}` } }),
     ...(gs && pool.error && part !== 'curve' && { poolError: pool.error }),
+    ...(emptyWindow && { pool }),
     note: 'claims all of it; the fee keeps growing with later curve trades and can be claimed again',
   }, rawOnly, summarize)
   // raw txs: both parts, two independent txs
   if (poolDue && rawOnly && curve.success) {
     const second = await poolStep()
     const row = (s) => ({ step: s.step, part: s.part, amount: s.amount, tx: s.tx })
-    return out(second.success ? { ...curve, steps: [row(curve), row(second)], stepsNote: 'two separate claims, each its own tx; tx = the first' } : { ...curve, poolError: second.error })
+    return out(second.tx ? { ...curve, steps: [row(curve), row(second)], stepsNote: 'two separate claims, each its own tx; tx = the first' }
+      : second.success ? { ...curve, pool: second } : { ...curve, poolError: second.error })
   }
   return out(curve)
 }

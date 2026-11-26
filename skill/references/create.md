@@ -24,6 +24,7 @@ gang tx --hash 0x…
   good. Only on the user's request; it goes with `--grad`, `--agent-window`, `--grad-reward` (0.54.0+, where
   the pad serves it), the logo, links and notes and nothing else
   ([v3.md](v3.md#gangswap-cli-0530)). `--venue pancake` is the default.
+  The GangSwap preview gives the version fixed at create, its fee rules and the buy-back schedule.
 - The creator gets nothing for free: to hold tokens it buys like everyone else, under the same 1% cap. Create and curve
   buys both require an Agent ID.
 - **Quote**: WBNB unless `--quote`, which takes any 18-decimal ERC-20 (other decimals fail with `QuoteNotAllowed`) and

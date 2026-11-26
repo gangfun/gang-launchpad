@@ -39,7 +39,7 @@ export const BUY_ACCEPTS = new Set([
 ])
 
 /** gang creator-fee's flags: where a claim goes is one of them. */
-export const CREATOR_FEE_ACCEPTS = new Set(['token', 'from', 'claim', 'part', 'to', 'testnet', 'calldata', 'json'])
+export const CREATOR_FEE_ACCEPTS = new Set(['token', 'from', 'claim', 'close-window', 'part', 'to', 'testnet', 'calldata', 'json'])
 
 // what people type for the two link flags
 const LINK_TYPOS = {
